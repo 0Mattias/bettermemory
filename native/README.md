@@ -4641,6 +4641,136 @@ constants, not a walk.
   the larger under 8 times the smaller plus 50 ms, which fails on cubic
   growth.
 
+## Chunked runs
+
+`store::tx` (batch, chunks) and `store::bulk` (`rename_scope`,
+`prune_tombstones`). Read at 5522b983.
+
+### The reference
+
+- `_joined` (`store.py` 1252-1284), with `_require_open` (1287-1296) and
+  `_roll_back` (1298-1311): built by "The write transaction"
+  (`Transaction::scope`): `_require_open` at the entry, `SAVEPOINT
+  nested_<depth>`, `RELEASE` on success; on failure the last appended row
+  and `_tx_returns` put back, `ROLLBACK TO` and `RELEASE` while in a
+  transaction, the owner rolled back when those fail. Not carried:
+  `_tx_first_seq` and `_tx_records`, which feed only `Store.commits` (a
+  counter the daemon's handlers read, `_handlers.py:193-205`) and change
+  no row, head or table.
+- `batch()` (1313-1322) is `_transaction()` yielding the store: outermost,
+  one transaction; nested, a savepoint. Native: `WritableStore::batch`
+  (begin, body, commit; an error rolls back) and, inside a transaction,
+  `Transaction::scope`.
+- `_in_chunks(items, apply)` (1324-1354). Inside an open transaction every
+  item goes into it (1340-1343), no clock read. Otherwise, while items
+  remain: `with self._transaction()` (BEGIN, the writer check), `started =
+  time.monotonic()`, then per item `apply(item)` and a monotonic read,
+  closing the chunk when the difference is at least `CHUNK_HOLD_SECONDS`
+  (0.1, line 298); the commit settles that chunk's returned marks (one
+  wall-clock read when anything is named) and moves the head; then, while
+  items remain, `time.sleep(CHUNK_YIELD_SECONDS)` (0.05, line 314). No
+  items: no lock. An exception in `apply` rolls its chunk back and
+  propagates: earlier chunks stay committed, later items are not tried.
+  Native: `WritableStore::in_chunks` (the provider's `monotonic` and
+  `pause`, new on `Provider` with defaults: the process's monotonic clock
+  and a thread sleep) and `Transaction::in_chunks`. The float comparison
+  is the same arithmetic on the same readings.
+- `rename_scope(old, new, include_tombstones=True, session=None)`
+  (`store_records.py` 1185-1275). `old == new`: the empty result, nothing
+  read. Lists the active ids whose scopes hold `old` (`iter_memories`,
+  `_MEMORY_SELECT ORDER BY rowid`, every row read through
+  `_row_to_memory`) outside any transaction, then chunks
+  `rename_active`: the row read again (gone: skipped), `old` no longer
+  there: skipped; `model_copy(scopes=_scopes_after_rename(...),
+  updated=utcnow())` (one wall read, no validation), then `put_memory`
+  (a nested transaction): `ValueError` and its subclasses (pydantic's
+  ValidationError, UnknownFieldsError, `validate_path_targets`) are caught
+  into `failed` with `str(exc)`; any other (TombstonedError, a KeyError)
+  ends the run. Then, with tombstones, lists the removed ids
+  (`ORDER BY removed, rowid`) after the active chunks have committed, and
+  chunks `rename_removed`: `tombstone_put` of the copy with the row's
+  provenance, filename, `list(_load_json(links_json, []))`,
+  `int(corroborations)` and `last_corroborated`, in a nested transaction,
+  catching only UnknownFieldsError. `_scopes_after_rename`
+  (`store_schema.py` 565-578): None without `old`, else `old` replaced and
+  duplicates dropped in order.
+- `prune_tombstones(older_than, now=None, session=None)` (1278-1319):
+  `cutoff = (now or utcnow()) - older_than` (one wall read without `now`),
+  the tombstones removed before it sorted by `(removed, id)`, chunked
+  `prune`: re-read (gone or no longer before the cutoff: skipped), then
+  `tombstone_delete` in a nested transaction, UnknownFieldsError skipped.
+  Returns the ids pruned.
+- `store_journal.py:226` (`prune(sid)`, the episode prune) is a later
+  caller of `_in_chunks`, not built here.
+
+### Findings
+
+- `rename_scope` to a scope the model refuses (`""`, `"bad scope"`):
+  the active branch records each record's ValidationError in `failed`,
+  but the removed branch catches only UnknownFieldsError, so with
+  `include_tombstones` the first matching tombstone raises the pydantic
+  ValidationError out of the call after the active chunks committed (they
+  wrote nothing, every put having failed), and `failed` is lost. Pinned in
+  the fixture (`invalid_scope`).
+- Neither caller checks `new`; the store's own fold (the model's scope
+  validator at the apply) is what refuses it.
+
+### Native
+
+`WritableStore::rename_scope(provider, old, new, include_tombstones,
+session) -> Bulk<Renamed>` and `WritableStore::prune_tombstones(provider,
+older_than_us, now, session) -> Bulk<Vec<PyStr>>`, each with a `_hooked`
+form; `Bulk { value, chunks }` carries each chunk's `Committed`. A
+failure returns the error; the chunks before it stay committed, as in the
+reference. `failed`'s reason is `str(exc)` where the reference's wording
+is the product's, and a pydantic ValidationError's first line (the rest of
+pydantic's text, its documentation URL with the pydantic version, is not
+reproduced, as everywhere in these files). The put inside a rename is
+`put_plain`: `put_memory` with no provenance, filename, home or standing,
+written in `bulk.rs` because `writers.rs` was held by another unit. It
+answers as `put_in` does (the same errors, a missing column the same
+`Record` IndexError), except that it reads a blob label or removed
+reason as the reference does (below), where `put_in` refuses it as not
+ported. It is to be replaced by the writers' own put (`put_in`) once the
+restore unit lands.
+
+A blob in a stored text column is read as the reference reads it:
+`str(bytes)`, the `b'...'` spelling, for the label (which the apply then
+refuses as `unknown provenance "b'a'"`: caught into `failed` for an
+active record, raised for a removed one) and for a removed reason; a
+removed record's `links_json` as `json.loads(bytes)` reads it
+(`decode_json_bytes`: a BOM or the zero-byte pattern picks UTF-8, -16 or
+-32; bytes no codec reads are a UnicodeDecodeError, its text None).
+
+A busy database (another connection's lock, the busy wait run out) at a
+later chunk's BEGIN or COMMIT ends the run as in the reference: the
+chunks before stay committed, the failing one rolls back, the error is
+sqlite's (the reference's OperationalError) and the next call writes.
+
+Refused or not ported (`WriterNotPorted::Blob`, nothing written): a blob
+filename or `last_corroborated`, which the reference sends on in the
+payload as bytes (the applied row holds the bytes, the log row
+`str(bytes)`), and this build's values carry no bytes; a blob
+`corroborations`, which the reference reads with `int(bytes)` (ASCII
+digits), not built and not met in the fixture. Otherwise nothing beyond what
+the transaction refuses.
+
+A refusal whose text is the interpreter's (`can't compare offset-naive
+and offset-aware datetimes`, a naive `now` against an aware removal;
+`date value out of range`, an age past the calendar) is returned as
+`Refused { class, text: None }`: the class is the contract, compared
+with the reference's; the wording is CPython's and is not reproduced or
+recorded in any fixture.
+
+### Tests
+
+| test | what | class |
+| --- | --- | --- |
+| `golden_store_bulk.rs` | `store_bulk.jsonl` (39 cases, 59 calls, 138 KB; Unicode and pydantic-core gated, POSIX only, as `store_tx.jsonl`): runs of 0, 3, 4, 5 and 12 records (a chunk is four under the default monotonic schedule), removed ones too, onto an existing scope, the same scope, a prefix, invalid scopes, no match, an item raising in the first, a middle and the last chunk, prunes with and without `now`, an offset `now`, ties, nothing and everything, `batch` with one, several, nested, a failing nested batch caught, a failure and a refusal; a blob label (also a quote), filename and links in active and removed rows, filenames and links also with bytes no codec reads (filenames marked not ported; an undecodable label is held in `store_bulk_robustness.rs`, as its reason's backslashes read as a UNC path to the host-fact check); schedules of its own at the hold's edge (exactly 0.1 apart, just under, just over, still, backwards, past it at once: `>` for `>=` fails); a second connection's lock failing a later chunk's BEGIN (rename, prune) or COMMIT (rollback journal); a returned mark settled by each chunk (settling once at the end fails); per call every read of each clock, the mint and the monotonic clock, every pause and each chunk's begin and commit in order, the value or refusal, the rows (count, kinds, digest), the state (every table, schema, files present, head; not raw bytes, which name the SQLite library that wrote them and keep freed cells), FTS5; a refold per case | ii |
+| `store_bulk_not_posix.rs` | the fixture's gap elsewhere | os |
+| `store_bulk_cross.rs` | native's renames, prune and batch read by the reference equal to a twin it runs; the reference continues and native after it; the reverse; both sides on one fixed monotonic schedule with recorded pauses (no sleep), each call's chunk begins, commits and pauses asserted and equal to the reference's | i |
+| `store_bulk_kills.rs` | 152 kills at all 76 boundaries of a five-chunk rename and a two-chunk prune (abort in WAL, exit in rollback journal): the log holds exactly the chunks committed before the point, each whole; the reference opens, verifies and writes after each; at 58 sampled kills (every third point, each commit) the surviving log equals the reference's chunk placement for the same schedule | i |
+| `store_bulk_robustness.rs` | stored values nested 9,998 and 100,000 deep on a 512 KiB stack, a run of 100,000 items (and one failing at item 50,001), hostile scopes (empty, NUL, lone surrogates, 1 MiB), ages out of the calendar and a naive `now`; `put_plain` against `put_memory` over ten stored states | i |
 
 ## Not built yet
 
@@ -4649,7 +4779,7 @@ the write transaction (`mutate`, `begin`, its `returned` marks),
 `put_memory`, `tombstone`, `delete_tombstone` and the row writers
 (`store::home`, `store::tables`): the rest of the public record API
 (`put_tombstone`, `restore` with
-relink, `rename_scope`, the prunes, `batch`), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
+relink, the episode prune), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
 restore's rows, re-spelling the index), membership's writes and
 the caller's resolution (its admission is `store::caller`), and each hit's snippet, signals and drift report,
 the daemon, the MCP tools and the hooks; reading and writing the key ring's

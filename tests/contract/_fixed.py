@@ -14,7 +14,10 @@ deterministically:
   it from ``bettermemory.models``: `Ticker` ``wall``;
 - the ULID mint, ``generate_ulid`` as ``bettermemory.store_records`` and
   ``bettermemory.store_journal`` import it: ``mint`` (ULIDs numbered from 0
-  unless given).
+  unless given);
+- when given, ``time.monotonic`` and ``time.sleep`` as ``bettermemory.store``
+  reads them (`Store._in_chunks` cutting a long run into chunks, and its
+  pause between them): ``monotonic`` and ``sleep``.
 
 The two clocks are set apart, so a fixture can tell which one stamped a
 value. Each `Ticker` keeps what it handed out (``read``), for the fixture
@@ -27,6 +30,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta
+import time as _real_time
 from typing import Any
 from unittest.mock import patch
 
@@ -80,9 +84,28 @@ def _wall_datetime(wall: Ticker) -> type[datetime]:
     return _Wall
 
 
+class _Time:
+    """``bettermemory.store``'s ``time`` with ``monotonic`` and ``sleep``
+    replaced; every other name is the real module's."""
+
+    def __init__(
+        self, monotonic: Callable[[], float], sleep: Callable[[float], None]
+    ) -> None:
+        self.monotonic = monotonic
+        self.sleep = sleep
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(_real_time, name)
+
+
 @contextmanager
 def fixed(
-    *, log: Ticker, wall: Ticker, mint: Callable[[], str] | None = None
+    *,
+    log: Ticker,
+    wall: Ticker,
+    mint: Callable[[], str] | None = None,
+    monotonic: Callable[[], float] | None = None,
+    sleep: Callable[[float], None] | None = None,
 ) -> Iterator[None]:
     """Every clock and mint of the record writers fixed (module docstring)."""
     mint = mint or ulid_mint()
@@ -96,4 +119,7 @@ def fixed(
         for module in (store_records, store_journal):
             stack.enter_context(patch.object(module, "utcnow", wall))
             stack.enter_context(patch.object(module, "generate_ulid", mint))
+        if monotonic is not None or sleep is not None:
+            fake = _Time(monotonic or _real_time.monotonic, sleep or (lambda _s: None))
+            stack.enter_context(patch.object(bstore, "time", fake))
         yield

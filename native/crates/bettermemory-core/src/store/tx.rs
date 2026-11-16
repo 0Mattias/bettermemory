@@ -40,6 +40,14 @@ use crate::datetime::DateTime;
 use crate::log::{fingerprint, next_row, Key, LogRow};
 use crate::pyvalue::PyValue;
 
+/// `CHUNK_HOLD_SECONDS` (`store.py:298`): how long a chunk of a long run
+/// holds the write lock before it commits.
+pub const CHUNK_HOLD_SECONDS: f64 = 0.1;
+
+/// `CHUNK_YIELD_SECONDS` (`store.py:314`): the pause between two chunks,
+/// the write lock free.
+pub const CHUNK_YIELD_SECONDS: f64 = 0.05;
+
 /// The records a transaction's writes named for `settle`: each with the
 /// record whose change named it and the session (`Store._tx_returns`).
 /// Ordered by id, as `settle` reads them (`sorted(pending.items())`).
@@ -215,6 +223,69 @@ impl WritableStore {
         Ok(tx)
     }
 
+    /// `Store.batch()` (`store.py` 1314-1321): one transaction around
+    /// `body`, committed when it returns Ok, rolled back with nothing
+    /// written when it returns an error. A batch inside an open
+    /// transaction is [`Transaction::scope`] (`batch` joins it).
+    pub fn batch<T, E: From<WriteError>>(
+        &mut self,
+        provider: &mut dyn Provider,
+        hook: Option<&mut dyn FnMut(WriteBoundary)>,
+        body: impl FnOnce(&mut Transaction<'_>) -> Result<T, E>,
+    ) -> Result<(T, Committed), E> {
+        let mut hook = hook;
+        let mut relay = |b: WriteBoundary| {
+            if let Some(h) = hook.as_mut() {
+                h(b);
+            }
+        };
+        let mut tx = self.begin_hooked(provider, Some(&mut relay))?;
+        let value = body(&mut tx)?;
+        Ok((value, tx.commit()?))
+    }
+
+    /// `Store._in_chunks(items, apply)` (`store.py` 1324-1354) with no
+    /// transaction open: `apply` runs on each item in order inside write
+    /// transactions of their own (chunks). A chunk begins, reads the
+    /// monotonic clock, and after each item reads it again, closing when
+    /// [`CHUNK_HOLD_SECONDS`] have passed or the items run out; it
+    /// commits (its returned marks settled, the head moved), and while
+    /// items remain the run pauses [`CHUNK_YIELD_SECONDS`] with the lock
+    /// free. No items: nothing begun. An item's error rolls its chunk back
+    /// and ends the run: the chunks before it stay committed, the items
+    /// after it are not tried. Returns each chunk's commit in order.
+    pub fn in_chunks<I, E: From<WriteError>>(
+        &mut self,
+        provider: &mut dyn Provider,
+        mut hook: Option<&mut dyn FnMut(WriteBoundary)>,
+        items: &[I],
+        mut apply: impl FnMut(&mut Transaction<'_>, &I) -> Result<(), E>,
+    ) -> Result<Vec<Committed>, E> {
+        let mut done = 0;
+        let mut chunks = Vec::new();
+        while done < items.len() {
+            let mut relay = |b: WriteBoundary| {
+                if let Some(h) = hook.as_mut() {
+                    h(b);
+                }
+            };
+            let mut tx = self.begin_hooked(&mut *provider, Some(&mut relay))?;
+            let started = tx.monotonic()?;
+            while done < items.len() {
+                apply(&mut tx, &items[done])?;
+                done += 1;
+                if tx.monotonic()? - started >= CHUNK_HOLD_SECONDS {
+                    break;
+                }
+            }
+            chunks.push(tx.commit()?);
+            if done < items.len() {
+                provider.pause(CHUNK_YIELD_SECONDS);
+            }
+        }
+        Ok(chunks)
+    }
+
     /// `Store.release_returned(record_id, session=)` in a transaction of
     /// its own: whether a mark was there (and is now deleted).
     pub fn release_returned(
@@ -240,6 +311,24 @@ impl Transaction<'_> {
     /// `tombstone`'s removal time among them).
     pub fn wall_now(&mut self) -> Result<DateTime, WriteError> {
         self.provider.wall_now().map_err(WriteError::Clock)
+    }
+
+    /// `time.monotonic()` as `_in_chunks` reads it.
+    pub fn monotonic(&mut self) -> Result<f64, WriteError> {
+        self.provider.monotonic().map_err(WriteError::Clock)
+    }
+
+    /// `_in_chunks` inside an open transaction (`store.py` 1340-1343):
+    /// every item into this one, no clock read, no pause.
+    pub fn in_chunks<I, E: From<WriteError>>(
+        &mut self,
+        items: &[I],
+        mut apply: impl FnMut(&mut Self, &I) -> Result<(), E>,
+    ) -> Result<(), E> {
+        for item in items {
+            apply(self, item)?;
+        }
+        Ok(())
     }
 
     /// The connection, to read the store inside the write lock.

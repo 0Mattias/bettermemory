@@ -72,6 +72,7 @@ from . import (
     gen_ulid,
     gen_unicode,
     gen_store_provenance,
+    gen_store_bulk,
 )
 
 GOLDEN = Path(__file__).parent / "golden"
@@ -134,6 +135,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_provenance": gen_store_provenance.generate,
     "fs_realpath": gen_fs_realpath.generate,
     "fs_realpath_python": gen_fs_realpath.generate_python,
+    "store_bulk": gen_store_bulk.generate,
     "fs_stat": gen_fs_stat.generate,
     "errno_class": gen_fs_stat.generate_errno_class,
 }
@@ -164,6 +166,7 @@ UNICODE_GATED = frozenset(
         "membership_lines_unicode",
         "store_rows_written",
         "store_provenance",
+        "store_bulk",
     }
 )
 
@@ -223,6 +226,7 @@ PYDANTIC_GATED = frozenset(
         "store_records_c",
         "store_rows_written",
         "store_provenance",
+        "store_bulk",
     }
 )
 
@@ -296,6 +300,7 @@ POSIX_ONLY = frozenset(
         "store_provenance",
         "fs_realpath",
         "fs_realpath_python",
+        "store_bulk",
         "fs_stat",
         "errno_class",
     }

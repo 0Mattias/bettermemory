@@ -195,6 +195,24 @@ impl DateTime {
         DateTime::from_wall_us(i128::from(us) + i128::from(epoch_us), Some(0))
     }
 
+    /// `dt - timedelta(microseconds=us)`: the wall-clock fields moved,
+    /// the offset kept; OverflowError out of the years 1 to 9999.
+    pub fn minus_micros(&self, us: i128) -> Result<DateTime, DateError> {
+        DateTime::from_wall_us(self.wall_us() - us, self.offset_us)
+    }
+
+    /// The instant in microseconds (UTC) of an aware value; None when
+    /// naive (Python refuses to order a naive against an aware one).
+    pub fn instant_us(&self) -> Option<i128> {
+        self.offset_us.map(|o| self.wall_us() - i128::from(o))
+    }
+
+    /// The wall-clock fields in microseconds since 0001-01-01: how Python
+    /// orders two naive values.
+    pub fn wall_micros(&self) -> i128 {
+        self.wall_us()
+    }
+
     /// `dt.replace(tzinfo=timezone.utc)` when naive, else `dt`.
     pub fn assume_utc(self) -> DateTime {
         DateTime {

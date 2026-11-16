@@ -95,6 +95,27 @@ pub trait Provider {
     fn ulid(&mut self) -> io::Result<String> {
         system_ulid()
     }
+    /// `time.monotonic()` as `Store._in_chunks` reads it (in seconds, a
+    /// float): when a chunk has held the write lock long enough. By
+    /// default [`system_monotonic`].
+    fn monotonic(&mut self) -> io::Result<f64> {
+        Ok(system_monotonic())
+    }
+    /// `time.sleep(seconds)` as `Store._yield_between_chunks` sleeps, the
+    /// write lock free. By default the thread sleeps.
+    fn pause(&mut self, seconds: f64) {
+        if let Ok(d) = std::time::Duration::try_from_secs_f64(seconds) {
+            std::thread::sleep(d);
+        }
+    }
+}
+
+/// A monotonic clock in seconds since its first reading in this process.
+pub fn system_monotonic() -> f64 {
+    static BASE: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    BASE.get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
 }
 
 /// `generate_ulid` as the reference mints it: `time.time()` and
@@ -196,6 +217,12 @@ impl<P: Provider> Provider for Clocks<P> {
     }
     fn ulid(&mut self) -> io::Result<String> {
         self.inner.ulid()
+    }
+    fn monotonic(&mut self) -> io::Result<f64> {
+        self.inner.monotonic()
+    }
+    fn pause(&mut self, seconds: f64) {
+        self.inner.pause(seconds);
     }
 }
 

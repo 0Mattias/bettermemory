@@ -208,7 +208,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_records.jsonl"
         | "store_records_b.jsonl"
         | "store_records_c.jsonl"
-        | "store_rows_written.jsonl" => &[Unicode, Pydantic],
+        | "store_rows_written.jsonl"
+        | "store_bulk.jsonl" => &[Unicode, Pydantic],
         "models_rows.jsonl" => &[Python, Pydantic],
         // 3.11's realpath walks a link loop otherwise (`gen_fs_realpath`).
         "fs_realpath_python.jsonl" => &[Python],

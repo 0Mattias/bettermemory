@@ -4,6 +4,7 @@
 
 #![allow(dead_code)]
 
+pub mod bulk;
 pub mod created;
 pub mod gitconfig_file;
 pub mod gitconfig_tree;
