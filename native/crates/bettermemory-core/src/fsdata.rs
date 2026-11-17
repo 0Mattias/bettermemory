@@ -279,6 +279,15 @@ pub trait Fs {
     /// `os.open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_BINARY)`:
     /// follows links, never waits on a FIFO.
     fn open(&self, path: &[u8]) -> Result<Self::File, PyErr>;
+    /// [`Fs::open`] with the error's errno. By default the class alone;
+    /// `StdFs` and `MemFs` carry the errno.
+    fn open_result(&self, path: &[u8]) -> Result<Self::File, OsError> {
+        self.open(path).map_err(|class| OsError {
+            class,
+            errno: None,
+            winerror: None,
+        })
+    }
     /// `os.fstat` of an open file.
     fn fstat(&self, file: &mut Self::File) -> Result<Stat, PyErr>;
     /// `os.read(fd, max)`: at most `max` bytes, empty at the end.
@@ -503,6 +512,12 @@ impl Fs for StdFs {
     fn open(&self, path: &[u8]) -> Result<StdFile, PyErr> {
         let path = native_path(path)?;
         let file = open_options().open(&path).map_err(|e| py_err(&e))?;
+        Ok(StdFile { file, path })
+    }
+
+    fn open_result(&self, path: &[u8]) -> Result<StdFile, OsError> {
+        let path = native_path(path).map_err(|_| OsError::value())?;
+        let file = open_options().open(&path).map_err(|e| os_error(&e))?;
         Ok(StdFile { file, path })
     }
 
@@ -1121,14 +1136,11 @@ impl MemFs {
             if self.mode(&id, &node) & READ == 0 {
                 return Err(OsError::new(PyErr::Permission, "EACCES"));
             }
-            // A socket cannot be opened (ENXIO on Linux, EOPNOTSUPP on
-            // macOS: OSError either way).
+            // A socket cannot be opened: ENXIO on Linux, EOPNOTSUPP on
+            // macOS, OSError either way. The model answers as Linux, as
+            // its walk does elsewhere (`..` after a non-directory).
             if node == Node::Socket {
-                return Err(OsError {
-                    class: PyErr::Os,
-                    errno: None,
-                    winerror: None,
-                });
+                return Err(OsError::new(PyErr::Os, "ENXIO"));
             }
         }
         Ok(MemFile {
@@ -1184,6 +1196,10 @@ impl Fs for MemFs {
 
     fn open(&self, path: &[u8]) -> Result<MemFile, PyErr> {
         self.open_at(path, true).map_err(PyErr::from)
+    }
+
+    fn open_result(&self, path: &[u8]) -> Result<MemFile, OsError> {
+        self.open_at(path, true)
     }
 
     fn open_no_follow(&self, path: &[u8]) -> Result<MemFile, OsError> {

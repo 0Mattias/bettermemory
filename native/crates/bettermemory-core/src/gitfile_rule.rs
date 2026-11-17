@@ -21,6 +21,7 @@
 
 pub mod bounded;
 pub mod format;
+pub mod gitdir;
 pub mod hostpath;
 pub mod probe;
 

@@ -391,8 +391,21 @@ fn errno_class_every_name() {
             failures.push(format!("{name}: {got}, reference {}", row["e"]));
         }
     }
+    // macOS alone names EOPNOTSUPP (no shared number there); it is not in
+    // the shared fixture, and its class is OSError.
+    let platform_only: &[&str] = if cfg!(target_os = "macos") {
+        &["EOPNOTSUPP"]
+    } else {
+        &[]
+    };
+    for name in platform_only {
+        if PyErr::of_errno(name) != PyErr::Os {
+            failures.push(format!("{name}: {}", PyErr::of_errno(name).name()));
+        }
+    }
     let known: std::collections::BTreeSet<String> = (0..4096)
         .filter_map(bettermemory_sys::errno_name)
+        .filter(|n| !platform_only.contains(n))
         .map(str::to_owned)
         .collect();
     if known != named {

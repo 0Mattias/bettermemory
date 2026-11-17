@@ -40,6 +40,7 @@ from . import (
     gen_fs_realpath,
     gen_fs_access,
     gen_fs_samestat,
+    gen_gitdir,
     gen_fs_stat,
     gen_gitconfig,
     gen_gitconfig_file,
@@ -157,6 +158,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "fs_realpath_strict": gen_fs_realpath.generate_strict,
     "fs_realpath_strict_python": gen_fs_realpath.generate_strict_python,
     "fs_samestat": gen_fs_samestat.generate,
+    "gitdir_read": gen_gitdir.generate,
+    "gitdir_read_python": gen_gitdir.generate_python,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -229,6 +232,7 @@ PYTHON_GATED = frozenset(
         "fs_realpath_python",
         "fs_realpath_strict_python",
         "gitconfig_legacy_python",
+        "gitdir_read_python",
     }
 )
 
@@ -306,7 +310,8 @@ PLATFORM_GATED = frozenset(
 #: ``O_NOFOLLOW`` over links, FIFOs and modes (`gen_fs_access`);
 #: ``fs_realpath_strict`` and ``fs_realpath_strict_python`` resolve the
 #: same trees strictly; ``fs_samestat`` states pairs over links and hard
-#: links (`gen_fs_samestat`);
+#: links (`gen_fs_samestat`); ``gitdir_read`` and ``gitdir_read_python``
+#: read git directories over links, FIFOs and modes (`gen_gitdir`);
 #: ``gitconfig_tree`` reads real trees with the host's ``os.path`` and ``pwd``;
 #: ``gitconfig_legacy`` and ``gitconfig_legacy_python`` read real trees with
 #: links, FIFOs and modes (`gen_gitconfig_legacy`; the second holds the link
@@ -348,6 +353,8 @@ POSIX_ONLY = frozenset(
         "fs_realpath_strict",
         "fs_realpath_strict_python",
         "fs_samestat",
+        "gitdir_read",
+        "gitdir_read_python",
     }
 )
 

@@ -113,12 +113,18 @@ pub fn access(_path: &std::ffi::CStr, _mode: AccessMode) -> Option<bool> {
 /// macOS and 40 on Linux. Safe code: it compares constants only.
 ///
 /// None is the answer for any code it does not know, never a guessed
-/// name. Among those are EOVERFLOW, EMFILE, ENFILE, ENOTSUP/EOPNOTSUPP,
-/// EAGAIN/EWOULDBLOCK, EDEADLK and ENODEV; a number that two names share
-/// on a platform (EAGAIN and EWOULDBLOCK, ENOTSUP and EOPNOTSUPP on Linux)
-/// is never answered, and the fixture generator refuses to record one. The
-/// list is `ERRNO_NAMES` in `tests/contract/gen_fs_stat.py`, held equal by
-/// a native test.
+/// name. Among those are EOVERFLOW, EMFILE, ENFILE, ENOTSUP, EOPNOTSUPP
+/// off macOS, EAGAIN/EWOULDBLOCK, EDEADLK and ENODEV; a number that two
+/// names share on a platform (EAGAIN and EWOULDBLOCK, ENOTSUP and
+/// EOPNOTSUPP on Linux) is never answered, and the fixture generator
+/// refuses to record one. The shared list is `ERRNO_NAMES` in
+/// `tests/contract/gen_fs_stat.py`, held equal by a native test.
+///
+/// macOS alone adds EOPNOTSUPP (102 there, ENOTSUP 45: no shared number),
+/// what opening a socket answers; Linux answers ENXIO for that open,
+/// which is in the shared list. On Linux an EOPNOTSUPP (= ENOTSUP, 95)
+/// stays None: a caller sees an OSError with no errno name, the class
+/// alone. A fixture shared with Linux records no socket.
 #[cfg(unix)]
 pub fn errno_name(code: i32) -> Option<&'static str> {
     Some(match code {
@@ -139,6 +145,8 @@ pub fn errno_name(code: i32) -> Option<&'static str> {
         libc::EINTR => "EINTR",
         libc::EBADF => "EBADF",
         libc::EILSEQ => "EILSEQ",
+        #[cfg(target_os = "macos")]
+        libc::EOPNOTSUPP => "EOPNOTSUPP",
         _ => return None,
     })
 }
