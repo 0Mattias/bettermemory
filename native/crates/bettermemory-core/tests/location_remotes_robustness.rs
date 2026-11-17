@@ -217,6 +217,7 @@ fn a_relative_machine_path_is_never_read_from_the_process_directory() {
                 git_config_system: Some(b"rel/sys".to_vec()),
                 git_config_global: global,
                 xdg_config_home: Some(b"rx".to_vec()),
+                git_test_default_initial_branch_name: None,
             };
             let got = gather(&StdFs, &githead::StdFs, &common, &common, &given).expect("ported");
             for (path, stamp) in &got.files {

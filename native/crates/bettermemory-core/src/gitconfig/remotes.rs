@@ -28,6 +28,9 @@ pub struct Env {
     pub git_config_system: Option<Vec<u8>>,
     pub git_config_global: Option<Vec<u8>>,
     pub xdg_config_home: Option<Vec<u8>>,
+    /// GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME, the branch a `branches` file
+    /// names where it names none (`gitconfig._default_branch`).
+    pub git_test_default_initial_branch_name: Option<Vec<u8>>,
 }
 
 /// `gitsystem.Sources`, as far as these reads take it.
@@ -41,6 +44,12 @@ pub struct Sources {
     pub prefix: Option<Vec<u8>>,
     /// Whether it takes a `hasconfig:` condition.
     pub hasconfig: Option<bool>,
+    /// Whether it reads the legacy `remotes/` and `branches/` files.
+    pub legacy: Option<bool>,
+    /// Whether an empty `remote.<name>.url` empties the remote's URLs.
+    pub resets: Option<bool>,
+    /// The version it names (`git version`).
+    pub version: Option<(u32, u32, u32)>,
 }
 
 /// What the reads are given.

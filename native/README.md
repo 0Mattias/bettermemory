@@ -3198,12 +3198,14 @@ The `Fs` trait has every operation unit A needs (`stat`, `lstat`,
   goes into `files` with its stamp, in the reference's order. The HEAD
   and ref stamps go in at the first read that asks the branch, before
   that read's own files.
-- **Unit B.** `_spellings`, `_best_rule`, `_undecided_matters`,
-  `remote_urls`, `RemoteKeys`/`read_remotes`, with `remote_key`, and
-  with `Sources.legacy`, `resets` and `version` as inputs. It also takes
-  the caller's stop rule on `maybe_dies`. The gitdiff below shows one
-  tree where git dies (a key with no value under an unsettled include)
-  and unit A, as the reference, hands the reads on.
+- **Unit B (built, `gitconfig::spellings`).** `_spellings`,
+  `_best_rule`, `_undecided_matters`, the rest of `_rewrites`
+  (`rewrites`), `remote_urls`, `RemoteKeys`/`read_remotes`, and
+  `_url_text`. It takes `Sources.legacy`, `resets` and `version`, and
+  GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME (`Env`), as inputs. It also holds
+  the stop rule on `maybe_dies`. It is one unit: `_undecided_matters` is
+  40 lines over the same `best` and `rewrites`, and cannot be checked
+  without them.
 - **Unit C.** `config_unchanged`, `_stamped_read` with its cache as an
   explicit value, `machine_config_stamps`, `machine_config_reads`,
   `repository_config_stamps`, and `_inside`.
@@ -3265,6 +3267,100 @@ The `Fs` trait has every operation unit A needs (`stat`, `lstat`,
       repository or answers no branch);
     - one is the `maybe_dies` tree that unit B's stop rule handles.
 
+
+### Unit B, built
+
+- What it reads and how:
+  - Only `url.<base>.insteadOf` rewrites a URL. `pushInsteadOf` and
+    `pushurl` are not read, as the reference reads neither.
+  - Only the repository's own remote URLs are keyed (the legacy files
+    count as its own). A remote that only the machine's config names is
+    not keyed.
+  - `_best_rule` takes the longest prefix; of equal ones it takes the
+    first met, bases in the order git first met them, and each base's
+    prefixes in order. An empty prefix matches every URL.
+  - A URL is spelled `_url_text`: UTF-8 with each invalid sequence
+    replaced. Rust's `from_utf8_lossy` replaces the same maximal
+    subparts, which the hostile-byte case pins.
+  - `read_remotes` takes the caller's `key`. A hosted URL's key is
+    `capture::remote::remote_key`'s. A local URL needs the file system
+    (`location._local`), so the fixture keys it as `local:` and its
+    stripped text in both.
+  - A `url` or `insteadOf` with no value never gets here: git's reader of
+    remotes dies on it first (unit A).
+- Golden: `location_spellings.jsonl`, POSIX only, 73 cases in 73,771
+  bytes. It is its own file beside `location_remotes.jsonl`: that one
+  pins the reads `_spellings` is handed, this one what comes of them.
+  It runs through `MemFs` and `StdFs` (`golden_location_spellings.rs`,
+  `cfg(unix)`). It covers:
+  - rules in the own, global and system files;
+  - `pushInsteadOf` alone;
+  - longest-prefix wins, in both orders;
+  - equal prefixes in two bases and in one;
+  - a base met first in an earlier file;
+  - an empty prefix and an empty base;
+  - an alias, and an alias fetched under another remote;
+  - a URL set then emptied under each `resets`;
+  - legacy `remotes/` and `branches/` files: with no URL in the config,
+    beside one, `legacy` false or unknown, the default branch from the
+    config, the test variable and a refused name, and an empty legacy
+    URL with `resets` unknown;
+  - blank space under each version, in a URL and in a prefix;
+  - each branch of `_undecided_matters` (tied bases in six shapes),
+    and the machine's read met before the own one;
+  - legacy files git dies on (a refused refspec, a refused branch name)
+    beside one it reads;
+  - `maybe_dies` with and without a remote at stake;
+  - names with dots, an empty name, non-UTF-8 names and URLs;
+  - URL forms that key alike and apart;
+  - a blank URL;
+  - a remote only the machine names.
+- Robustness (`location_spellings_robustness.rs`, ungated, 512 KiB
+  thread):
+  - 10,000 remotes against 10,000 rules. Names and bases are indexed;
+    `_best_rule` stays the reference's scan, 10^8 prefix tests, about a
+    second in debug.
+  - A 1 MiB URL with a 1 MiB base, each in its own file.
+  - Hostile bytes in names, bases and URLs.
+  - The tie rule on a table.
+  - An empty key counting as none.
+  - Two cost checks by ratio: the larger size must stay under 30 times
+    the smaller plus 50 ms, best of five runs. Both failed with the code
+    they replaced, then passed.
+    - `read_remotes` over 5,000 and 50,000 aliased URLs. Before: 175 ms
+      and 15.9 s, from a list searched per alias. After: 29 ms and 348 ms,
+      with a set, as the reference's set difference. The reference then
+      sorts the difference (code points), and so does native.
+    - `undecided_matters` over undecided `insteadOf` names of one base
+      against 1,000 and 10,000 bases, keyed URLs and that base's
+      prefixes. Before: 49 ms and 5.0 s, scanning every base and a list
+      of prefixes. After: 4.4 ms and 44 ms, with the bases indexed once
+      and the prefixes a set, as the reference's dict and set.
+- Mutations: 42 made, 39 killed. Six first survived: five were given
+  cases and the sixth a test. The three that are left are equivalent,
+  and each survives the whole fixture with a case that reaches it:
+  - a legacy remote git dies on, kept as an empty entry rather than
+    none. Nothing keys an empty entry (`[init] defaultBranch = bad..name`).
+  - legacy URLs appended rather than assigned. A remote is only pending
+    while its list is empty (`url = ""` and then a legacy file).
+  - an alias kept where the rewrite keys the same. That key is then
+    fetched, and fetched keys are taken out of the aliases (a rule onto
+    itself).
+- Against git 2.54 (neutral environment on the child only; 64 trees,
+  `git remote get-url --all`, `--push --all` and `ls-remote --get-url`):
+  - 33 agree.
+  - 15 decline. In 8 of them git dies too; in 7 the git on PATH answers
+    what the case marked unknown (`legacy`, `resets`, `version`).
+  - 16 differ, none in the serious direction:
+    - a remote with no URL: git takes its name as its URL, the reference
+      keys nothing (fewer keys);
+    - legacy remotes: `git remote` does not list them, and
+      `ls-remote --get-url` gives the reference's URL in every one;
+    - `resets` false given to a git that resets;
+    - unsettled includes, where real git sees no repository;
+    - the order across remotes: git lists names sorted.
+  - git rewrites push URLs by `pushInsteadOf`, which the reference does
+    not key. That again means fewer keys, never a key git would not use.
 ## A record id's text
 
 `store::mint` is `models.generate_ulid` (`models.py:56-64`) with its clock

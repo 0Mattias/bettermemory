@@ -41,7 +41,7 @@ from typing import Any
 from unittest import mock
 
 from bettermemory import _git as git_runner
-from bettermemory import gitconfig, gitfile_rule, gitsystem, location_git
+from bettermemory import gitconfig, gitfile_rule, gitsystem, location, location_git
 
 from . import _sandbox
 from ._common import jsonl
@@ -70,6 +70,7 @@ class Tree:
         hasconfig: bool | None = True,
         version: tuple[int, int] | None = (2, 54),
         asked: str | None = None,
+        spell: dict[str, Any] | None = None,
     ) -> None:
         self.files = files
         self.dirs = dirs
@@ -94,6 +95,9 @@ class Tree:
             "v": None if version is None else list(version),
             "ab": asked,
         }
+        if spell is not None:
+            # What unit B reads of the git on PATH (`location_spellings`).
+            self.ask["so"].update(spell)
 
     def record(self) -> dict[str, Any]:
         out: dict[str, Any] = {"f": {k: _content(v) for k, v in self.files.items()}}
@@ -129,7 +133,7 @@ def _values(names: dict[Any, Any]) -> list[Any]:
     ]
 
 
-def _answer(case: Tree, root: Path) -> dict[str, Any]:
+def _answer(case: Tree, root: Path, spell: bool = False) -> dict[str, Any]:
     root = Path(os.path.realpath(root))
     made: dict[str, int] = {}
 
@@ -179,6 +183,9 @@ def _answer(case: Tree, root: Path) -> dict[str, Any]:
         system=at(so["system"]),
         prefix=at(so["prefix"]),
         hasconfig=so["hasconfig"],
+        legacy=so.get("legacy"),
+        resets=so.get("resets"),
+        version=None if so.get("version") is None else tuple(so["version"]),
     )
     env = {k: at(v) or "" for k, v in case.ask["env"].items()}
     release = case.ask["v"]
@@ -210,13 +217,25 @@ def _answer(case: Tree, root: Path) -> dict[str, Any]:
             mock.patch.dict(os.environ, env, clear=True),
             mock.patch.object(location_git, "_sources_once", lambda: lambda: sources),
             mock.patch.object(git_runner, "run_git", run_git),
-            mock.patch.object(location_git, "_spellings", spellings),
+            mock.patch.object(
+                location_git,
+                "_spellings",
+                location_git._spellings if spell else spellings,
+            ),
             mock.patch.object(gitfile_rule, "_git_is_at_least", at_least),
+            # A local URL keys as its text: resolving its path is the
+            # caller's file system, not this unit's.
+            mock.patch.object(location, "_local", lambda path, _base: path),
         ):
             gitconfig._clear_format_memo()
             found = location_git._rewrites(
                 prefix + "/" + case.ask["cd"], prefix + "/" + case.ask["gd"]
             )
+            if spell:
+                with mock.patch.object(location_git, "_rewrites", lambda *_a: found):
+                    keyed = location_git.read_remotes(
+                        "", "", lambda u: location.remote_key(u, None)
+                    )
     finally:
         os.chdir(saved)
         for rel in by_depth:
@@ -228,6 +247,18 @@ def _answer(case: Tree, root: Path) -> dict[str, Any]:
         "fl": [[label(p), _stamp(s)] for p, s in found.files],
         "nm": [label(p) for p in found.named],
     }
+    if spell:
+
+        def text(value: str) -> Any:
+            return _b(value.encode("utf-8"))
+
+        out["sp"] = [
+            [text(u), None if r is None else text(r), m] for u, r, m in found.spellings
+        ]
+        out["ky"] = [text(k) for k in keyed.keys]
+        out["al"] = [text(k) for k in keyed.aliases]
+        out["dc"] = None if keyed.declined is None else label(keyed.declined)
+        return out
     if found.declined is not None:
         out["o"] = {"d": label(found.declined)}
     elif "reads" not in seen:

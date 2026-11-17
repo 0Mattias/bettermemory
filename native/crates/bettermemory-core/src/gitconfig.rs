@@ -16,7 +16,8 @@
 //! - [`file`]: one config file read from a file system, bounded;
 //! - [`paths`] and [`tree`]: a file and its plain includes;
 //! - [`legacy`]: the stamps and the legacy remote files;
-//! - [`remotes`]: the config files a checkout reads for its remotes.
+//! - [`remotes`]: the config files a checkout reads for its remotes;
+//! - [`spellings`]: its remote URLs as git rewrites them, and their keys.
 //!
 //! Includes, files, the 2 MiB bound ([`FORMAT_LIMIT`], applied by the
 //! readers of files, not by the parser) and the worded reasons a caller
@@ -30,6 +31,7 @@ pub mod legacy;
 pub mod paths;
 pub mod remote_rules;
 pub mod remotes;
+pub mod spellings;
 pub mod tree;
 pub mod wildmatch;
 

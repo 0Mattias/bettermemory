@@ -190,6 +190,7 @@ fn answer<F: bettermemory_core::fsdata::Fs>(
             git_config_system: env_var("GIT_CONFIG_SYSTEM"),
             git_config_global: env_var("GIT_CONFIG_GLOBAL"),
             xdg_config_home: env_var("XDG_CONFIG_HOME"),
+            git_test_default_initial_branch_name: env_var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME"),
         },
         sources: Sources {
             own: so["own"]
@@ -201,6 +202,12 @@ fn answer<F: bettermemory_core::fsdata::Fs>(
             system: so["system"].as_str().map(&at),
             prefix: so["prefix"].as_str().map(&at),
             hasconfig: so["hasconfig"].as_bool(),
+            legacy: so.get("legacy").and_then(Value::as_bool),
+            resets: so.get("resets").and_then(Value::as_bool),
+            version: so.get("version").and_then(Value::as_array).map(|v| {
+                let n = |i: usize| v[i].as_u64().unwrap() as u32;
+                (n(0), n(1), n(2))
+            }),
         },
         git: GitFacts {
             release: k["v"]
