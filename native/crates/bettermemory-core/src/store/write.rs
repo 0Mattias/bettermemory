@@ -506,12 +506,12 @@ fn open_lock(path: &Path) -> io::Result<fs::File> {
 /// `atomic_write_bytes`: on Windows its `replace_atomic` tries a rename a
 /// reader holds open again, with a doubling pause.
 #[cfg(not(windows))]
-fn replace_retrying(path: &Path, data: &[u8]) -> io::Result<()> {
+pub(crate) fn replace_retrying(path: &Path, data: &[u8]) -> io::Result<()> {
     replace_atomic(path, data)
 }
 
 #[cfg(windows)]
-fn replace_retrying(path: &Path, data: &[u8]) -> io::Result<()> {
+pub(crate) fn replace_retrying(path: &Path, data: &[u8]) -> io::Result<()> {
     let mut delay = std::time::Duration::from_millis(10);
     let mut tries = 0;
     loop {

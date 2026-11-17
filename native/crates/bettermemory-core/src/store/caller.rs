@@ -691,7 +691,7 @@ fn utf32_surrogatepass(b: &[u8], big: bool) -> Option<PyStr> {
 /// `bytes.decode(json.detect_encoding(b), "surrogatepass")`, as
 /// `json.loads` reads bytes; None for UnicodeDecodeError (a ValueError
 /// the read catches: the row is malformed).
-fn json_bytes(b: &[u8]) -> Option<PyStr> {
+pub(crate) fn json_bytes(b: &[u8]) -> Option<PyStr> {
     match detect_encoding(b) {
         Codec::Utf8 => utf8_surrogatepass(b),
         Codec::Utf8Sig => utf8_surrogatepass(&b[3..]),

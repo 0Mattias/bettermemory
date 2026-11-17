@@ -51,6 +51,7 @@ from . import (
     gen_location_remotes,
     gen_location_spellings,
     gen_location_stamped,
+    gen_gitsystem_record,
     gen_githead,
     gen_gitfile_leaves,
     gen_json,
@@ -142,6 +143,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "location_remotes": gen_location_remotes.generate,
     "location_spellings": gen_location_spellings.generate,
     "location_stamped": gen_location_stamped.generate,
+    "gitsystem_record": gen_gitsystem_record.generate,
+    "gitsystem_record_python": gen_gitsystem_record.generate_python,
     "gitconfig_legacy_python": gen_gitconfig_legacy.generate_python,
     "membership_lines": gen_membership_lines.generate,
     "membership_lines_unicode": gen_membership_lines.generate_unicode,
@@ -191,6 +194,7 @@ UNICODE_GATED = frozenset(
         "store_rows_written",
         "store_provenance",
         "store_bulk",
+        "gitsystem_record",
     }
 )
 
@@ -219,8 +223,11 @@ PYTHON_VERSION = "3.13.13"
 #: ``toml`` and ``settings_python`` / ``settings_paths_python`` hold the
 #: interpreter's wording (`tomllib`'s messages, codec, `int()` and `repr`
 #: texts, pathlib's parsing); 3.11 and 3.12 ship another `tomllib`.
+#: ``gitsystem_record_python`` holds records nested past 1,000 levels,
+#: where `json.loads` raising RecursionError is the interpreter's.
 PYTHON_GATED = frozenset(
     {
+        "gitsystem_record_python",
         "python_edges",
         "models_rows",
         "models_stores",
@@ -318,6 +325,8 @@ PLATFORM_GATED = frozenset(
 #: loops); ``location_remotes`` and ``location_spellings`` read real trees
 #: with modes, links and FIFOs (`gen_location_remotes`); ``location_stamped``
 #: changes such trees between reads (`gen_location_stamped`);
+#: ``gitsystem_record`` reads and writes the record over links, modes and
+#: FIFOs (`gen_gitsystem_record`);
 #: ``gitfile_leaves_posix`` reads links and mode-000 files
 #: (`gen_gitfile_leaves`).
 POSIX_ONLY = frozenset(
@@ -342,6 +351,8 @@ POSIX_ONLY = frozenset(
         "location_remotes",
         "location_spellings",
         "location_stamped",
+        "gitsystem_record",
+        "gitsystem_record_python",
         "gitfile_leaves_posix",
         "store_provenance",
         "fs_realpath",

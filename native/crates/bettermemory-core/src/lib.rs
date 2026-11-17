@@ -37,6 +37,7 @@ pub mod fsdata;
 pub mod gitconfig;
 pub mod gitfile_rule;
 pub mod githead;
+pub mod gitsystem;
 pub mod json;
 pub mod lexicon;
 pub mod log;

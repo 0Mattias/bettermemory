@@ -3470,6 +3470,193 @@ The `Fs` trait has every operation unit A needs (`stat`, `lstat`,
   The asked ones are among the 21: a hit that skips the stamp, the key
   without the git directory, `reuse` ignored, an included file not
   compared, the stamps' order, and `_inside` without its separator.
+## The git on PATH and what it reads (`gitsystem.py`)
+
+`gitsystem.py` (986 lines, read at 485d3980) answers what the git on PATH
+reads before the global config (`Sources`). It asks git, keeps the answer
+in the state directory, and reuses that answer while it stands. Every
+caller goes through `sources()`, `reads_compat()` or `is_at_least()`:
+`location_git` (`_sources_once`, `machine_config_stamps`,
+`config_unchanged`), `gitfile_rule` and `origin_gitfiles`.
+
+### What it touches, and how the port takes each
+
+The port never spawns a process. It never reads the environment, the
+clock or the working directory itself. Each row below is either an
+argument or a trait the caller implements.
+
+| Ambient thing | Where the reference reaches it | The port |
+|---|---|---|
+| The git executable | `_ask`: `shutil.which("git")` over PATH (PATHEXT on Windows), then `file_stamp` of it. `run_git` spawns `["git", *PINS, ...]` and lets the OS search PATH again. | INPUT. The PATH value comes from the environment map. The search itself (`which`: each PATH entry, an executable regular file, PATHEXT) reads through `Fs`. The command handed to the `Git` trait names the binary the search found. |
+| Running git | `_git.run_git`. `subprocess.run` with `capture_output` (stdout and stderr unbounded), a timeout, the scrubbed environment (`GIT_OPTIONAL_LOCKS=0`; `SCRUBBED_ENV`, `RESHAPING_ENV` and the caller's `unset` removed; `NO_FETCH` set), and the `-c` pins. It is bounded by `git_read_budget`'s shared deadline, and `--git-dir=` is set where it is given. | A `Git` trait. The port builds the whole command: argv, working directory, the complete environment (from the environment map, as `run_git` builds it) and the timeout. The trait gives back one of three things: an exit status with output (bounded by a limit the command carries), not run, or timed out. `git_read_budget` is an input too: the allowance the caller grants. |
+| `git var GIT_CONFIG_SYSTEM` | `_ask`. The working directory is `git-ask`, with `GIT_CEILING_DIRECTORIES` set to its parent. `GIT_CONFIG_SYSTEM` and `GIT_CONFIG_NOSYSTEM` are unset. The timeout is `ASK_SECONDS` (0.3 s). Output is text. | A `Git` command. |
+| `git config --system --list --show-origin -z` | `_older_system`, when `var` exits non-zero (git before 2.42). `GIT_CONFIG_GLOBAL` is the null device, plus the ceiling; the overrides are unset. The timeout is what is left of the deadline. Output is bytes. | A `Git` command. |
+| `git config --list --show-scope --show-origin -z` | `_ask`. The system and global files are the null device, plus the ceiling; the overrides are unset. The timeout is `max(left, 0)`. Output is bytes. | A `Git` command. |
+| `git version` | `_version`. The ceiling is set and the overrides unset. The timeout is what is left. Output is text. | A `Git` command. |
+| `ls-remote --get-url p`, `config -z --type=path --get-regexp ^bettermemory\.`, `rev-parse --git-dir` | `_probe_ask`. `--git-dir` is the probe, or `compat-differ` inside it. The system and global files are the null device, `GIT_CONFIG_NOSYSTEM=1`, and the ceiling is set. `_PROBE_UNSET` is unset. The timeout is what is left. | `Git` commands. |
+| The wall clock | `time.time()`: the `now` of `sources`, which becomes `asked` and `tried` and is the clock `_current` and `_kept` compare against. `_sweep_probes` compares it with a probe's mtime. | INPUT: `now: f64` on each call. |
+| The monotonic clock | `time.monotonic()`: the deadline of `ASK_SECONDS` over every question. | A clock trait (`fn monotonic(&self) -> f64`), read where the reference reads it. A test drives it. |
+| Environment variables | PATH (the key and `which`). DEVELOPER_DIR (the key on macOS). `BETTERMEMORY_STATE_DIR`, then `platformdirs` (HOME, XDG_STATE_HOME, LOCALAPPDATA), through `resolve_state_dir`. PATHEXT. The whole environment, which `run_git` passes to git. | INPUT: an environment map. The state directory is an input already resolved (`resolve_state_dir` belongs to the daemon client, not to this module). |
+| macOS's developer link | `_developer`: `os.readlink("/var/db/xcode_select_link")`. | Read through `Fs::readlink_result`. The link's path and whether this is macOS are arguments. |
+| The platform | `sys.platform` (`_MACOS`), `os.name` (`_FALLBACK`), `os.path` (`_absolute`), `os.devnull`. | INPUTS: `macos: bool` and the path `Flavour`. The null device's spelling is an argument. |
+| The working directory | Relative state directories and git paths open against it (`open`, `os.stat`). | INPUT `cwd`. Every relative path goes through `paths::opened`. |
+| The state directory | `RECORD`: read bounded, written atomically at 0600, its directory made 0700 and tightened. `git-ask`: made owner-only, `realpath`, listed (it must be empty). | Reads through `Fs`. Writes through `std::fs`, as the store code writes: `owner_only_dir` (`ensure_owner_only_dir(parents=True)`) and `replace_retrying` (`atomic_write_bytes`: `replace_atomic`, plus the reference's Windows retry). `Fs` has no write method, and this unit may not add one. Reusing the store's writer means one atomic write in the crate, not two. |
+| The probe repository | `git-probe-<digest>` under the state directory. It is swept (`_sweep_probes`: mtime against the wall clock, `rmtree`), built (`ensure_owner_only_dir`, `atomic_write_bytes`), stamped (`_probe_stamps`), checked (`_probe_holds`: `listdir`, `lstat`, bounded reads) and cleared (`_clear_probe`). | Reads, stamps and listings through `Fs`. Building, sweeping and clearing through `std::fs`, with the same helpers as the record. The wall clock for the sweep is the `now` input. |
+| The process's held answers | `_HELD` (eight PATHs, under a lock) and `_caches.register`. | A cache the caller holds and passes in, like `StampedReads`. No static and no lock. |
+
+### The cut, in the code's order
+
+1. **The record and whether an answer stands** (lines 289-340 and
+   399-465, 845 to the end): `Sources`, `_Answer`, `_key`, `_developer`,
+   `_current`, `_kept`, `_entries`, `_text`, `_recorded`,
+   `_recorded_version`, `_record`. It asks git nothing. Built:
+   `gitsystem::record`.
+2. **What git's answers say**: `_own_files`, `_variables`,
+   `_REMOTE_ANSWERS`, the prefix and hasconfig reading in
+   `_reads_remotes`, `_older_system`'s parse, `_absolute`,
+   `gitversion.parse`. These are pure functions over bytes.
+3. **The probe repository and the ask folder**: `_probe_name` (a
+   SHA-256 of a Python `repr`), `_probe_stamps`, `_probe_children`,
+   `_probe_holds`, `_clear_probe`, `_sweep_probes`, `_probe_repository`,
+   `_where`.
+4. **The ask**: the `Git` trait, `which`, `run_git`'s command shaping,
+   `_ask`, `_older_system`, `_version`, `_reads_remotes`, `_probe_ask`,
+   and the monotonic deadline.
+5. **`sources`, `reads_compat` and `is_at_least`**, with the held answers.
+
+### Unit 1, built (`gitsystem::record`)
+
+- `Place { fs, flavour, state_dir, cwd }` has these methods:
+  - `record_path`, `entries` and `recorded`, which read the record
+    through `Fs`;
+  - `current`, `kept` and `record`.
+- `key` and `developer` are free functions. PATH and DEVELOPER_DIR are
+  passed as Python text (code points). `surrogateescape` decodes OS
+  bytes as `os.fsdecode` does.
+- Text is code points throughout, because a record read back may hold
+  a lone surrogate (`"\ud800"`).
+- A recorded stamp is five canonical decimal texts. `int()` of a
+  record has no bound: `int(1e300)` is exact, and a 40-digit part reads
+  back and is written again as it was.
+- What the reference raises and does not catch comes back as
+  `Refused::Raises`:
+  - an OverflowError: `int()` of an infinite stamp part, or `float()`
+    of an integer past a double (2**1024 after rounding);
+  - a RecursionError: `json.loads` of a record nested 9,999 deep or
+    more.
+- A stamp this file system cannot give as the reference's is
+  `Refused::NotPorted`: no inode or change time, or, on Windows, a git
+  path holding a lone surrogate.
+- Rules the reading turned up, each pinned by a fixture case:
+  - `"format": 5.0` is the format, because 5.0 == 5 in Python.
+  - `float()` of text maps non-ASCII spaces to a space, then strips
+    `Py_ISSPACE` alone. U+001C to U+001F are `str.isspace` but are not
+    stripped, so `"\u001c5"` is refused. The config reader's `py_strip`
+    would take it, so it is not reused here.
+  - `max()` keeps the first of equal `asked` values, and a NaN replaces
+    nothing.
+  - The first entry for the key decides, even when it is bad.
+  - `asked` is converted before `tried`, so an OverflowError from
+    `asked` hides a bad `tried`.
+  - A git path the OS cannot be given (a lone surrogate outside
+    U+DC80..U+DCFF on POSIX) stamps as `_UNSTATED`.
+  - The fallback is not written over an answer git gave. Even then the
+    state directory is left as it is: it is not tightened.
+- Writes:
+  - the bytes are `json.dumps(body, ensure_ascii=True) + "\n"`, through
+    `json::dumps` (NaN, Infinity, `repr` floats);
+  - the other PATHs' entries are written back as they were parsed:
+    duplicate keys are folded with the last value in the first key's
+    place, `1E5` is written as `100000.0`, and 300-digit integers are
+    kept;
+  - then `owner_only_dir`, `replace_retrying`, and a `chmod 0600` after
+    the rename (the reference's `fchmod` and its fallback), so the mode
+    does not depend on the umask.
+- Moved to reach them from outside `store/`, with only their visibility
+  changed (`pub(crate)`):
+  - `store::caller::json_bytes` (`json.loads` of bytes);
+  - `store::create::owner_only_dir`;
+  - `store::write::replace_retrying`.
+- Where native and the reference differ, deliberately:
+  - A FIFO where the record should be. The reference's `open()` blocks
+    until a writer comes, so `sources()` hangs. Native opens without
+    blocking (`Fs::open`), reads nothing, and takes the record as
+    absent. This is pinned by `gitsystem_record_robustness`, not by the
+    fixture, which cannot record a hang.
+- What the reference does (recorded upstream; the port reproduces it):
+  a hostile state file blocks every call until a person removes it.
+  - A record nested past the limit raises RecursionError.
+  - An entry for this PATH whose stamp holds `1e999`, or whose `asked`
+    is an integer past a double's range, raises OverflowError.
+  - Each raises out of `_recorded`, before `_record` is reached, so the
+    file is never replaced.
+  - Native returns these as `Raises`: `gitsystem_record.jsonl` cases
+    212, 255, 261 and 373, and every case of
+    `gitsystem_record_python.jsonl`.
+
+#### Tests
+
+- `gitsystem_record.jsonl` (`gen_gitsystem_record`): 423 cases, 89 KB.
+  A record nested more than 1,000 levels goes, by its input, in
+  `gitsystem_record_python.jsonl` (3 cases, 2 KB, Python-gated). Whether
+  `json.loads` raises RecursionError there is the interpreter's, and
+  depends on how deep in the C stack it is called. Those records sit at
+  20,000 and 32,000 levels, far from 9,999 on either side. The native
+  limit's own edges stay in native tests. The clock cases include `now`
+  equal to `asked` or `tried`, one float step below it and 1e-7 below
+  it.
+  It is POSIX only, for the modes, links, stamps by inode and change
+  time, and FIFOs. It is gated on the Unicode data, because `int()` and
+  `float()` read non-ASCII digits and spaces. It covers:
+  - every malformed shape of the file: empty, not JSON, truncated, the
+    wrong type at each level, UTF-8 with a BOM, UTF-16 and UTF-32 with
+    and without a BOM, invalid UTF-8, surrogates;
+  - every field missing, null and of each wrong type;
+  - text bounds;
+  - every `int()` and `float()` spelling;
+  - versions;
+  - 65,536 and 65,537 bytes, and 10,000 entries (inputs as recipes);
+  - nesting;
+  - a link, a dangling link, a directory, mode 000 and the state
+    directory at 000, 500 and 711;
+  - the clock at each edge of each window, with NaN and the
+    infinities;
+  - `_kept`'s choices;
+  - record, read back, the git binary changed each way (write, mtime,
+    rename, mode, remove, directory, FIFO), read again;
+  - two keys and ten keys;
+  - others written back;
+  - the key on and off macOS.
+
+  An answer is written as its difference from the header's. A written
+  record is written as its difference from the header's base, or as its
+  SHA-256 past 512 bytes.
+- `golden_gitsystem_record.rs` runs every case on disk (`StdFs` reads,
+  `std::fs` writes). It also runs every case that neither writes nor
+  changes the binary through `MemFs`.
+- `gitsystem_record_kills.rs` runs a child that records in a loop and
+  kills it from outside at 40 fixed delays. Each record left must read
+  back whole as the answer of some `j`. Its bytes must be exactly that
+  record's, and a further record must succeed. The reference's
+  `_recorded` reads every copy and must give the same `j`. Temporary
+  files left behind are counted; the reference leaves them too.
+- `gitsystem_record_robustness.rs` runs on 512 KiB threads. It covers a
+  100 MiB record (at most `MAX_BYTES + 1` bytes read), nesting of
+  100,000 and 32,000, an entry 9,000 deep written back, a FIFO, and
+  3,000 hostile files. A child the test starts under umask 277 records,
+  and the record is 0600.
+- Mutation check: 42 mutations, one per rule (the bound, the format,
+  each field's shape, each conversion's raise or catch, each window,
+  each stamp part, `_kept`'s choice, the fallback rule, the others
+  written back, the bytes, the modes, the key). Every one fails a test.
+  Two survived the first run and were given cases:
+  - the stamp's fifth part, through `"<git~i>"`;
+  - `max()`'s tie, through a record for another binary, which does not
+    stand.
+  One survived the second run and was given a test: the `chmod`, through
+  the umask child. Review found two more: each window's lower edge
+  widened to -1e-6. Both are now killed by the edge cases.
+
 ## A record id's text
 
 `store::mint` is `models.generate_ulid` (`models.py:56-64`) with its clock

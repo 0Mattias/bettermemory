@@ -703,7 +703,7 @@ fn link_text(target: &Path) -> String {
 
 /// `_fsutil.ensure_owner_only_dir(path, parents=True)`: each directory it
 /// makes is 0700, and the leaf, made or not, loses group and other bits.
-pub(super) fn owner_only_dir(path: &Path) -> io::Result<()> {
+pub(crate) fn owner_only_dir(path: &Path) -> io::Result<()> {
     let mut missing: Vec<&Path> = path
         .ancestors()
         .skip(1)

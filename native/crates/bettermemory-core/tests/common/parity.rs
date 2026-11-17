@@ -230,6 +230,12 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // The rows hold the tokenizer's spelling; the records are built
         // through the models.
         "store_provenance.jsonl" => &[Unicode, Pydantic],
+        // `int()` and `float()` of a recorded stamp or time read non-ASCII
+        // digits and spaces from `unicodedata` (`gen_gitsystem_record`).
+        "gitsystem_record.jsonl" => &[Unicode],
+        // Records nested past 1,000 levels: whether `json.loads` raises
+        // RecursionError is the interpreter's (`gen_gitsystem_record`).
+        "gitsystem_record_python.jsonl" => &[Python],
         _ => &[],
     }
 }
