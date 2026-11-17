@@ -258,6 +258,31 @@ pub fn dirname(flavour: Flavour, p: &[u8]) -> Vec<u8> {
     }
 }
 
+/// The bytes the OS opens for `path` where the process's working
+/// directory is `cwd`: a relative path joined onto `cwd` as written, with
+/// nothing normalised (the OS resolves `..` past links as it walks). An
+/// empty path stays empty: the OS refuses it. The name a reader reports
+/// stays `path`; only what it hands to the file system is this.
+pub fn opened(flavour: Flavour, path: &[u8], cwd: &[u8]) -> Vec<u8> {
+    let absolute = match flavour {
+        Flavour::Posix => path.first() == Some(&b'/'),
+        Flavour::Windows => {
+            matches!(path.first(), Some(b'/' | b'\\')) || path.get(1) == Some(&b':')
+        }
+    };
+    if path.is_empty() || absolute || cwd.is_empty() {
+        return path.to_vec();
+    }
+    let mut out = cwd.to_vec();
+    match flavour {
+        Flavour::Posix if !out.ends_with(b"/") => out.push(b'/'),
+        Flavour::Windows if !matches!(out.last(), Some(b'/' | b'\\')) => out.push(b'\\'),
+        _ => {}
+    }
+    out.extend_from_slice(path);
+    out
+}
+
 /// `os.path.join(a, b)` of the flavour.
 pub fn join(flavour: Flavour, a: &[u8], b: &[u8]) -> Vec<u8> {
     match flavour {

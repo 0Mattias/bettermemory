@@ -3153,6 +3153,118 @@ general file-system trait and three-platform CI in one run. Proposed:
    the collecting and forbidding pass (`_forbidding`, 683-700, 504-509),
    with the remote rules at 430-433.
 
+## Which remotes a checkout has (`location_git.py` 259-1001)
+
+The area is `location_git.py` from `_env_true` (259) to
+`repository_config_stamps` (962-1000). It reads the config files git
+reads and the legacy remote files, settles the `hasconfig:` includes,
+and turns each remote's URLs into keys, through `_spellings` and
+`remote_key`. `gitconfig::remotes` holds unit A of the cut below.
+
+### What it stands on
+
+| Dependency | What the area takes from it | Here |
+| --- | --- | --- |
+| `gitsystem.Sources` (`own`, `system`, `prefix`, `hasconfig`; through `_sources_once`) | the build's own system files, its system file, `%(prefix)/`, whether this git reads `hasconfig:` | INPUT: `remotes::Sources`. Asking the installed git is not ported. |
+| `gitsystem` release (`gitfile_rule._git_is_at_least`) | (2, 42) for an `extensions.worktreeConfig` under a version below -1 | INPUT: `GitFacts.release`, as in `gitfile_rule::format`. |
+| `Sources.legacy`, `resets`, `version` (read by `_spellings`) | whether legacy files are read; git's `url.*` resets; spellings before 2.45 | INPUT for unit B. Not used by unit A. |
+| The environment: `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_GLOBAL`, `XDG_CONFIG_HOME`, `HOME` (and `USERPROFILE` and the user database through `gitconfig._home`) | which machine files are read | INPUT: `remotes::Env`, plus `paths::Machine` for the home. The reference reads no other `GIT_CONFIG_*` variable: neither `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` nor `GIT_CONFIG_PARAMETERS`. Native reads none of these ambiently. |
+| The process's working directory | relative `GIT_CONFIG_*`, `XDG_CONFIG_HOME` and HOME paths, and includes beside them | INPUT: `Inputs.cwd`. `config_tree` opens and stamps a relative name at `paths::opened(name, cwd)`: joined onto `cwd` as written, nothing normalised, the way the OS resolves the reference's `open` and `os.stat`. The name in `named`, `files` and a refusal stays as written. The repository's own paths (config, config.worktree, HEAD, refs, legacy folders) hang off the git and common directories. The reference's caller passes both through `realpath` (`location.py` 745-747), so a relative one is never reached; native declines it as `NotPortedWhy::RelativeGitDir`. |
+| `_git_runner.run_git` (`git symbolic-ref -q HEAD`, in `_asked_branch`) | the branch when the reference cannot read HEAD itself | INPUT: `Inputs.asked_branch`. None declines as `NotPortedWhy::AskedBranch`. Native never runs git. |
+| `githead` (`_PER_WORKTREE`, `head_bytes`, `parse`, `lookup`, `MAX_READS`) | HEAD and the refs a branch condition follows | ported (`githead.rs`, through its own `RefFs`). |
+| `gitconfig` (`config_tree`, `IncludeContext`, `read_git_config`, `file_stamp`, `wildmatch`) | each read and its stamps | ported (`gitconfig::{tree, file, legacy}`). The lazy `_Once` branch is now `Branch::Unasked`: a read that needs it stops with `asks_branch`, and the caller computes the branch and reruns that read. Stamps are now kept in `ConfigValues.stamps`, so the leftover noted under piece 4 is closed. |
+| `gitfile_rule.reads_worktree_config`, `judge_format` | whether `config.worktree` is read | ported (`gitfile_rule::format`). The `_FORMAT_MEMO` cache is not: native reads again. |
+| `_legacy_names`, `_legacy_values` | legacy remote names and URLs | ported (`gitconfig::legacy`). |
+| `remote_key` (`location.py`) | a URL's key | ported (`capture::remote`). Used by unit B. |
+| `_caches`, `threading.Lock`, `time` (`_stamped_read`, `_STAMPED_KEPT`) | reuse of stamped machine reads across captures | unit C. The cache is process state; native takes the kept reads as a value. |
+| `origin.py` | caller of `remote_urls`/`read_remotes`/`config_unchanged` | not in the area. |
+
+The `Fs` trait has every operation unit A needs (`stat`, `lstat`,
+`open`/`read`, `listdir`, `readlink`). Unit C needs nothing more either.
+
+### The cut
+
+- **Unit A (built, `gitconfig::remotes::gather`).** `_env_true`,
+  `_system_configs`, `_global_configs`, `_machine_configs`,
+  `_repository_paths`, `_read_configs`, `_failed`, `_head_branch`,
+  `_asked_branch`, and `_rewrites` up to its call of `_spellings`: the
+  own reads; `_failed`; the legacy names; "no remotes" when there is no
+  legacy name and no own remote URL (in the values or the undecided
+  ones); the machine reads, with the global files gentle; and, if any
+  read asks the remote URLs, the collecting pass over machine then own
+  reads. That pass stops on a failed read, a forbidden URL, or an
+  undecided remote URL. Otherwise the machine and own files are read
+  again with the URLs settled, then checked by `_failed`. Every file
+  goes into `files` with its stamp, in the reference's order. The HEAD
+  and ref stamps go in at the first read that asks the branch, before
+  that read's own files.
+- **Unit B.** `_spellings`, `_best_rule`, `_undecided_matters`,
+  `remote_urls`, `RemoteKeys`/`read_remotes`, with `remote_key`, and
+  with `Sources.legacy`, `resets` and `version` as inputs. It also takes
+  the caller's stop rule on `maybe_dies`. The gitdiff below shows one
+  tree where git dies (a key with no value under an unsettled include)
+  and unit A, as the reference, hands the reads on.
+- **Unit C.** `config_unchanged`, `_stamped_read` with its cache as an
+  explicit value, `machine_config_stamps`, `machine_config_reads`,
+  `repository_config_stamps`, and `_inside`.
+
+### Tests
+
+- Golden: `location_remotes.jsonl`, POSIX only, 92 cases in 105,396
+  bytes. It runs through `MemFs` and `StdFs` (`golden_location_remotes.rs`,
+  `cfg(unix)`). The cases cover: each `GIT_CONFIG_NOSYSTEM` value (unset,
+  empty, junk); `GIT_CONFIG_SYSTEM` and `GIT_CONFIG_GLOBAL` named, empty
+  and missing; `XDG_CONFIG_HOME` set and empty; `HOME` unset; unreadable,
+  folder and broken machine files; `extensions.worktreeConfig` under
+  each version and the (2, 42) rule; a linked worktree with a
+  per-worktree ref and an unreadable HEAD; HEAD on a branch, detached,
+  unborn, through a symbolic ref, a tag, garbage, an unreadable ref,
+  past git's depth and unreadable, with git's answer given, not given,
+  and failing; the branch asked once across machine and own reads;
+  `gitdir:`; `%(prefix)/` three ways; each `hasconfig:` stop and a
+  remote URL only under one; a die found only after the URLs settle;
+  and an incomplete read. Also: relative `XDG_CONFIG_HOME`,
+  `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_GLOBAL` and HOME, each with a readable
+  file, a refused line, no file and a remote, and an include beside a
+  relative file; a FIFO and a file over the bound as a machine file, the
+  own config and `config.worktree`. There is an unsettled `onbranch`
+  include setting only a `pushurl` (the read goes on) and its `url` twin
+  (it stops). The unsettled stop also comes through a match past the
+  wildmatch depth and through an unsettled include nested in a held one.
+  A `gitdir:` with no git directory cannot happen here: `gather` always
+  gives one. Last, a `hasconfig` collection after a machine read that
+  dies, and after one not read whole.
+- Robustness (`location_remotes_robustness.rs`, 512 KiB thread): 10,000
+  remotes with 10,000 `onbranch:` and `hasconfig:` conditions and 1,000
+  machine files (HEAD stamped once; declined at the 64-file bound); a
+  1,000-long HEAD chain (git asked; declined without an answer); the
+  Windows flavour declining as not ported (`Stamp`). It also runs
+  `gather` over `StdFs` in a child process whose working directory holds
+  decoys of every relative name (`cfg(unix)`); none is read or stamped.
+  Git's answer not given (`asked_branch` None) is declined there too,
+  after the stamps its answered twin asserts by name.
+- Mutations: 46 of 46 caught, after the review: the 43 below, plus
+  three more. They are a relative machine path opened from the process's
+  directory, an undecided `pushurl` taken as the unsettled stop, and the
+  collecting pass run after a failed machine read. Six first survived and were given cases:
+  the per-worktree base of a ref; a ref lookup that fails; a detached
+  HEAD read as an empty branch; the order of the reftable lists; an own
+  remote URL that is only undecided; and the final `_failed` after the
+  settled reads. The last needs a die that only git's remote rules see,
+  since the collecting read does not apply them.
+- Against git 2.54 (neutral environment on the child only; 45 trees
+  built from the fixture's cases, skipping those that would read the
+  host's system config, linked worktrees and non-default sources):
+  `git config --includes --get-regexp` for remote URLs, and `git remote -v`.
+  - 28 agree on the same names and URLs in the same order.
+  - 11 decline where git also dies. The exception is one "not read
+    whole" decline, which is conservative.
+  - 6 differ, none from the port:
+    - five come from a git answer the fixture invents (a HEAD git cannot
+      read, or a ref git cannot resolve, where real git does not see a
+      repository or answers no branch);
+    - one is the `maybe_dies` tree that unit B's stop rule handles.
+
 ## A record id's text
 
 `store::mint` is `models.generate_ulid` (`models.py:56-64`) with its clock

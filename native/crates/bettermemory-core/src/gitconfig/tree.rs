@@ -27,7 +27,8 @@
 
 use std::collections::BTreeMap;
 
-use super::file::{config_bytes, ConfigBytes};
+use super::file::{config_bytes, ConfigBytes, Dies};
+use super::legacy::{file_stamp, NotPorted, Stamp};
 use super::paths::{self, Machine};
 use super::wildmatch::{any_match, literal_head, Steps};
 use super::{git_entries, remote_rules, spaced, Name};
@@ -69,6 +70,11 @@ pub enum Branch {
     Elsewhere,
     /// A branch name under `refs/heads/`.
     Name(Vec<u8>),
+    /// Not asked yet: the first `onbranch:` condition stops the read
+    /// ([`ConfigValues::asks_branch`]), so the caller can ask (and stamp
+    /// what the asking reads) where the reference's `IncludeContext.branch`
+    /// is first called, and read again with the answer.
+    Unasked,
 }
 
 /// `IncludeContext` (lines 126-178).
@@ -130,6 +136,16 @@ pub struct ConfigValues {
     pub maybe_dies: Option<Vec<u8>>,
     /// Each file the read opened or looked for, in order (`files`' paths).
     pub files: Vec<Vec<u8>>,
+    /// Each of [`ConfigValues::files`]' stamps, taken before the file is
+    /// opened (`file_stamp`); None where nothing is there, or where the
+    /// stamp is not held ([`ConfigValues::stamps_held`] false).
+    pub stamps: Vec<Option<Stamp>>,
+    /// Whether every stamp is the reference's (false: a file system that
+    /// gives no inode, mode or change time, as on Windows).
+    pub stamps_held: bool,
+    /// The read stopped at an `onbranch:` condition under
+    /// [`Branch::Unasked`]: the rest of the answer is not the reference's.
+    pub asks_branch: bool,
     /// The `includeIf` subsection the read stopped at, its condition not
     /// evaluated here (a `gitdir:` one under the Windows flavour).
     pub not_ported: Option<Vec<u8>>,
@@ -150,6 +166,7 @@ enum Stop {
     Dies(Vec<u8>),
     NotPorted(Vec<u8>),
     Raised(PyErr),
+    AskBranch,
 }
 
 type Key = (String, Option<Vec<u8>>, String);
@@ -190,7 +207,7 @@ struct Out {
     values: Map,
     undecided: Map,
     maybe_dies: Option<Vec<u8>>,
-    files: Vec<Vec<u8>>,
+    files: Vec<(Vec<u8>, Option<Stamp>)>,
 }
 
 struct Reading<'a, F: Fs> {
@@ -205,6 +222,7 @@ struct Reading<'a, F: Fs> {
     forbidding: bool,
     asks_remote_urls: bool,
     forbidden: bool,
+    stamps_held: bool,
 }
 
 fn words(parts: &[&[u8]]) -> Vec<u8> {
@@ -233,6 +251,7 @@ pub fn config_tree<F: Fs>(fs: &F, machine: &Machine, path: &[u8], ask: &Ask) -> 
         forbidding: false,
         asks_remote_urls: false,
         forbidden: false,
+        stamps_held: true,
     };
     let mut out = Out::default();
     let stop = reading.read(path, &mut out, 0);
@@ -242,7 +261,10 @@ pub fn config_tree<F: Fs>(fs: &F, machine: &Machine, path: &[u8], ask: &Ask) -> 
         dies: None,
         undecided: out.undecided.list,
         maybe_dies: out.maybe_dies,
-        files: out.files,
+        files: out.files.iter().map(|(p, _)| p.clone()).collect(),
+        stamps: out.files.iter().map(|(_, s)| *s).collect(),
+        stamps_held: reading.stamps_held,
+        asks_branch: false,
         not_ported: None,
         raised: None,
         asks_remote_urls: reading.asks_remote_urls,
@@ -254,6 +276,7 @@ pub fn config_tree<F: Fs>(fs: &F, machine: &Machine, path: &[u8], ask: &Ask) -> 
         Err(Stop::Dies(why)) => answer.dies = Some(why),
         Err(Stop::NotPorted(sub)) => answer.not_ported = Some(sub),
         Err(Stop::Raised(error)) => answer.raised = Some(error),
+        Err(Stop::AskBranch) => answer.asks_branch = true,
     }
     answer
 }
@@ -265,20 +288,43 @@ fn unresolved(error: Unresolved, sub: &[u8]) -> Stop {
     }
 }
 
+/// A refusal of the bytes opened, worded with the name as written.
+fn named(dies: Dies, path: &[u8]) -> Dies {
+    match dies {
+        Dies::CannotRead { error, .. } => Dies::CannotRead {
+            path: path.to_vec(),
+            error,
+        },
+        Dies::Folder { .. } => Dies::Folder {
+            path: path.to_vec(),
+        },
+    }
+}
+
 impl<F: Fs> Reading<'_, F> {
     fn read(&mut self, path: &[u8], out: &mut Out, depth: usize) -> Result<(), Stop> {
         self.files += 1;
         if self.files > INCLUDE_FILES {
             return Err(Stop::Overflow(path.to_vec()));
         }
+        // What the OS opens: a relative name taken from the working
+        // directory the caller gave, never the process's own.
+        let at = paths::opened(self.machine.flavour, path, &self.ask.cwd);
         if depth > 0 || self.ask.stamp_self {
-            out.files.push(path.to_vec());
+            let stamp = match file_stamp(self.fs, &at) {
+                Ok(stamp) => stamp,
+                Err(NotPorted) => {
+                    self.stamps_held = false;
+                    None
+                }
+            };
+            out.files.push((path.to_vec(), stamp));
         }
         let gentle = self.ask.gentle && depth == 0;
-        let (data, identity) = match config_bytes(self.fs, path, gentle) {
+        let (data, identity) = match config_bytes(self.fs, &at, gentle) {
             ConfigBytes::Skipped => return Ok(()),
-            ConfigBytes::Dies(dies) => return Err(Stop::Dies(dies.why())),
-            ConfigBytes::Overflow { path } => return Err(Stop::Overflow(path)),
+            ConfigBytes::Dies(dies) => return Err(Stop::Dies(named(dies, path).why())),
+            ConfigBytes::Overflow { .. } => return Err(Stop::Overflow(path.to_vec())),
             ConfigBytes::Read { data, identity } => (data, identity),
         };
         if depth > INCLUDE_DEPTH {
@@ -469,7 +515,7 @@ impl<F: Fs> Reading<'_, F> {
             }
         }
         if let Some(pattern) = sub.strip_prefix(b"onbranch:") {
-            return Ok(self.branch_condition(pattern));
+            return self.branch_condition(pattern);
         }
         if let Some(pattern) = sub.strip_prefix(REMOTE_URL) {
             if let Some(context) = &self.ask.context {
@@ -502,11 +548,14 @@ impl<F: Fs> Reading<'_, F> {
     }
 
     /// `_branch_condition` (1129-1147).
-    fn branch_condition(&mut self, pattern: &[u8]) -> Option<bool> {
-        let context = self.ask.context.as_ref()?;
+    fn branch_condition(&mut self, pattern: &[u8]) -> Result<Option<bool>, Stop> {
+        let Some(context) = self.ask.context.as_ref() else {
+            return Ok(None);
+        };
         let branch = match &context.branch {
-            Branch::Unsettled => return None,
-            Branch::Elsewhere => return Some(false),
+            Branch::Unasked => return Err(Stop::AskBranch),
+            Branch::Unsettled => return Ok(None),
+            Branch::Elsewhere => return Ok(Some(false)),
             Branch::Name(name) => name,
         };
         let mut spelled = pattern.to_vec();
@@ -517,7 +566,12 @@ impl<F: Fs> Reading<'_, F> {
         if matches!(spelled.last(), Some(&b) if b == b'/' || b == sep) {
             spelled.extend_from_slice(b"**");
         }
-        any_match(&spelled, [branch.as_slice()], &mut self.steps, false)
+        Ok(any_match(
+            &spelled,
+            [branch.as_slice()],
+            &mut self.steps,
+            false,
+        ))
     }
 
     /// `_gitdir_matches` (1177-1212). Under the Windows flavour every

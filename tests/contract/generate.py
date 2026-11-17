@@ -46,6 +46,7 @@ from . import (
     gen_gitconfig_tree,
     gen_gitconfig_remote_rules,
     gen_gitconfig_wildmatch,
+    gen_location_remotes,
     gen_githead,
     gen_gitfile_leaves,
     gen_json,
@@ -134,6 +135,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitconfig_tree": gen_gitconfig_tree.generate,
     "gitconfig_tree_rules": gen_gitconfig_tree.generate_rules,
     "gitconfig_legacy": gen_gitconfig_legacy.generate,
+    "location_remotes": gen_location_remotes.generate,
     "gitconfig_legacy_python": gen_gitconfig_legacy.generate_python,
     "membership_lines": gen_membership_lines.generate,
     "membership_lines_unicode": gen_membership_lines.generate_unicode,
@@ -296,7 +298,8 @@ PLATFORM_GATED = frozenset(
 #: ``gitconfig_tree`` reads real trees with the host's ``os.path`` and ``pwd``;
 #: ``gitconfig_legacy`` and ``gitconfig_legacy_python`` read real trees with
 #: links, FIFOs and modes (`gen_gitconfig_legacy`; the second holds the link
-#: loops);
+#: loops); ``location_remotes`` reads real trees with modes and links
+#: (`gen_location_remotes`);
 #: ``gitfile_leaves_posix`` reads links and mode-000 files
 #: (`gen_gitfile_leaves`).
 POSIX_ONLY = frozenset(
@@ -318,6 +321,7 @@ POSIX_ONLY = frozenset(
         "gitconfig_tree",
         "gitconfig_legacy",
         "gitconfig_legacy_python",
+        "location_remotes",
         "gitfile_leaves_posix",
         "store_provenance",
         "fs_realpath",
