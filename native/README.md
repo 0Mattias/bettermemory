@@ -3511,7 +3511,7 @@ argument or a trait the caller implements.
    `_current`, `_kept`, `_entries`, `_text`, `_recorded`,
    `_recorded_version`, `_record`. It asks git nothing. Built:
    `gitsystem::record`.
-2. **What git's answers say**: `_own_files`, `_variables`,
+2. **What git's answers say** (built: `gitsystem::answers`): `_own_files`, `_variables`,
    `_REMOTE_ANSWERS`, the prefix and hasconfig reading in
    `_reads_remotes`, `_older_system`'s parse, `_absolute`,
    `gitversion.parse`. These are pure functions over bytes.
@@ -3656,6 +3656,123 @@ argument or a trait the caller implements.
   One survived the second run and was given a test: the `chmod`, through
   the umask child. Review found two more: each window's lower edge
   widened to -1e-6. Both are now killed by the edge cases.
+
+### Unit 2, built (`gitsystem::answers`)
+
+Pure functions over what git printed: `own_files` (`_own_files`),
+`older_system` (the parse inside `_older_system`), `absolute`
+(`_absolute`), `variables` (`_variables`), `remote_answer`
+(`_REMOTE_ANSWERS`), `reads_remotes` (the reading inside
+`_reads_remotes`) and `parse_version` (`gitversion.parse`).
+
+- **Flavour is an input.** `Flavour` stands for `os.path`
+  (`posixpath`, or `ntpath` as CPython 3.13 splits a drive) and for
+  `os.fsdecode`:
+  - POSIX: UTF-8 with `surrogateescape`.
+  - Windows: UTF-8 with `surrogatepass`; bytes that are not UTF-8 raise
+    UnicodeDecodeError, which the port returns as `Raised`.
+- **What unit 4 hands in:**
+  - each question's exit status and stdout bytes, or no answer;
+  - `held`, whether the probe stamped and held as before (unit 3's
+    `_probe_stamps` and `_probe_holds`);
+  - the bytes `git var GIT_CONFIG_SYSTEM` printed, which `_ask` strips
+    itself.
+- **Text is decoded here.** A text answer is decoded as `run_git`
+  decodes it (UTF-8, `replace`), by `text`.
+- **No scans for the reference's dict lookups.** `_variables`' dict
+  is a map with an index. `_own_files`' "seen before" is a hash set:
+  the reference scans its whole list (see below).
+- **Fixtures** (`gen_gitsystem_answers`). Each case is placed by its
+  input. The generator drives `os.fsdecode` and `_absolute`'s flavour
+  as plain functions of the case, so every host gives the same answers
+  and no file is POSIX-only.
+  - `gitsystem_answers.jsonl`: 256 cases, 43 KB, ungated.
+  - `gitsystem_answers_unicode.jsonl`: 22 cases, 2 KB, Unicode-gated.
+    Text past ASCII, where `str.strip`, `re`'s `\d`, `int` and
+    `str.upper` read the Unicode data.
+  - `gitsystem_answers_python.jsonl`: 4 cases, Python-gated:
+    - a Windows path starting with a separator and then a colon;
+      3.11's `ntpath.splitdrive` reads a drive there and 3.13's does
+      not (1,256 of 271,452 generated spellings differ, all of that
+      shape);
+    - a digit run past `int`'s 4,300.
+- **The stand-in matches a real Windows host.** Review confirmed that
+  the stand-in for `os.fsdecode` and `os.path` under the Windows
+  flavour matches a real Windows host. The one exception is the legacy
+  file-system-encoding mode, which is out of scope.
+- **Long Windows paths are not compared with a Windows host.** Every
+  Windows-flavour path in the fixtures is under 30,000 characters.
+  Past 32,767, a Windows host's C `nt._path_splitroot_ex` may refuse
+  the path. The port answers there as the pure-Python `ntpath` does,
+  and that answer has not been compared with a Windows host.
+- **Tests.**
+  - `golden_gitsystem_answers.rs` runs the three files.
+  - `gitsystem_answers_robustness.rs`:
+    - 5,000 random inputs under both flavours.
+    - A linear-cost check for each parser: 2,000 units against 20,000,
+      best of five, the large run under 30 times the small one plus
+      50 ms. A clean run takes under half a second. A quadratic
+      `variables` fails in 6.4 s and a quadratic `own_files` in 5.4 s.
+      The version-digits check is removed: `int`'s 4,300-digit limit
+      caps that input, so it could never fail.
+    - A Windows-flavour path of a million characters (native only).
+  - Mutation check: 38 mutants, one per branch. Review added five that
+    change answers, and each now fails a fixture case:
+    - `file` for `file:`: `system\0file//a`;
+    - a prefix that starts with `/z`: `/za`;
+    - the UNC check without `upper`: `\\?\unc\server\share`, plus
+      mixed case;
+    - the UNC check needing more than its eight characters:
+      `\\?\UNC\`;
+    - a patch after any character: `2.3-4`, `2.3+4`, `2.3 4`, `2.3_4`.
+    - 37 fail a test. The two that first survived were given a case
+      or a test:
+      - a colon read at any second character, caught by `ab\x` and
+        `ab/x`;
+      - a list scan in place of the hash set, caught by the cost check
+        (519 s).
+    - One is equivalent and is argued, not killed: a UNC path with no
+      separator after its server returns the whole path as its drive,
+      and the mutant returns no drive. `_absolute` is false either way,
+      and the drive is used nowhere else.
+
+#### What the reference does that git does not mean (not changed)
+
+- **A version past 65,535 is never kept.** `gitversion.parse` takes a
+  part of any size, so `git version 65536.0.0` reads as (65536, 0, 0).
+  `_recorded_version` refuses a part of 65,536 or more, so the record
+  of that answer never reads back, and git is asked again in every
+  process.
+- **`parse` reads Unicode digits and strips Unicode spaces.** `\d`
+  matches any decimal digit (`git version ٢.٣.4` is 2.3.4). git prints
+  only ASCII.
+- **`parse` reads past a suffix, and the patch is optional:**
+  - `2.42.0.windows.1`, `2.39.5 (Apple Git-154)` and `2.45.0-rc1` give
+    the release before the suffix;
+  - `2.45.0.rc1`, `2.45`, `2.56.GIT` and `2.3.4.5` give patch 0, 0, 0
+    and 4.
+- **`_own_files` is quadratic.** It keeps every file it finds in a list
+  and checks each new one against the whole list, though it keeps only
+  the first eight. The port's hash set gives the same answer in linear
+  time.
+- **Windows: one undecodable origin fails the whole ask.** On Windows,
+  one `file:` origin that is not UTF-8 raises UnicodeDecodeError out of
+  `_ask`. That holds even when eight files are already found, or when
+  the path would not be kept as not absolute; `_older_system` does the
+  same. git for Windows writes UTF-8, so this needs a hostile git.
+- **Only the end of the prefix listing is stripped of CR.** `_PREFIX_ASK`
+  is read after `rstrip("\r\n")` of the whole listing:
+  - a final value with a CR before its NUL keeps the CR, so it does
+    not end with `/z` and the prefix is unsaid;
+  - the same value with no NUL after it does end with `/z`.
+- **hasconfig depends on the prefix.** `hasconfig` is unsaid wherever
+  `bettermemory.prefix` is missing from the listing, even when
+  `bettermemory.hasconfig` is in it.
+- **`_absolute` on Windows is the interpreter's.** It agrees with
+  git's own rule only for a drive letter or a `\\server\share` root.
+  3.11 and 3.13 differ on a separator followed by a colon. On Windows,
+  3.13 uses `nt._path_splitroot_ex` in C, which this fixture, made on
+  POSIX, does not pin.
 
 ## A record id's text
 

@@ -1,0 +1,5 @@
+{"cases":4,"fixture":"gitsystem_answers_python"}
+{"f":"version","i":[["=git version 1",1],["=0",4300],["=.2.3",1]],"r":{"x":"ValueError"}}
+{"f":"absolute","fl":"nt","i":"=/:x","r":false}
+{"f":"absolute","fl":"nt","i":"5c3a5c78","r":false}
+{"f":"absolute","fl":"nt","i":"5c3a2f78","r":false}

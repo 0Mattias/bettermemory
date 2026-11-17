@@ -51,6 +51,7 @@ from . import (
     gen_location_remotes,
     gen_location_spellings,
     gen_location_stamped,
+    gen_gitsystem_answers,
     gen_gitsystem_record,
     gen_githead,
     gen_gitfile_leaves,
@@ -145,6 +146,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "location_stamped": gen_location_stamped.generate,
     "gitsystem_record": gen_gitsystem_record.generate,
     "gitsystem_record_python": gen_gitsystem_record.generate_python,
+    "gitsystem_answers": gen_gitsystem_answers.generate,
+    "gitsystem_answers_unicode": gen_gitsystem_answers.generate_unicode,
+    "gitsystem_answers_python": gen_gitsystem_answers.generate_python,
     "gitconfig_legacy_python": gen_gitconfig_legacy.generate_python,
     "membership_lines": gen_membership_lines.generate,
     "membership_lines_unicode": gen_membership_lines.generate_unicode,
@@ -195,6 +199,7 @@ UNICODE_GATED = frozenset(
         "store_provenance",
         "store_bulk",
         "gitsystem_record",
+        "gitsystem_answers_unicode",
     }
 )
 
@@ -225,9 +230,13 @@ PYTHON_VERSION = "3.13.13"
 #: texts, pathlib's parsing); 3.11 and 3.12 ship another `tomllib`.
 #: ``gitsystem_record_python`` holds records nested past 1,000 levels,
 #: where `json.loads` raising RecursionError is the interpreter's.
+#: ``gitsystem_answers_python`` holds Windows paths a separator then a colon
+#: begins (3.11's `ntpath.splitdrive` reads a drive there) and digit runs
+#: past `int`'s limit.
 PYTHON_GATED = frozenset(
     {
         "gitsystem_record_python",
+        "gitsystem_answers_python",
         "python_edges",
         "models_rows",
         "models_stores",

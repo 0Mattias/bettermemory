@@ -236,6 +236,12 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // Records nested past 1,000 levels: whether `json.loads` raises
         // RecursionError is the interpreter's (`gen_gitsystem_record`).
         "gitsystem_record_python.jsonl" => &[Python],
+        // `str.strip`, `re`'s `\d`, `int` and `str.upper` of text past
+        // ASCII (`gen_gitsystem_answers`).
+        "gitsystem_answers_unicode.jsonl" => &[Unicode],
+        // 3.11's `ntpath.splitdrive` of a separator then a colon; `int`'s
+        // digit limit.
+        "gitsystem_answers_python.jsonl" => &[Python],
         _ => &[],
     }
 }
