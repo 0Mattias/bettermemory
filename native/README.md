@@ -3165,7 +3165,7 @@ and turns each remote's URLs into keys, through `_spellings` and
 
 | Dependency | What the area takes from it | Here |
 | --- | --- | --- |
-| `gitsystem.Sources` (`own`, `system`, `prefix`, `hasconfig`; through `_sources_once`) | the build's own system files, its system file, `%(prefix)/`, whether this git reads `hasconfig:` | INPUT: `remotes::Sources`. Asking the installed git is not ported. |
+| `gitsystem.Sources` (`own`, `system`, `prefix`, `hasconfig`; through `_sources_once`) | the build's own system files, its system file, `%(prefix)/`, whether this git reads `hasconfig:` | INPUT: `remotes::Sources`. Asking the installed git is ported apart, as `gitsystem::sources` (its unit 5); this caller still takes the answer as an input. |
 | `gitsystem` release (`gitfile_rule._git_is_at_least`) | (2, 42) for an `extensions.worktreeConfig` under a version below -1 | INPUT: `GitFacts.release`, as in `gitfile_rule::format`. |
 | `Sources.legacy`, `resets`, `version` (read by `_spellings`) | whether legacy files are read; git's `url.*` resets; spellings before 2.45 | INPUT for unit B. Not used by unit A. |
 | The environment: `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_GLOBAL`, `XDG_CONFIG_HOME`, `HOME` (and `USERPROFILE` and the user database through `gitconfig._home`) | which machine files are read | INPUT: `remotes::Env`, plus `paths::Machine` for the home. The reference reads no other `GIT_CONFIG_*` variable: neither `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` nor `GIT_CONFIG_PARAMETERS`. Native reads none of these ambiently. |
@@ -3494,7 +3494,7 @@ argument or a trait the caller implements.
 | `git config --list --show-scope --show-origin -z` | `_ask`. The system and global files are the null device, plus the ceiling; the overrides are unset. The timeout is `max(left, 0)`. Output is bytes. | A `Git` command. |
 | `git version` | `_version`. The ceiling is set and the overrides unset. The timeout is what is left. Output is text. | A `Git` command. |
 | `ls-remote --get-url p`, `config -z --type=path --get-regexp ^bettermemory\.`, `rev-parse --git-dir` | `_probe_ask`. `--git-dir` is the probe, or `compat-differ` inside it. The system and global files are the null device, `GIT_CONFIG_NOSYSTEM=1`, and the ceiling is set. `_PROBE_UNSET` is unset. The timeout is what is left. | `Git` commands. |
-| The wall clock | `time.time()`: the `now` of `sources`, which becomes `asked` and `tried` and is the clock `_current` and `_kept` compare against. `_sweep_probes` compares it with a probe's mtime. | INPUT: `now: f64` on each call. |
+| The wall clock | `time.time()`: the `now` of `sources`, which becomes `asked` and `tried` and is the clock `_current` and `_kept` compare against. `_sweep_probes` compares it with a probe's mtime. | The `Clock` trait's `wall`, read where the reference reads it (`sources` once, after the key; the sweep once). |
 | The monotonic clock | `time.monotonic()`: the deadline of `ASK_SECONDS` over every question. | The `Clock` trait (`monotonic`, and `wall` for the sweep), read where the reference reads it. A test drives it. |
 | Environment variables | PATH (the key and `which`). DEVELOPER_DIR (the key on macOS). `BETTERMEMORY_STATE_DIR`, then `platformdirs` (HOME, XDG_STATE_HOME, LOCALAPPDATA), through `resolve_state_dir`. PATHEXT. The whole environment, which `run_git` passes to git. | INPUT: an environment map. The state directory is an input already resolved (`resolve_state_dir` belongs to the daemon client, not to this module). |
 | macOS's developer link | `_developer`: `os.readlink("/var/db/xcode_select_link")`. | Read through `Fs::readlink_result`. The link's path and whether this is macOS are arguments. |
@@ -3523,7 +3523,10 @@ argument or a trait the caller implements.
 4. **The ask** (built: `gitsystem::ask`): the `Git` trait, `which`, `run_git`'s command shaping,
    `_ask`, `_older_system`, `_version`, `_reads_remotes`, `_probe_ask`,
    and the monotonic deadline.
-5. **`sources`, `reads_compat` and `is_at_least`**, with the held answers.
+5. **`sources`, `reads_compat` and `is_at_least`** (built:
+   `gitsystem::sources`), with the held answers.
+
+All of `gitsystem.py` is ported.
 
 ### Unit 1, built (`gitsystem::record`)
 
@@ -4022,7 +4025,7 @@ Each statement is checked against random trees by
 - the PATH key (unit 1's `key`) and `now`.
 
 `sources` itself (the held answers, `_current`, `_kept`, `_record`, the
-lock) is unit 5's.
+lock) is unit 5's (built: see unit 5).
 
 #### Declined under the Windows flavour
 
@@ -4143,6 +4146,164 @@ ungated file is byte-identical under 3.11.15 and 3.13.13.
 - **Output is unbounded.** `capture_output` reads all git writes, so a
   hostile git can make the process hold any amount (the divergence
   above).
+
+### Unit 5, built (`gitsystem::sources`)
+
+- **`Held`** is `_HELD`: the answer of each PATH, oldest first (a dict's
+  insertion order), at most `KEPT` (8). The caller owns it and hands it
+  in, as it does `StampedReads`. There is no static and no lock;
+  `Held::clear` is `_clear`, which `_caches.clear_all` calls. An answer
+  stored again moves to the end; one found and standing does not move;
+  past eight, the oldest leaves.
+- **`Caller { place, git, clock, env, cs_path, budget, macos, link }`**
+  carries everything the reference reads of the process. Its methods
+  follow the reference line by line:
+  - `key()` is `_key(os.environ.get("PATH"))` with `_developer()`
+    (DEVELOPER_DIR from the environment, the link read through `Fs`);
+  - `sources(held, stamp)` reads the wall clock once, after the key. A
+    held answer that stands (`_current`, `stamp` as given) is answered
+    as it is. Otherwise the record's, if it stands (stamped). Otherwise
+    git is asked (unit 4), a failed ask keeps the newest good answer
+    (`_kept` over the held one and the one read before the ask, in that
+    order), and the result is recorded and held;
+  - `reads_compat(held)` and `is_at_least(held, (major, minor))`. The
+    version's parts are Python ints of any size (`Natural`), compared
+    with the release as numbers.
+- **`Fault`** is why no answer comes: `Refused` from the record (the
+  reference raises, or a stamp is not ported) or `Declined` from the ask
+  (`ReadDeadline`, an OSError class or ValueError raised; `NotPorted`).
+  Where the reference raises, nothing is held or recorded, as there.
+- **The budget's other fields.** `ReadBudget.allowance` sets
+  `last_root` and `first_home`, and `exhausted` sets `deferred`, from
+  `git_read_budget._ROOT` or `(cwd, True)`. `sources` never reads them:
+  they are the bookkeeping of the read-root loop in `location.py`'s
+  callers, which set `_ROOT` and read `deferred` to resume. They belong
+  there, not here, and are left out. A port of those callers must set
+  them around each `run_git` call: one call per question, with the
+  root and `home` that `_ROOT` gives at that point.
+
+#### Declined under the Windows flavour
+
+`sources` declines with `Fault::Declined(NotPorted)` wherever it would
+ask git (unit 4 declines the whole ask there). By design it still
+computes the key and reads the record first: a held answer or a
+recorded one that stands is answered (nothing written), and one that
+does not stand is declined (nothing written; both in
+`gitsystem_sources_robustness`). A held answer or a recorded one that
+stands is still answered, read and stamped through
+`Fs` as on POSIX. A git path holding a lone surrogate there is not
+ported (`Refused::NotPorted`).
+
+#### What the callers hand in
+
+`location_git` (`_sources_once`, `machine_config_stamps`,
+`config_unchanged` with `stamp=False`), `gitfile_rule`
+(`reads_compat`, `is_at_least`) and `origin_gitfiles` (`is_at_least`)
+each hand in:
+- one `Held` for the process, cleared where `_caches.clear_all` runs;
+- the `Place`: the state directory `resolve_state_dir` gives, the
+  working directory, the file system and the flavour;
+- the environment as `os.environ` holds it, in its order, and
+  `cs_path` (`os.confstr("CS_PATH")`, else `os.defpath`);
+- a `Git` that runs each command exactly as given, bounding each stream
+  at `limit + 1` bytes;
+- a `Clock` (`time.monotonic`, also `git_read_budget._clock`, and
+  `time.time`);
+- the `Budget` of the active `git_read_budget` scope, or `Inactive`;
+- `macos` (`sys.platform == "darwin"`) and `XCODE_SELECT_LINK`.
+
+#### Tests
+
+- `golden_gitsystem_sources` runs two fixtures, POSIX only (the ask
+  reads modes on disk):
+  - `gitsystem_sources.jsonl`: 65 cases (230 calls), 129,321 bytes;
+  - `gitsystem_sources_python.jsonl`: 2 cases (4 calls), 5,604 bytes,
+    Python-gated (a version part past `int`'s 4,300 digits).
+  Both are byte-identical under 3.11.15 and 3.13.13. Each case is a
+  sequence of calls over one held cache, with git and the clocks
+  scripted on both sides (never a real git). After each call the
+  fixture records: every command (argv, working directory, the whole
+  environment and the timeout, by index into a table of distinct
+  commands); the answer or the class raised; each clock's reads; the
+  held answers in order; and the record whenever it changed. A
+  record's entries are kept in `json.dumps` form, with the stamp shown
+  only as whether it matches the git's stamp now. PATH keys are written
+  as `K<i>` and the scratch root as `@`. The cases:
+  - a second call inside and outside each window: whole (`REASK`),
+    partial and fallback (`RETRY`), kept (`tried`), and the clock gone
+    back;
+  - `stamp=False`, with the git binary changed;
+  - git's stamp changing: rewritten, its mode changed, removed, a link
+    moved to another binary;
+  - the record written by one cache and read by a fresh one;
+  - PATH changing, coming back, unset, empty;
+  - DEVELOPER_DIR and the xcode link changing, on macOS and off it;
+  - the eight-PATH bound: which entry leaves, a held one not moved,
+    one asked again moved to the end;
+  - the record damaged, of format 4, for another key, past
+    `_MAX_BYTES`, holding entries that are not ones, holding nine
+    entries;
+  - another process recording a good answer while this one's ask
+    fails; the record rewritten and then removed while git is asked
+    (the held answer kept over the one read before);
+  - the ask raising `ReadDeadline` at each step, and ValueError at
+    each (in the Python-gated file). An OSError from `_probe_holds`
+    cannot be scripted: any change that makes it raise first changes a
+    probe stamp, and the probe then reads as unsaid. It stays covered
+    natively by unit 4's `Declined::Raised`;
+  - a timeout under an unstarted budget;
+  - `reads_compat` over every compat answer;
+  - `is_at_least` over 2.54.0, 2.45, 65535.65535.65535, 65536.0.0,
+    2.65536, a 20-digit major, 007.08.09, no version and the fallback,
+    against releases equal, below and above (2.53, 2.55, 1.99, 3.0, 0.0,
+    65535.65535, 65536.0), and again after the cache is cleared.
+- `gitsystem_sources_kills`: a child calling `sources` over three PATHs,
+  with the clock moving past each answer's life, is killed at 40 delays
+  timed from a marker (all 40 landed in the loop). A fresh cache then
+  answers each PATH as a fresh state directory does, a second call is
+  answered from the cache without asking, and nothing outside the state
+  directory changes.
+- `gitsystem_sources_robustness`:
+  - 60 random sequences of 30 calls each. PATH, DEVELOPER_DIR, the xcode
+    link and git's binary change; the cache is cleared; the clock jumps
+    both ways; git answers, fails or leaves out the version. Each key
+    names exactly one PATH, developer directory and link target. At
+    most eight distinct PATHs are held. The answer returned is the held
+    one. An answer reused without asking (and not kept after a failed
+    ask) has the git that the PATH finds now, and with `stamp` on that
+    git's stamp now. This is the serious class: a stale answer standing
+    in for a changed git, PATH or developer directory;
+  - under the Windows flavour, `sources` declines and holds nothing;
+  - the key over 2,000 against 20,000 environment variables: the larger
+    must take under 30 times the smaller plus 50 ms. A quadratic lookup
+    fails it within seconds.
+
+#### What the reference does that looks wrong (not changed)
+
+- **A kept answer stands whatever git does.** After a failed ask,
+  `_kept` returns the last good answer with `tried` set. `_current`
+  then takes it for `RETRY_SECONDS` without looking at git's stamp.
+  If the git binary on PATH is replaced, or a git first appears there,
+  within that minute, the old git's files keep being reported (the
+  robustness test exempts `tried` answers for this reason).
+- **The held answers are kept by insertion order, not by use.** A held
+  answer that is found and standing does not move. So the PATH used
+  most can be the one that leaves when an eighth other PATH is asked.
+  It is then read back from the record, which costs a file read but
+  gives no wrong answer.
+- **The lock covers neither the check nor the ask.** `_HELD` is read
+  under the lock, released, and written back under it after the ask.
+  Two threads on the same PATH can both ask git, and the later one's
+  answer wins. The record has the same race between processes, which
+  `_kept`'s re-read handles only for a failed ask.
+- **`_kept` breaks ties on `asked` by argument order.** `good` is
+  `[again, *seen]`, and `max` keeps the first of equal maxima. So:
+  - against the record read before the ask, the held answer wins a tie;
+  - a record re-read inside `_kept` (good but not standing) with an
+    equal time wins over both.
+  Which answer is kept on a tie therefore depends on whether another
+  process rewrote the record during the ask, not on which answer is
+  newer.
 
 ## A record id's text
 

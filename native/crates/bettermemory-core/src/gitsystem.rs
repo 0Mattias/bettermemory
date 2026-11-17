@@ -16,9 +16,16 @@
 //!   `_sweep_probes`, `_probe_stamps`, `_probe_children`, `_probe_holds`,
 //!   `_clear_probe`): built.
 //!
-//! The questions asked of git and `sources` itself are the next units'.
+//! - [`ask`]: the questions asked of the git on PATH (`_ask`,
+//!   `_older_system`, `_version`, `_reads_remotes`, `_probe_ask`,
+//!   `run_git`'s command shaping, `shutil.which`): built.
+//!
+//! - [`sources`]: `sources`, `reads_compat` and `is_at_least`, with the
+//!   held answers (`_HELD`) as a cache the caller owns: built. The whole
+//!   module is ported.
 
 pub mod answers;
 pub mod ask;
 pub mod probe;
 pub mod record;
+pub mod sources;

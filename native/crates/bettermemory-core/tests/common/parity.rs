@@ -260,6 +260,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `shutil.which` before 3.12 always searches the current folder
         // and keeps a PATHEXT entry's trailing dot.
         "gitsystem_which_windows_python.jsonl" => &[Python],
+        // A version part past `int`'s 4,300 digits (`gen_gitsystem_sources`).
+        "gitsystem_sources_python.jsonl" => &[Python],
         _ => &[],
     }
 }
