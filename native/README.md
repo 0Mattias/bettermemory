@@ -3206,9 +3206,10 @@ The `Fs` trait has every operation unit A needs (`stat`, `lstat`,
   the stop rule on `maybe_dies`. It is one unit: `_undecided_matters` is
   40 lines over the same `best` and `rewrites`, and cannot be checked
   without them.
-- **Unit C.** `config_unchanged`, `_stamped_read` with its cache as an
-  explicit value, `machine_config_stamps`, `machine_config_reads`,
-  `repository_config_stamps`, and `_inside`.
+- **Unit C (built, `gitconfig::stamped`).** `config_unchanged`,
+  `_stamped_read` with its two caches as a value the caller holds
+  (`StampedReads`), `machine_config_stamps` (with `reuse`),
+  `machine_config_reads`, `repository_config_stamps` and `_inside`.
 
 ### Tests
 
@@ -3361,6 +3362,114 @@ The `Fs` trait has every operation unit A needs (`stat`, `lstat`,
     - the order across remotes: git lists names sorted.
   - git rewrites push URLs by `pushInsteadOf`, which the reference does
     not key. That again means fewer keys, never a key git would not use.
+
+### Unit C, built
+
+- The caches:
+  - `_STAMPED_READS` and `_FRESH_READS` are `StampedReads`, which the
+    caller holds and passes in. There is no static and no lock: a caller
+    that shares one across threads wraps it.
+  - Both are ordered as a Python dict: a read taken again goes last, the
+    oldest goes first past 256, and a plain lookup does not move an
+    entry.
+  - The key is the file, the git directory and the home directory
+    (`gitconfig._home`).
+  - The clock (`time.monotonic`) is an input: `now` for
+    `machine_config_stamps`, and a clock read once per unread file for
+    `machine_config_reads`.
+- The reads:
+  - A kept read is used only where every file it read, its includes
+    among them, still stamps as it did. Otherwise the file is read
+    again, with no context, so an `onbranch:` or `hasconfig:` include is
+    read and stamped whatever its condition.
+  - A file is stamped before it is opened (`config_tree`). A change
+    between the two leaves a read the next call sees as changed; the
+    robustness test makes that change through a wrapper.
+  - A relative name is stated from `Inputs.cwd`, as in unit A.
+- `config_unchanged` takes the capture's `config_sources` and
+  `config_files` as arguments: the native `Capture` does not carry the
+  stamped files.
+- `_inside` is POSIX only (`posixpath.normpath`). Under the Windows
+  flavour it answers None.
+- Still not ported in `location_git.py` 259-1001:
+  - `_sources_once` and `gitsystem.sources` themselves: their answer is
+    the `Sources` input.
+  - The `_caches.register` hook and the lock.
+  - `_inside` under Windows.
+  Everything else in the range is ported across units A, B and C.
+- Golden: `location_stamped.jsonl`, POSIX only, 63 sequences in 79,064
+  bytes (`golden_location_stamped.rs`, `cfg(unix)`).
+  - Each case is a tree, then steps: stamps (with and without `reuse`),
+    reads, repo stamps, a capture and `config_unchanged`, changes, an
+    environment variable set, a clear. Each step records the stamps
+    (mode and size only), whether they equal the last ones, and the
+    cache's entries with whether each is the same read as before.
+  - Changes covered: none; a write of the same size and of another
+    size; mtime only; a replace by rename; mode; a file removed, created
+    (the XDG file), turned into a folder or a FIFO; an included file
+    changed; the repository's config against a machine file; HEAD moved,
+    under an `onbranch:` include the capture asked for and with no
+    condition asking; a legacy file added; the files git names changing
+    after a capture, and a capture that named none;
+  - a capture that named no machine file, then a file changed: an
+    include changed or removed answers changed. The common config gaining
+    a remote answers unchanged, in the reference too: `_rewrites` leaves
+    the common config out of a capture's files, because the capture's
+    signature stamps it;
+  - a mode changed and changed back (only the change time moves);
+  - the mtime of a mode-000 file set;
+  - past the bound, through 260 of the build's own files: a read
+    evicted and read again; one evicted while its fresh mark stays, then
+    `reuse`; one read again later, its mark taken anew;
+  - one file under three spellings (`./`, `//`, `x/..`), kept apart;
+  - `_stamped_read` of one file directly (`read` steps), with two git
+    directories in turn (`gitdir` steps).
+  - A `kp` of more than one entry, and any other list of more than eight,
+    is recorded as its length and an FNV-1a 64 hash of its compact JSON.
+  - The fresh window: inside it, at its end, before its start, a change
+    of size within it, a second call after the mark is spent.
+  - Also: two git directories kept apart; system and own files; a
+    relative global file; a FIFO and an unreadable global file;
+    `config.worktree` read and not read, and a format git dies reading.
+  - Every change shows whatever the clock's granularity: a write sets a
+    fixed time in 2001, a replace renames a new file over the old while
+    both exist (a new inode), and the rest change the mode, the size or
+    the kind.
+  - In memory, the tree is a model rebuilt into a `MemFs` after each
+    change, behind a test-local wrapper that delegates every `Fs` method
+    and only adds a change's times and inode to `stat`. Every change
+    moves the change time, as on disk.
+  - On disk, setting the time of a file no one may write opens its mode
+    around the write and puts it back. `os.utime` opens nothing, but the
+    change time moves either way, so the stamps compare the same.
+- Robustness (`location_stamped_robustness.rs`, ungated, no
+  `tests/common`, 512 KiB thread):
+  - 100,000 files through one cache: 256 kept, the newest last, an
+    evicted one coming back last;
+  - hostile paths (non-UTF-8, empty, relative, `..`, 64 KiB);
+  - `_inside` on its edges;
+  - a file rewritten between its stamp and its read, through `Swap`, a
+    test-local wrapper that delegates every method. Once the other
+    unit lands, both wrappers must also delegate `lstat_result` and
+    `readlink_result`.
+- Mutations: 25 made, 25 caught. The four added after review: a capture
+  with no sources answered unchanged without stamping, the fresh mark
+  kept from the first read, the key normalized, and the marks restarting
+  at a clear. The first three are caught by the fixture alone.
+- `clear` keeps the marks counting, so a read taken after a clear never
+  carries an earlier read's mark (a native test). The marks are the
+  port's own, so no answer compared with the reference changes.
+- Of the first 21 mutations, six first survived and were given
+  cases:
+  - the fresh window closed at its end;
+  - the fresh window open below zero;
+  - 255 kept;
+  - the sources of `config_unchanged` not compared;
+  - its empty sources compared;
+  - `config.worktree` read where git dies reading the format.
+  The asked ones are among the 21: a hit that skips the stamp, the key
+  without the git directory, `reuse` ignored, an included file not
+  compared, the stamps' order, and `_inside` without its separator.
 ## A record id's text
 
 `store::mint` is `models.generate_ulid` (`models.py:56-64`) with its clock

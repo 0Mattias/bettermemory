@@ -17,7 +17,8 @@
 //! - [`paths`] and [`tree`]: a file and its plain includes;
 //! - [`legacy`]: the stamps and the legacy remote files;
 //! - [`remotes`]: the config files a checkout reads for its remotes;
-//! - [`spellings`]: its remote URLs as git rewrites them, and their keys.
+//! - [`spellings`]: its remote URLs as git rewrites them, and their keys;
+//! - [`stamped`]: the stamped reads a kept answer about them is reused by.
 //!
 //! Includes, files, the 2 MiB bound ([`FORMAT_LIMIT`], applied by the
 //! readers of files, not by the parser) and the worded reasons a caller
@@ -32,6 +33,7 @@ pub mod paths;
 pub mod remote_rules;
 pub mod remotes;
 pub mod spellings;
+pub mod stamped;
 pub mod tree;
 pub mod wildmatch;
 
