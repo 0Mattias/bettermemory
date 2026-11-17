@@ -286,6 +286,8 @@ def _answer(
         real = os.getcwd()
         for rel, target in tree.links.items():
             os.symlink(target.replace("<root>", real), Path(real) / rel)
+        for rel, existing in tree.hard.items():
+            os.link(Path(real) / existing, Path(real) / rel)
         for rel in tree.fifos:
             os.mkfifo(Path(real) / rel)  # type: ignore[attr-defined,unused-ignore]
             os.chmod(Path(real) / rel, 0o644)

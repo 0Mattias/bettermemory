@@ -90,6 +90,12 @@ impl Fs for Counting {
     ) -> Result<bettermemory_core::fsdata::StatResult, bettermemory_core::fsdata::OsError> {
         self.inner.stat(path)
     }
+    fn lstat_result(
+        &self,
+        path: &[u8],
+    ) -> Result<bettermemory_core::fsdata::StatResult, bettermemory_core::fsdata::OsError> {
+        self.inner.lstat_result(path)
+    }
     fn listdir(&self, path: &[u8]) -> Result<Vec<Vec<u8>>, bettermemory_core::fsdata::OsError> {
         self.inner.listdir(path)
     }
@@ -220,6 +226,12 @@ impl Fs for Failing {
             errno: None,
             winerror: None,
         })
+    }
+    fn lstat_result(
+        &self,
+        path: &[u8],
+    ) -> Result<bettermemory_core::fsdata::StatResult, bettermemory_core::fsdata::OsError> {
+        self.stat(path)
     }
     fn listdir(&self, _: &[u8]) -> Result<Vec<Vec<u8>>, bettermemory_core::fsdata::OsError> {
         Err(bettermemory_core::fsdata::OsError {

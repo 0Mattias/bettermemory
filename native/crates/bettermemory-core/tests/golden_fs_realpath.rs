@@ -2,13 +2,19 @@
 //! `fs_realpath_python.jsonl` (class ii, Python: trees holding a link
 //! loop), POSIX only: `os.path.realpath` and `os.path.abspath` against
 //! `fsdata::realpath` over the case's tree in memory (`MemFs`), and again
-//! over the same tree written to a scratch directory (`StdFs`).
+//! over the same tree written to a scratch directory (`StdFs`). And
+//! `fs_realpath_strict.jsonl` (class i) and `fs_realpath_strict_python.jsonl`
+//! (class ii, Python: by the query's shape, `gen_fs_realpath.strict_gated`)
+//! against `realpath_strict`, the same two ways, the on-disk answers also
+//! asked of the reference Python live.
 
 #![cfg(unix)]
 
 mod common;
 
-use bettermemory_core::fsdata::realpath::{abspath, realpath, Unresolved};
+use bettermemory_core::fsdata::realpath::{
+    abspath, realpath, realpath_strict, StrictUnresolved, Unresolved,
+};
 use bettermemory_core::fsdata::{Flavour, Fs, MemFs, Node, PyErr, StdFs};
 use common::jsonl;
 use common::parity::Ledger;
@@ -16,6 +22,8 @@ use serde_json::{json, Value};
 
 const PLAIN: &str = "fs_realpath.jsonl";
 const LOOPS: &str = "fs_realpath_python.jsonl";
+const STRICT: &str = "fs_realpath_strict.jsonl";
+const STRICT_GATED: &str = "fs_realpath_strict_python.jsonl";
 /// The case's directory in memory.
 const MEM_ROOT: &str = "/<scratch>";
 
@@ -87,6 +95,15 @@ fn answers<F: Fs>(fs: &F, case: &Value, root: &str) -> Value {
             .map(|q| {
                 let query = unspelled(q["p"].as_str().unwrap());
                 let path = replaced(&query, b"<root>", root.as_bytes());
+                if q.get("s").is_some() {
+                    return json!({
+                        "p": q["p"],
+                        "s": strict_label(
+                            realpath_strict(fs, Flavour::Posix, &path, root.as_bytes()),
+                            root,
+                        ),
+                    });
+                }
                 json!({
                     "p": q["p"],
                     "r": label(realpath(fs, Flavour::Posix, &path, root.as_bytes())),
@@ -95,6 +112,48 @@ fn answers<F: Fs>(fs: &F, case: &Value, root: &str) -> Value {
             })
             .collect(),
     )
+}
+
+fn strict_label(answer: Result<Vec<u8>, StrictUnresolved>, root: &str) -> Value {
+    match answer {
+        Ok(path) => json!(b(&replaced(&path, root.as_bytes(), b"<scratch>"))),
+        Err(StrictUnresolved::Raised(e)) => match e.errno {
+            Some(n) => json!({"e": e.class.name(), "n": n}),
+            None => json!({"e": e.class.name()}),
+        },
+        Err(other) => json!({"native": format!("{other:?}")}),
+    }
+}
+
+/// The reference Python's strict `realpath` of `paths` (cwd `root`):
+/// the path, or `[class, errno name]`.
+fn reference_strict(python: &std::path::Path, root: &str, paths: &[String]) -> Vec<Value> {
+    let script = "import errno, json, os, sys\n\
+        os.chdir(sys.argv[1])\n\
+        out = []\n\
+        for p in sys.argv[2:]:\n\
+        \x20   try:\n\
+        \x20       out.append(os.path.realpath(p, strict=True))\n\
+        \x20   except OSError as e:\n\
+        \x20       out.append([type(e).__name__, errno.errorcode.get(e.errno)])\n\
+        print(json.dumps(out))\n";
+    let mut cmd = std::process::Command::new(python);
+    cmd.env_clear()
+        .arg("-I")
+        .arg("-c")
+        .arg(script)
+        .arg(root)
+        .args(paths);
+    if let Some(p) = std::env::var_os("PATH") {
+        cmd.env("PATH", p);
+    }
+    let out = cmd.output().expect("the reference runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice::<Vec<Value>>(&out.stdout).expect("JSON")
 }
 
 fn world(case: &Value) -> MemFs {
@@ -238,6 +297,7 @@ fn on_disk(test: &str, file: &str) {
     let ledger = Ledger::new(test, file);
     let base = Scratch(fresh_dir("bm-fsreal"));
     refuse_root(&base.0);
+    let live = live_reference(test, file);
     let mut failures = Vec::new();
     for (i, case) in cases.iter().enumerate() {
         let dir = base.0.join(i.to_string());
@@ -246,13 +306,59 @@ fn on_disk(test: &str, file: &str) {
             failures.push(format!("#{i}: mkfifo could not run"));
             continue;
         }
-        let got = answers(&StdFs, case, dir.to_str().unwrap());
+        let root = dir.to_str().unwrap();
+        let got = answers(&StdFs, case, root);
         if got != case["q"] {
             failures.push(format!("#{i}: native {got} reference {}", case["q"]));
+        }
+        if let Some(Ok(python)) = &live {
+            let paths: Vec<String> = case["q"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|q| unspelled(q["p"].as_str().unwrap()))
+                .filter(|p| std::str::from_utf8(p).is_ok() && !p.contains(&0))
+                .map(|p| String::from_utf8(p).unwrap().replace("<root>", root))
+                .collect();
+            let theirs = reference_strict(python, root, &paths);
+            for (path, want) in paths.iter().zip(theirs) {
+                let mine =
+                    match realpath_strict(&StdFs, Flavour::Posix, path.as_bytes(), root.as_bytes())
+                    {
+                        Ok(p) => json!(String::from_utf8(p).unwrap()),
+                        Err(StrictUnresolved::Raised(e)) => json!([e.class.name(), e.errno]),
+                        Err(other) => json!(format!("{other:?}")),
+                    };
+                if mine != want {
+                    failures.push(format!("#{i} {path}: native {mine} reference {want}"));
+                }
+            }
         }
     }
     drop(base);
     ledger.settle(cases.len(), &failures);
+}
+
+/// The live reference for a strict file: asked where `BM_REFERENCE_PYTHON`
+/// is set (and of this file's Python release), recorded NOT RUN where not.
+fn live_reference(test: &str, file: &str) -> Option<Result<std::path::PathBuf, String>> {
+    if file != STRICT {
+        return None;
+    }
+    let python = common::created::reference_python();
+    if let Err(why) = &python {
+        let test = format!("{test}_reference");
+        eprintln!("NOT RUN {test}: the live reference not asked: {why}");
+        common::parity::record(
+            &test,
+            "reference Python",
+            "i",
+            0,
+            std::slice::from_ref(&test),
+            std::slice::from_ref(why),
+        );
+    }
+    Some(python)
 }
 
 #[test]
@@ -263,4 +369,24 @@ fn fs_realpath_every_case_on_disk() {
 #[test]
 fn fs_realpath_loops_on_disk() {
     on_disk("golden_fs_realpath_loops_stdfs", LOOPS);
+}
+
+#[test]
+fn fs_realpath_strict_in_memory() {
+    in_memory("golden_fs_realpath_strict", STRICT);
+}
+
+#[test]
+fn fs_realpath_strict_gated_in_memory() {
+    in_memory("golden_fs_realpath_strict_gated", STRICT_GATED);
+}
+
+#[test]
+fn fs_realpath_strict_on_disk() {
+    on_disk("golden_fs_realpath_strict_stdfs", STRICT);
+}
+
+#[test]
+fn fs_realpath_strict_gated_on_disk() {
+    on_disk("golden_fs_realpath_strict_gated_stdfs", STRICT_GATED);
 }

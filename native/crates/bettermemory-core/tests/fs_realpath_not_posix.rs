@@ -14,6 +14,19 @@ fn the_posix_realpath_fixtures_have_no_case_here() {
         ("golden_fs_realpath_stdfs", "fs_realpath.jsonl"),
         ("golden_fs_realpath_loops", "fs_realpath_python.jsonl"),
         ("golden_fs_realpath_loops_stdfs", "fs_realpath_python.jsonl"),
+        ("golden_fs_realpath_strict", "fs_realpath_strict.jsonl"),
+        (
+            "golden_fs_realpath_strict_stdfs",
+            "fs_realpath_strict.jsonl",
+        ),
+        (
+            "golden_fs_realpath_strict_gated",
+            "fs_realpath_strict_python.jsonl",
+        ),
+        (
+            "golden_fs_realpath_strict_gated_stdfs",
+            "fs_realpath_strict_python.jsonl",
+        ),
     ] {
         common::parity::record(
             test,

@@ -127,6 +127,12 @@ impl Fs for Failing {
             winerror: None,
         })
     }
+    fn lstat_result(
+        &self,
+        path: &[u8],
+    ) -> Result<bettermemory_core::fsdata::StatResult, bettermemory_core::fsdata::OsError> {
+        self.stat(path)
+    }
     fn listdir(&self, _: &[u8]) -> Result<Vec<Vec<u8>>, bettermemory_core::fsdata::OsError> {
         Err(bettermemory_core::fsdata::OsError {
             class: self.0,

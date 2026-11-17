@@ -1,5 +1,9 @@
 """Fixtures: `os.path.realpath` and `os.path.abspath` of paths in real trees
-(``fs_realpath.jsonl``, ``fs_realpath_python.jsonl``).
+(``fs_realpath.jsonl``, ``fs_realpath_python.jsonl``), and
+`os.path.realpath(p, strict=True)` of the same trees
+(``fs_realpath_strict.jsonl``, ``fs_realpath_strict_python.jsonl``: ``s``
+the answer, spelled as ``r``, or the error's class and errno name; a query
+goes in the Python-gated file by its input, `strict_gated`).
 
 The native build reads paths through a file-system trait
 (``native/crates/bettermemory-core/src/fsdata.rs``) and resolves them with
@@ -77,6 +81,7 @@ class Tree:
         fifos: tuple[str, ...] = (),
         modes: dict[str, int] | None = None,
         loop: bool = False,
+        hard: dict[str, str] | None = None,
     ) -> None:
         self.queries = queries
         self.files = files or {}
@@ -84,6 +89,8 @@ class Tree:
         self.links = links or {}
         self.fifos = fifos
         self.modes = modes or {}
+        #: Hard links: a new name to an existing file (`gen_fs_samestat`).
+        self.hard = hard or {}
         #: The tree holds a link loop (declared, not observed).
         self.loop = loop
 
@@ -94,6 +101,7 @@ class Tree:
             ("l", dict(self.links)),
             ("p", list(self.fifos)),
             ("m", {k: f"{v:03o}" for k, v in self.modes.items()}),
+            ("h", dict(self.hard)),
         ):
             if value:
                 out[key] = value
@@ -249,7 +257,7 @@ def _trees() -> Iterator[Tree]:
     )
 
 
-def _answer(tree: Tree, root: Path) -> list[dict[str, Any]]:
+def _answer(tree: Tree, root: Path, *, strict: bool = False) -> list[dict[str, Any]]:
     for d in tree.dirs:
         (root / d).mkdir(parents=True, exist_ok=True)
     for rel, text in tree.files.items():
@@ -270,12 +278,20 @@ def _answer(tree: Tree, root: Path) -> list[dict[str, Any]]:
         for rel in reversed(by_depth):
             os.chmod(Path(real) / rel, tree.modes[rel])
         try:
+            if strict:
+                return [_strict_query(q, real, tree.links) for q in tree.queries]
             return [_query(q, real, tree.links) for q in tree.queries]
         finally:
             for rel in by_depth:
                 os.chmod(Path(real) / rel, 0o700)
     finally:
         os.chdir(saved)
+
+
+def _strict_query(query: str, real: str, links: dict[str, str]) -> dict[str, Any]:
+    path = query.replace("<root>", real)
+    check_length(path, links, real)
+    return {"p": _b(query.encode("utf-8", "surrogateescape")), "s": _strict(path, real)}
 
 
 def refuse_root() -> None:
@@ -362,6 +378,83 @@ def _query(query: str, real: str, links: dict[str, str]) -> dict[str, Any]:
         except (OSError, ValueError) as exc:
             out[key] = {"raised": type(exc).__name__}
     return out
+
+
+def strict_gated(query: str, tree: Tree) -> bool:
+    """Whether a strict query goes in the Python-gated file, by its input:
+    a tree holding a loop, or a query or link target with an empty, ``.``
+    or ``..`` part after its first. 3.13's strict walk raises ENOTDIR at
+    a non-directory with any part after it, those included; 3.11's asks
+    the OS, which never sees such a part (``f/..`` resolves there)."""
+    if tree.loop:
+        return True
+    for text in [query, *tree.links.values()]:
+        parts = text.split("/")
+        if any(p in ("", ".", "..") for p in parts[1:]) or parts[0] in (".", ".."):
+            return True
+        if text in ("", "."):
+            return True
+    return False
+
+
+def _strict(path: str, real: str) -> Any:
+    from .gen_fs_stat import _error
+
+    try:
+        answer = os.path.realpath(path, strict=True)
+    except (OSError, ValueError) as exc:
+        return _error(exc)
+    return _b(answer.replace(real, "<scratch>").encode("utf-8", "surrogateescape"))
+
+
+def _strict_trees() -> Iterator[Tree]:
+    """Every tree of the non-strict fixture, then cases asked strictly
+    alone: a file, and a link to one, followed by ``/.`` (3.13 raises
+    ENOTDIR there itself; 3.11 asks the OS, which never sees the ``.``)."""
+    yield from _trees()
+    yield Tree(
+        ["<root>/f/.", "<root>/lf/.", "<root>/f/./."],
+        files={"f": "x"},
+        links={"lf": "f"},
+    )
+
+
+def _strict_lines(gated: bool) -> list[dict[str, Any]]:
+    refuse_root()
+    lines: list[dict[str, Any]] = []
+    with _sandbox.world() as world:
+        base = world.root / "fs-realpath-strict"
+        for i, tree in enumerate(_strict_trees()):
+            queries = [q for q in tree.queries if strict_gated(q, tree) == gated]
+            if not queries:
+                continue
+            root = base / str(i)
+            root.mkdir(parents=True)
+            asked = Tree(
+                queries,
+                files=tree.files,
+                dirs=tree.dirs,
+                links=tree.links,
+                fifos=tree.fifos,
+                modes=tree.modes,
+                loop=tree.loop,
+            )
+            answers = _answer(asked, root, strict=True)
+            shutil.rmtree(root)
+            lines.append({**asked.record(), "q": answers})
+    return lines
+
+
+def generate_strict() -> dict[str, bytes]:
+    lines = _strict_lines(gated=False)
+    header = {"fixture": "fs_realpath_strict", "cases": len(lines)}
+    return {"fs_realpath_strict.jsonl": jsonl([header, *lines])}
+
+
+def generate_strict_python() -> dict[str, bytes]:
+    lines = _strict_lines(gated=True)
+    header = {"fixture": "fs_realpath_strict_python", "cases": len(lines)}
+    return {"fs_realpath_strict_python.jsonl": jsonl([header, *lines])}
 
 
 def _lines(loop: bool) -> list[dict[str, Any]]:

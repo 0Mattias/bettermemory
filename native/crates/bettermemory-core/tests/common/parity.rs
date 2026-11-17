@@ -215,6 +215,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "models_rows.jsonl" => &[Python, Pydantic],
         // 3.11's realpath walks a link loop otherwise (`gen_fs_realpath`).
         "fs_realpath_python.jsonl" => &[Python],
+        // 3.11's strict walk asks the OS where 3.13's raises ENOTDIR at a
+        // non-directory followed by `.`, `..` or a separator.
+        "fs_realpath_strict_python.jsonl" => &[Python],
         // A link loop's class name is read as 3.11 and 3.13 read it, but
         // trees holding one are gated by the standing rule.
         "gitconfig_legacy_python.jsonl" => &[Python],

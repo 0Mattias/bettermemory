@@ -5129,27 +5129,152 @@ Windows' `os` has no `O_NOFOLLOW` and no `O_NONBLOCK` (the reference's
 Parts 7 (the stat bits) and 8 (`expanduser`) are not needed by these two
 and stay designed, as above.
 
-### Can unit 2 of `gitfile_rule` be built now? No
+### Part 4 (fsx4), built: the stat bits, `st_dev`, strict `realpath`
 
-Unit 2 (1062-1287, 130-144, 908-982) still needs, beyond this trait:
-- **the stat bits (part 7):** `_placeholder` reads `st_flags`
-  (`SF_DATALESS`, macOS) and `st_file_attributes` (Windows recall) of an
-  `lstat` (`_valid_headref`) and a `stat` (`_entry_names`, unit 4);
-  `_is_link` reads `st_reparse_tag` (Windows junctions);
-- **`st_dev`:** `samestat` (`_names_here`, `_names_folder`,
-  `_same_folder`) compares device and inode; `StatResult` has `ino` only;
-- **`realpath(strict=True)`** (`_real`, `_real_to_last`): the built
-  `realpath` is the non-strict one.
+Confirmed against `gitfile_rule.py` at 0d06240a: `_SF_DATALESS` and
+`_WINDOWS_RECALL` (75-76), `_tree_of` (972-982: `samestat` of two
+`os.stat`), `_names_here` (130-144) and `_names_folder`/`_same_folder`
+(908-934: `samestat`), `_JUNCTION_TAG` and `_is_link` (940-948: the kind
+and `st_reparse_tag` of an `lstat`), `_registered` (1035-1046:
+`samefile`), `_placeholder` (1062-1070: `st_flags` and
+`st_file_attributes` of a `stat` (895) or an `lstat` (1189)), `_real` and
+`_real_to_last` (1137-1164: `realpath(strict=True)`, ENOENT told apart by
+class and errno through `path_missing`).
 
-So the next unit is part 7 with `st_dev` in `StatResult` and a strict
-`realpath`, then unit 2. Which trait operations each unit uses:
+- **`StatResult` gains fields; no existing field changes meaning.** New:
+  `dev` (`st_dev`), `flags` (`getattr(st, "st_flags", 0)`),
+  `file_attributes` (`getattr(st, "st_file_attributes", 0)`) and
+  `reparse_tag` (`getattr(st, "st_reparse_tag", 0)`; None on Windows,
+  not ported). A caller that builds a `StatResult` literal must add
+  them; one that reads it is unchanged. `StatResult::placeholder()` is
+  `_placeholder`, `StatResult::is_link()` is `_is_link` (None on Windows
+  for a non-link, where the tag is not ported).
+- **`Fs::lstat_result(path) -> Result<StatResult, OsError>`**: `os.lstat`
+  in full, beside `Fs::lstat` (the kind), whose callers are unchanged.
+- **`fsdata::samestat(a, b) -> Option<bool>`** (device and inode) and
+  **`fsdata::samefile(fs, a, b) -> Result<Option<bool>, OsError>`**:
+  None where either side's device or inode is not ported.
+- **`realpath::realpath_strict(fs, flavour, path, cwd) ->
+  Result<Vec<u8>, StrictUnresolved>`**, 3.13.13's `posixpath.realpath(
+  strict=True)`: the same walk, raising every OSError of an `lstat` or a
+  `readlink` (FileNotFoundError ENOENT for a missing component, the
+  final one or a middle one; PermissionError EACCES through a folder that
+  cannot be searched); the `os.stat` of a link still being resolved (a
+  loop: OSError ELOOP); and NotADirectoryError ENOTDIR, raised by
+  `realpath` itself, at a component that is neither a folder nor a link
+  with any part after it, `.`, `..` and a trailing separator included.
+  The error is an `OsError` with the errno's name (and, on Windows, the
+  code). The Windows flavour answers `NotPorted`.
+- **Where each value comes from.** On unix `dev` and `ino` from
+  `MetadataExt`; `flags` from `std::os::macos::fs::MetadataExt::st_flags`
+  on macOS and 0 on other unix (Linux's `stat_result` has no `st_flags`;
+  the other BSDs, which have one, are not ported). On Windows
+  `file_attributes` from `MetadataExt::file_attributes` (read, not run);
+  `dev`, `ino` and `reparse_tag` are None: the volume serial and file
+  index are only on nightly std, and the reparse tag needs a call std does
+  not make, so they are typed refusals, not guesses. No `unsafe` was
+  needed: nothing was added to `bettermemory-sys`.
+- **`MemFs`** gains `flags` (`set_flags`) and `mounts` (`mount`): a
+  path's device is that of the longest mount above it (else 0), and its
+  inode number is made from its path below that mount, so two devices can
+  hold one inode number, as on a real host.
+- **`Fs::readlink_result(path) -> Result<Vec<u8>, OsError>`**: `readlink`
+  with the errno (EINVAL for a path that is no link). Its default wraps
+  `readlink`'s class alone, so every other implementor still compiles;
+  `StdFs` and `MemFs` carry the errno. The strict walk raises it, so an
+  entry that stops being a link between `lstat` and `readlink` raises
+  ENOENT with its errno, as Python does, and `_real` can tell it apart
+  (`a_readlink_failing_after_lstat_keeps_its_errno`).
+- **A mount at the root** (`MemFs::mount(b"/", dev)`) covers every path
+  below it; a deeper mount still wins below its folder
+  (`a_mount_at_the_root_covers_everything`).
+- **A link's own mode in `MemFs`** is 0o777 (`lstat_result` of a link
+  gives `0o120777`), where macOS's `lstat` gives `0o120755` and Linux's
+  `0o120777`. No reader looks at a link's mode today; a future caller
+  must not.
+- **`realpath` of a relative path and the working directory.**
+  `os.path.realpath` of a relative path calls `os.getcwd()`, which raises
+  PermissionError where an ancestor of the working directory cannot be
+  searched. The native walks take the working directory as an input, so
+  a native caller must reproduce that error itself before resolving.
+- **`expanduser` (part 8)** is not needed by unit 2: `gitfile_rule.py`
+  calls none. It stays designed.
+
+### Can unit 2 of `gitfile_rule` be built now? On POSIX, yes
+
+Unit 2 can now be built on POSIX with no further trait work. On Windows
+what stays refused is: `samestat`/`samefile` (no volume serial or file
+index, so `_tree_of`, `_registered`, `_names_here` and `_same_folder`
+decline), `_is_link` of a non-link (no reparse tag, so a junction cannot
+be told), and both `realpath`s (the `ntpath` walk is not ported). Which
+trait operations each unit uses, as the trait now stands:
 
 | Unit | Trait operations |
 |---|---|
-| 2: git's reading of a git directory, identity helpers | `open_no_follow`, `open`, `fstat`, `read` (`_read`); `lstat` with the stat bits, `readlink` (`_valid_headref`); `stat` with `st_dev`/`ino` (`_names_here`, `_names_folder`, `_same_folder`); `realpath` strict and not (`_real`, `_real_to_last`, `_tree_of`); `access(EXECUTE)` (`_git_found`); `listdir` (`_working_tree_of`'s `scandir`, names only); `lstat` with the reparse tag (`_is_link`) |
-| 3: the format, the trust of a `commondir` | `gitconfig::file::read_git_config` (its `open`, `fstat`, `read`, `access(READ)`); `open`/`read` (`_commondir`'s blocking `open()`); `stat` (`isdir`, `samefile` with `st_dev`); `lstat` (`lexists`); `realpath` |
-| 4: records and the follow | `lstat`, `stat` with the stat bits (`_entry_names`, `_placeholder`); `open`, `read` (`.git` file); `realpath`; unit 1's bounded reads |
-| 5: judge and discovery | `lstat`, `stat` (`lexists`, `_is_link`, `_same_folder`); `realpath`; everything of units 2-4 |
+| 2: git's reading of a git directory, identity helpers | `open_no_follow`, `open`, `fstat`, `read` (`_read`); `lstat` (`_is_directory`), `lstat_result` with `placeholder()`, `readlink` (`_valid_headref`); `stat` and `samestat` (`_names_here`, `_names_folder`, `_same_folder`, `_tree_of`); `realpath_strict` (`_real`, `_real_to_last`) and `realpath` (`_tree_of`); `access(EXECUTE)` (`_git_found`); `listdir` (`_working_tree_of`'s `scandir`, names only); `lstat_result` with `is_link()` (`_is_link`) |
+| 3: the format, the trust of a `commondir` | `gitconfig::file::read_git_config` (its `open`, `fstat`, `read`, `access(READ)`); `open`/`read` (`_commondir`'s blocking `open()`); `stat` (`isdir`), `samefile` (`_registered`); `lstat` (`lexists`); `realpath` |
+| 4: records and the follow | `lstat_result` with `is_link()`, `stat` with `placeholder()` and `samestat` (`_entry_names`); `open`, `read` (the `.git` file); `realpath`; unit 1's bounded reads |
+| 5: judge and discovery | `lstat_result` with `is_link()` (`_is_link`), `stat` and `samestat` (`_same_folder`), `lstat` (`lexists`); `realpath`; everything of units 2-4 |
+
+### Tests (part 4)
+
+- Fixtures, POSIX only (11 KB added):
+  - `fs_realpath_strict.jsonl` (class i) and
+    `fs_realpath_strict_python.jsonl` (class ii, Python): every tree of
+    the non-strict fixture, strictly, and a file and a link to one
+    followed by `/.` (strict alone; in the gated file by shape). New files, so the non-strict ones
+    keep their bytes. A query goes to the gated file by its input
+    (`gen_fs_realpath.strict_gated`): a loop tree, or a query or link
+    target with an empty, `.` or `..` part after its first, since 3.11's
+    strict walk asks the OS where 3.13's raises ENOTDIR itself. Generated
+    under 3.11, the ungated file is byte-identical and the gated one
+    differs.
+  - `fs_samestat.jsonl` (class i): `samefile` of 20 pairs (one name
+    twice, `./`, a hard link, a link, a link to a link, equal content, a
+    file and its folder, a folder and a link to it with and without a
+    trailing slash, missing and dangling on either side, through a
+    mode-000 folder, a FIFO and a link to it, a NUL), and for each path
+    the reference's own `_placeholder` of `stat` and `lstat` and
+    `_is_link` of `lstat`. No device, inode, flag or attribute value is
+    recorded. A dataless file (set by a file provider, never a user), the
+    recall attributes and a junction cannot be made here: those are held
+    to the reference by reading only.
+- `golden_fs_realpath.rs`: the strict files in memory and on disk; the
+  on-disk ungated file is also asked of the reference Python live (NOT
+  RUN, recorded as `golden_fs_realpath_strict_stdfs_reference`, without
+  `BM_REFERENCE_PYTHON`).
+- `golden_fs_stat.rs`: `fs_samestat.jsonl` in memory and on disk; on disk
+  the pairs, and `<scratch>`/`/`, `/`/`/dev` and `/dev`/`/dev/.` (across a
+  mount where the host has one, never assumed), are asked of the
+  reference live (NOT RUN as `golden_fs_samestat_stdfs_reference`).
+- `fs_identity_robustness.rs`: hostile paths through `realpath_strict`,
+  `lstat_result` and `samefile` on a 512 KiB thread in debug (a 2,001-link
+  chain, a loop, paths at and past the limit); devices and inodes apart
+  (`samestat_compares_device_and_inode`); a placeholder by its flag and
+  `lstat` not following; and on macOS `the_flags_are_st_flags`, which
+  sets `UF_HIDDEN` with `chflags hidden` and reads it from `st_flags`.
+- Mutations checked before hand-back, each caught:
+  - strict behaving as non-strict: the four strict golden tests,
+    `hostile_paths_answer_typed_on_a_small_stack`;
+  - the ENOTDIR check skipped where the next part is `.` (the review's;
+    nothing caught it until `<root>/f/.`, `<root>/lf/.` and
+    `<root>/f/./.` were added): both `fs_realpath_strict_gated` tests;
+  - `samestat` comparing the inode only:
+    `samestat_compares_device_and_inode` (no fixture can hold two devices
+    with one inode number, so the case was added there);
+  - comparing the device only: both `fs_samestat` golden tests and
+    `samestat_compares_device_and_inode`;
+  - `lstat_result` following the link (`MemFs` and `StdFs`): the strict
+    and `fs_samestat` golden tests,
+    `a_placeholder_by_its_flag_and_lstat_not_following`,
+    `the_flags_are_st_flags`, the robustness test;
+  - the dataless bit read from the wrong field (`st_mode` for `st_flags`,
+    `file_attributes` for `flags`): `the_flags_are_st_flags`,
+    `a_placeholder_by_its_flag_and_lstat_not_following`.
+- Compiled only on Windows, so never built here: `attributes_of` and the
+  `not(unix)` `stat_of`; compiled only off macOS unix (Linux), so never
+  built here either: the zero `st_flags`; and `not(any(unix, windows))`
+  `attributes_of`.
 
 ### Test doubles that answer with a constant
 

@@ -38,3 +38,17 @@ fn the_posix_access_fixture_has_no_case_here() {
         );
     }
 }
+
+#[test]
+fn the_posix_samestat_fixture_has_no_case_here() {
+    for test in ["golden_fs_samestat", "golden_fs_samestat_stdfs"] {
+        common::parity::record(
+            test,
+            "fs_samestat.jsonl",
+            "os",
+            0,
+            &["every case of the fixture".to_owned()],
+            &["POSIX trees; Windows device and inode are not ported".to_owned()],
+        );
+    }
+}

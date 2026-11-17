@@ -141,20 +141,78 @@ pub struct Stat {
     pub size: u64,
 }
 
-/// What `os.stat` (links followed) answers: the fields
-/// `gitconfig.file_stamp` reads. `ino`, `mode` and `ctime_ns` are None
-/// where they are not ported (Windows: `st_ino` is the file index, which
-/// the standard library does not give safely, and CPython makes `st_mode`
-/// and `st_ctime` up from attributes); a caller declines there.
+/// What `os.stat` (links followed) or `os.lstat` answers: the fields
+/// `gitconfig.file_stamp` reads, and those `gitfile_rule` reads
+/// (`samestat`'s device and inode, `_placeholder`'s flags and attributes,
+/// `_is_link`'s reparse tag). `ino`, `dev`, `mode`, `ctime_ns` and
+/// `reparse_tag` are None where they are not ported (Windows: `st_ino`
+/// and `st_dev` are the file index and the volume serial, which the
+/// standard library gives only on nightly; CPython makes `st_mode` and
+/// `st_ctime` up from attributes; the reparse tag needs a call std does
+/// not make); a caller declines there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatResult {
     pub kind: Kind,
     /// `st_mode`: the type bits and the permission bits.
     pub mode: Option<u32>,
     pub ino: Option<u64>,
+    /// `st_dev`.
+    pub dev: Option<u64>,
     pub size: u64,
     pub mtime_ns: i128,
     pub ctime_ns: Option<i128>,
+    /// `getattr(st, "st_flags", 0)`: the BSD file flags on macOS, 0 where
+    /// `os.stat_result` has no `st_flags` (Linux, Windows).
+    pub flags: u32,
+    /// `getattr(st, "st_file_attributes", 0)`: Windows' attributes, 0
+    /// elsewhere.
+    pub file_attributes: u32,
+    /// `getattr(st, "st_reparse_tag", 0)`: 0 off Windows; None on Windows,
+    /// where it is not ported.
+    pub reparse_tag: Option<u32>,
+}
+
+/// `_SF_DATALESS` (`gitfile_rule.py` 75): a file provider holds the data.
+pub const SF_DATALESS: u32 = 0x4000_0000;
+/// `_WINDOWS_RECALL` (76): `FILE_ATTRIBUTE_RECALL_ON_OPEN` and
+/// `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`.
+pub const WINDOWS_RECALL: u32 = 0x0004_0000 | 0x0040_0000;
+/// `_JUNCTION_TAG` (940): `IO_REPARSE_TAG_MOUNT_POINT`.
+pub const JUNCTION_TAG: u32 = 0xA000_0003;
+
+impl StatResult {
+    /// `_placeholder(st)` (1062-1070): the dataless flag or a recall
+    /// attribute.
+    pub fn placeholder(&self) -> bool {
+        self.flags & SF_DATALESS != 0 || self.file_attributes & WINDOWS_RECALL != 0
+    }
+
+    /// `_is_link(st)` (943-948) of an `lstat` result: a symbolic link, or
+    /// a junction by its reparse tag. None where a non-link's tag is not
+    /// ported (Windows), so a junction cannot be told.
+    pub fn is_link(&self) -> Option<bool> {
+        if self.kind == Kind::Link {
+            return Some(true);
+        }
+        self.reparse_tag.map(|tag| tag == JUNCTION_TAG)
+    }
+}
+
+/// `os.path.samestat(a, b)`: the same device and inode. None where either
+/// is not ported (Windows), never a guess.
+pub fn samestat(a: &StatResult, b: &StatResult) -> Option<bool> {
+    match (a.dev, a.ino, b.dev, b.ino) {
+        (Some(ad), Some(ai), Some(bd), Some(bi)) => Some(ad == bd && ai == bi),
+        _ => None,
+    }
+}
+
+/// `os.path.samefile(a, b)`: both stated (links followed), the first
+/// error raised as it is; `Ok(None)` where `samestat` is not ported.
+pub fn samefile<F: Fs + ?Sized>(fs: &F, a: &[u8], b: &[u8]) -> Result<Option<bool>, OsError> {
+    let first = fs.stat(a)?;
+    let second = fs.stat(b)?;
+    Ok(samestat(&first, &second))
 }
 
 /// The type bits of `st_mode` for a kind (`stat.S_IF*`).
@@ -249,8 +307,21 @@ pub trait Fs {
     /// `os.readlink(path)`: a symbolic link's target as stored. A path
     /// that is no link raises OSError (EINVAL).
     fn readlink(&self, path: &[u8]) -> Result<Vec<u8>, PyErr>;
+    /// `os.readlink(path)` with the error's errno (EINVAL for a path that
+    /// is no link). By default the class alone, from [`Fs::readlink`];
+    /// `StdFs` and `MemFs` carry the errno.
+    fn readlink_result(&self, path: &[u8]) -> Result<Vec<u8>, OsError> {
+        self.readlink(path).map_err(|class| OsError {
+            class,
+            errno: None,
+            winerror: None,
+        })
+    }
     /// `os.stat(path)`: links followed.
     fn stat(&self, path: &[u8]) -> Result<StatResult, OsError>;
+    /// `os.lstat(path)` in full: a final link is described itself. The
+    /// kind alone is [`Fs::lstat`].
+    fn lstat_result(&self, path: &[u8]) -> Result<StatResult, OsError>;
     /// `os.listdir(path)`: the names in the folder (links followed), `.`
     /// and `..` left out, in the OS's order (a caller sorts).
     fn listdir(&self, path: &[u8]) -> Result<Vec<Vec<u8>>, OsError>;
@@ -482,9 +553,25 @@ impl Fs for StdFs {
         link_bytes(target)
     }
 
+    fn readlink_result(&self, path: &[u8]) -> Result<Vec<u8>, OsError> {
+        let path = native_path(path).map_err(|_| OsError::value())?;
+        let target = std::fs::read_link(path).map_err(|e| os_error(&e))?;
+        link_bytes(target).map_err(|class| OsError {
+            class,
+            errno: None,
+            winerror: None,
+        })
+    }
+
     fn stat(&self, path: &[u8]) -> Result<StatResult, OsError> {
         let path = native_path(path).map_err(|_| OsError::value())?;
         let meta = std::fs::metadata(path).map_err(|e| os_error(&e))?;
+        Ok(stat_of(&meta))
+    }
+
+    fn lstat_result(&self, path: &[u8]) -> Result<StatResult, OsError> {
+        let path = native_path(path).map_err(|_| OsError::value())?;
+        let meta = std::fs::symlink_metadata(path).map_err(|e| os_error(&e))?;
         Ok(stat_of(&meta))
     }
 
@@ -540,10 +627,29 @@ fn stat_of(meta: &std::fs::Metadata) -> StatResult {
         kind: kind_of(meta.file_type()),
         mode: Some(meta.mode()),
         ino: Some(meta.ino()),
+        dev: Some(meta.dev()),
         size: meta.size(),
         mtime_ns: ns(meta.mtime(), meta.mtime_nsec()),
         ctime_ns: Some(ns(meta.ctime(), meta.ctime_nsec())),
+        flags: st_flags(meta),
+        file_attributes: 0,
+        reparse_tag: Some(0),
     }
+}
+
+/// macOS's `st_flags`.
+#[cfg(target_os = "macos")]
+fn st_flags(meta: &std::fs::Metadata) -> u32 {
+    use std::os::macos::fs::MetadataExt;
+    meta.st_flags()
+}
+
+/// Linux and other unix: CPython's `stat_result` has `st_flags` only on
+/// the BSDs and macOS; Linux has none (0). The other BSDs are not ported
+/// (0 here, where CPython would answer the flags).
+#[cfg(all(unix, not(target_os = "macos")))]
+fn st_flags(_: &std::fs::Metadata) -> u32 {
+    0
 }
 
 /// Windows: the kind, size and modification time; `st_ino`, `st_mode` and
@@ -559,10 +665,28 @@ fn stat_of(meta: &std::fs::Metadata) -> StatResult {
         kind: kind_of(meta.file_type()),
         mode: None,
         ino: None,
+        dev: None,
         size: meta.len(),
         mtime_ns,
         ctime_ns: None,
+        flags: 0,
+        file_attributes: attributes_of(meta),
+        reparse_tag: None,
     }
+}
+
+/// Windows' `st_file_attributes`, as `GetFileAttributesEx` gives them
+/// (read, not run here).
+#[cfg(windows)]
+fn attributes_of(meta: &std::fs::Metadata) -> u32 {
+    use std::os::windows::fs::MetadataExt;
+    meta.file_attributes()
+}
+
+/// Neither unix nor Windows: not ported (0).
+#[cfg(not(any(unix, windows)))]
+fn attributes_of(_: &std::fs::Metadata) -> u32 {
+    0
 }
 
 /// A listed name as bytes: as stored on POSIX.
@@ -657,6 +781,10 @@ pub struct MemFs {
     pub flavour: Flavour,
     pub nodes: BTreeMap<Vec<u8>, Node>,
     pub modes: BTreeMap<Vec<u8>, u32>,
+    /// `st_flags` of a path where not 0 (`set_flags`).
+    pub flags: BTreeMap<Vec<u8>, u32>,
+    /// Devices mounted at folders (`mount`); the rest is device 0.
+    pub mounts: BTreeMap<Vec<u8>, u64>,
     pub link_hops: usize,
     /// The host's `PATH_MAX`, its terminating NUL included: a path of
     /// this many bytes or more is ENAMETOOLONG, as is a link's target
@@ -680,6 +808,8 @@ impl MemFs {
             flavour,
             nodes: BTreeMap::new(),
             modes: BTreeMap::new(),
+            flags: BTreeMap::new(),
+            mounts: BTreeMap::new(),
             link_hops: LINK_HOPS,
             path_max: PATH_MAX,
         }
@@ -754,6 +884,68 @@ impl MemFs {
             .next()
             .filter(|(k, _)| k.starts_with(&prefix))
             .map(|_| (key.to_vec(), Node::Dir))
+    }
+
+    /// The stat result of the node `node` whose identity is `id`.
+    fn stat_result(&self, id: &[u8], node: &Node) -> StatResult {
+        let kind = kind_of_node(node);
+        let size = match node {
+            Node::File(bytes) => bytes.len() as u64,
+            Node::Link(target) => target.len() as u64,
+            _ => 0,
+        };
+        let posix = self.flavour == Flavour::Posix;
+        let (dev, rel) = self.device_of(id);
+        let bits = match node {
+            Node::Link(_) => 0o777,
+            _ => self.mode(id, node),
+        };
+        StatResult {
+            kind,
+            mode: posix.then(|| type_bits(kind) | bits),
+            // An inode number for each identity on its device, never 0.
+            ino: posix.then(|| inode_of(rel)),
+            dev: posix.then_some(dev),
+            size,
+            mtime_ns: 0,
+            ctime_ns: posix.then_some(0),
+            flags: self.flags.get(id).copied().unwrap_or(0),
+            file_attributes: 0,
+            // Windows' tag is not ported, as in `StdFs`.
+            reparse_tag: posix.then_some(0),
+        }
+    }
+
+    /// The device `id` is on (the longest mount above it, else 0) and its
+    /// path below that mount, from which its inode number is made: two
+    /// devices can hold the same inode number.
+    fn device_of<'a>(&self, id: &'a [u8]) -> (u64, &'a [u8]) {
+        let mut best: (u64, &[u8]) = (0, id);
+        let mut best_len = 0;
+        for (at, &dev) in &self.mounts {
+            // The root's key is empty: a mount there covers every path.
+            let under = at.is_empty()
+                || id == at.as_slice()
+                || (id.starts_with(at) && id.get(at.len()) == Some(&b'/'));
+            if under && at.len() >= best_len {
+                best_len = at.len();
+                let rest = &id[at.len()..];
+                best = (dev, rest);
+            }
+        }
+        best
+    }
+
+    /// Set the file flags (`st_flags`) of `path`, for a placeholder.
+    pub fn set_flags(&mut self, path: &[u8], flags: u32) {
+        let key = self.key(path);
+        self.flags.insert(key, flags);
+    }
+
+    /// Mount a device `dev` (not 0) at the folder `path`.
+    pub fn mount(&mut self, path: &[u8], dev: u64) {
+        let key = self.key(path);
+        self.mounts.insert(key, dev);
     }
 
     /// The owner's bits of the file whose identity is `id`.
@@ -1050,30 +1242,25 @@ impl Fs for MemFs {
     }
 
     fn readlink(&self, path: &[u8]) -> Result<Vec<u8>, PyErr> {
+        self.readlink_result(path).map_err(PyErr::from)
+    }
+
+    fn readlink_result(&self, path: &[u8]) -> Result<Vec<u8>, OsError> {
         match self.walk(path, false)?.1 {
             Node::Link(target) => Ok(target),
             // EINVAL: no link (OSError itself).
-            _ => Err(PyErr::Os),
+            _ => Err(OsError::new(PyErr::Os, "EINVAL")),
         }
     }
 
     fn stat(&self, path: &[u8]) -> Result<StatResult, OsError> {
         let (id, node) = self.walk(path, true)?;
-        let kind = kind_of_node(&node);
-        let size = match &node {
-            Node::File(bytes) => bytes.len() as u64,
-            _ => 0,
-        };
-        let posix = self.flavour == Flavour::Posix;
-        Ok(StatResult {
-            kind,
-            mode: posix.then(|| type_bits(kind) | self.mode(&id, &node)),
-            // An inode number for each identity, never 0.
-            ino: posix.then(|| inode_of(&id)),
-            size,
-            mtime_ns: 0,
-            ctime_ns: posix.then_some(0),
-        })
+        Ok(self.stat_result(&id, &node))
+    }
+
+    fn lstat_result(&self, path: &[u8]) -> Result<StatResult, OsError> {
+        let (id, node) = self.walk(path, false)?;
+        Ok(self.stat_result(&id, &node))
     }
 
     fn listdir(&self, path: &[u8]) -> Result<Vec<Vec<u8>>, OsError> {

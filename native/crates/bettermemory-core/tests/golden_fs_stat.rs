@@ -6,12 +6,16 @@
 //! same paths. And `fs_access.jsonl` (class i, POSIX only): `os.access`
 //! for each mode and the open that does not follow a final link, the same
 //! two ways, the on-disk answers also asked of the reference Python live.
+//! And `fs_samestat.jsonl` (class i, POSIX only): `os.path.samefile` of
+//! pairs and `_placeholder`/`_is_link` of each path, the same two ways;
+//! on disk the pairs, and pairs across `/` and `/dev` (another device on
+//! most hosts, never assumed), are also asked of the reference live.
 
 #![cfg(unix)]
 
 mod common;
 
-use bettermemory_core::fsdata::{Access, Flavour, Fs, Kind, MemFs, Node, OsError, StdFs};
+use bettermemory_core::fsdata::{samefile, Access, Flavour, Fs, Kind, MemFs, Node, OsError, StdFs};
 use common::jsonl;
 use common::parity::Ledger;
 use serde_json::{json, Value};
@@ -150,6 +154,9 @@ fn world(case: &Value) -> MemFs {
     for (rel, _) in entries(case, "p") {
         fs.insert(&at(rel), Node::Fifo);
     }
+    for (rel, to) in entries(case, "h") {
+        fs.insert(&at(rel), Node::Hard(at(to.as_str().unwrap())));
+    }
     for (rel, mode) in entries(case, "m") {
         fs.set_mode(
             &at(rel),
@@ -243,6 +250,9 @@ fn write_tree(case: &Value, root: &std::path::Path) -> bool {
     let real = root.to_str().unwrap();
     for (rel, to) in entries(case, "l") {
         symlink(to.as_str().unwrap().replace("<root>", real), root.join(rel)).unwrap();
+    }
+    for (rel, to) in entries(case, "h") {
+        std::fs::hard_link(root.join(to.as_str().unwrap()), root.join(rel)).unwrap();
     }
     for (rel, _) in entries(case, "p") {
         let made = std::process::Command::new("mkfifo")
@@ -583,6 +593,168 @@ fn fs_access_every_case_on_disk() {
                 };
                 if mine != want {
                     failures.push(format!("#{i} {path}: native {mine} reference {want}"));
+                }
+            }
+        }
+    }
+    drop(base);
+    ledger.settle(cases.len(), &failures);
+}
+
+const SAMESTAT: &str = "fs_samestat.jsonl";
+
+fn bits<F: Fs>(fs: &F, path: &[u8]) -> Value {
+    let s = match fs.stat(path) {
+        Ok(st) => json!(st.placeholder()),
+        Err(e) => error(e),
+    };
+    let (l, k) = match fs.lstat_result(path) {
+        Ok(st) => (
+            json!(st.placeholder()),
+            match st.is_link() {
+                Some(link) => json!(link),
+                None => json!("not ported"),
+            },
+        ),
+        Err(e) => (error(e), error(e)),
+    };
+    json!({"s": s, "l": l, "k": k})
+}
+
+fn same<F: Fs>(fs: &F, a: &[u8], b: &[u8]) -> Value {
+    match samefile(fs, a, b) {
+        Ok(Some(same)) => json!(same),
+        Ok(None) => json!("not ported"),
+        Err(e) => error(e),
+    }
+}
+
+fn samestat_answers<F: Fs>(fs: &F, case: &Value, root: &str) -> Value {
+    let at = |text: &Value| {
+        replaced(
+            &unspelled(text.as_str().unwrap()),
+            b"<root>",
+            root.as_bytes(),
+        )
+    };
+    Value::Array(
+        case["q"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|q| {
+                let (a, o) = (at(&q["p"]), at(&q["o"]));
+                json!({
+                    "p": q["p"],
+                    "o": q["o"],
+                    "same": same(fs, &a, &o),
+                    "a": bits(fs, &a),
+                    "b": bits(fs, &o),
+                })
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn fs_samestat_every_case_in_memory() {
+    let (_, cases) = cases_of(SAMESTAT);
+    let ledger = Ledger::new("golden_fs_samestat", SAMESTAT);
+    let mut failures = Vec::new();
+    for (i, case) in cases.iter().enumerate() {
+        let got = samestat_answers(&world(case), case, MEM_ROOT);
+        if got != case["q"] {
+            failures.push(format!("#{i}: native {got} reference {}", case["q"]));
+        }
+    }
+    ledger.settle(cases.len(), &failures);
+}
+
+/// The reference Python's `os.path.samefile` of pairs: a bool, or the
+/// error's class.
+fn reference_samefile(python: &std::path::Path, pairs: &[(String, String)]) -> Vec<Value> {
+    let script = "import json, os, sys\n\
+        a = sys.argv[1:]\n\
+        out = []\n\
+        for x, y in zip(a[::2], a[1::2]):\n\
+        \x20   try:\n\
+        \x20       out.append(os.path.samefile(x, y))\n\
+        \x20   except OSError as e:\n\
+        \x20       out.append(type(e).__name__)\n\
+        print(json.dumps(out))\n";
+    let mut cmd = std::process::Command::new(python);
+    cmd.env_clear().arg("-I").arg("-c").arg(script);
+    for (x, y) in pairs {
+        cmd.arg(x).arg(y);
+    }
+    if let Some(p) = std::env::var_os("PATH") {
+        cmd.env("PATH", p);
+    }
+    let out = cmd.output().expect("the reference runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice::<Vec<Value>>(&out.stdout).expect("JSON")
+}
+
+#[test]
+fn fs_samestat_every_case_on_disk() {
+    let (_, cases) = cases_of(SAMESTAT);
+    let ledger = Ledger::new("golden_fs_samestat_stdfs", SAMESTAT);
+    let base = Scratch(fresh_dir("bm-fssame"));
+    refuse_root(&base.0);
+    let python = common::created::reference_python();
+    if let Err(why) = &python {
+        let test = "golden_fs_samestat_stdfs_reference";
+        eprintln!("NOT RUN {test}: the live reference not asked: {why}");
+        common::parity::record(
+            test,
+            "reference Python",
+            "i",
+            0,
+            &[test.to_owned()],
+            std::slice::from_ref(why),
+        );
+    }
+    let mut failures = Vec::new();
+    for (i, case) in cases.iter().enumerate() {
+        let dir = base.0.join(i.to_string());
+        std::fs::create_dir(&dir).unwrap();
+        if !write_tree(case, &dir) {
+            failures.push(format!("#{i}: mkfifo could not run"));
+            continue;
+        }
+        let root = dir.to_str().unwrap();
+        let got = samestat_answers(&StdFs, case, root);
+        if got != case["q"] {
+            failures.push(format!("#{i}: native {got} reference {}", case["q"]));
+        }
+        if let Ok(python) = &python {
+            let text = |v: &Value| String::from_utf8(unspelled(v.as_str().unwrap())).ok();
+            let mut pairs: Vec<(String, String)> = case["q"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|q| Some((text(&q["p"])?, text(&q["o"])?)))
+                .filter(|(a, o)| !a.contains('\0') && !o.contains('\0'))
+                .map(|(a, o)| (a.replace("<root>", root), o.replace("<root>", root)))
+                .collect();
+            // Across a mount, where the host has one: never assumed, the
+            // answer is the reference's.
+            pairs.push((root.to_owned(), "/".to_owned()));
+            pairs.push(("/".to_owned(), "/dev".to_owned()));
+            pairs.push(("/dev".to_owned(), "/dev/.".to_owned()));
+            let theirs = reference_samefile(python, &pairs);
+            for ((a, o), want) in pairs.iter().zip(theirs) {
+                let mine = match samefile(&StdFs, a.as_bytes(), o.as_bytes()) {
+                    Ok(Some(same)) => json!(same),
+                    Ok(None) => json!("not ported"),
+                    Err(e) => json!(e.class.name()),
+                };
+                if mine != want {
+                    failures.push(format!("#{i} {a} {o}: native {mine} reference {want}"));
                 }
             }
         }

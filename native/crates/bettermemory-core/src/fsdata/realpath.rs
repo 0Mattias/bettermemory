@@ -8,13 +8,16 @@
 //! (a loop) with the path as reached. The walk keeps its own stack, so no
 //! link recurses: a chain of any length costs memory, not stack.
 //!
+//! `realpath_strict` is the same walk with 3.13's `strict=True`: each
+//! error raised with its errno's name.
+//!
 //! The Windows flavour (`ntpath.realpath` over `_getfinalpathname` and
 //! its fallbacks, `ntpath.abspath` over `_getfullpathname`) is not ported:
 //! it answers [`Unresolved::NotPorted`], which a caller reads as a decline.
 
 use std::collections::HashMap;
 
-use super::{Flavour, Fs, Kind, PyErr};
+use super::{Flavour, Fs, Kind, OsError, PyErr};
 
 /// Why a path was not resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +81,16 @@ enum Part {
     Resolved(Vec<u8>),
 }
 
+/// Why a strict resolution failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StrictUnresolved {
+    /// The reference raised this: the OSError with its errno's name (and,
+    /// on Windows, its code), or ValueError (a NUL).
+    Raised(OsError),
+    /// The Windows flavour, which is not ported.
+    NotPorted,
+}
+
 /// `os.path.realpath(path)` (non-strict) with `os.getcwd()` answering
 /// `cwd` (absolute and free of links, as `getcwd` gives it).
 pub fn realpath<F: Fs + ?Sized>(
@@ -89,6 +102,37 @@ pub fn realpath<F: Fs + ?Sized>(
     if flavour == Flavour::Windows {
         return Err(Unresolved::NotPorted);
     }
+    resolve(fs, path, cwd, false).map_err(|e| Unresolved::Raised(e.class))
+}
+
+/// `os.path.realpath(path, strict=True)` (3.13.13's `posixpath`): the
+/// same walk, but every OSError of an `lstat`, a `readlink` or the `stat`
+/// of a loop is raised (a missing component: FileNotFoundError, ENOENT; a
+/// loop: OSError, ELOOP, from that `stat`); and a component that is no
+/// directory and no link with parts after it raises NotADirectoryError
+/// (ENOTDIR) before anything below it is asked, a trailing separator,
+/// `.` or `..` included (3.11 asks the OS instead, so `f/..` resolves
+/// there: those queries are Python-gated in the fixture).
+pub fn realpath_strict<F: Fs + ?Sized>(
+    fs: &F,
+    flavour: Flavour,
+    path: &[u8],
+    cwd: &[u8],
+) -> Result<Vec<u8>, StrictUnresolved> {
+    if flavour == Flavour::Windows {
+        return Err(StrictUnresolved::NotPorted);
+    }
+    resolve(fs, path, cwd, true).map_err(StrictUnresolved::Raised)
+}
+
+/// The walk of both: non-strict ignores every OSError (a ValueError
+/// rises); strict raises each.
+fn resolve<F: Fs + ?Sized>(
+    fs: &F,
+    path: &[u8],
+    cwd: &[u8],
+    strict: bool,
+) -> Result<Vec<u8>, OsError> {
     let mut rest: Vec<Part> = path
         .split(|&b| b == b'/')
         .rev()
@@ -129,26 +173,44 @@ pub fn realpath<F: Fs + ?Sized>(
             resolved.push(b'/');
         }
         resolved.extend_from_slice(&name);
-        let kind = match fs.lstat(&resolved) {
-            Ok(kind) => kind,
-            Err(PyErr::Value) => return Err(Unresolved::Raised(PyErr::Value)),
-            // An ignored OSError: the path as reached stands.
-            Err(_) => continue,
+        let kind = if strict {
+            fs.lstat_result(&resolved)?.kind
+        } else {
+            match fs.lstat(&resolved) {
+                Ok(kind) => kind,
+                Err(PyErr::Value) => return Err(OsError::value()),
+                // An ignored OSError: the path as reached stands.
+                Err(_) => continue,
+            }
         };
         if kind != Kind::Link {
-            continue;
-        }
-        if let Some(cached) = seen.get(&resolved) {
-            // A link still being resolved (None) is a loop: the path stands.
-            if let Some(target) = cached {
-                resolved = target.clone();
+            if strict && part_count > 0 && kind != Kind::Directory {
+                return Err(OsError::new(PyErr::NotADirectory, "ENOTDIR"));
             }
             continue;
         }
-        let target = match fs.readlink(&resolved) {
-            Ok(target) => target,
-            Err(PyErr::Value) => return Err(Unresolved::Raised(PyErr::Value)),
-            Err(_) => continue,
+        if let Some(cached) = seen.get(&resolved) {
+            match cached {
+                Some(target) => resolved = target.clone(),
+                // A link still being resolved is a loop: strict raises
+                // what `os.stat` of it raises (ELOOP); otherwise the path
+                // stands.
+                None if strict => {
+                    fs.stat(&resolved)?;
+                }
+                None => {}
+            }
+            continue;
+        }
+        let target = if strict {
+            // Strict raises what `os.readlink` raised, its errno with it.
+            fs.readlink_result(&resolved)?
+        } else {
+            match fs.readlink(&resolved) {
+                Ok(target) => target,
+                Err(PyErr::Value) => return Err(OsError::value()),
+                Err(_) => continue,
+            }
         };
         let link = std::mem::take(&mut resolved);
         resolved = if target.starts_with(b"/") {
