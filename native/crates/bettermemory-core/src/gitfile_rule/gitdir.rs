@@ -55,7 +55,13 @@ impl From<OsError> for Failure {
 pub struct Ctx<'a, F: Fs + ?Sized> {
     pub fs: &'a F,
     pub flavour: Flavour,
-    /// `os.getcwd()`: absolute, free of links.
+    /// What `os.getcwd()` returned: absolute and physical (free of
+    /// links). This is the caller's contract, not checked here: a `cwd`
+    /// with a link is taken as given (`tree_of(b".git")` answers its
+    /// spelling, unresolved). A caller whose `getcwd` fails (macOS: a
+    /// working directory it cannot read) builds no `Ctx` and declines
+    /// whole, the safe direction: the reference's `_tree_of` answers None
+    /// there, never a tree.
     pub cwd: &'a [u8],
 }
 

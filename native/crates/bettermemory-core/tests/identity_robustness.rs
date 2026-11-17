@@ -1,0 +1,332 @@
+//! `gitfile_rule::identity` on hostile trees, on a 512 KiB thread (debug
+//! build): typed answers, no panic; a crowded folder costs `same_folder`,
+//! `names_here` and `tree_of` what an empty one does (they state, never
+//! list); the Windows flavour declines; a relative path (here and in
+//! `read_small`) is taken from the context's working directory, never the
+//! process's; and a name in NFC against one in NFD is answered as the
+//! platform's own file system answers it.
+
+use bettermemory_core::fsdata::{Flavour, Fs, MemFs, Node, StatResult};
+use bettermemory_core::gitfile_rule::gitdir::{Ctx, Failure};
+use bettermemory_core::gitfile_rule::identity::{
+    is_link, names_folder, names_here, same_folder, tree_of, working_tree_of,
+};
+
+fn on_small_stack(work: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(work)
+        .expect("a thread")
+        .join()
+        .expect("no panic on a 512 KiB stack");
+}
+
+fn ctx(fs: &MemFs) -> Ctx<'_, MemFs> {
+    Ctx {
+        fs,
+        flavour: Flavour::Posix,
+        cwd: b"/",
+    }
+}
+
+#[test]
+fn hostile_trees_answer_typed_on_a_small_stack() {
+    on_small_stack(|| {
+        let mut fs = MemFs::new(Flavour::Posix);
+        fs.insert(b"/w/.git", Node::Dir);
+        fs.insert(b"/w/f", Node::File(Vec::new()));
+        fs.insert(b"/loop", Node::Link(b"/loop".to_vec()));
+        fs.insert(b"/deep", Node::Link(b"/w/.git".to_vec()));
+        let mut chain = b"/deep".to_vec();
+        for i in 0..200 {
+            let name = format!("/c{i}");
+            fs.insert(name.as_bytes(), Node::Link(chain.clone()));
+            chain = name.into_bytes();
+        }
+        fs.insert(b"/locked", Node::Dir);
+        fs.insert(b"/locked/.git", Node::Dir);
+        fs.set_mode(b"/locked", 0);
+        let c = ctx(&fs);
+        let long = b"/a".repeat(5000);
+        for path in [
+            &b""[..],
+            b".",
+            b"..",
+            b"/",
+            b"/loop",
+            b"/loop/.git",
+            b"/x\x00y",
+            b"/\xff\xfe",
+            &chain,
+            &long,
+            b"/w/f/..",
+            b"/locked/.git",
+            b"/deep",
+        ] {
+            let _ = names_here(&c, path, b"/w", b"/w/.git").expect("ported");
+            let _ = names_folder(&c, path, b"/w", b"/w").expect("ported");
+            let _ = same_folder(&c, path, b"/w").expect("ported");
+            let _ = same_folder(&c, b"/w", path).expect("ported");
+            let _ = tree_of(&c, path).expect("ported");
+            let _ = working_tree_of(&c, path).expect("ported");
+        }
+        assert_eq!(same_folder(&c, b"/x\x00y", b"/w"), Ok(Some(false)));
+        assert_eq!(same_folder(&c, b"/loop", b"/w"), Ok(Some(false)));
+        assert_eq!(same_folder(&c, b"/nothing", b"/w"), Ok(None));
+        assert_eq!(tree_of(&c, b"/deep"), Ok(Some(b"/w".to_vec())));
+        // `realpath` walks a chain of any length: only `stat` caps it.
+        assert_eq!(tree_of(&c, &chain), Ok(Some(b"/w".to_vec())));
+        assert_eq!(same_folder(&c, &chain, b"/w/.git"), Ok(Some(false)));
+        assert_eq!(working_tree_of(&c, b"/deep"), Ok(Some(b"/w".to_vec())));
+    });
+}
+
+/// `same_folder`, `names_here` and `tree_of` of a folder of 100,000 names
+/// cost what one of 10,000 does: they state two paths, never list (best of
+/// five; a scan would be 10 times).
+#[test]
+fn a_crowded_folder_is_not_scanned() {
+    fn tree(n: usize) -> MemFs {
+        let mut fs = MemFs::new(Flavour::Posix);
+        fs.insert(b"/w/.git", Node::Dir);
+        for i in 0..n {
+            fs.insert(format!("/w/n{i}").as_bytes(), Node::File(Vec::new()));
+        }
+        fs
+    }
+    let best = |fs: &MemFs| {
+        let c = ctx(fs);
+        (0..5)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                for _ in 0..200 {
+                    assert_eq!(same_folder(&c, b"/w/.git/..", b"/w"), Ok(Some(true)));
+                    assert_eq!(names_here(&c, b".git", b"/w", b"/w/.git"), Ok(Some(true)));
+                    assert_eq!(tree_of(&c, b"/w/.git"), Ok(Some(b"/w".to_vec())));
+                }
+                started.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
+    let (small, large) = (tree(10_000), tree(100_000));
+    let (s, l) = (best(&small), best(&large));
+    assert!(
+        l < s * 5 + std::time::Duration::from_millis(50),
+        "10,000 names {s:?}, 100,000 names {l:?}"
+    );
+    // `working_tree_of` reads the listing whole (`scandir` stops at the
+    // first name other than `.git`): linear, so 10 times the names may
+    // cost 10 times; a pass over the listing per name would be 100.
+    let listing = |fs: &MemFs| {
+        let c = ctx(fs);
+        (0..5)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                assert_eq!(working_tree_of(&c, b"/w/.git"), Ok(Some(b"/w".to_vec())));
+                started.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
+    let (s, l) = (listing(&small), listing(&large));
+    assert!(
+        l < s * 30 + std::time::Duration::from_millis(50),
+        "working_tree_of: 10,000 names {s:?}, 100,000 names {l:?}"
+    );
+}
+
+/// `Ctx::cwd` is the caller's contract: what `os.getcwd()` returned, so
+/// physical (free of links). Handed one with a link, the port takes it as
+/// given; pinned here so a change to that is seen.
+#[test]
+fn a_cwd_with_a_link_is_taken_as_given() {
+    let mut fs = MemFs::new(Flavour::Posix);
+    fs.insert(b"/real/w/.git", Node::Dir);
+    fs.insert(b"/real/w/f", Node::File(Vec::new()));
+    fs.insert(b"/l", Node::Link(b"/real".to_vec()));
+    let c = Ctx {
+        fs: &fs,
+        flavour: Flavour::Posix,
+        cwd: b"/l/w",
+    };
+    assert_eq!(tree_of(&c, b".git"), Ok(Some(b"/l/w".to_vec())));
+    assert_eq!(tree_of(&c, b"../w/.git"), Ok(Some(b"/l/w".to_vec())));
+    assert_eq!(same_folder(&c, b".", b"/real/w"), Ok(Some(true)));
+}
+
+#[test]
+fn the_windows_flavour_declines() {
+    let mut fs = MemFs::new(Flavour::Windows);
+    fs.insert(b"C:/w/.git", Node::Dir);
+    let c = Ctx {
+        fs: &fs,
+        flavour: Flavour::Windows,
+        cwd: b"C:/",
+    };
+    let no = Err(Failure::NotPorted);
+    assert_eq!(names_here(&c, b"C:/w/.git", b"C:/w", b"C:/w/.git"), no);
+    assert_eq!(names_here(&c, b"C:/none", b"C:/w", b"C:/w/.git"), no);
+    assert_eq!(names_folder(&c, b"C:/w/.git", b"C:/w", b"C:/w"), no);
+    assert_eq!(same_folder(&c, b"C:/w", b"C:/w"), no);
+    assert_eq!(tree_of(&c, b"C:/w/.git"), Err(Failure::NotPorted));
+    assert_eq!(working_tree_of(&c, b"C:/w/.git"), Err(Failure::NotPorted));
+    let st: StatResult = fs.lstat_result(b"C:/w").unwrap();
+    assert_eq!(is_link(&st), Err(Failure::NotPorted));
+}
+
+#[test]
+fn a_link_is_a_link_on_posix() {
+    let mut fs = MemFs::new(Flavour::Posix);
+    fs.insert(b"/d", Node::Dir);
+    fs.insert(b"/l", Node::Link(b"/d".to_vec()));
+    assert_eq!(is_link(&fs.lstat_result(b"/l").unwrap()), Ok(true));
+    assert_eq!(is_link(&fs.lstat_result(b"/d").unwrap()), Ok(false));
+}
+
+#[cfg(unix)]
+fn scratch(tag: &str) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("bm-identity-{tag}-{}-{n}", std::process::id()));
+    std::fs::create_dir(&dir).expect("a new scratch directory");
+    std::fs::canonicalize(&dir).expect("resolved")
+}
+
+/// Run in a child whose working directory holds decoys of every relative
+/// name: the reads and the identity helpers over `StdFs`, with `cwd` given
+/// as the case's own root, must answer from the root alone.
+#[cfg(unix)]
+#[test]
+fn a_relative_path_is_never_taken_from_the_process_directory() {
+    use bettermemory_core::fsdata::StdFs;
+    use bettermemory_core::gitfile_rule::{gitfile_target, small_text};
+    const CHILD: &str = "BM_IDENTITY_DECOY_ROOT";
+    let name = "a_relative_path_is_never_taken_from_the_process_directory";
+    if let Some(root) = std::env::var_os(CHILD) {
+        let root = root.into_string().expect("a UTF-8 root").into_bytes();
+        let c = Ctx {
+            fs: &StdFs,
+            flavour: Flavour::Posix,
+            cwd: &root,
+        };
+        let at = |rel: &[u8]| [&root[..], b"/", rel].concat();
+        assert_eq!(gitfile_target(&c, b"w/.git"), Ok(Some(b"w/real".to_vec())));
+        assert_eq!(small_text(&c, b"w/note"), Ok(Some("root".to_owned())));
+        assert_eq!(small_text(&c, b"only-decoy"), Ok(None));
+        assert_eq!(names_here(&c, b"w", b"", &at(b"w")), Ok(Some(true)));
+        assert_eq!(names_here(&c, b"only-decoy", b"", &at(b"w")), Ok(None));
+        assert_eq!(same_folder(&c, b"w", &at(b"w")), Ok(Some(true)));
+        assert_eq!(same_folder(&c, b"only-decoy", &at(b"w")), Ok(None));
+        assert_eq!(names_folder(&c, b"t/.git", b"", &at(b"t")), Ok(Some(true)));
+        assert_eq!(tree_of(&c, b"t/.git"), Ok(Some(at(b"t"))));
+        assert_eq!(working_tree_of(&c, b"t/.git"), Ok(None));
+        return;
+    }
+    let base = scratch("decoy");
+    let (root, decoys) = (base.join("root"), base.join("decoys"));
+    for (dir, text) in [(&root, "root"), (&decoys, "decoy")] {
+        std::fs::create_dir_all(dir.join("w")).unwrap();
+        std::fs::write(dir.join("w/.git"), format!("gitdir: {text}")).unwrap();
+        std::fs::write(dir.join("w/note"), text).unwrap();
+    }
+    std::fs::write(root.join("w/.git"), "gitdir: real").unwrap();
+    std::fs::create_dir_all(root.join("t/.git")).unwrap();
+    std::fs::create_dir_all(decoys.join("t/.git")).unwrap();
+    std::fs::write(decoys.join("t/more"), "").unwrap();
+    std::fs::write(decoys.join("only-decoy"), "decoy").unwrap();
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--test-threads=1"])
+        .current_dir(&decoys)
+        .env(CHILD, &root)
+        .status()
+        .expect("the child runs");
+    let _ = std::fs::remove_dir_all(&base);
+    assert!(status.success());
+}
+
+/// A name in NFD on disk, asked for in NFC: the answer is the platform's
+/// own (macOS's file systems find it, Linux's do not), never a guess. Not
+/// in the shared fixture, as the platforms differ.
+#[cfg(unix)]
+#[test]
+fn nfc_against_nfd_is_answered_as_the_platform_answers() {
+    use bettermemory_core::fsdata::StdFs;
+    use std::os::unix::ffi::OsStrExt;
+    let base = scratch("nfd");
+    let nfd = base.join("e\u{301}");
+    std::fs::create_dir(&nfd).unwrap();
+    let nfc = base.join("\u{e9}");
+    let finds = std::fs::metadata(&nfc).is_ok();
+    let cwd = base.as_os_str().as_bytes().to_vec();
+    let c = Ctx {
+        fs: &StdFs,
+        flavour: Flavour::Posix,
+        cwd: &cwd,
+    };
+    let got = same_folder(&c, nfc.as_os_str().as_bytes(), nfd.as_os_str().as_bytes());
+    let named = names_here(&c, "\u{e9}".as_bytes(), &cwd, nfd.as_os_str().as_bytes());
+    let _ = std::fs::remove_dir_all(&base);
+    let want = if finds { Some(true) } else { None };
+    assert_eq!(got, Ok(want));
+    assert_eq!(named, Ok(want));
+}
+
+/// A stat without an inode (as Windows' is, not ported) is declined,
+/// never read as another file.
+#[test]
+fn a_stat_without_an_inode_is_declined() {
+    use bettermemory_core::fsdata::{Access, Kind, OsError, PyErr, Stat};
+    struct NoIno(MemFs);
+    impl Fs for NoIno {
+        type File = <MemFs as Fs>::File;
+        fn open(&self, path: &[u8]) -> Result<Self::File, PyErr> {
+            self.0.open(path)
+        }
+        fn fstat(&self, file: &mut Self::File) -> Result<Stat, PyErr> {
+            self.0.fstat(file)
+        }
+        fn read(&self, file: &mut Self::File, max: usize) -> Result<Vec<u8>, PyErr> {
+            self.0.read(file, max)
+        }
+        fn access(&self, path: &[u8], mode: Access) -> Result<bool, PyErr> {
+            self.0.access(path, mode)
+        }
+        fn open_no_follow(&self, path: &[u8]) -> Result<Self::File, OsError> {
+            self.0.open_no_follow(path)
+        }
+        fn lstat(&self, path: &[u8]) -> Result<Kind, PyErr> {
+            self.0.lstat(path)
+        }
+        fn readlink(&self, path: &[u8]) -> Result<Vec<u8>, PyErr> {
+            self.0.readlink(path)
+        }
+        fn stat(&self, path: &[u8]) -> Result<StatResult, OsError> {
+            self.0.stat(path).map(|st| StatResult { ino: None, ..st })
+        }
+        fn lstat_result(&self, path: &[u8]) -> Result<StatResult, OsError> {
+            self.0
+                .lstat_result(path)
+                .map(|st| StatResult { ino: None, ..st })
+        }
+        fn listdir(&self, path: &[u8]) -> Result<Vec<Vec<u8>>, OsError> {
+            self.0.listdir(path)
+        }
+    }
+    let mut fs = MemFs::new(Flavour::Posix);
+    fs.insert(b"/w/.git", Node::Dir);
+    fs.insert(b"/v", Node::Dir);
+    let fs = NoIno(fs);
+    let c = Ctx {
+        fs: &fs,
+        flavour: Flavour::Posix,
+        cwd: b"/",
+    };
+    let no = Err(Failure::NotPorted);
+    assert_eq!(same_folder(&c, b"/w", b"/v"), no);
+    assert_eq!(names_here(&c, b"/w", b"/", b"/w"), no);
+    assert_eq!(names_folder(&c, b"/w/.git", b"/", b"/w"), no);
+    assert_eq!(tree_of(&c, b"/w/.git"), Err(Failure::NotPorted));
+    assert_eq!(working_tree_of(&c, b"/w/.git"), Err(Failure::NotPorted));
+}

@@ -23,9 +23,12 @@ pub mod bounded;
 pub mod format;
 pub mod gitdir;
 pub mod hostpath;
+pub mod identity;
 pub mod probe;
 
-use crate::fsdata::{Flavour, Fs, Kind};
+use crate::fsdata::{Flavour, Fs, Kind, PyErr};
+
+use gitdir::{Ctx, Failure};
 
 /// `_GITFILE_LIMIT`: git refuses a `.git` file over 1 MiB.
 pub const GITFILE_LIMIT: usize = 1 << 20;
@@ -93,7 +96,8 @@ pub fn parse_gitfile(data: &[u8], dotgit: &[u8], flavour: Flavour) -> Option<Vec
 
 /// The bytes of the file at `path` read as the reference's
 /// `open(path, "rb").read(GITFILE_LIMIT + 1)` reads them, or None where
-/// that raises; also None where the file is longer than
+/// that raises an OSError (a ValueError rises: [`Failure::Value`]); also
+/// None where the file is longer than
 /// [`GITFILE_LIMIT`].
 ///
 /// The reference's `open` blocks on a FIFO until a writer comes; this
@@ -101,8 +105,22 @@ pub fn parse_gitfile(data: &[u8], dotgit: &[u8], flavour: Flavour) -> Option<Vec
 /// None, as one that cannot be read (native/README.md). A directory is
 /// None, as its `open` raises IsADirectoryError (PermissionError on
 /// Windows). At most [`GITFILE_LIMIT`] + 1 bytes are read.
-fn read_small<F: Fs>(fs: &F, path: &[u8]) -> Option<Vec<u8>> {
-    let mut file = fs.open(path).ok()?;
+///
+/// The path goes through [`Ctx::at`]: a relative one is taken from the
+/// context's working directory, never the process's own (declined on the
+/// Windows flavour).
+fn read_small<F: Fs + ?Sized>(ctx: &Ctx<'_, F>, path: &[u8]) -> Result<Option<Vec<u8>>, Failure> {
+    let path = ctx.at(path)?;
+    match ctx.fs.open(&path) {
+        // `open` raises ValueError (a NUL in the path), which neither
+        // `_gitfile_target` nor `_small_text` catches: it rises.
+        Err(PyErr::Value) => Err(Failure::Value),
+        Err(_) => Ok(None),
+        Ok(file) => Ok(read_open(ctx.fs, file)),
+    }
+}
+
+fn read_open<F: Fs + ?Sized>(fs: &F, mut file: F::File) -> Option<Vec<u8>> {
     let stat = fs.fstat(&mut file).ok()?;
     if matches!(stat.kind, Kind::Directory | Kind::Fifo | Kind::Socket) {
         return None;
@@ -125,14 +143,19 @@ fn read_small<F: Fs>(fs: &F, path: &[u8]) -> Option<Vec<u8>> {
 /// `_gitfile_target(dotgit)`: the directory the `gitdir:` file `dotgit`
 /// names ([`parse_gitfile`]), or None where it cannot be read or names
 /// none.
-pub fn gitfile_target<F: Fs>(fs: &F, dotgit: &[u8], flavour: Flavour) -> Option<Vec<u8>> {
-    let data = read_small(fs, dotgit)?;
-    parse_gitfile(&data, dotgit, flavour)
+pub fn gitfile_target<F: Fs + ?Sized>(
+    ctx: &Ctx<'_, F>,
+    dotgit: &[u8],
+) -> Result<Option<Vec<u8>>, Failure> {
+    Ok(read_small(ctx, dotgit)?.and_then(|data| parse_gitfile(&data, dotgit, ctx.flavour)))
 }
 
 /// `_small_text(path)`: a small text file's content, decoded with
 /// `replace` and stripped; None where it cannot be read or holds more than
 /// [`GITFILE_LIMIT`] bytes.
-pub fn small_text<F: Fs>(fs: &F, path: &[u8]) -> Option<String> {
-    read_small(fs, path).map(|data| stripped_text(&data))
+pub fn small_text<F: Fs + ?Sized>(
+    ctx: &Ctx<'_, F>,
+    path: &[u8],
+) -> Result<Option<String>, Failure> {
+    Ok(read_small(ctx, path)?.map(|data| stripped_text(&data)))
 }

@@ -220,6 +220,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "fs_realpath_strict_python.jsonl" => &[Python],
         // The same by the strict walk's input shape (`gen_gitdir.gated`).
         "gitdir_read_python.jsonl" => &[Python],
+        // A link loop, by the standing rule (`gen_identity.gated`).
+        "gitfile_identity_python.jsonl" => &[Python],
         // A link loop's class name is read as 3.11 and 3.13 read it, but
         // trees holding one are gated by the standing rule.
         "gitconfig_legacy_python.jsonl" => &[Python],

@@ -8,6 +8,7 @@
 mod common;
 
 use bettermemory_core::fsdata::{Flavour, Fs, StdFs};
+use bettermemory_core::gitfile_rule::gitdir::Ctx;
 use bettermemory_core::gitfile_rule::{gitfile_target, small_text};
 use common::gitconfig_file::{content, modes, target, world, ROOT};
 use common::jsonl;
@@ -63,8 +64,8 @@ fn out(data: Option<Vec<u8>>, root: &[u8]) -> Value {
 fn answers<F: Fs>(fs: &F, root: &str, case: &Value) -> Value {
     let path = target(case, root);
     json!({
-        "gt": out(gitfile_target(fs, &path, Flavour::Posix), root.as_bytes()),
-        "st": out(small_text(fs, &path).map(String::into_bytes), root.as_bytes()),
+        "gt": out(gt(fs, &path, Flavour::Posix), root.as_bytes()),
+        "st": out(st(fs, &path).map(String::into_bytes), root.as_bytes()),
     })
 }
 
@@ -72,6 +73,27 @@ fn shown(case: &Value) -> String {
     let mut c = case.clone();
     c["f"] = Value::Null;
     c.to_string().chars().take(300).collect()
+}
+
+/// `_gitfile_target` of an absolute path, with `/` as the working
+/// directory (never consulted).
+fn gt<F: Fs + ?Sized>(fs: &F, path: &[u8], flavour: Flavour) -> Option<Vec<u8>> {
+    let ctx = Ctx {
+        fs,
+        flavour,
+        cwd: b"/",
+    };
+    gitfile_target(&ctx, path).expect("an absolute path is ported")
+}
+
+/// `_small_text` of an absolute path.
+fn st<F: Fs + ?Sized>(fs: &F, path: &[u8]) -> Option<String> {
+    let ctx = Ctx {
+        fs,
+        flavour: Flavour::Posix,
+        cwd: b"/",
+    };
+    small_text(&ctx, path).expect("an absolute path is ported")
 }
 
 #[test]

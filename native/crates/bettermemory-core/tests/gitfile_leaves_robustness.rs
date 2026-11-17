@@ -9,10 +9,60 @@ use std::collections::BTreeSet;
 use bettermemory_core::fsdata::{Flavour, Fs, Kind, MemFs, Node, PyErr, Stat};
 use bettermemory_core::gitfile_rule::bounded::{bounded_read, bounded_reads, Hung, Job, Read};
 use bettermemory_core::gitfile_rule::format::{object_format, GitFacts};
+use bettermemory_core::gitfile_rule::gitdir::{Ctx, Failure};
 use bettermemory_core::gitfile_rule::probe::{path_gone, path_missing, Raised};
 use bettermemory_core::gitfile_rule::{
     gitfile_target, headref_content, parse_gitfile, small_text, GITFILE_LIMIT,
 };
+
+/// `_gitfile_target` of an absolute path, with `/` as the working
+/// directory (never consulted).
+fn gt<F: Fs + ?Sized>(fs: &F, path: &[u8], flavour: Flavour) -> Option<Vec<u8>> {
+    let ctx = Ctx {
+        fs,
+        flavour,
+        cwd: b"/",
+    };
+    gitfile_target(&ctx, path).expect("an absolute path is ported")
+}
+
+/// `_gitfile_target` as it answers, a raised class included.
+fn gt_raw<F: Fs + ?Sized>(
+    fs: &F,
+    path: &[u8],
+    flavour: Flavour,
+) -> Result<Option<Vec<u8>>, Failure> {
+    gitfile_target(
+        &Ctx {
+            fs,
+            flavour,
+            cwd: b"/",
+        },
+        path,
+    )
+}
+
+/// `_small_text` as it answers, a raised class included.
+fn st_raw<F: Fs + ?Sized>(fs: &F, path: &[u8]) -> Result<Option<String>, Failure> {
+    small_text(
+        &Ctx {
+            fs,
+            flavour: Flavour::Posix,
+            cwd: b"/",
+        },
+        path,
+    )
+}
+
+/// `_small_text` of an absolute path.
+fn st<F: Fs + ?Sized>(fs: &F, path: &[u8]) -> Option<String> {
+    let ctx = Ctx {
+        fs,
+        flavour: Flavour::Posix,
+        cwd: b"/",
+    };
+    small_text(&ctx, path).expect("an absolute path is ported")
+}
 
 /// A file system that counts the bytes it hands back.
 struct Counting {
@@ -217,19 +267,16 @@ fn a_fifty_megabyte_dotgit_is_refused_at_the_bound() {
         inner: mem(Flavour::Posix, &[(b"/r/.git", Node::File(big))]),
         read: Cell::new(0),
     };
-    assert_eq!(gitfile_target(&fs, b"/r/.git", Flavour::Posix), None);
+    assert_eq!(gt(&fs, b"/r/.git", Flavour::Posix), None);
     assert!(fs.read.get() <= GITFILE_LIMIT + 1, "{}", fs.read.get());
     fs.read.set(0);
-    assert_eq!(small_text(&fs, b"/r/.git"), None);
+    assert_eq!(st(&fs, b"/r/.git"), None);
     assert!(fs.read.get() <= GITFILE_LIMIT + 1, "{}", fs.read.get());
     // At the bound the file reads.
     let mut at = b"gitdir: x".to_vec();
     at.resize(GITFILE_LIMIT, b' ');
     let fs = mem(Flavour::Posix, &[(b"/r/.git", Node::File(at))]);
-    assert_eq!(
-        gitfile_target(&fs, b"/r/.git", Flavour::Posix),
-        Some(b"/r/x".to_vec())
-    );
+    assert_eq!(gt(&fs, b"/r/.git", Flavour::Posix), Some(b"/r/x".to_vec()));
 }
 
 #[test]
@@ -244,7 +291,7 @@ fn an_endless_device_is_read_to_the_bound_only() {
         ),
         read: Cell::new(0),
     };
-    assert_eq!(gitfile_target(&fs, b"/r/.git", Flavour::Posix), None);
+    assert_eq!(gt(&fs, b"/r/.git", Flavour::Posix), None);
     assert!(fs.read.get() <= GITFILE_LIMIT + 1);
 }
 
@@ -252,12 +299,8 @@ fn an_endless_device_is_read_to_the_bound_only() {
 fn a_fifo_socket_or_folder_is_not_read() {
     for node in [Node::Fifo, Node::Socket, Node::Dir] {
         let fs = mem(Flavour::Posix, &[(b"/r/.git", node.clone())]);
-        assert_eq!(
-            gitfile_target(&fs, b"/r/.git", Flavour::Posix),
-            None,
-            "{node:?}"
-        );
-        assert_eq!(small_text(&fs, b"/r/.git"), None, "{node:?}");
+        assert_eq!(gt(&fs, b"/r/.git", Flavour::Posix), None, "{node:?}");
+        assert_eq!(st(&fs, b"/r/.git"), None, "{node:?}");
     }
 }
 
@@ -279,12 +322,7 @@ fn a_real_fifo_does_not_block() {
         .status()
         .is_ok_and(|s| s.success());
     let path = fifo.to_str().expect("UTF-8").as_bytes().to_vec();
-    let answers = made.then(|| {
-        (
-            gitfile_target(&StdFs, &path, Flavour::Posix),
-            small_text(&StdFs, &path),
-        )
-    });
+    let answers = made.then(|| (gt(&StdFs, &path, Flavour::Posix), st(&StdFs, &path)));
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(answers, Some((None, None)));
 }
@@ -322,15 +360,21 @@ fn a_file_system_that_fails_every_call_reads_nothing() {
         PyErr::Value,
     ] {
         let fs = Failing(error);
-        assert_eq!(gitfile_target(&fs, b"/r/.git", Flavour::Posix), None);
-        assert_eq!(small_text(&fs, b"/r/.git"), None);
+        // A ValueError from `open` rises out of both (nothing catches it).
+        let want = if error == PyErr::Value {
+            Err(Failure::Value)
+        } else {
+            Ok(None)
+        };
+        assert_eq!(gt_raw(&fs, b"/r/.git", Flavour::Posix), want);
+        assert_eq!(st_raw(&fs, b"/r/.git"), want.map(|_| None));
         let exc = Raised::from(error);
         assert!(!path_missing(exc) || path_gone(exc));
     }
     for stat in [true, false] {
         let fs = FailsLater { stat };
-        assert_eq!(gitfile_target(&fs, b"/r/.git", Flavour::Windows), None);
-        assert_eq!(small_text(&fs, b"/r/.git"), None);
+        assert_eq!(gt(&fs, b"C:/r/.git", Flavour::Windows), None);
+        assert_eq!(st(&fs, b"/r/.git"), None);
     }
 }
 
@@ -343,10 +387,13 @@ fn nul_and_non_utf8_paths_and_contents_give_typed_answers() {
             Node::File(b"gitdir: \xfe\x00\xc3".to_vec()),
         )],
     );
-    // A path with a NUL is a ValueError: nothing is read.
-    assert_eq!(gitfile_target(&fs, b"/r/\x00/.git", Flavour::Posix), None);
+    // A path with a NUL is a ValueError, which rises: nothing is read.
+    for path in [&b"/r/\x00/.git"[..], b"\x00r", b"r\x00", b"r\x00s"] {
+        assert_eq!(gt_raw(&fs, path, Flavour::Posix), Err(Failure::Value));
+        assert_eq!(st_raw(&fs, path), Err(Failure::Value));
+    }
     assert_eq!(
-        gitfile_target(&fs, b"/r/\xff/.git", Flavour::Posix),
+        gt(&fs, b"/r/\xff/.git", Flavour::Posix),
         Some(b"/r/\xff/\xef\xbf\xbd\x00\xef\xbf\xbd".to_vec())
     );
     // The Windows flavour refuses a path that is not UTF-8 (ValueError).
@@ -355,15 +402,15 @@ fn nul_and_non_utf8_paths_and_contents_give_typed_answers() {
         &[(b"C:/r/.git", Node::File(b"gitdir: x".to_vec()))],
     );
     assert_eq!(
-        gitfile_target(&win, b"C:/r/\xff/.git", Flavour::Windows),
-        None
+        gt_raw(&win, b"C:/r/\xff/.git", Flavour::Windows),
+        Err(Failure::Value)
     );
     assert_eq!(
-        gitfile_target(&win, b"C:/r/.git", Flavour::Windows),
+        gt(&win, b"C:/r/.git", Flavour::Windows),
         Some(b"C:\\r\\x".to_vec())
     );
     assert_eq!(
-        small_text(&fs, b"/r/\xff/.git").as_deref(),
+        st(&fs, b"/r/\xff/.git").as_deref(),
         Some("gitdir: \u{fffd}\0\u{fffd}")
     );
 }

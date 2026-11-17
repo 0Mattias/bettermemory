@@ -1,0 +1,2 @@
+{"cases":1,"fixture":"gitfile_identity_python"}
+{"f":{},"l":{"s":"s"},"q":[{"p":"=t:<root>/s","v":null,"w":null},{"p":"=t:<root>/s/.git","v":null,"w":null},{"p":"=s:<root>/s|<root>","v":false}]}

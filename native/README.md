@@ -34,7 +34,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
-| `gitfile_rule` | units 1 and 2a of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl` |
+| `gitfile_rule` | units 1, 2a and 2b of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
@@ -5267,6 +5267,124 @@ model follows Linux elsewhere (`..` after a non-directory). No socket is in
 a fixture shared by both; `gitdir_socket.rs` holds each platform's
 (`cfg(target_os)`), asking the reference live where it can.
 
+### Unit 2b: the identity helpers, as built (confirmed at ff99085d)
+
+**The cut, confirmed: one unit.** Six functions, about 60 lines of
+reference logic, one fixture's worth of rules (pairs of paths stated,
+one listing); nothing in it needs a second fixture or a trait change.
+
+| Lines | Function | Callers in `gitfile_rule.py` | Callers outside |
+|---|---|---|---|
+| 130-144 | `_names_here` -> `identity::names_here` | 637, 905 | none |
+| 908-920 | `_names_folder` -> `identity::names_folder` | 206 | none |
+| 923-934 | `_same_folder` -> `identity::same_folder` | 214, 775, 850, 883, 1367, 1537 (via `_names_folder` too) | none |
+| 940-948 | `_JUNCTION_TAG`, `_is_link` -> `identity::is_link` (`StatResult::is_link`) | 877, 1348 | `location.py` 710, 1028 |
+| 951-966 | `_working_tree_of` -> `identity::working_tree_of` | 213, 880, 1366 | none |
+| 969-982 | `_tree_of` -> `identity::tree_of` | 955 (via `_working_tree_of`) | none |
+
+**Outcomes.** Each helper catches what it asks the OS, so each answers a
+value: `Result<Option<bool>, Failure>` (True, False, None as the
+reference's), `Result<Option<Vec<u8>>, Failure>` for the two folder
+answers, `Result<bool, Failure>` for `is_link`. The only failure is
+`Failure::NotPorted`. A `samestat` of a stat with no device or inode is
+declined, never read as another file.
+
+**Windows flavour, declined as not ported:** `names_here`,
+`names_folder`, `same_folder` (`samestat`), `tree_of` (`realpath`,
+`samestat`) and `working_tree_of` (through `tree_of`), whole, even where
+the reference would answer before its `samestat`; `is_link` of an entry
+that is not a symbolic link (the reparse tag).
+
+**Relative paths, and `read_small`.** Every path goes through `Ctx::at`,
+as in 2a; `tree_of` passes `Ctx::cwd` to `realpath`. Unit 1's
+`read_small` now does too: `gitfile_target(ctx, dotgit)` and
+`small_text(ctx, path)` take a `Ctx` and return `Result<Option<..>,
+Failure>` (a relative path on Windows is declined). No fixture answer
+changed (both leaves fixtures pass unchanged; the full regenerate changed
+no golden file). Held by `a_relative_path_is_never_taken_from_the_process_directory`
+(a child process whose own working directory holds a decoy of every
+relative name).
+
+**The working directory is the caller's contract.** `Ctx::cwd` is what
+`os.getcwd()` returned: absolute and physical (free of links). It is not
+checked here (no file-system call per helper). A `cwd` holding a link is
+taken as given: `tree_of(b".git")` answers its unresolved spelling where
+Python, inside the link, answers the resolved tree (pinned by
+`a_cwd_with_a_link_is_taken_as_given`). A caller whose `getcwd` fails
+(macOS raises PermissionError in a working directory it cannot read)
+builds no `Ctx` and declines whole. That is the safe direction for
+`_tree_of` and `_working_tree_of`, which answer None there (their
+`realpath` calls `getcwd`), never a tree.
+
+**A recorded, conservative difference.** In that state the reference's
+other helpers still answer: `_names_here`, `_names_folder` and
+`_same_folder` state relative paths, which the kernel resolves without
+`getcwd`, and `_gitfile_target` and `_small_text` open them. The port
+declines all of them there, since no `Ctx` is built.
+
+**A NUL rises out of the leaves.** `_gitfile_target` and `_small_text`
+do not catch the ValueError `open` raises for a NUL. `gitfile_target`
+and `small_text` now answer `Err(Failure::Value)` there (unit 1 answered
+`Ok(None)`). The six identity helpers catch it (`except (OSError,
+ValueError)`), as the reference does, and so answer a value.
+
+**Cost.** No set or dict in the reference here: each helper states one or
+two paths, and `same_folder`, `names_here` and `tree_of` of a folder of
+100,000 names cost what one of 10,000 does (best of five, under 5 times
+plus 50 ms). `working_tree_of` lists its folder whole through
+`Fs::listdir` where `os.scandir` stops at the first name other than
+`.git`: linear in the folder's names, as the reference is when every name
+is `.git`.
+
+**Fixtures** (POSIX only, 7.5 KB): `gitfile_identity.jsonl` (class i)
+and `gitfile_identity_python.jsonl` (class ii, Python: the loop tree, by
+input). Trees (`tests/contract/gen_identity.py`): the same folder by a
+link, `..`, a trailing slash, a relative path, and a hard-linked file
+inside; not: equal names in other parents, a link to a sibling, a
+dangling link, a file, nothing, a NUL, a mode-000 parent, `""` and `.`;
+worktree back-pointers that agree, disagree, are missing, run through
+links, name the folder by `..` and relatively, and a lone relative name
+(its `dirname` is `""`); `_tree_of` and `_working_tree_of` of a git
+directory, a `.git` file, links to either, a folder holding `.git` alone,
+3,000 names (recorded by count), names near `.git` (`.gi`, `.git.`), a
+folder that cannot be listed (mode 300), a `.git` in a mode-000 parent,
+and a loop (gated); a git directory whose folder's `.git` is another
+folder, a `.git` link to a sibling's `.git` and to a sibling's other
+folder (both stats answer, naming other files); a NUL at the start,
+middle and end of a path, relative and absolute, for every helper and
+for `_gitfile_target` (`G`) and `_small_text` (`T`). NFC against NFD is not in the fixture
+(`nfc_against_nfd_is_answered_as_the_platform_answers`, per platform).
+
+**Tests.** `golden_gitfile_identity.rs`: both files through `MemFs` and
+`StdFs`, every field; on disk the ungated file is also asked of the
+reference Python live by class and errno name (NOT RUN as
+`golden_gitfile_identity_stdfs_reference` without `BM_REFERENCE_PYTHON`).
+`identity_robustness.rs`: on a 512 KiB thread, loops, a chain of 200
+links (`realpath` walks it; `stat` refuses it), 10 KB paths, NUL and
+non-UTF-8 bytes, a mode-000 parent; the ratio test (with `working_tree_of`);
+a `cwd` holding a link, pinned; Windows declines; a
+stat without an inode; the decoy child; NFC/NFD.
+`gitfile_identity_not_posix.rs` records the gap off POSIX.
+
+**Mutations, one per rule, each caught:** `names_here`'s missing read as
+False, the second stat's error read as True, `base` not joined;
+`names_folder` without `normpath`, with `stat` for `lstat`, with None
+counted as the same folder; `same_folder`'s missing read as False;
+`path_missing` inverted; `tree_of` without `realpath`, comparing with
+the folder itself, answering on a `realpath` error; `working_tree_of`
+with `any` for `all`, a listing error read as `.git` alone; the Windows
+decline dropped; a missing inode read as False; `read_small` without
+`Ctx::at`. Two survived the first run and were given cases: None counted
+as the same folder (`F:wt||<root>`, a lone relative name) and a missing
+inode (`a_stat_without_an_inode_is_declined`). The review's: `tree_of` answering the folder where
+both stats name other files (now caught by the `p/repo`, `r/.git` and
+`sib/x` cases), a counting pass over the listing per name in
+`working_tree_of` (caught by `a_crowded_folder_is_not_scanned`, which
+now times `working_tree_of`: linear allowed, under 30 times plus 50 ms),
+and a NUL read as `Ok(None)`. Two are equivalent, said at the site:
+`lstat` for `stat` of `realpath`'s answer, and a `realpath` ValueError
+falling back to `git_dir`.
+
 ### Findings about the reference (reproduced, pinned; native agrees)
 
 Checked against git 2.54.0 (`git rev-parse --absolute-git-dir` in a
@@ -5750,11 +5868,11 @@ trait operations each unit uses, as the trait now stands:
 | Unit | Trait operations |
 |---|---|
 | 2a: git's reading of a git directory (built, `gitfile_rule::gitdir`) | `open_result` and `open_no_follow`, `fstat`, `read` (`_read`); `stat`/`lstat_result` (`_is_directory`), `lstat_result` with `placeholder()`, `readlink_result` (`_valid_headref`); `realpath_strict` (`_real`, `_real_to_last`); `access(EXECUTE)` (`_git_found`) |
-| 2b: identity helpers (not built) | `stat` and `samestat` (`_names_here`, `_names_folder`, `_same_folder`, `_tree_of`); `lstat` (`_names_folder`); `realpath` (`_tree_of`); `listdir` (`_working_tree_of`'s `scandir`, names only, stopping at the first other name); `lstat_result` with `is_link()` (`_is_link`) |
+| 2b: identity helpers (built, `gitfile_rule::identity`) | `stat` and `samestat` (`_names_here`, `_names_folder`, `_same_folder`, `_tree_of`); `lstat_result` (`_names_folder`); `realpath` (`_tree_of`); `listdir` (`_working_tree_of`'s `scandir`, names only, read whole); `lstat_result` with `is_link()` (`_is_link`) |
 | 2 (as cut before, for reference): git's reading of a git directory, identity helpers | `open_no_follow`, `open`, `fstat`, `read` (`_read`); `lstat` (`_is_directory`), `lstat_result` with `placeholder()`, `readlink` (`_valid_headref`); `stat` and `samestat` (`_names_here`, `_names_folder`, `_same_folder`, `_tree_of`); `realpath_strict` (`_real`, `_real_to_last`) and `realpath` (`_tree_of`); `access(EXECUTE)` (`_git_found`); `listdir` (`_working_tree_of`'s `scandir`, names only); `lstat_result` with `is_link()` (`_is_link`) |
 | 3: the format, the trust of a `commondir` | `gitconfig::file::read_git_config` (its `open`, `fstat`, `read`, `access(READ)`); `open`/`read` (`_commondir`'s blocking `open()`); `stat` (`isdir`), `samefile` (`_registered`); `lstat` (`lexists`); `realpath` |
-| 4: records and the follow | `lstat_result` with `is_link()`, `stat` with `placeholder()` and `samestat` (`_entry_names`); `open`, `read` (the `.git` file); `realpath`; unit 1's bounded reads |
-| 5: judge and discovery | `lstat_result` with `is_link()` (`_is_link`), `stat` and `samestat` (`_same_folder`), `lstat` (`lexists`); `realpath`; everything of units 2-4 |
+| 4: records and the follow | `identity::is_link`, `identity::names_here`, `identity::same_folder` and `identity::working_tree_of` (built in 2b), `stat` with `placeholder()` (`_entry_names`); `open`, `read` (the `.git` file); `realpath`; unit 1's bounded reads |
+| 5: judge and discovery | `identity::is_link` and `identity::same_folder` (built in 2b), `lstat` (`lexists`); `realpath`; everything of units 2-4. Obligation of whoever builds the `Ctx`: `cwd` is what `os.getcwd()` returned (physical, free of links); where `getcwd` fails, build no `Ctx` and decline whole |
 
 ### Tests (part 4)
 
