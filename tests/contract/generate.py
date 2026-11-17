@@ -42,6 +42,7 @@ from . import (
     gen_fs_stat,
     gen_gitconfig,
     gen_gitconfig_file,
+    gen_gitconfig_legacy,
     gen_gitconfig_tree,
     gen_gitconfig_remote_rules,
     gen_gitconfig_wildmatch,
@@ -132,6 +133,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitconfig_file": gen_gitconfig_file.generate,
     "gitconfig_tree": gen_gitconfig_tree.generate,
     "gitconfig_tree_rules": gen_gitconfig_tree.generate_rules,
+    "gitconfig_legacy": gen_gitconfig_legacy.generate,
+    "gitconfig_legacy_python": gen_gitconfig_legacy.generate_python,
     "membership_lines": gen_membership_lines.generate,
     "membership_lines_unicode": gen_membership_lines.generate_unicode,
     "membership_lines_python": gen_membership_lines.generate_python,
@@ -214,6 +217,7 @@ PYTHON_GATED = frozenset(
         "membership_lines_python",
         "capture_vocabulary_python",
         "fs_realpath_python",
+        "gitconfig_legacy_python",
     }
 )
 
@@ -290,6 +294,9 @@ PLATFORM_GATED = frozenset(
 #: errnos (`gen_fs_stat`); ``fs_access`` asks ``access`` and opens with
 #: ``O_NOFOLLOW`` over links, FIFOs and modes (`gen_fs_access`);
 #: ``gitconfig_tree`` reads real trees with the host's ``os.path`` and ``pwd``;
+#: ``gitconfig_legacy`` and ``gitconfig_legacy_python`` read real trees with
+#: links, FIFOs and modes (`gen_gitconfig_legacy`; the second holds the link
+#: loops);
 #: ``gitfile_leaves_posix`` reads links and mode-000 files
 #: (`gen_gitfile_leaves`).
 POSIX_ONLY = frozenset(
@@ -309,6 +316,8 @@ POSIX_ONLY = frozenset(
         "githead_posix",
         "gitconfig_file",
         "gitconfig_tree",
+        "gitconfig_legacy",
+        "gitconfig_legacy_python",
         "gitfile_leaves_posix",
         "store_provenance",
         "fs_realpath",

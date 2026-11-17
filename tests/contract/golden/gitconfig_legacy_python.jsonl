@@ -1,0 +1,3 @@
+{"cases":2,"fixture":"gitconfig_legacy_python"}
+{"f":{},"k":{"rs":true},"l":{"remotes":"remotes"},"r":{"db":"=master","fl":[["=<scratch>/remotes","u"]],"nm":{"d":"=<scratch>/remotes cannot be listed (OSError)"},"st":["u",null]}}
+{"f":{"branches/origin":"68747470733a2f2f6578616d706c652e696e76616c69642f610a"},"k":{"rs":true},"l":{"remotes/origin":"origin"},"r":{"db":"=master","fl":[["=<scratch>/remotes",["40755",0]],["=<scratch>/branches",["40755",0]],["=<scratch>/remotes/origin","u"]],"nm":["=origin"],"rm":[["=origin",{"d":"=<scratch>/remotes/origin cannot be read (OSError)"}]],"st":["u",["100644",26]]}}

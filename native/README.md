@@ -3026,6 +3026,113 @@ confirmed).** `hasconfig:remote.*.url:` (`_condition` 1104-1109,
   the caller runs them, against `git config --list --includes`: all
   agree (values, and git dying where the collecting read is forbidden).
 
+### Piece 4: stamps and the legacy remotes (built, `gitconfig::legacy`)
+
+Read at ca86be7d (line numbers confirmed): `file_stamp` 620-637,
+`unchanged` 640-651, `_LEGACY_FOLDERS`/`_LEGACY_LIMIT`/`_LEGACY_NAMES`
+893-899 (`_GIT_SPACE` 902), `_legacy_file` 905-944, `_legacy_names`
+947-968, `_Legacy` 971-979, `_legacy_remote` 982-1030, `_add_url`
+1033-1042, `_default_branch` 1045-1059, `legacy_remote_stamps`
+1062-1073. Callers: `location_git` 422, 435, 466 (`file_stamp` of HEAD
+and refs), 585 (`_legacy_names`), 626 and 690-700 (`_legacy_remote`,
+`_Legacy(resets, lambda: _default_branch(...))`, only for the names whose
+config gives no URL), 843 and 887 (`unchanged`); `origin.py` 399
+(`legacy_remote_stamps` of `origin`); `gitsystem.py` 450, 511, 760
+(`file_stamp` of the git binary and the probe's files). One unit by the
+sizing rule.
+
+- `file_stamp`: `Fs::stat`; a missing path (`path_missing`) None, any
+  other error `UNSTATED`; a folder `(mtime, ctime, 0, ino, mode)`, a
+  regular file with its size, anything else `(0, 0, 0, ino, mode)`.
+  `unchanged` stamps each path once and compares in order.
+- `legacy_names`: each folder stamped, then listed (missing: skipped;
+  any other error declines with its class); names sorted as Python sorts
+  `os.listdir`'s text (by code point, an undecodable byte its surrogate
+  U+DC80+b, so `\xff` sorts before a four-byte character though 0xFF is
+  above 0xF0), each once, declining past 256 after either folder.
+- `_legacy_file`: stamped before it is opened; missing, unreadable for
+  want of permission or a folder (at the open or by `fstat`) reads
+  nothing; another kind declines ("is not a regular file": a FIFO is
+  opened non-blocking and never read); larger than 64 KiB declines; any
+  other error declines with its class. Compared with `_config_bytes`:
+  no `access` check before a missing file, a permission error is
+  nothing rather than a death, a folder is nothing rather than a death,
+  a FIFO declines rather than reading incomplete, and the bound is 64 KiB
+  rather than 2 MiB.
+- `legacy_remote`: `remotes/<name>` line by line (right-trimmed of git's
+  space, cut at a NUL): a `Push:`/`Pull:` refspec (left-trimmed) git
+  refuses dies, one that turns on the object format declines; `URL:`
+  adds its left-trimmed rest (`_add_url`: an empty one empties the list
+  where `resets`, is kept otherwise, and asks `resets`, `Legacy::Unknown`
+  where that is not known). URLs found: they win. Else `branches/<name>`:
+  its first line, trimmed; empty gives no URLs; cut at a NUL, split at
+  the first `#` (none: the default branch, which `default_branch` gives,
+  None dies); the fetch and push refspecs checked; the URL added.
+- `default_branch`: GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME (an input,
+  empty is unset), else the last `init.defaultBranch` of the reads, else
+  `master`; None where valueless or not a branch name git takes. The
+  reference asks it lazily; it reads nothing, so computing it before is
+  the same answer.
+- Which wins between the config and the legacy files is the caller's
+  (`_spellings`: a legacy file is read only for a name whose
+  `remote.<name>.url` gives none, after the config's own `resets`).
+- Windows: a stamp in the reference is `os.stat` there: `st_mtime_ns`
+  the last write, `st_ctime_ns` the creation time (3.12 deprecates the
+  name; 3.13 still gives creation), `st_size`, `st_ino` the file index of
+  `GetFileInformationByHandle`, and `st_mode` made up from the
+  attributes (a folder 040555 or 040777, a file 0100444 or 0100666 by
+  the read-only bit, 0111 added for `.exe`, `.bat`, `.cmd`, `.com`).
+  `Fs::stat` gives none of index, mode or creation time there, so a stamp
+  of anything present is `NotPorted` (a missing path is still None and an
+  error still `UNSTATED`), and `legacy_names` and `legacy_remote` decline
+  as not ported at their first stamp.
+- Fixture: `gitconfig_legacy.jsonl` (POSIX only, 161 cases, 75,458
+  bytes) and `gitconfig_legacy_python.jsonl` (POSIX and Python, 2 cases
+  holding a link loop: the `remotes` folder and a remote file). Stamps
+  are recorded as `[mode, size]` (null missing, `"u"` unstated), never
+  times or inodes; every path's mode is set (644/755 unless the case
+  sets one). Cases: `remotes` files with every line kind in every order,
+  repeated, CRLF, no final newline, spaces and tabs, a NUL, empty, over
+  and at the bound, a long URL (digest), non-UTF-8 content, each under
+  three `resets` answers; `branches` files with a URL, `#branch`, `#`,
+  `#a#b`, refused branches, spaces, a leading empty line, a NUL, empty;
+  the default branch from each kind of read; both folders; a folder
+  missing, a file, a link, a link to nothing, mode 000 and 300; past 256
+  names and at it; names with dots, a dash, upper case, a nested folder;
+  a FIFO, a folder and mode 000 where a remote file should be; stamp
+  changes to `x` (size, mtime, replace by rename, mode, remove, create,
+  a hard link, a folder entry, a link retargeted, the null device
+  written, which moves its times but not its stamp).
+  Not in it: a non-UTF-8 name (APFS refuses one; the robustness test
+  pins the code-point order in memory) and two names differing by case
+  in one folder (a case-insensitive file system would merge them).
+- Robustness (512 KiB thread, debug): 10,000 names (declined after the
+  first folder), a 1 MiB remote file (declined at the bound) and one at
+  the bound exactly, a `remotes` folder nested 1,000 deep, a FIFO on
+  disk with no writer (refused; a waiting read would hang, which a
+  120 s bound turns into a failure), the Windows flavour's stamp.
+- Mutations (each made in the port, the golden and robustness tests
+  run, the source restored): 35 of 38 caught, after adding cases for
+  three that first survived (`Push:` read as a fetch refspec; the
+  branches fetch refspec unchecked: `#:a`, and a `.x` name). Survived,
+  equivalent: the branches push refspec unchecked (`HEAD:refs/heads/<b>`
+  refused where `refs/heads/<b>:refs/heads/<n>` is taken was found for
+  no branch of up to 3 of 17 symbols; the fetch check reads the same
+  name first); a stamp without its mtime, and without its inode (every
+  write, `utime` and rename moves the change time too on POSIX, so the
+  stamp still differs).
+- Checked against git 2.54 outside the fixture (neutral environment on
+  the child only): 34 trees, `git ls-remote --get-url <name>` against
+  the reference's first URL (or git dying where the reference says it
+  dies): all agree. git warns that it reads `remotes/` (or `branches/`),
+  "nominated for removal", and `git remote -v` lists no legacy remote.
+- What of `gitconfig.py` is still not ported after this: the stamps in
+  `config_tree`'s `files` (line 372: native keeps the paths only;
+  `file_stamp` is now there to add them); `read_git_config`'s
+  `_FORMAT_MEMO` cache (1589-1599, left out by design in piece 1); and
+  `IncludeContext`'s lazy `_Once` callables (native takes the branch,
+  prefix and `hasconfig` answers as values).
+
 ### Proposed split
 
 Read in full, this is still too large to land cleanly with fixtures, a
