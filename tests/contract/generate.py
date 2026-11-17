@@ -38,6 +38,7 @@ from . import (
     gen_edges,
     gen_fold,
     gen_fs_realpath,
+    gen_fs_access,
     gen_fs_stat,
     gen_gitconfig,
     gen_gitconfig_file,
@@ -142,6 +143,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_bulk": gen_store_bulk.generate,
     "fs_stat": gen_fs_stat.generate,
     "errno_class": gen_fs_stat.generate_errno_class,
+    "fs_access": gen_fs_access.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -285,7 +287,8 @@ PLATFORM_GATED = frozenset(
 #: ``fs_realpath`` and ``fs_realpath_python`` resolve links and FIFOs by
 #: ``posixpath`` (`gen_fs_realpath`); ``fs_stat`` states and lists links,
 #: FIFOs and mode-000 folders (`gen_fs_stat`); ``errno_class`` names POSIX
-#: errnos (`gen_fs_stat`);
+#: errnos (`gen_fs_stat`); ``fs_access`` asks ``access`` and opens with
+#: ``O_NOFOLLOW`` over links, FIFOs and modes (`gen_fs_access`);
 #: ``gitconfig_tree`` reads real trees with the host's ``os.path`` and ``pwd``;
 #: ``gitfile_leaves_posix`` reads links and mode-000 files
 #: (`gen_gitfile_leaves`).
@@ -313,6 +316,7 @@ POSIX_ONLY = frozenset(
         "store_bulk",
         "fs_stat",
         "errno_class",
+        "fs_access",
     }
 )
 

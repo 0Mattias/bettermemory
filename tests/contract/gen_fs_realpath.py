@@ -326,6 +326,28 @@ def check_length(
         )
 
 
+def check_parent_of_file(path: str) -> None:
+    """Refuse a query with ``..`` directly after a component that exists
+    and is not a directory nor a link to one: macOS resolves ``x/..``
+    after a file, FIFO or socket where Linux answers ENOTDIR (and the
+    native model follows Linux), so a fixture made on macOS with such a
+    path would differ on Linux. For the generators whose queries reach the
+    kernel (`gen_fs_stat`, `gen_fs_access`); `realpath`'s own walk is
+    Python's."""
+    if "\x00" in path:
+        return
+    parts = path.split("/")
+    for i, part in enumerate(parts):
+        if part != ".." or i == 0:
+            continue
+        before = "/".join(parts[:i]) or "/"
+        if os.path.lexists(before) and not os.path.isdir(before):
+            raise RuntimeError(
+                f"a query with '..' after {before!r}, which is not a directory: "
+                "macOS resolves it and Linux answers ENOTDIR"
+            )
+
+
 def _query(query: str, real: str, links: dict[str, str]) -> dict[str, Any]:
     path = query.replace("<root>", real)
     check_length(path, links, real)

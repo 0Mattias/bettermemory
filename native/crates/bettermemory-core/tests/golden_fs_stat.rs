@@ -3,13 +3,15 @@
 //! in memory (`MemFs`), and over the same tree written to a scratch
 //! directory (`StdFs`), where the inode number and the times the fixture
 //! leaves out are compared with the reference Python's `os.stat` of the
-//! same paths.
+//! same paths. And `fs_access.jsonl` (class i, POSIX only): `os.access`
+//! for each mode and the open that does not follow a final link, the same
+//! two ways, the on-disk answers also asked of the reference Python live.
 
 #![cfg(unix)]
 
 mod common;
 
-use bettermemory_core::fsdata::{Flavour, Fs, Kind, MemFs, Node, OsError, StdFs};
+use bettermemory_core::fsdata::{Access, Flavour, Fs, Kind, MemFs, Node, OsError, StdFs};
 use common::jsonl;
 use common::parity::Ledger;
 use serde_json::{json, Value};
@@ -18,10 +20,15 @@ const FILE: &str = "fs_stat.jsonl";
 const MEM_ROOT: &str = "/<scratch>";
 
 fn cases() -> Vec<Value> {
-    let lines = jsonl(FILE);
+    cases_of(FILE).1
+}
+
+/// A fixture's header and its cases.
+fn cases_of(file: &str) -> (Value, Vec<Value>) {
+    let lines = jsonl(file);
     let cases = lines[1..].to_vec();
     assert_eq!(lines[0]["cases"].as_u64(), Some(cases.len() as u64));
-    cases
+    (lines[0].clone(), cases)
 }
 
 fn b(data: &[u8]) -> String {
@@ -382,4 +389,204 @@ fn errno_class_every_name() {
         failures.push(format!("errno_name knows {known:?}, the fixture {named:?}"));
     }
     ledger.settle(rows.len(), &failures);
+}
+
+const ACCESS: &str = "fs_access.jsonl";
+
+/// `os.access` for R_OK, W_OK and X_OK as `"rwx"`, and the no-follow
+/// open with its kind and, for a regular file, `_read`'s bytes up to
+/// `limit + 1`.
+fn access_answers<F: Fs>(fs: &F, case: &Value, root: &str, limit: usize) -> Value {
+    let queries = case["q"].as_array().unwrap();
+    Value::Array(
+        queries
+            .iter()
+            .map(|q| {
+                let path = replaced(
+                    &unspelled(q["p"].as_str().unwrap()),
+                    b"<root>",
+                    root.as_bytes(),
+                );
+                let mut a = String::new();
+                let mut value = false;
+                for (c, mode) in [
+                    ('r', Access::READ),
+                    ('w', Access::WRITE),
+                    ('x', Access::EXECUTE),
+                ] {
+                    match fs.access(&path, mode) {
+                        Ok(true) => a.push(c),
+                        Ok(false) => a.push('-'),
+                        Err(_) => value = true,
+                    }
+                }
+                let a = if value {
+                    json!({"e": "ValueError"})
+                } else {
+                    json!(a)
+                };
+                let o = match fs.open_no_follow(&path) {
+                    Err(e) => error(e),
+                    Ok(mut file) => {
+                        let st = fs.fstat(&mut file).expect("fstat of an open file");
+                        let mut out = json!({"k": kind(st.kind)});
+                        if st.kind == Kind::Regular {
+                            let mut data = Vec::new();
+                            while data.len() <= limit {
+                                let chunk =
+                                    fs.read(&mut file, limit + 1 - data.len()).expect("a read");
+                                if chunk.is_empty() {
+                                    break;
+                                }
+                                data.extend_from_slice(&chunk);
+                            }
+                            out["d"] = json!(b(&data));
+                        }
+                        out
+                    }
+                };
+                json!({"p": q["p"], "a": a, "o": o})
+            })
+            .collect(),
+    )
+}
+
+fn limit_of(header: &Value) -> usize {
+    usize::try_from(header["limit"].as_u64().expect("a limit")).unwrap()
+}
+
+#[test]
+fn fs_access_every_case_in_memory() {
+    let (header, cases) = cases_of(ACCESS);
+    let ledger = Ledger::new("golden_fs_access", ACCESS);
+    let mut failures = Vec::new();
+    for (i, case) in cases.iter().enumerate() {
+        let got = access_answers(&world(case), case, MEM_ROOT, limit_of(&header));
+        if got != case["q"] {
+            failures.push(format!("#{i}: native {got} reference {}", case["q"]));
+        }
+    }
+    ledger.settle(cases.len(), &failures);
+}
+
+/// The reference Python's answers of `paths` on this host, as the
+/// generator makes them (`gen_fs_access._access` and `_open`).
+fn reference_access(python: &std::path::Path, limit: usize, paths: &[String]) -> Vec<Value> {
+    let script = "import json, os, stat, sys\n\
+        limit = int(sys.argv[1])\n\
+        out = []\n\
+        for p in sys.argv[2:]:\n\
+        \x20   a = ''.join(c if os.access(p, m) else '-' for c, m in (('r', os.R_OK), ('w', os.W_OK), ('x', os.X_OK)))\n\
+        \x20   try:\n\
+        \x20       fd = os.open(p, os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOFOLLOW)\n\
+        \x20   except OSError as e:\n\
+        \x20       out.append([a, type(e).__name__, None])\n\
+        \x20       continue\n\
+        \x20   mode = os.fstat(fd).st_mode\n\
+        \x20   data = os.read(fd, limit + 1) if stat.S_ISREG(mode) else b''\n\
+        \x20   os.close(fd)\n\
+        \x20   out.append([a, stat.S_IFMT(mode), data.hex()])\n\
+        print(json.dumps(out))\n";
+    let mut cmd = std::process::Command::new(python);
+    cmd.env_clear()
+        .arg("-I")
+        .arg("-c")
+        .arg(script)
+        .arg(limit.to_string())
+        .args(paths);
+    if let Some(p) = std::env::var_os("PATH") {
+        cmd.env("PATH", p);
+    }
+    let out = cmd.output().expect("the reference runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice::<Vec<Value>>(&out.stdout).expect("JSON")
+}
+
+#[test]
+fn fs_access_every_case_on_disk() {
+    let (header, cases) = cases_of(ACCESS);
+    let limit = limit_of(&header);
+    let ledger = Ledger::new("golden_fs_access_stdfs", ACCESS);
+    let base = Scratch(fresh_dir("bm-fsaccess"));
+    refuse_root(&base.0);
+    let python = common::created::reference_python();
+    if let Err(why) = &python {
+        let test = "golden_fs_access_stdfs_reference";
+        eprintln!("NOT RUN {test}: the live reference not asked: {why}");
+        common::parity::record(
+            test,
+            "reference Python",
+            "i",
+            0,
+            &[test.to_owned()],
+            std::slice::from_ref(why),
+        );
+    }
+    let mut failures = Vec::new();
+    for (i, case) in cases.iter().enumerate() {
+        let dir = base.0.join(i.to_string());
+        std::fs::create_dir(&dir).unwrap();
+        if !write_tree(case, &dir) {
+            failures.push(format!("#{i}: mkfifo could not run"));
+            continue;
+        }
+        let root = dir.to_str().unwrap();
+        let got = access_answers(&StdFs, case, root, limit);
+        if got != case["q"] {
+            failures.push(format!("#{i}: native {got} reference {}", case["q"]));
+        }
+        // The same tree asked of the reference Python live: the access
+        // bits, the open's class or kind, and the first read.
+        if let Ok(python) = &python {
+            let paths: Vec<String> = case["q"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|q| unspelled(q["p"].as_str().unwrap()))
+                .filter(|p| std::str::from_utf8(p).is_ok() && !p.contains(&0))
+                .map(|p| String::from_utf8(p).unwrap().replace("<root>", root))
+                .collect();
+            let theirs = reference_access(python, limit, &paths);
+            for (path, want) in paths.iter().zip(theirs) {
+                let p = path.as_bytes();
+                let a: String = [
+                    ('r', Access::READ),
+                    ('w', Access::WRITE),
+                    ('x', Access::EXECUTE),
+                ]
+                .iter()
+                .map(|&(c, m)| {
+                    if StdFs.access(p, m) == Ok(true) {
+                        c
+                    } else {
+                        '-'
+                    }
+                })
+                .collect();
+                let mine = match StdFs.open_no_follow(p) {
+                    Err(e) => json!([a, e.class.name(), null]),
+                    Ok(mut f) => {
+                        let st = StdFs.fstat(&mut f).unwrap();
+                        let data = if st.kind == Kind::Regular {
+                            StdFs.read(&mut f, limit + 1).unwrap()
+                        } else {
+                            Vec::new()
+                        };
+                        let ifmt = bettermemory_core::fsdata::type_bits(st.kind);
+                        let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
+                        json!([a, ifmt, hex])
+                    }
+                };
+                if mine != want {
+                    failures.push(format!("#{i} {path}: native {mine} reference {want}"));
+                }
+            }
+        }
+    }
+    drop(base);
+    ledger.settle(cases.len(), &failures);
 }

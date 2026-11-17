@@ -4758,23 +4758,83 @@ component count; so does this one's.
   trees answer otherwise. The on-disk golden tests refuse too: they probe
   whether a mode-000 folder can be listed, with no `unsafe`.
 
-### Still designed, not built
+### Part 3 (fsx3), built: `access` and the open that does not follow
 
-- **5. `access(X_OK)`** (`gitfile_rule._git_found`, 1259): POSIX
-  `access(2)` through a safe wrapper in `bettermemory-sys`. Its safety
-  argument: the path is a `CString` borrowed for the call, and `access`
-  writes no memory of the process. On Windows CPython answers X_OK by the
-  attributes, as R_OK. `MemFs` checks the owner's execute bit along a path
-  it can search.
-- **6. The open that does not follow a final link** (`gitfile_rule._read`,
-  1083-1124): `O_NOFOLLOW` through `OpenOptionsExt::custom_flags` (no
-  `unsafe`). A final link is ELOOP, OSError, and gone by errno (the
-  `OsError` above). Windows' `os.open` has no `O_NOFOLLOW`, so it follows
-  there.
-- **7. The stat bits** and **8. `expanduser`**, as designed above.
+**What the readers call.** Every `os.access` in `gitfile_rule.py`,
+`gitconfig.py`, `_location_probe.py` and `location_git.py`:
+- `gitfile_rule._git_found` (1259-1261): `os.access(join(common,
+  "objects"), os.X_OK)` and the same of `refs`; nothing caught, so a
+  ValueError would rise (the path is built from read text).
+- `gitconfig._accessible` (353): `os.access(path, os.R_OK)`, ValueError
+  taken as False.
+- `_location_probe.py` and `location_git.py` call none.
 
-Each takes one POSIX fixture from the reference's own call; 5 and 6 fit
-one unit together.
+Every call takes the defaults: `effective_ids=False` (the real ids),
+`follow_symlinks=True`, no `dir_fd`. No caller asks W_OK, but the trait
+answers it (the fixture pins it).
+
+**`Fs::access(path, Access) -> Result<bool, PyErr>`.** `Access` is any of
+`READ`, `WRITE`, `EXECUTE` (none is F_OK). False for any OSError, as
+CPython answers; `Err(PyErr::Value)` for a NUL (and on Windows a path
+that is not UTF-8). `access_read` is now a default method over it.
+- `StdFs` on unix: `bettermemory_sys::access`, one `access(2)` call. Its
+  safety argument, beside it: the path is a borrowed `CStr`, valid and
+  NUL-terminated for the call, which only reads it and writes no memory
+  of the process; the mode is an OR of the platform's own constants.
+  `bettermemory-core` keeps `#![forbid(unsafe_code)]`.
+- `StdFs` on Windows: CPython's `os.access` is `GetFileAttributesW`
+  (read, not run): False where no attributes are found; W_OK fails on a
+  read-only file that is no directory; R_OK and X_OK hold wherever the
+  attributes are found, the link's own. Ported from
+  `symlink_metadata().file_attributes()`, no `unsafe`.
+- `MemFs`: POSIX walks with links followed, search asked of each folder,
+  then the owner's bits of what is found; Windows finds the link itself
+  and models no read-only attribute.
+
+**`Fs::open_no_follow(path) -> Result<File, OsError>`** is
+`gitfile_rule._read`'s open with `follow=False`: `O_RDONLY | O_NONBLOCK |
+O_CLOEXEC | O_NOFOLLOW`, through `OpenOptionsExt::custom_flags` (no
+`unsafe`; `bettermemory_sys::O_NOFOLLOW` is libc's constant). What the
+reference does around it is the caller's (unit 2), on the trait as it is:
+- a PermissionError at the open asks `_is_directory` (`lstat` with
+  `follow=False`) and raises IsADirectoryError for a folder (Windows);
+- `os.fstat` after: a folder is IsADirectoryError, any kind but a regular
+  file OSError(EINVAL); a FIFO opens at once and is refused by its kind,
+  never read;
+- the read is `os.read` in chunks of `_READ_CHUNK` (64 KiB) up to
+  `limit + 1` bytes, so a caller tells a longer file apart;
+- a final link is ELOOP (OSError, no subclass) on macOS and Linux alike,
+  which `path_gone` reads as gone, and `_valid_headref` catches as
+  OSError: False. A link in a middle component is followed.
+
+Windows' `os` has no `O_NOFOLLOW` and no `O_NONBLOCK` (the reference's
+`getattr` gives 0), so there the open follows links: `open_no_follow` is
+`open`, in `StdFs` and in `MemFs`'s Windows flavour.
+
+Parts 7 (the stat bits) and 8 (`expanduser`) are not needed by these two
+and stay designed, as above.
+
+### Can unit 2 of `gitfile_rule` be built now? No
+
+Unit 2 (1062-1287, 130-144, 908-982) still needs, beyond this trait:
+- **the stat bits (part 7):** `_placeholder` reads `st_flags`
+  (`SF_DATALESS`, macOS) and `st_file_attributes` (Windows recall) of an
+  `lstat` (`_valid_headref`) and a `stat` (`_entry_names`, unit 4);
+  `_is_link` reads `st_reparse_tag` (Windows junctions);
+- **`st_dev`:** `samestat` (`_names_here`, `_names_folder`,
+  `_same_folder`) compares device and inode; `StatResult` has `ino` only;
+- **`realpath(strict=True)`** (`_real`, `_real_to_last`): the built
+  `realpath` is the non-strict one.
+
+So the next unit is part 7 with `st_dev` in `StatResult` and a strict
+`realpath`, then unit 2. Which trait operations each unit uses:
+
+| Unit | Trait operations |
+|---|---|
+| 2: git's reading of a git directory, identity helpers | `open_no_follow`, `open`, `fstat`, `read` (`_read`); `lstat` with the stat bits, `readlink` (`_valid_headref`); `stat` with `st_dev`/`ino` (`_names_here`, `_names_folder`, `_same_folder`); `realpath` strict and not (`_real`, `_real_to_last`, `_tree_of`); `access(EXECUTE)` (`_git_found`); `listdir` (`_working_tree_of`'s `scandir`, names only); `lstat` with the reparse tag (`_is_link`) |
+| 3: the format, the trust of a `commondir` | `gitconfig::file::read_git_config` (its `open`, `fstat`, `read`, `access(READ)`); `open`/`read` (`_commondir`'s blocking `open()`); `stat` (`isdir`, `samefile` with `st_dev`); `lstat` (`lexists`); `realpath` |
+| 4: records and the follow | `lstat`, `stat` with the stat bits (`_entry_names`, `_placeholder`); `open`, `read` (`.git` file); `realpath`; unit 1's bounded reads |
+| 5: judge and discovery | `lstat`, `stat` (`lexists`, `_is_link`, `_same_folder`); `realpath`; everything of units 2-4 |
 
 ### Test doubles that answer with a constant
 
@@ -4799,6 +4859,34 @@ constants, not a walk.
   the OSError for the reference's answer.
 - `stat`'s errno names on Windows are CPython's map of the class, read,
   not run.
+- `access_of` reads `symlink_metadata` where CPython calls
+  `GetFileAttributesW`. On a file whose ACL denies reading attributes, or
+  one held open under some sharing modes, the native answer could be
+  False where Python's is True. Unverified: Windows cannot be run here.
+- For the next unit: on Windows `StatResult.ino` is None, but `samestat`
+  and `samefile` there need the file index as well as the volume, so
+  `_tree_of` and `_registered` cannot be answered on Windows until the
+  index is carried; and `lstat` answers only the kind, so `_is_link`
+  needs the extra stat bits (the reparse tag) from it.
+
+### Platform notes (`MemFs`)
+
+- **`..` after a non-directory.** For `<root>/n0/..` with `n0` a regular
+  file, macOS resolves the `..` (Python's `os.access` is True for every
+  mode, and the no-follow open gives a folder); Linux answers ENOTDIR.
+  `MemFs`'s walk follows Linux. The review found this the only class of
+  `MemFs` difference from macOS (112 of 75,000 random queries, each
+  `X/..` with X a file, FIFO or socket). The model is unchanged; the
+  shared generator check `check_parent_of_file` (beside `check_length`
+  in `gen_fs_realpath.py`, used by `gen_fs_stat` and `gen_fs_access`)
+  refuses any query with `..` right after a component that exists and is
+  not a directory or a link to one, so no fixture made on macOS holds
+  one.
+- **A trailing separator after a final link** makes the kernel follow
+  the link under `O_NOFOLLOW` too, on macOS and Linux alike: `ld/` opens
+  the folder, `lf/` is ENOTDIR, `dangling/` ENOENT. `fs_access.jsonl`
+  pins all three for `access` and the open; a mutation refusing `ld/`
+  with ELOOP on the no-follow path fails `fs_access_every_case_in_memory`.
 
 ### Tests (part 2)
 
@@ -4820,6 +4908,42 @@ constants, not a walk.
   `the_memfs_walk_is_at_most_quadratic_in_depth`: depth 4,000 and 8,000,
   the larger under 8 times the smaller plus 50 ms, which fails on cubic
   growth.
+
+### Tests (part 3)
+
+- `golden_fs_stat.rs` (unix) adds `fs_access_every_case_in_memory` and
+  `fs_access_every_case_on_disk`: `fs_access.jsonl` (2 trees, 44
+  queries, class i, POSIX only), each query's `access` for R, W and X
+  and its no-follow open (the kind, and for a regular file the bytes up
+  to the fixture's `limit + 1`). On disk the same tree is also asked of
+  the reference Python live; without `BM_REFERENCE_PYTHON` that prints
+  NOT RUN and is recorded as `golden_fs_access_stdfs_reference`.
+  `fs_stat_not_posix.rs` records the gap off unix as os.
+- Why `fs_access.jsonl` is its own file: other calls, and `fs_stat.jsonl`
+  keeps its bytes. Why Linux gives macOS's bytes: `gen_fs_access.py`'s
+  docstring, outcome by outcome (ELOOP for a final link under
+  `O_NOFOLLOW` on both; a folder and a FIFO open for reading at once on
+  both; `access(2)` by the owner's bits, never as root).
+- `fs_access_robustness.rs`: hostile paths (empty, NUL, separators only,
+  a loop, a 101-link chain, `..` and depth at the path limit, a name past
+  `NAME_MAX`, bytes that are not UTF-8) through `access` and
+  `open_no_follow`, both flavours, on a 512 KiB thread in debug; and
+  `a_fifo_opened_without_following_does_not_wait`: the open of a FIFO
+  with no writer must answer; a helper releases a waiting open with a
+  writer after 60 s and fails the test, so passing never depends on the
+  clock.
+- `bettermemory-sys`: `access_answers_by_the_bits` (unix).
+- Mutations checked before hand-back, each caught:
+  - following the final link (`MemFs` and `StdFs`):
+    `fs_access_every_case_in_memory`, `fs_access_every_case_on_disk`,
+    `hostile_paths_answer_typed_on_a_small_stack`;
+  - dropping `O_NONBLOCK` from the no-follow open:
+    `a_fifo_opened_without_following_does_not_wait` (the on-disk golden
+    test then waits on its FIFO);
+  - answering from the bits without the folders' search check (`MemFs`):
+    `fs_access_every_case_in_memory`, `fs_stat_every_case_in_memory`;
+  - R and X swapped (`MemFs` and the sys mapping): both `fs_access`
+    golden tests.
 
 ## Chunked runs
 

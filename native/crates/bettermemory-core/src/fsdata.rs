@@ -169,6 +169,51 @@ pub fn type_bits(kind: Kind) -> u32 {
     }
 }
 
+/// The modes `os.access` asks, any together; none is `F_OK`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Access {
+    pub read: bool,
+    pub write: bool,
+    pub execute: bool,
+}
+
+impl Access {
+    /// `R_OK`.
+    pub const READ: Access = Access {
+        read: true,
+        write: false,
+        execute: false,
+    };
+    /// `W_OK`.
+    pub const WRITE: Access = Access {
+        read: false,
+        write: true,
+        execute: false,
+    };
+    /// `X_OK`.
+    pub const EXECUTE: Access = Access {
+        read: false,
+        write: false,
+        execute: true,
+    };
+
+    /// The owner's permission bits it asks: `0o400`, `0o200` and `0o100`,
+    /// ORed.
+    fn bits(self) -> u32 {
+        let mut bits = 0;
+        if self.read {
+            bits |= READ;
+        }
+        if self.write {
+            bits |= WRITE;
+        }
+        if self.execute {
+            bits |= SEARCH;
+        }
+        bits
+    }
+}
+
 /// The file system the readers of config files take as data.
 pub trait Fs {
     /// An open file.
@@ -181,7 +226,24 @@ pub trait Fs {
     /// `os.read(fd, max)`: at most `max` bytes, empty at the end.
     fn read(&self, file: &mut Self::File, max: usize) -> Result<Vec<u8>, PyErr>;
     /// `os.access(path, os.R_OK)`, False where it raises ValueError.
-    fn access_read(&self, path: &[u8]) -> bool;
+    fn access_read(&self, path: &[u8]) -> bool {
+        self.access(path, Access::READ).unwrap_or(false)
+    }
+    /// `os.access(path, mode)` with its defaults (`effective_ids=False`,
+    /// `follow_symlinks=True`): POSIX `access(2)`, the real ids, links
+    /// followed, search permission asked of each folder on the way. False
+    /// for any OSError, as CPython answers; ValueError (a NUL in the path,
+    /// or on Windows one that is not UTF-8) is `Err(PyErr::Value)`, which
+    /// `gitfile_rule._git_found` lets through and `gitconfig._accessible`
+    /// takes as False.
+    fn access(&self, path: &[u8], mode: Access) -> Result<bool, PyErr>;
+    /// `os.open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_BINARY |
+    /// O_NOFOLLOW)` (`gitfile_rule._read` with `follow=False`): a final
+    /// symbolic link, dangling or not, is ELOOP (OSError) on macOS and
+    /// Linux alike; links in the middle are followed; a FIFO opens without
+    /// waiting. Windows' `os` has no `O_NOFOLLOW` (the reference's
+    /// `getattr` gives 0), so there it is [`Fs::open`]: links followed.
+    fn open_no_follow(&self, path: &[u8]) -> Result<Self::File, OsError>;
     /// The kind `os.lstat` answers (the link itself, not its target).
     fn lstat(&self, path: &[u8]) -> Result<Kind, PyErr>;
     /// `os.readlink(path)`: a symbolic link's target as stored. A path
@@ -278,6 +340,67 @@ fn open_options() -> std::fs::OpenOptions {
     options
 }
 
+/// The open of [`Fs::open_no_follow`]: `O_NOFOLLOW` beside `O_NONBLOCK`.
+/// The standard library's `OpenOptions` always sets `O_CLOEXEC`, so no
+/// test can catch its loss.
+#[cfg(unix)]
+fn no_follow_options() -> std::fs::OpenOptions {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut options = std::fs::OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(bettermemory_sys::O_NONBLOCK | bettermemory_sys::O_NOFOLLOW);
+    options
+}
+
+/// Windows: the reference's `getattr(os, "O_NOFOLLOW", 0)` is 0, so the
+/// open follows links, as [`Fs::open`] does.
+#[cfg(not(unix))]
+fn no_follow_options() -> std::fs::OpenOptions {
+    open_options()
+}
+
+/// POSIX `access(2)` through `bettermemory-sys` (the path holds no NUL:
+/// `native_path` refused one).
+#[cfg(unix)]
+fn access_of(path: &std::path::Path, mode: Access) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let mode = bettermemory_sys::AccessMode {
+        read: mode.read,
+        write: mode.write,
+        execute: mode.execute,
+    };
+    bettermemory_sys::access(&c, mode).unwrap_or(false)
+}
+
+/// Windows: CPython's `os.access` is `GetFileAttributesW` (read, not run
+/// here): False where no attributes are found; W_OK fails on a read-only
+/// file that is not a directory; R_OK and X_OK hold wherever the
+/// attributes are found. The attributes are the link's own (a dangling
+/// link answers), as `symlink_metadata` reads them.
+#[cfg(windows)]
+fn access_of(path: &std::path::Path, mode: Access) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    let attributes = meta.file_attributes();
+    !mode.write
+        || attributes & FILE_ATTRIBUTE_READONLY == 0
+        || attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+}
+
+/// Neither POSIX nor Windows: not ported.
+#[cfg(not(any(unix, windows)))]
+fn access_of(_: &std::path::Path, _: Access) -> bool {
+    false
+}
+
 #[cfg(unix)]
 fn identity_of(meta: &std::fs::Metadata, _: &std::fs::File) -> Option<FileId> {
     use std::os::unix::fs::MetadataExt;
@@ -336,21 +459,15 @@ impl Fs for StdFs {
         Ok(out)
     }
 
-    fn access_read(&self, path: &[u8]) -> bool {
-        let Ok(path) = native_path(path) else {
-            return false;
-        };
-        // Windows: CPython's `os.access` is `GetFileAttributesW`, which
-        // describes a link itself (a dangling one answers), and R_OK holds
-        // wherever the attributes are found (the read-only attribute
-        // bears on W_OK only).
-        if cfg!(windows) {
-            return std::fs::symlink_metadata(&path).is_ok();
-        }
-        // POSIX `access(R_OK)`: an open for reading that is closed at once
-        // answers it for a file, a directory and a FIFO (not for a socket,
-        // which the readers never ask about), without waiting.
-        open_options().open(&path).is_ok()
+    fn access(&self, path: &[u8], mode: Access) -> Result<bool, PyErr> {
+        let path = native_path(path)?;
+        Ok(access_of(&path, mode))
+    }
+
+    fn open_no_follow(&self, path: &[u8]) -> Result<StdFile, OsError> {
+        let path = native_path(path).map_err(|_| OsError::value())?;
+        let file = no_follow_options().open(&path).map_err(|e| os_error(&e))?;
+        Ok(StdFile { file, path })
     }
 
     fn lstat(&self, path: &[u8]) -> Result<Kind, PyErr> {
@@ -511,6 +628,7 @@ pub enum Node {
 
 /// The owner's permission bits, as the OS checks them for the owner.
 const READ: u32 = 0o400;
+const WRITE: u32 = 0o200;
 const SEARCH: u32 = 0o100;
 
 /// The hops macOS follows before ELOOP (Linux follows 40); the default,
@@ -790,6 +908,44 @@ impl MemFs {
         Ok(found)
     }
 
+    /// The non-blocking open, a final link followed where `follow` and
+    /// ELOOP where not.
+    fn open_at(&self, path: &[u8], follow: bool) -> Result<MemFile, OsError> {
+        if self.flavour == Flavour::Windows && self.trailing_separator(path) {
+            // `_wopen` of a path ending in a separator finds nothing.
+            self.walk(path, true)?;
+            return Err(OsError::new(PyErr::FileNotFound, "ENOENT"));
+        }
+        let (id, node) = self.walk(path, follow)?;
+        if matches!(node, Node::Link(_)) {
+            return Err(OsError::new(PyErr::Os, "ELOOP"));
+        }
+        if self.flavour == Flavour::Windows {
+            // `_wopen` of a directory is refused (EACCES).
+            if node == Node::Dir {
+                return Err(OsError::new(PyErr::Permission, "EACCES"));
+            }
+        } else {
+            if self.mode(&id, &node) & READ == 0 {
+                return Err(OsError::new(PyErr::Permission, "EACCES"));
+            }
+            // A socket cannot be opened (ENXIO on Linux, EOPNOTSUPP on
+            // macOS: OSError either way).
+            if node == Node::Socket {
+                return Err(OsError {
+                    class: PyErr::Os,
+                    errno: None,
+                    winerror: None,
+                });
+            }
+        }
+        Ok(MemFile {
+            node,
+            at: 0,
+            identity: id,
+        })
+    }
+
     /// Read past separators, dropping each segment read to its end.
     fn skip_separators(&self, stack: &mut Vec<(Vec<u8>, usize)>, unread: &mut usize) {
         while let Some((bytes, at)) = stack.last_mut() {
@@ -835,32 +991,12 @@ impl Fs for MemFs {
     type File = MemFile;
 
     fn open(&self, path: &[u8]) -> Result<MemFile, PyErr> {
-        if self.flavour == Flavour::Windows && self.trailing_separator(path) {
-            // `_wopen` of a path ending in a separator finds nothing.
-            self.walk(path, true)?;
-            return Err(PyErr::FileNotFound);
-        }
-        let (id, node) = self.walk(path, true)?;
-        if self.flavour == Flavour::Windows {
-            // `_wopen` of a directory is refused (EACCES).
-            if node == Node::Dir {
-                return Err(PyErr::Permission);
-            }
-        } else {
-            if self.mode(&id, &node) & READ == 0 {
-                return Err(PyErr::Permission);
-            }
-            // A socket cannot be opened (ENXIO on Linux, EOPNOTSUPP on
-            // macOS: OSError either way).
-            if node == Node::Socket {
-                return Err(PyErr::Os);
-            }
-        }
-        Ok(MemFile {
-            node,
-            at: 0,
-            identity: id,
-        })
+        self.open_at(path, true).map_err(PyErr::from)
+    }
+
+    fn open_no_follow(&self, path: &[u8]) -> Result<MemFile, OsError> {
+        // Windows has no `O_NOFOLLOW`: the open follows there.
+        self.open_at(path, self.flavour == Flavour::Windows)
     }
 
     fn fstat(&self, file: &mut MemFile) -> Result<Stat, PyErr> {
@@ -891,14 +1027,21 @@ impl Fs for MemFs {
         }
     }
 
-    fn access_read(&self, path: &[u8]) -> bool {
-        if self.flavour == Flavour::Windows {
-            // `GetFileAttributesW`: the link itself, found or not.
-            return self.walk(path, false).is_ok();
-        }
-        match self.walk(path, true) {
-            Ok((id, node)) => self.mode(&id, &node) & READ != 0,
-            Err(_) => false,
+    fn access(&self, path: &[u8], mode: Access) -> Result<bool, PyErr> {
+        let found = match self.flavour {
+            // `GetFileAttributesW`: the link itself, found or not; no
+            // read-only attribute is modelled, so W_OK holds too.
+            Flavour::Windows => self.walk(path, false).map(|_| true),
+            // `access(2)`: links followed, each folder searched on the
+            // way (`walk`), then the owner's bits of what is found.
+            Flavour::Posix => self
+                .walk(path, true)
+                .map(|(id, node)| self.mode(&id, &node) & mode.bits() == mode.bits()),
+        };
+        match found {
+            Ok(answer) => Ok(answer),
+            Err(e) if e.class == PyErr::Value => Err(PyErr::Value),
+            Err(_) => Ok(false),
         }
     }
 

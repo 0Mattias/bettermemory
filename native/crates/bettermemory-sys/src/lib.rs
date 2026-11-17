@@ -54,6 +54,59 @@ pub fn fsync(file: &File) -> io::Result<()> {
     }
 }
 
+/// The platform's `O_NOFOLLOW` open flag: a final symbolic link fails
+/// with ELOOP (macOS and Linux alike) instead of being followed.
+#[cfg(unix)]
+pub const O_NOFOLLOW: i32 = libc::O_NOFOLLOW;
+
+/// The modes `os.access` asks: read (`R_OK`), write (`W_OK`) and execute
+/// or search (`X_OK`), any together.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AccessMode {
+    /// `R_OK`.
+    pub read: bool,
+    /// `W_OK`.
+    pub write: bool,
+    /// `X_OK`.
+    pub execute: bool,
+}
+
+/// `os.access(path, mode)` with its defaults (`effective_ids=False`,
+/// `follow_symlinks=True`, no `dir_fd`): POSIX `access(2)`, which checks
+/// with the real user and group ids, follows links, and asks search
+/// permission of every folder on the way. True where it answers 0; False
+/// for any error, as CPython answers (it raises nothing but ValueError,
+/// for a NUL in the path, which `CStr` cannot hold, so the caller refuses
+/// one first).
+///
+/// Elsewhere there is no `access(2)`: None, and the caller answers from
+/// the attributes as CPython's `os.access` does there.
+#[cfg(unix)]
+pub fn access(path: &std::ffi::CStr, mode: AccessMode) -> Option<bool> {
+    let mut bits = libc::F_OK;
+    if mode.read {
+        bits |= libc::R_OK;
+    }
+    if mode.write {
+        bits |= libc::W_OK;
+    }
+    if mode.execute {
+        bits |= libc::X_OK;
+    }
+    // SAFETY: `path` is a borrowed `CStr`, so the pointer is valid and
+    // NUL-terminated for the length of the call; `access` only reads it
+    // and writes no memory of this process. Every `bits` value is a valid
+    // mode (an OR of the platform's own constants).
+    let status = unsafe { libc::access(path.as_ptr(), bits) };
+    Some(status == 0)
+}
+
+/// Not POSIX: no `access(2)` here (see the unix version).
+#[cfg(not(unix))]
+pub fn access(_path: &std::ffi::CStr, _mode: AccessMode) -> Option<bool> {
+    None
+}
+
 /// The name `errno.errorcode` gives the error number `code` (an
 /// `io::Error`'s raw OS error), for the errnos the native readers tell
 /// apart. Names, not numbers, are what the fixtures record: ELOOP is 62 on
@@ -100,6 +153,39 @@ pub fn errno_name(_code: i32) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::fsync;
+
+    /// `access` on this test's own file: the bits as set, a missing path
+    /// false. Root reads and writes past the bits, so only the execute
+    /// answer (root needs one x bit too) and missing paths are asserted
+    /// for any user.
+    #[cfg(unix)]
+    #[test]
+    fn access_answers_by_the_bits() {
+        use super::{access, AccessMode};
+        use std::os::unix::fs::PermissionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("bettermemory-sys-access-{}", std::process::id()));
+        std::fs::create_dir(&dir).expect("dir");
+        let file = dir.join("f");
+        std::fs::write(&file, b"x").expect("write");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        let c = |p: &std::path::Path| {
+            std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).expect("no NUL")
+        };
+        let x = AccessMode {
+            execute: true,
+            ..AccessMode::default()
+        };
+        let r = AccessMode {
+            read: true,
+            ..AccessMode::default()
+        };
+        assert_eq!(access(&c(&file), x), Some(false));
+        assert_eq!(access(&c(&file), AccessMode::default()), Some(true));
+        assert_eq!(access(&c(&dir.join("missing")), r), Some(false));
+        assert_eq!(access(&c(&dir), x), Some(true));
+        std::fs::remove_dir_all(&dir).expect("remove");
+    }
     use std::io::Write;
 
     #[test]

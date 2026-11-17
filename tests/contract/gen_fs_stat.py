@@ -48,13 +48,19 @@ import errno
 import os
 import shutil
 import stat
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 from . import _sandbox
 from ._common import jsonl
-from .gen_fs_realpath import Tree, _b, check_length, refuse_root
+from .gen_fs_realpath import (
+    Tree,
+    _b,
+    check_length,
+    check_parent_of_file,
+    refuse_root,
+)
 
 NAME_MAX = 255
 
@@ -238,6 +244,7 @@ def _kind(mode: int) -> str:
 def _query(query: str, real: str, links: dict[str, str]) -> dict[str, Any]:
     path = query.replace("<root>", real)
     check_length(path, links, real)
+    check_parent_of_file(path)
     out: dict[str, Any] = {"p": _b(query.encode("utf-8", "surrogateescape"))}
     try:
         st = os.stat(path)
@@ -256,7 +263,14 @@ def _query(query: str, real: str, links: dict[str, str]) -> dict[str, Any]:
     return out
 
 
-def _answer(tree: Tree, root: Path) -> list[dict[str, Any]]:
+def _answer(
+    tree: Tree,
+    root: Path,
+    query: Callable[[str, str, dict[str, str]], dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Write `tree` under `root` and answer each query by `query` (by
+    default `os.stat` and `os.listdir`)."""
+    ask = _query if query is None else query
     os.chmod(root, 0o755)
     for d in tree.dirs:
         (root / d).mkdir(parents=True, exist_ok=True)
@@ -279,7 +293,7 @@ def _answer(tree: Tree, root: Path) -> list[dict[str, Any]]:
         for rel in reversed(by_depth):
             os.chmod(Path(real) / rel, tree.modes[rel])
         try:
-            return [_query(q, real, tree.links) for q in tree.queries]
+            return [ask(q, real, tree.links) for q in tree.queries]
         finally:
             for rel in by_depth:
                 os.chmod(Path(real) / rel, 0o700)

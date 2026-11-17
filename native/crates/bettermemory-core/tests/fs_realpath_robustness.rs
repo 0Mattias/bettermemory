@@ -97,6 +97,20 @@ impl Fs for Failing {
     fn access_read(&self, _: &[u8]) -> bool {
         false
     }
+    fn access(&self, path: &[u8], _: bettermemory_core::fsdata::Access) -> Result<bool, PyErr> {
+        Ok(self.access_read(path))
+    }
+    fn open_no_follow(
+        &self,
+        path: &[u8],
+    ) -> Result<Self::File, bettermemory_core::fsdata::OsError> {
+        self.open(path)
+            .map_err(|class| bettermemory_core::fsdata::OsError {
+                class,
+                errno: None,
+                winerror: None,
+            })
+    }
     fn lstat(&self, _: &[u8]) -> Result<bettermemory_core::fsdata::Kind, PyErr> {
         Err(self.0)
     }
