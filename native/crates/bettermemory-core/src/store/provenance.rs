@@ -2,23 +2,28 @@
 //! `provenance_for`, `_segment_for`, `_origin_broken`, `_pointer_verified`,
 //! `trust_rows`, `unaccounted_ids`, `provenance_counts`, `links_with_status`
 //! (with `store_index.links_for_many`) and `episode_provenance`, over an
-//! open [`StoreFile`] and its [`KeyRing`]. Nothing is written: every
+//! open [`StoreFile`] (or a writer's connection, [`ConnSource`]) and its
+//! [`KeyRing`]. Nothing is written: every
 //! statement is a `SELECT` on the reader's connection.
 //!
 //! The verify key is the caller's decision (native/README.md, "A record's
 //! provenance, read"): a [`Provenance`] that verifies checks pointers under
 //! the ring's current key, as the reference's `_verify_key` is the key its
 //! open loaded as current; one that does not answers the labels as stored.
-//! The state is a fresh open's: no refold has marked an id unaccounted.
+//! The state is a fresh open's, no refold having marked an id unaccounted,
+//! unless the caller gives the ids its own refold found
+//! ([`Provenance::with_unaccounted`]).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 use rusqlite::types::ValueRef;
 
-use super::{SqlValue, StoreError, StoreFile};
+use rusqlite::Connection;
+
+use super::{sql_value, SqlValue, StoreError, StoreFile};
 use crate::json;
-use crate::log::{self, ChainTrust, KeyRing, VerifyError};
+use crate::log::{self, ChainTrust, KeyRing, LogRow, LogSource, VerifyError};
 use crate::pyvalue::{py_str, PyError, PyValue};
 use crate::unicode;
 
@@ -93,6 +98,114 @@ pub struct TrustRow {
 /// each value as stored.
 pub type Link = (SqlValue, SqlValue, SqlValue);
 
+/// What a reader reads from: the connection its statements run on, the
+/// `meta` table and the log rows the segment map needs. A [`StoreFile`]
+/// is one; a [`ConnSource`] is a writer's connection inside its own
+/// transaction, where the reference's `provenance_for` reads (the relink
+/// of a restore, `store_records._put_relinked`).
+pub trait Source: LogSource<Error = StoreError> {
+    fn connection(&self) -> &Connection;
+    /// `meta` as a dict: each key's last value, in first-seen order.
+    fn meta(&self) -> Result<Vec<(String, String)>, StoreError>;
+}
+
+impl Source for StoreFile {
+    fn connection(&self) -> &Connection {
+        StoreFile::connection(self)
+    }
+    fn meta(&self) -> Result<Vec<(String, String)>, StoreError> {
+        StoreFile::meta(self)
+    }
+}
+
+/// A bare connection as a [`Source`]: the same statements a
+/// [`StoreFile`] sends, on a connection the caller holds (a write
+/// transaction's, which sees its own rows as the reference's does).
+#[derive(Clone, Copy)]
+pub struct ConnSource<'c>(pub &'c Connection);
+
+impl std::fmt::Debug for ConnSource<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnSource")
+    }
+}
+
+impl ConnSource<'_> {
+    fn log_rows(&self, tail: &str, seq: i64, limit: bool) -> Result<Vec<LogRow>, StoreError> {
+        let mut statement = self.0.prepare(&format!("{} {tail}", super::LOG_SELECT))?;
+        let mut rows = statement.query([seq])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(super::log_row(row)?);
+            if limit {
+                break;
+            }
+        }
+        Ok(out)
+    }
+}
+
+impl LogSource for ConnSource<'_> {
+    type Error = StoreError;
+    fn first(&self) -> Result<Option<LogRow>, StoreError> {
+        Ok(self
+            .log_rows("WHERE seq > ? ORDER BY seq LIMIT 1", 0, true)?
+            .into_iter()
+            .next())
+    }
+    fn rekeys(&self) -> Result<Vec<LogRow>, StoreError> {
+        Ok(self
+            .log_rows("WHERE seq > ? AND kind = 'rekey' ORDER BY seq", 0, false)?
+            .into_iter()
+            .filter(|r| r.kind == log::REKEY)
+            .collect())
+    }
+    fn at_seq(&self, seq: i64) -> Result<Option<LogRow>, StoreError> {
+        if seq <= 0 {
+            return Ok(None);
+        }
+        Ok(self
+            .log_rows("WHERE seq = ? ORDER BY seq LIMIT 1", seq, true)?
+            .into_iter()
+            .next())
+    }
+    fn each(
+        &self,
+        visit: &mut dyn FnMut(&LogRow) -> Result<(), PyError>,
+    ) -> Result<Result<(), PyError>, StoreError> {
+        let mut statement = self
+            .0
+            .prepare(&format!("{} WHERE seq > ? ORDER BY seq", super::LOG_SELECT))?;
+        let mut rows = statement.query([0i64])?;
+        while let Some(row) = rows.next()? {
+            if let Err(e) = visit(&super::log_row(row)?) {
+                return Ok(Err(e));
+            }
+        }
+        Ok(Ok(()))
+    }
+}
+
+impl Source for ConnSource<'_> {
+    fn connection(&self) -> &Connection {
+        self.0
+    }
+    fn meta(&self) -> Result<Vec<(String, String)>, StoreError> {
+        let mut statement = self.0.prepare("SELECT key, value FROM meta")?;
+        let mut rows = statement.query([])?;
+        let mut out: Vec<(String, String)> = Vec::new();
+        while let Some(row) = rows.next()? {
+            let key = sql_value(row.get_ref(0)?)?.py_str();
+            let value = sql_value(row.get_ref(1)?)?.py_str();
+            match out.iter_mut().find(|(k, _)| *k == key) {
+                Some(slot) => slot.1 = value,
+                None => out.push((key, value)),
+            }
+        }
+        Ok(out)
+    }
+}
+
 /// `links_with_status`'s answer: outbound links, inbound links and the
 /// record's trust row.
 pub type LinksWithStatus = (Vec<Link>, Vec<Link>, Option<TrustRow>);
@@ -101,12 +214,15 @@ pub type LinksWithStatus = (Vec<Link>, Vec<Link>, Option<TrustRow>);
 /// (the segment map and the pointer verdicts, as the reference keeps
 /// them per connection).
 pub struct Provenance<'a> {
-    file: &'a StoreFile,
+    file: &'a dyn Source,
     ring: &'a KeyRing,
     verifies: bool,
     strict: bool,
     chain: RefCell<Option<ChainTrust>>,
     cache: RefCell<HashMap<(String, String), bool>>,
+    /// `_unaccounted_memory_ids`: what the caller's last `refold` in this
+    /// process found (empty for a fresh open).
+    memo: std::collections::HashSet<String>,
 }
 
 impl std::fmt::Debug for Provenance<'_> {
@@ -135,7 +251,7 @@ impl<'a> Provenance<'a> {
     /// ring's current key as its verify key (`Store.can_verify`).
     /// `strict`: `[security] strict_provenance` for this connection.
     pub fn new(
-        file: &'a StoreFile,
+        file: &'a dyn Source,
         ring: &'a KeyRing,
         verifies: bool,
         strict: bool,
@@ -155,7 +271,18 @@ impl<'a> Provenance<'a> {
             strict,
             chain: RefCell::new(None),
             cache: RefCell::new(HashMap::new()),
+            memo: std::collections::HashSet::new(),
         })
+    }
+
+    /// The reader with `ids` as `_unaccounted_memory_ids`, the ids the
+    /// caller's last `refold` in the same process found unaccounted
+    /// (`store_events.py` 586-589): `provenance_for` and
+    /// `unaccounted_ids` read such an id `unaccounted` without checking its
+    /// pointer, as the reference does. A fresh open's set is empty.
+    pub fn with_unaccounted(mut self, ids: impl IntoIterator<Item = String>) -> Self {
+        self.memo = ids.into_iter().collect();
+        self
     }
 
     /// `Store.can_verify`.
@@ -351,7 +478,9 @@ impl<'a> Provenance<'a> {
             for row in rows {
                 let memory_id = text_of(&row[0])?;
                 let mut label = row[1].py_str();
-                if self.pointer_verified(&memory_id, "memory_put", &row[2])? == Some(false) {
+                if self.memo.contains(&memory_id)
+                    || self.pointer_verified(&memory_id, "memory_put", &row[2])? == Some(false)
+                {
                     label = UNACCOUNTED.to_owned();
                 }
                 // The ids are unique in the table and across batches.
@@ -426,7 +555,9 @@ impl<'a> Provenance<'a> {
         let mut out = Vec::new();
         for row in rows {
             let memory_id = text_of(&row[0])?;
-            if self.pointer_verified(&memory_id, "memory_put", &row[2])? == Some(false) {
+            if self.memo.contains(&memory_id)
+                || self.pointer_verified(&memory_id, "memory_put", &row[2])? == Some(false)
+            {
                 out.push(memory_id);
             }
         }

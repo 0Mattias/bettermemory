@@ -1,13 +1,16 @@
 //! What the record writer tests share: `store_records.jsonl`'s cases and
 //! one writer call run natively as `gen_store_records._call` runs it.
 
+use bettermemory_core::datetime::DateTime;
 use bettermemory_core::json;
 use bettermemory_core::pyvalue::PyValue;
-use bettermemory_core::records::Memory;
+use bettermemory_core::records::{Memory, Tombstone};
 use bettermemory_core::store::create::Provider;
 use bettermemory_core::store::home::{truthy, Answer, Home};
 use bettermemory_core::store::open::WritableStore;
-use bettermemory_core::store::writers::{Put, RecordWriteError, Update, Verify, WriteArgs};
+use bettermemory_core::store::writers::{
+    Put, PutTombstone, RecordWriteError, Relink, Trim, Update, Verify, WriteArgs,
+};
 use serde_json::Value;
 
 use super::{jsonl, written};
@@ -279,5 +282,241 @@ pub fn call_c(
             Ok(done.value.map(|m| m.payload_text().expect("payload")))
         }
         _ => call_b(store, provider, call),
+    }
+}
+
+/// The header and the cases of `store_records_d.jsonl`.
+pub fn cases_d() -> (Value, Vec<Value>) {
+    let mut lines = jsonl("store_records_d.jsonl");
+    let header = lines.remove(0);
+    (header, lines)
+}
+
+/// What a restore's relink reads that the reference keeps on its `Store`:
+/// the opener's `strict_provenance` and the ids its last refold found.
+#[derive(Clone, Debug, Default)]
+pub struct Reads {
+    pub strict: bool,
+    pub memo: Vec<String>,
+}
+
+impl Reads {
+    pub fn relink(&self) -> Relink<'_> {
+        Relink {
+            strict: self.strict,
+            unaccounted: &self.memo,
+        }
+    }
+}
+
+/// One call of `store_records_d.jsonl` (`gen_store_records_d._run`):
+/// `sql` (a hand edit, committed), `put_tombstone`, `restore` and
+/// `restore_trimmed`, the rest as [`call_b`]; `reads` as the reference's
+/// store holds them.
+pub fn call_d(
+    store: &mut WritableStore,
+    provider: &mut dyn Provider,
+    call: &Value,
+    reads: &Reads,
+) -> Result<Option<String>, RecordWriteError> {
+    let session = call["session"].as_str();
+    let id = call["id"].as_str().unwrap_or_default();
+    match call["call"].as_str().expect("call") {
+        "sql" => {
+            // One statement, or several, each given the id.
+            let statements: Vec<&str> = match &call["sql"] {
+                Value::Array(list) => list.iter().map(|v| v.as_str().expect("sql")).collect(),
+                one => vec![one.as_str().expect("sql")],
+            };
+            for statement in statements {
+                store
+                    .connection()
+                    .execute(statement, [id])
+                    .expect("the hand edit");
+            }
+            Ok(None)
+        }
+        "put_tombstone" => {
+            let dead = Tombstone::from_payload(&py(&call["dead"])).expect("a valid tombstone");
+            let kw = &call["kw"];
+            let get = |k: &str| kw.get(k).map(py);
+            let (provenance, links, corroborations) =
+                (get("provenance"), get("links"), get("corroborations"));
+            let filename = kw.get("filename").and_then(Value::as_str);
+            let last = kw
+                .get("last_corroborated")
+                .and_then(Value::as_str)
+                .map(|t| {
+                    DateTime::from_isoformat(&bettermemory_core::unicode::cps(t)).expect("a time")
+                });
+            let args = PutTombstone {
+                provenance: provenance.as_ref(),
+                filename,
+                links: links.as_ref(),
+                corroborations: corroborations.as_ref(),
+                last_corroborated: last,
+                session,
+            };
+            let done = store.put_tombstone(provider, &dead, args)?;
+            Ok(Some(done.value.payload_text().expect("payload")))
+        }
+        "restore" => {
+            let done = store.restore(provider, id, session, reads.relink())?;
+            Ok(Some(done.value.payload_text().expect("payload")))
+        }
+        "restore_trimmed" => {
+            let kw = &call["kw"];
+            let get = |k: &str| kw.get(k).map(py);
+            let values: Vec<Option<PyValue>> = [
+                "drop_claims",
+                "drop_verified_paths",
+                "clear_verification",
+                "drop_verified_head",
+            ]
+            .iter()
+            .map(|k| get(k))
+            .collect();
+            let trim = Trim {
+                drop_claims: values[0].as_ref(),
+                drop_verified_paths: values[1].as_ref(),
+                clear_verification: values[2].as_ref(),
+                drop_verified_head: values[3].as_ref(),
+                session,
+                relink: reads.relink(),
+            };
+            let done = store.restore_trimmed(provider, id, trim)?;
+            Ok(Some(done.value.payload_text().expect("payload")))
+        }
+        _ => call_b(store, provider, call),
+    }
+}
+
+/// The header and the cases of `store_records_e.jsonl`.
+pub fn cases_e() -> (Value, Vec<Value>) {
+    let mut lines = jsonl("store_records_e.jsonl");
+    let header = lines.remove(0);
+    (header, lines)
+}
+
+/// One step of `store_records_e.jsonl` (`gen_store_records_e._run_all`):
+/// `rekey`, `drop`, `drop_k0` and `reopen` replay exactly what the
+/// reference wrote (its row, meta, key files); `refold` is native's own,
+/// its unaccounted ids kept in `reads` as the reference keeps them (and
+/// returned, for the comparison); the rest as [`call_d`].
+pub fn call_e(
+    store: &mut WritableStore,
+    provider: &mut dyn Provider,
+    call: &Value,
+    reads: &mut Reads,
+) -> Result<Option<Value>, RecordWriteError> {
+    let keys = store.keys_dir().to_path_buf();
+    let file = store.path().to_path_buf();
+    match call["call"].as_str().expect("call") {
+        "rekey" => {
+            let row = call["row"].as_array().expect("row");
+            let conn = store.connection();
+            conn.execute(
+                "INSERT INTO log (seq, ts, session, kind, payload, prev_mac, mac) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    row[0].as_i64(),
+                    row[1].as_str(),
+                    row[2].as_str(),
+                    row[3].as_str(),
+                    row[4].as_str(),
+                    row[5].as_str(),
+                    row[6].as_str()
+                ],
+            )
+            .expect("the rekey row");
+            conn.execute(
+                "UPDATE meta SET value = ? WHERE key = 'key_fingerprint'",
+                [call["meta"].as_str().expect("meta")],
+            )
+            .expect("meta");
+            for f in call["files"].as_array().expect("files") {
+                let bytes = (0..f[1].as_str().expect("hex").len() / 2)
+                    .map(|i| {
+                        u8::from_str_radix(&f[1].as_str().expect("hex")[2 * i..2 * i + 2], 16)
+                            .expect("hex")
+                    })
+                    .collect::<Vec<u8>>();
+                std::fs::write(keys.join(f[0].as_str().expect("name")), bytes).expect("key");
+            }
+            Ok(Some(Value::Null))
+        }
+        "drop" | "drop_k0" => match call.get("file").and_then(Value::as_str) {
+            Some(name) => {
+                std::fs::remove_file(keys.join(name)).expect("drop");
+                Ok(Some(Value::Null))
+            }
+            // The reference's unlink refused (it records no file): the
+            // same ring here has no such file either.
+            None => Err(RecordWriteError::Write(
+                bettermemory_core::store::write::WriteError::Refused {
+                    class: "FileNotFoundError",
+                    text: None,
+                },
+            )),
+        },
+        "reopen" => {
+            // `Store.close()` then `Store.open()`: a new store, whose
+            // `_unaccounted_memory_ids` starts empty.
+            reads.strict = call["strict"].as_bool().expect("strict");
+            reads.memo.clear();
+            let again = bettermemory_core::store::open::open_for_writing(
+                &file,
+                &keys,
+                &super::opened::engine_provider(),
+            )
+            .expect("reopened");
+            let old = std::mem::replace(store, again);
+            old.close().expect("closed");
+            Ok(Some(Value::Null))
+        }
+        "later_field" => {
+            for e in call["edits"].as_array().expect("edits") {
+                let params: Vec<rusqlite::types::Value> = e[1]
+                    .as_array()
+                    .expect("params")
+                    .iter()
+                    .map(|v| match v {
+                        Value::Number(n) => {
+                            rusqlite::types::Value::Integer(n.as_i64().expect("int"))
+                        }
+                        Value::String(t) => rusqlite::types::Value::Text(t.clone()),
+                        other => panic!("a parameter {other}"),
+                    })
+                    .collect();
+                store
+                    .connection()
+                    .execute(
+                        e[0].as_str().expect("sql"),
+                        rusqlite::params_from_iter(params),
+                    )
+                    .expect("the signed edit");
+            }
+            Ok(Some(Value::Null))
+        }
+        "refold" => {
+            let read = bettermemory_core::store::StoreFile::open(&file).expect("read");
+            let report = read.refold().expect("refold");
+            let mut ids: Vec<String> = report
+                .unaccounted_ids()
+                .iter()
+                .map(|l| match l {
+                    bettermemory_core::store::fold::Label::One(
+                        bettermemory_core::store::fold::Cell::Text(t),
+                    ) => t.clone(),
+                    other => panic!("an id {other:?}"),
+                })
+                .collect();
+            ids.sort();
+            reads.memo = ids.clone();
+            Ok(Some(serde_json::json!(ids)))
+        }
+        _ => {
+            call_d(store, provider, call, reads).map(|r| Some(r.map_or(Value::Null, Value::String)))
+        }
     }
 }

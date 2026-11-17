@@ -44,6 +44,7 @@ each line with serde_json, which refuses one, so no case passes one.
 from __future__ import annotations
 
 import json
+import warnings
 from typing import Any
 
 from bettermemory.log import canonical_payload
@@ -281,7 +282,17 @@ def _run(store: Store, call: dict[str, Any]) -> Any:
     what = call["call"]
     if what == "verify":
         kw = {k: decode(v) for k, v in call["kw"].items()}
-        got = store.mark_verified(call["id"], session=call["session"], **kw)
+        with warnings.catch_warnings():
+            # The record copy a refused map lands in is unvalidated by
+            # design (`mark_verified` validates a copy); pydantic warns when
+            # it serializes such a copy's non-text keys. Expected here, and
+            # only here: any other warning still shows.
+            warnings.filterwarnings(
+                "ignore",
+                message="Pydantic serializer warnings",
+                category=UserWarning,
+            )
+            got = store.mark_verified(call["id"], session=call["session"], **kw)
         return canonical_payload(record_payload(got))
     if what == "corroborate":
         found = store.record_corroboration(call["id"], session=call["session"])

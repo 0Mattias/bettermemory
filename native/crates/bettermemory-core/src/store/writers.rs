@@ -42,6 +42,9 @@ pub enum WriterNotPorted {
     /// A column read as a Python value that this build does not carry (a
     /// blob where the reference would hold `bytes`).
     Blob(&'static str),
+    /// The relink's provenance read met what `store::provenance` does not
+    /// port (its own `NotPorted`), or the key ring could not be loaded.
+    Provenance(String),
 }
 
 /// Why a writer wrote nothing.
@@ -95,7 +98,7 @@ impl RecordWriteError {
 fn is_key_error(class: &str) -> bool {
     matches!(
         class,
-        "TombstonedError" | "NotFoundError" | "MemoryNotFoundError"
+        "TombstonedError" | "NotFoundError" | "MemoryNotFoundError" | "NotTombstonedError"
     )
 }
 
@@ -108,6 +111,9 @@ impl std::fmt::Display for RecordWriteError {
             RecordWriteError::Record(e) => write!(f, "the stored record raised {}", e.class()),
             RecordWriteError::NotPorted(WriterNotPorted::Blob(column)) => {
                 write!(f, "the native build does not read a blob in {column}")
+            }
+            RecordWriteError::NotPorted(WriterNotPorted::Provenance(what)) => {
+                write!(f, "the relink's provenance read is not ported: {what}")
             }
             RecordWriteError::Write(e) => write!(f, "{e}"),
         }
@@ -515,7 +521,7 @@ impl WritableStore {
             py_str(&py_value(column(&row, "provenance")?, "provenance")?).map_err(py_failed)?;
         let filename = py_value(column(&row, "filename")?, "filename")?;
         let links = match column(&row, "links_json")? {
-            SqlValue::Text(t) => json::loads(&unicode::cps(t)).map_err(py_failed)?,
+            SqlValue::Text(t) => loads_worded(&unicode::cps(t))?,
             // `json.loads` of anything but text: TypeError.
             _ => return Err(py_failed(PyError::TypeError)),
         };
@@ -1293,6 +1299,582 @@ impl WritableStore {
         let committed = tx.commit()?;
         Ok(Done {
             value: Some(bumped),
+            committed,
+        })
+    }
+}
+
+// -- part W6r: put_tombstone, restore, restore_trimmed and the relink -------
+
+/// `_TOMBSTONE_SELECT` (`store_records.py:105-108`), for one id.
+const TOMBSTONE_ONE: &str =
+    "SELECT tombstones.*, (SELECT payload FROM log WHERE mac = tombstones.log_mac \
+     AND kind = 'tombstone_put' LIMIT 1) AS attestation_payload FROM tombstones WHERE id = ?";
+
+/// `store_returned.RELINK_MARK`.
+pub const RELINK_MARK: &str = "relink";
+
+/// `put_tombstone`'s keyword arguments (550-560), each as a caller passes
+/// it. None is the reference's default: no label or name (the row's, or
+/// `local` and None for a new row), no links, 0 corroborations, None.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PutTombstone<'a> {
+    pub provenance: Option<&'a PyValue>,
+    pub filename: Option<&'a str>,
+    /// Any iterable a caller passes; each item through
+    /// `MemoryLink.model_validate`.
+    pub links: Option<&'a PyValue>,
+    /// Through `int()`.
+    pub corroborations: Option<&'a PyValue>,
+    pub last_corroborated: Option<DateTime>,
+    pub session: Option<&'a str>,
+}
+
+/// What a restore's relink reads provenance with, which the reference
+/// holds on its `Store` and native takes from the caller.
+#[derive(Clone, Copy, Debug)]
+pub struct Relink<'a> {
+    /// `Store.strict_provenance` (`store.py` 1147): as the opener passed
+    /// it, else `configured_strict_provenance()`. Reading the config is the
+    /// caller's (not ported); a config that cannot be read means strict.
+    pub strict: bool,
+    /// `_unaccounted_memory_ids`: the ids the caller's last `refold` in
+    /// this process found unaccounted; empty for a fresh open.
+    pub unaccounted: &'a [String],
+}
+
+impl Default for Relink<'_> {
+    /// Strict, with no refold's ids: what an unreadable config gives a
+    /// fresh open.
+    fn default() -> Self {
+        Relink {
+            strict: true,
+            unaccounted: &[],
+        }
+    }
+}
+
+/// `restore_trimmed`'s keyword arguments (1124-1132), each as a caller
+/// passes it; None is the default (nothing dropped, False).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Trim<'a> {
+    pub drop_claims: Option<&'a PyValue>,
+    pub drop_verified_paths: Option<&'a PyValue>,
+    pub clear_verification: Option<&'a PyValue>,
+    pub drop_verified_head: Option<&'a PyValue>,
+    pub session: Option<&'a str>,
+    /// What the relink reads provenance with.
+    pub relink: Relink<'a>,
+}
+
+/// `json.loads(text)` with the class the reference raises and, for a
+/// JSONDecodeError (a ValueError) and the digit limit's ValueError, its
+/// text as CPython words it (`json::decode_failure`); a RecursionError's
+/// text is the interpreter's and is not carried.
+fn loads_worded(text: &[u32]) -> Result<PyValue, RecordWriteError> {
+    json::loads_detailed(text).map_err(|e| {
+        let message = match json::decode_failure(text) {
+            Some(f @ (json::DecodeFailure::At(..) | json::DecodeFailure::IntDigits(_))) => {
+                Some(f.message(text))
+            }
+            _ => None,
+        };
+        RecordWriteError::Write(WriteError::Refused {
+            class: e.name(),
+            text: if e == json::LoadError::Recursion {
+                None
+            } else {
+                message
+            },
+        })
+    })
+}
+
+/// `int(value)` with CPython's messages (`fold`'s port).
+fn int_worded(v: &PyValue) -> Result<PyValue, RecordWriteError> {
+    super::fold::int_worded(v)
+        .map_err(|(class, text)| RecordWriteError::Write(WriteError::Refused { class, text }))
+}
+
+/// A row's apply refused for an int past SQLite's 64 bits: sqlite3's
+/// OverflowError, with its text (`digest::OVERFLOW_TEXT`), which the
+/// transaction reports by class only.
+fn overflow_worded(e: WriteError) -> RecordWriteError {
+    match e {
+        WriteError::Refused {
+            class: "OverflowError",
+            text: None,
+        } => RecordWriteError::Write(WriteError::Refused {
+            class: "OverflowError",
+            text: Some(super::digest::OVERFLOW_TEXT.to_owned()),
+        }),
+        other => RecordWriteError::Write(other),
+    }
+}
+
+/// `set(value)`: its items (`list()`'s), TypeError for an unhashable one.
+fn py_set(value: &PyValue) -> Result<Vec<PyValue>, RecordWriteError> {
+    let items = py_list(value)?;
+    for item in &items {
+        if let Some(kind) = unhashable(item) {
+            return Err(refused("TypeError", format!("unhashable type: '{kind}'")));
+        }
+    }
+    Ok(items)
+}
+
+/// `text in gone` for a set of hashables: a str equals only a str.
+fn holds(gone: &[PyValue], text: &[u32]) -> bool {
+    gone.iter()
+        .any(|g| matches!(g, PyValue::Str(s) if s.as_slice() == text))
+}
+
+fn provenance_failed(e: super::provenance::ProvenanceError) -> RecordWriteError {
+    match e {
+        super::provenance::ProvenanceError::Raised { class, .. } => {
+            RecordWriteError::Write(WriteError::Refused { class, text: None })
+        }
+        super::provenance::ProvenanceError::NotPorted(what) => {
+            RecordWriteError::NotPorted(WriterNotPorted::Provenance(what))
+        }
+    }
+}
+
+/// The tombstone row's record as an active one, as `restore` builds it
+/// (650-662) and `restore_trimmed` (1146-1179), `edit` changing the
+/// fields first: the links from `links_json`, each validated; `int()` of
+/// the rollup; `_dt_opt` of `last_corroborated`; then `Memory(...)`.
+fn restored(
+    row: &Row,
+    edit: impl FnOnce(&Tombstone, &mut Vec<(PyValue, PyValue)>) -> Result<(), RecordWriteError>,
+) -> Result<Memory, RecordWriteError> {
+    let dead = rows::tombstone(row).map_err(|e| write_error(home::record_refusal(e)))?;
+    let dumped = dead.dump();
+    let mut items = match &dumped {
+        PyValue::Dict(items) => items.clone(),
+        _ => Vec::new(),
+    };
+    items.retain(|(k, _)| {
+        !["removed", "removed_reason", "removed_session"]
+            .iter()
+            .any(|n| *k == PyValue::str(n))
+    });
+    edit(&dead, &mut items)?;
+    let loaded = match column(row, "links_json")? {
+        SqlValue::Text(t) => loads_worded(&unicode::cps(t))?,
+        _ => return Err(py_failed(PyError::TypeError)),
+    };
+    let mut links = Vec::new();
+    for entry in py_list(&loaded)? {
+        let link = crate::records::MemoryLink::from_value(&entry)
+            .map_err(|e| write_error(home::record_refusal(e)))?;
+        links.push(link.dump(false));
+    }
+    let corroborations = int_worded(&py_value(column(row, "corroborations")?, "corroborations")?)?;
+    let stamp = py_value(column(row, "last_corroborated")?, "last_corroborated")?;
+    let last = match &stamp {
+        PyValue::None => PyValue::None,
+        PyValue::Str(t) => PyValue::DateTime(crate::datetime::parse_record_dt(t).map_err(|e| {
+            RecordWriteError::Write(WriteError::Refused {
+                class: e.name(),
+                text: None,
+            })
+        })?),
+        // `text.replace` of a non-str: AttributeError.
+        _ => {
+            return Err(RecordWriteError::Write(WriteError::Refused {
+                class: "AttributeError",
+                text: None,
+            }))
+        }
+    };
+    items.extend([
+        (PyValue::str("links"), PyValue::List(links)),
+        (PyValue::str("corroborations"), corroborations),
+        (PyValue::str("last_corroborated"), last),
+    ]);
+    Memory::from_payload(&PyValue::Dict(items)).map_err(|e| write_error(home::record_refusal(e)))
+}
+
+fn set_field(items: &mut [(PyValue, PyValue)], name: &str, value: PyValue) {
+    if let Some(slot) = items.iter_mut().find(|(k, _)| *k == PyValue::str(name)) {
+        slot.1 = value;
+    }
+}
+
+/// `store_returned.linking_sources` (215-233): the active records other
+/// than `record_id` whose stored links name it, oldest id first.
+fn linking_sources(conn: &Connection, record_id: &str) -> Result<Vec<String>, RecordWriteError> {
+    let mut statement = conn.prepare(
+        "SELECT id, links_json FROM memories WHERE id != ? AND links_json LIKE ? ORDER BY id",
+    )?;
+    let mut rows = statement.query(params![record_id, format!("%\"{record_id}\"%")])?;
+    let want = PyValue::str(record_id);
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        let id = py_value(&sql_value(row.get_ref(0)?)?, "id")?;
+        // `json.loads(row[1] or "[]")`: TypeError and ValueError pass it over.
+        let text = match sql_value(row.get_ref(1)?)? {
+            SqlValue::Null => "[]".to_owned(),
+            SqlValue::Text(t) if t.is_empty() => "[]".to_owned(),
+            SqlValue::Text(t) => t,
+            _ => continue,
+        };
+        let links = match json::loads(&unicode::cps(&text)) {
+            Ok(v) => v,
+            Err(PyError::TypeError | PyError::ValueError) => continue,
+            Err(e) => return Err(py_failed(e)),
+        };
+        // `any(...)` over the value: a number, a bool or None is not
+        // iterable (TypeError, not caught).
+        let named = py_list(&links)?.iter().any(|link| match link {
+            PyValue::Dict(items) => items
+                .iter()
+                .rev()
+                .find(|(k, _)| *k == PyValue::str("target_id"))
+                .is_some_and(|(_, v)| *v == want),
+            _ => false,
+        });
+        if named {
+            // A column's text is UTF-8, so `str(id)` is too.
+            out.push(json::utf8_text(&py_str(&id).map_err(py_failed)?));
+        }
+    }
+    Ok(out)
+}
+
+/// What the relink needs to read provenance inside the transaction.
+struct Ring {
+    keys_dir: std::path::PathBuf,
+    store_id: String,
+}
+
+/// `_relink` and `_put_relinked` (696-741) inside `tx`: each active record
+/// whose links name `record_id` put again unchanged with the relink mark,
+/// unless its label reads `unaccounted` or its rows carry fields this
+/// build does not define (a payload nested past the parser's limit there
+/// raises RecursionError and the restore writes nothing). The labels are
+/// read once, before any put, on the transaction's own connection,
+/// verified under the ring's current key (the writer's), with the
+/// caller's `strict_provenance` and refold's ids.
+fn relink(
+    tx: &mut Transaction<'_>,
+    ring: &Ring,
+    reads: Relink<'_>,
+    record_id: &str,
+    session: Option<&str>,
+) -> Result<Vec<String>, RecordWriteError> {
+    let sources = linking_sources(tx.connection(), record_id)?;
+    if sources.is_empty() {
+        return Ok(Vec::new());
+    }
+    let labels = {
+        let keys = super::keys::load_key_ring(&ring.keys_dir, &ring.store_id).map_err(|e| {
+            RecordWriteError::NotPorted(WriterNotPorted::Provenance(format!("the key ring: {e:?}")))
+        })?;
+        let source = super::provenance::ConnSource(tx.connection());
+        let reader = super::provenance::Provenance::new(&source, &keys, true, reads.strict)
+            .map_err(provenance_failed)?
+            .with_unaccounted(reads.unaccounted.iter().cloned());
+        let ids: Vec<&str> = sources.iter().map(String::as_str).collect();
+        reader.provenance_for(&ids).map_err(provenance_failed)?
+    };
+    let mut put = Vec::new();
+    for source_id in &sources {
+        let label = labels.iter().find(|(id, _)| id == source_id);
+        if label.is_some_and(|(_, l)| l == super::provenance::UNACCOUNTED) {
+            continue;
+        }
+        let unknown =
+            super::fold::unknown_record_fields_raising(tx.connection(), &PyValue::str(source_id))?
+                .map_err(py_failed)?;
+        if !unknown.is_empty() {
+            continue;
+        }
+        let Some(row) = one_row(tx.connection(), MEMORY_ONE, source_id)? else {
+            continue;
+        };
+        let memory = rows::memory(&row).map_err(|e| write_error(home::record_refusal(e)))?;
+        put_in(
+            tx,
+            &memory,
+            None,
+            None,
+            session,
+            None,
+            None,
+            vec![(RELINK_MARK, PyValue::str(record_id))],
+        )?;
+        put.push(source_id.clone());
+    }
+    Ok(put)
+}
+
+/// `_put_restored` (669-693) inside `tx`.
+fn put_restored(
+    tx: &mut Transaction<'_>,
+    ring: &Ring,
+    reads: Relink<'_>,
+    memory: &Memory,
+    filename: PyValue,
+    session: Option<&str>,
+) -> Result<(), RecordWriteError> {
+    let id = text_id(&memory.fields.id)?;
+    let payload = dict(vec![
+        ("memory", memory.record_payload().map_err(py_failed)?),
+        ("provenance", PyValue::str(LOCAL)),
+        ("filename", filename),
+    ]);
+    tx.mutate(
+        "tombstone_delete",
+        &dict(vec![("id", PyValue::str(&id))]),
+        session,
+    )?;
+    tx.mutate("memory_put", &payload, session)?;
+    relink(tx, ring, reads, &id, session)?;
+    tx.name_returned(&id, &id, session);
+    Ok(())
+}
+
+impl WritableStore {
+    fn ring(&self) -> Ring {
+        Ring {
+            keys_dir: self.keys_dir().to_path_buf(),
+            store_id: self.store_id().to_owned(),
+        }
+    }
+
+    /// `Store.put_tombstone(dead, provenance=, filename=, links=,
+    /// corroborations=, last_corroborated=, session=)` (550-594). Before
+    /// the transaction: the label check and each link validated. Inside:
+    /// ValueError for an active id, the row's label and name kept, then
+    /// `tombstone_put`. Returns `dead`.
+    pub fn put_tombstone(
+        &mut self,
+        provider: &mut dyn Provider,
+        dead: &Tombstone,
+        args: PutTombstone<'_>,
+    ) -> Result<Done<Tombstone>, RecordWriteError> {
+        self.put_tombstone_hooked(provider, dead, args, None)
+    }
+
+    /// [`WritableStore::put_tombstone`] with `hook` shown each boundary.
+    #[doc(hidden)]
+    pub fn put_tombstone_hooked(
+        &mut self,
+        provider: &mut dyn Provider,
+        dead: &Tombstone,
+        args: PutTombstone<'_>,
+        hook: Hook<'_>,
+    ) -> Result<Done<Tombstone>, RecordWriteError> {
+        let provenance = check_provenance(args.provenance)?;
+        let mut link_rows = Vec::new();
+        if let Some(links) = args.links {
+            for link in py_list(links)? {
+                let link = crate::records::MemoryLink::from_value(&link)
+                    .map_err(|e| write_error(home::record_refusal(e)))?;
+                link_rows.push(link.dump(true));
+            }
+        }
+        let id = text_id(&dead.fields.id)?;
+        let mut tx = start(self, provider, hook)?;
+        if one_row(tx.connection(), "SELECT 1 FROM memories WHERE id = ?", &id)?.is_some() {
+            return Err(refused(
+                "ValueError",
+                format!("{id} is active; tombstone it instead"),
+            ));
+        }
+        let existing = one_row(
+            tx.connection(),
+            "SELECT provenance, filename FROM tombstones WHERE id = ?",
+            &id,
+        )?;
+        let mut label: Option<PyStr> = provenance.map(|p| unicode::cps(&p));
+        let mut name: PyValue = args.filename.map_or(PyValue::None, PyValue::str);
+        if let Some(row) = &existing {
+            if label.as_ref().is_none_or(Vec::is_empty) {
+                let stored = py_value(column(row, "provenance")?, "provenance")?;
+                label = Some(py_str(&stored).map_err(py_failed)?);
+            }
+            if args.filename.is_none() {
+                name = py_value(column(row, "filename")?, "filename")?;
+            }
+        }
+        let label = match label {
+            Some(l) if !l.is_empty() => l,
+            _ => unicode::cps(LOCAL),
+        };
+        let record = dead.record_payload().map_err(py_failed)?;
+        let corroborations = match args.corroborations {
+            Some(v) => int_worded(v)?,
+            None => PyValue::int(0),
+        };
+        let last = args
+            .last_corroborated
+            .map_or(PyValue::None, |d| PyValue::str(&d.isoformat()));
+        let payload = dict(vec![
+            ("tombstone", record),
+            ("provenance", PyValue::Str(label)),
+            ("filename", name),
+            ("links", PyValue::List(link_rows)),
+            ("corroborations", corroborations),
+            ("last_corroborated", last),
+        ]);
+        tx.mutate("tombstone_put", &payload, args.session)
+            .map_err(overflow_worded)?;
+        let committed = tx.commit()?;
+        Ok(Done {
+            value: dead.clone(),
+            committed,
+        })
+    }
+
+    /// `Store.restore(memory_id, session=)` (642-666): the tombstone read
+    /// under the write lock (NotFoundError when there is none), the record
+    /// rebuilt from it, then `_put_restored`. Returns the record.
+    pub fn restore(
+        &mut self,
+        provider: &mut dyn Provider,
+        memory_id: &str,
+        session: Option<&str>,
+        reads: Relink<'_>,
+    ) -> Result<Done<Memory>, RecordWriteError> {
+        self.restore_hooked(provider, memory_id, session, reads, None)
+    }
+
+    /// [`WritableStore::restore`] with `hook` shown each boundary.
+    #[doc(hidden)]
+    pub fn restore_hooked(
+        &mut self,
+        provider: &mut dyn Provider,
+        memory_id: &str,
+        session: Option<&str>,
+        reads: Relink<'_>,
+        hook: Hook<'_>,
+    ) -> Result<Done<Memory>, RecordWriteError> {
+        let ring = self.ring();
+        let mut tx = start(self, provider, hook)?;
+        let Some(row) = one_row(tx.connection(), TOMBSTONE_ONE, memory_id)? else {
+            return Err(RecordWriteError::raised(
+                "NotFoundError",
+                unicode::cps(memory_id),
+            ));
+        };
+        let memory = restored(&row, |_, _| Ok(()))?;
+        let filename = py_value(column(&row, "filename")?, "filename")?;
+        put_restored(&mut tx, &ring, reads, &memory, filename, session)?;
+        let committed = tx.commit()?;
+        Ok(Done {
+            value: memory,
+            committed,
+        })
+    }
+
+    /// `Store.restore_trimmed(memory_id, drop_claims=, drop_verified_paths=,
+    /// clear_verification=, drop_verified_head=, session=)` (1124-1182):
+    /// the id checked before the transaction; inside, NotTombstonedError
+    /// for an active id, MemoryNotFoundError for no tombstone, the record
+    /// rebuilt without the dropped trust fields, then `_put_restored`.
+    pub fn restore_trimmed(
+        &mut self,
+        provider: &mut dyn Provider,
+        memory_id: &str,
+        trim: Trim<'_>,
+    ) -> Result<Done<Memory>, RecordWriteError> {
+        self.restore_trimmed_hooked(provider, memory_id, trim, None)
+    }
+
+    /// [`WritableStore::restore_trimmed`] with `hook` shown each boundary.
+    #[doc(hidden)]
+    pub fn restore_trimmed_hooked(
+        &mut self,
+        provider: &mut dyn Provider,
+        memory_id: &str,
+        trim: Trim<'_>,
+        hook: Hook<'_>,
+    ) -> Result<Done<Memory>, RecordWriteError> {
+        let cps = unicode::cps(memory_id);
+        if !crate::records::is_valid_ulid(&cps) {
+            let mut message = unicode::cps("invalid id: ");
+            message.extend(repr_str(&cps));
+            return Err(RecordWriteError::raised("MemoryNotFoundError", message));
+        }
+        let ring = self.ring();
+        let mut tx = start(self, provider, hook)?;
+        if one_row(
+            tx.connection(),
+            "SELECT 1 FROM memories WHERE id = ?",
+            memory_id,
+        )?
+        .is_some()
+        {
+            return Err(refused(
+                "NotTombstonedError",
+                format!("memory {memory_id} is active; nothing to restore"),
+            ));
+        }
+        let Some(row) = one_row(tx.connection(), TOMBSTONE_ONE, memory_id)? else {
+            return Err(refused(
+                "MemoryNotFoundError",
+                format!("no tombstone with id {memory_id}"),
+            ));
+        };
+        let memory = restored(&row, |dead, items| {
+            let gone = match trim.drop_claims {
+                Some(v) => py_set(v)?,
+                None => Vec::new(),
+            };
+            if !gone.is_empty() {
+                let kept = dead
+                    .fields
+                    .claims
+                    .iter()
+                    .filter(|c| !holds(&gone, c))
+                    .map(|c| PyValue::Str(c.clone()))
+                    .collect();
+                set_field(items, "claims", PyValue::List(kept));
+            }
+            let gone = match trim.drop_verified_paths {
+                Some(v) => py_set(v)?,
+                None => Vec::new(),
+            };
+            if !gone.is_empty() {
+                let kept = dead
+                    .fields
+                    .verified_paths
+                    .iter()
+                    .filter(|p| !holds(&gone, p))
+                    .map(|p| PyValue::Str(p.clone()))
+                    .collect();
+                set_field(items, "verified_paths", PyValue::List(kept));
+                if let Some(targets) = &dead.fields.verified_path_targets {
+                    let kept = targets
+                        .iter()
+                        .filter(|(raw, _)| !holds(&gone, raw))
+                        .map(|(raw, t)| {
+                            (
+                                PyValue::Str(raw.clone()),
+                                t.as_ref()
+                                    .map_or(PyValue::None, |t| PyValue::Str(t.clone())),
+                            )
+                        })
+                        .collect();
+                    set_field(items, "verified_path_targets", PyValue::Dict(kept));
+                }
+            }
+            if trim.clear_verification.is_some_and(home::truthy) {
+                set_field(items, "last_verified_at", PyValue::None);
+            }
+            if trim.drop_verified_head.is_some_and(home::truthy) {
+                set_field(items, "verified_head", PyValue::None);
+            }
+            Ok(())
+        })?;
+        let filename = py_value(column(&row, "filename")?, "filename")?;
+        put_restored(&mut tx, &ring, trim.relink, &memory, filename, trim.session)?;
+        let committed = tx.commit()?;
+        Ok(Done {
+            value: memory,
             committed,
         })
     }

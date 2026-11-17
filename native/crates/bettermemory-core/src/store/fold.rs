@@ -730,6 +730,16 @@ fn json_text(v: &PyValue) -> Result<PyValue, Fail> {
     records::json_text(v).map(PyValue::Str).map_err(py_fail)
 }
 
+/// `int(value)` with the reference's messages, for the writers: the
+/// value, or the exception's class and its text where CPython's wording
+/// is ported (None where it is not).
+pub(crate) fn int_worded(v: &PyValue) -> Result<PyValue, (&'static str, Option<String>)> {
+    py_int(v).map_err(|f| match f {
+        Fail::Caught(class, text) => (class, Some(text)),
+        Fail::Raised(class) => (class, None),
+    })
+}
+
 /// `int(value)`, with the reference's messages.
 fn py_int(v: &PyValue) -> Result<PyValue, Fail> {
     match v {
@@ -935,7 +945,29 @@ pub const TOMBSTONE_FIELDS: [&str; 22] = [
 ];
 
 /// `store_rows._unknown_record_fields`: sorted, without repeats.
-fn unknown_record_fields(conn: &Connection, id: &PyValue) -> rusqlite::Result<Vec<PyStr>> {
+pub(crate) fn unknown_record_fields(
+    conn: &Connection,
+    id: &PyValue,
+) -> rusqlite::Result<Vec<PyStr>> {
+    Ok(unknown_fields_of(conn, id, false)?.unwrap_or_default())
+}
+
+/// [`unknown_record_fields`] as the reference's relink meets it: a
+/// payload nested past the parser's limit raises RecursionError, which
+/// `_unknown_record_fields` does not catch (it catches ValueError and
+/// AttributeError), so the call leaves with it (`Ok(Err)`).
+pub(crate) fn unknown_record_fields_raising(
+    conn: &Connection,
+    id: &PyValue,
+) -> rusqlite::Result<Result<Vec<PyStr>, PyError>> {
+    unknown_fields_of(conn, id, true)
+}
+
+fn unknown_fields_of(
+    conn: &Connection,
+    id: &PyValue,
+    raise_deep: bool,
+) -> rusqlite::Result<Result<Vec<PyStr>, PyError>> {
     let id = bind(id).map_err(|_| rusqlite::Error::InvalidQuery)?;
     let mut statement = conn.prepare(
         "SELECT kind, payload FROM log WHERE mac IN (\
@@ -956,8 +988,10 @@ fn unknown_record_fields(conn: &Connection, id: &PyValue) -> rusqlite::Result<Ve
         };
         // `json.loads(payload).get(key)`: a payload that does not parse, or
         // is not an object, is passed over (ValueError, AttributeError).
-        let Ok(value @ PyValue::Dict(_)) = json::loads(&unicode::cps(&payload)) else {
-            continue;
+        let value = match json::loads(&unicode::cps(&payload)) {
+            Ok(value @ PyValue::Dict(_)) => value,
+            Err(PyError::RecursionError) if raise_deep => return Ok(Err(PyError::RecursionError)),
+            _ => continue,
         };
         let Some(PyValue::Dict(record)) = value.get(key) else {
             continue;
@@ -976,7 +1010,7 @@ fn unknown_record_fields(conn: &Connection, id: &PyValue) -> rusqlite::Result<Ve
         }
     }
     unknown.sort();
-    Ok(unknown)
+    Ok(Ok(unknown))
 }
 
 /// `UnknownFieldsError`'s text.

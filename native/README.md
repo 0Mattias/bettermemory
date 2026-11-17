@@ -3374,10 +3374,11 @@ The public record writers of `store_records.py` (read at faa1b32e), ported
 as functions on `WritableStore`, each running one `Transaction`
 (`src/store/writers.rs`). Built: `put_memory`, `tombstone`,
 `delete_tombstone` (part A), `write`, `update`, `_active_or_raise` (part
-B1, below), `mark_verified`, `record_corroboration` (part B2, below).
-Not ported: `put_tombstone`, `restore`, `restore_trimmed` with relink,
-`rename_scope`, `prune_tombstones` and the other prunes, and `batch()`
-across several writers; nothing here writes for them. Every writer below runs inside one
+B1, below), `mark_verified`, `record_corroboration` (part B2, below),
+`put_tombstone`, `restore`, `restore_trimmed` with `_put_restored` and the
+relink (part W6r, below). Not ported: `rename_scope`, `prune_tombstones`
+and the other prunes, and `batch()` across several writers; nothing here
+writes for them. Every writer below runs inside one
 `_transaction`, so every row it appends is followed at commit by the
 returned marks its puts and removals name (`_flush_returns`, one wall
 clock read when anything is named and the `returned` table exists), and
@@ -3649,6 +3650,117 @@ flags are bools and it holds no surrogate. Tests:
 `store_records_c_cross.rs` (both ways), `store_records_c_robustness.rs`
 (deep arguments on a 512 KiB thread, hostile ids, wrong types, the head
 refused under a held lock with no clock read).
+
+### Part W6r, built (read at 5522b983; line numbers confirmed)
+
+`put_tombstone` (`store_records.py` 550-594), `restore` (642-666),
+`_put_restored` (669-693), `_relink` (696-703), `_put_relinked` (706-741),
+`restore_trimmed` (1124-1182), with `store_returned.linking_sources`
+(215-233) and `store_rows._unknown_record_fields`. Callers: `migrate_v8`
+calls `put_tombstone` with a label, a name, model links, an int rollup and
+a datetime; the restore handler calls `restore_trimmed` with tuples of
+text and bools; `Store.restore` has no caller in the package. Native takes
+each argument as the Python value a caller can pass.
+
+Before the transaction, as in the reference: `put_tombstone`'s label check
+(`_WRITABLE_PROVENANCE`, its ValueError and the TypeError of an unhashable
+label) and each link through `MemoryLink.model_validate`; `restore_trimmed`'s
+ULID check ("invalid id: {id!r}"). `restore` checks nothing first. Inside:
+`put_tombstone` refuses an active id (ValueError "{id} is active;
+tombstone it instead"), keeps the row's label and name, then
+`tombstone_put`. A restore reads the tombstone row (`_TOMBSTONE_SELECT`),
+rebuilds the record in the reference's order (fields, `restore_trimmed`'s
+drops by `set()` membership, the links from `links_json` each validated,
+`int()` of the rollup, `_dt_opt`), validates it as `Memory`, then
+`tombstone_delete`, `memory_put` labelled `local` with the row's name, the
+relink, and the record named for its `returned` mark
+(`Transaction::name_returned`), which the commit settles.
+
+The relink. `linking_sources` sends the reference's `LIKE` statement and
+reads each row's links as it does (TypeError and ValueError from
+`json.loads` pass a row over; a value that is not iterable raises). The
+labels are read once, before any put, by `store::provenance` on the
+transaction's own connection: the reference's `provenance_for` runs on
+the connection its transaction holds, so it sees the transaction's rows.
+`Provenance` read only a `StoreFile`; it now takes any `Source` (the
+statements, `meta` and the log rows the segment map needs), and
+`ConnSource` is a bare connection as one, with the same statements; no
+second verifier. The ring is loaded from the keys directory only when a
+record links to the restored one (the reference reads its key files at
+the first segment lookup), and verifies under its current key, the
+writer's.
+
+The relink depends on two things the reference keeps on its `Store`,
+which native takes from the caller as `Relink { strict, unaccounted }`
+(`restore`'s last argument, `Trim::relink`):
+
+- `strict`: `Store.strict_provenance` (`store.py` 1147), as the opener
+  passed it, else `configured_strict_provenance()`. Reading the config is
+  the caller's and is not ported; the rule to keep is that a config that
+  cannot be read means strict (`store_keys.py` 1067 on), and
+  `Relink::default()` is strict. With strict on, a source signed in a
+  segment whose key is not held, that this machine's key did not sign,
+  reads `unaccounted` and is passed over.
+- `unaccounted`: `_unaccounted_memory_ids`, the ids the last `refold` in
+  the same process found (`store_events.py` 586-589), empty for a fresh
+  open and after a reopen (`Store.close` then `Store.open` starts a new
+  set). `provenance_for` reads such an id `unaccounted` without checking
+  its pointer (`Provenance::with_unaccounted`), so a hand-edited row whose
+  pointer still verifies is passed over after a refold, not re-signed.
+
+A source whose label reads `unaccounted`, or whose rows carry fields this
+build does not define, is passed over; the rest are put again unchanged
+through `_put_memory` with the `relink` mark, keeping their labels. A
+payload a source's rows point at nested past the parser's limit makes
+`_unknown_record_fields` raise RecursionError, which it does not catch:
+the reference's restore raises and writes nothing, and so does native's
+(`fold::unknown_record_fields_raising`; the fold's own use keeps passing
+such a payload over).
+
+Refusal texts, by one rule for both fixtures: a text that is the
+product's own or pydantic's first line is carried and compared; a text
+CPython words is carried where the crate has a port of that wording, and
+otherwise the generator records null and the comparison is by class (as
+`gen_membership_lines.py` does). Ported here: `json.loads`' JSONDecodeError
+(a ValueError; no caller of a restore catches it apart) with its message
+and position for the `links_json` a writer reads (`json::decode_failure`),
+`int()`'s messages for the rollup (`fold::int_worded`), sqlite3's
+OverflowError for a rollup past 64 bits (`digest::OVERFLOW_TEXT`). Null:
+`Invalid isoformat string`, a JSONDecodeError from another JSON column of a
+tombstone row (the row reader, `records::rows`, carries the class only),
+RecursionError and OSError. The generator's docstring lists each.
+
+What the native API cannot express, so no case holds it: a `filename`
+that is not text (the reference writes it into the payload as given, e.g.
+`"filename":3`; native takes `Option<&str>`), and a `last_corroborated`
+that is not a datetime (the reference raises AttributeError from
+`isoformat`; native takes `Option<DateTime>`).
+
+Held to `store_records_d.jsonl` (6 cases, 88 calls, 142,435 bytes), a file
+of its own because `_c` is at its budget; gated as `store_tx.jsonl`. It
+holds two texts CPython words (`'int' object is not iterable`,
+`unhashable type: 'list'`), safe only because the Unicode gate confines it
+to Python 3.13; hand edits (`sql` steps) break a source's pointer or add a
+later field to show the relink passing them over.
+
+`store_records_e.jsonl` (5 cases, 51 steps, 110,200 bytes) holds what the
+relink reads: one rekey with the old key held, then dropped, then
+strict on, then strict off with the origin anchor gone; two rekeys with the middle key foreign; and a
+refold's ids read by the restore after it in the same process, and not
+after a reopen; a later field on a record whose pointer verifies. Its rekey,
+key-file and reopen steps record exactly what they wrote, which native
+replays byte for byte; every opener sets strict provenance, so no config
+is read. `golden_store_records_e.rs` and `store_records_e_not_posix.rs`.
+Tests: `golden_store_records_d.rs` (Ledger), `store_records_d_not_posix.rs`,
+`store_records_d_kills.rs` (152 kills, both journal modes, every column of
+memories, tombstones, memory_links and returned), `store_records_d_cross.rs`
+(both ways; and hand-edited stores restored by each build on its own
+copy: a broken pointer, a refold's ids, a deep payload behind a linking
+record), `store_records_d_robustness.rs` (deep arguments and deep stored
+links on a 512 KiB thread, hostile ids, wrong types, the checks before a
+held lock with no clock read, the RecursionError of the relink at the
+parser's limit with every file of the store unchanged after a refusal,
+and a `ConnSource` seeing its own transaction's uncommitted row).
 
 ## Text made safe to show, and the membership lines
 
@@ -4356,7 +4468,8 @@ opens and the origin file and retired keys when it first builds the
 segment map. A ring changed between the open and the first query that
 needs a segment could be answered from different files.
 
-Special files and size. A key or origin name that is a FIFO, a socket,
+The refold's memo can be given (`Provenance::with_unaccounted`); without
+it the reader holds a fresh open's state. Special files and size. A key or origin name that is a FIFO, a socket,
 a device or a directory is read by the ring loader as unreadable without
 being opened (`store::keys`): the reference's read of a FIFO waits for a
 writer, so there native answers where the reference would not return
@@ -4778,8 +4891,8 @@ The store's writes past `create`, the writing open's plain states and
 the write transaction (`mutate`, `begin`, its `returned` marks),
 `put_memory`, `tombstone`, `delete_tombstone` and the row writers
 (`store::home`, `store::tables`): the rest of the public record API
-(`put_tombstone`, `restore` with
-relink, the episode prune), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
+(the episode prune), the membership kinds, schema steps, rekey, reclaim,
+the origin's settling, a
 restore's rows, re-spelling the index), membership's writes and
 the caller's resolution (its admission is `store::caller`), and each hit's snippet, signals and drift report,
 the daemon, the MCP tools and the hooks; reading and writing the key ring's

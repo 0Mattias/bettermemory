@@ -284,7 +284,11 @@ def _run(store: Store, call: dict[str, Any]) -> str | None:
 
 
 def run_case(
-    case_def: dict[str, Any], runner: Callable[[Store, dict[str, Any]], Any] = _run
+    case_def: dict[str, Any],
+    runner: Callable[[Store, dict[str, Any]], Any] = _run,
+    refusal: Callable[[BaseException, dict[str, Any]], dict[str, Any]] = (
+        lambda exc, step: _refusal(exc)
+    ),
 ) -> dict[str, Any]:
     steps_out: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory() as raw:
@@ -292,8 +296,12 @@ def run_case(
         case = root / "c"
         _made("created", {}, case)
         file = case / "memory.sqlite"
+        # Strict provenance as the case says, so no config is read.
+        strict = bool(case_def.get("strict", False))
         with _engine():
-            store = Store.open(file, keys_dir=case / "keys", allow_rekey=True)
+            store = Store.open(
+                file, keys_dir=case / "keys", allow_rekey=True, strict_provenance=strict
+            )
         try:
             opened = state(case, root)
             for i, step in enumerate(case_def["steps"]):
@@ -315,14 +323,27 @@ def run_case(
                     return minted[-1]
 
                 before = _last_seq(file)
+                if step.get("call") == "reopen":
+                    # A new connection under the ring as it now is, with
+                    # strict provenance as the step says.
+                    store.close()
+                    with _engine():
+                        store = Store.open(
+                            file,
+                            keys_dir=case / "keys",
+                            allow_rekey=True,
+                            strict_provenance=bool(step["strict"]),
+                        )
                 with fixed(log=log, wall=wall, mint=mint):
                     try:
                         outcome: dict[str, Any] = {
                             "written": True,
-                            "returned": runner(store, step),
+                            "returned": None
+                            if step.get("call") == "reopen"
+                            else runner(store, step),
                         }
                     except Exception as exc:  # noqa: BLE001 - the refusal is the record
-                        outcome = {"written": False, "refusal": _refusal(exc)}
+                        outcome = {"written": False, "refusal": refusal(exc, step)}
                 steps_out.append(
                     {
                         "step": i,
