@@ -53,6 +53,7 @@ from . import (
     gen_location_spellings,
     gen_location_stamped,
     gen_gitsystem_answers,
+    gen_gitsystem_probe,
     gen_gitsystem_record,
     gen_githead,
     gen_gitfile_leaves,
@@ -150,6 +151,10 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitsystem_answers": gen_gitsystem_answers.generate,
     "gitsystem_answers_unicode": gen_gitsystem_answers.generate_unicode,
     "gitsystem_answers_python": gen_gitsystem_answers.generate_python,
+    "gitsystem_probe": gen_gitsystem_probe.generate,
+    "gitsystem_probe_python": gen_gitsystem_probe.generate_python,
+    "gitsystem_probe_names": gen_gitsystem_probe.generate_names,
+    "gitsystem_probe_names_unicode": gen_gitsystem_probe.generate_names_unicode,
     "gitconfig_legacy_python": gen_gitconfig_legacy.generate_python,
     "membership_lines": gen_membership_lines.generate,
     "membership_lines_unicode": gen_membership_lines.generate_unicode,
@@ -203,6 +208,7 @@ UNICODE_GATED = frozenset(
         "store_bulk",
         "gitsystem_record",
         "gitsystem_answers_unicode",
+        "gitsystem_probe_names_unicode",
     }
 )
 
@@ -235,11 +241,14 @@ PYTHON_VERSION = "3.13.13"
 #: where `json.loads` raising RecursionError is the interpreter's.
 #: ``gitsystem_answers_python`` holds Windows paths a separator then a colon
 #: begins (3.11's `ntpath.splitdrive` reads a drive there) and digit runs
-#: past `int`'s limit.
+#: past `int`'s limit. ``gitsystem_probe_python`` checks links and folders
+#: through a folder that cannot be searched, where 3.13's `Path.is_dir`
+#: raises and 3.14's answers False.
 PYTHON_GATED = frozenset(
     {
         "gitsystem_record_python",
         "gitsystem_answers_python",
+        "gitsystem_probe_python",
         "python_edges",
         "models_rows",
         "models_stores",
@@ -341,7 +350,8 @@ PLATFORM_GATED = frozenset(
 #: with modes, links and FIFOs (`gen_location_remotes`); ``location_stamped``
 #: changes such trees between reads (`gen_location_stamped`);
 #: ``gitsystem_record`` reads and writes the record over links, modes and
-#: FIFOs (`gen_gitsystem_record`);
+#: FIFOs (`gen_gitsystem_record`); ``gitsystem_probe`` builds, sweeps and
+#: clears the probe over links, modes and FIFOs (`gen_gitsystem_probe`);
 #: ``gitfile_leaves_posix`` reads links and mode-000 files
 #: (`gen_gitfile_leaves`).
 POSIX_ONLY = frozenset(
@@ -368,6 +378,8 @@ POSIX_ONLY = frozenset(
         "location_stamped",
         "gitsystem_record",
         "gitsystem_record_python",
+        "gitsystem_probe",
+        "gitsystem_probe_python",
         "gitfile_leaves_posix",
         "store_provenance",
         "fs_realpath",

@@ -11,8 +11,13 @@
 //!   `_REMOTE_ANSWERS`, the reading inside `_reads_remotes`, the parse
 //!   inside `_older_system`, `_absolute`, `gitversion.parse`): built.
 //!
-//! The questions asked of git, the probe repository and `sources` itself
-//! are the next units'.
+//! - [`probe`]: the probe repository git is asked in and the folder it
+//!   is asked in otherwise (`_probe_name`, `_where`, `_probe_repository`,
+//!   `_sweep_probes`, `_probe_stamps`, `_probe_children`, `_probe_holds`,
+//!   `_clear_probe`): built.
+//!
+//! The questions asked of git and `sources` itself are the next units'.
 
 pub mod answers;
+pub mod probe;
 pub mod record;

@@ -3515,7 +3515,8 @@ argument or a trait the caller implements.
    `_REMOTE_ANSWERS`, the prefix and hasconfig reading in
    `_reads_remotes`, `_older_system`'s parse, `_absolute`,
    `gitversion.parse`. These are pure functions over bytes.
-3. **The probe repository and the ask folder**: `_probe_name` (a
+3. **The probe repository and the ask folder** (built:
+   `gitsystem::probe`): `_probe_name` (a
    SHA-256 of a Python `repr`), `_probe_stamps`, `_probe_children`,
    `_probe_holds`, `_clear_probe`, `_sweep_probes`, `_probe_repository`,
    `_where`.
@@ -3773,6 +3774,179 @@ Pure functions over what git printed: `own_files` (`_own_files`),
   3.11 and 3.13 differ on a separator followed by a colon. On Windows,
   3.13 uses `nt._path_splitroot_ex` in C, which this fixture, made on
   POSIX, does not pin.
+
+### Unit 3, built (`gitsystem::probe`)
+
+- `probe_name(files, folders)` is `_probe_name`: the SHA-256 of
+  `repr((sorted(files.items()), folders))`, the repr written out:
+  - text through `pyvalue::repr_str` (its quote choice and escapes;
+    a printable character past ASCII is kept, so the ASCII encode
+    fails, `NotAscii`, as UnicodeEncodeError);
+  - bytes as `b'...'`: `"` only where there is a `'` and no `"`;
+    `\\`, `\t`, `\n`, `\r`; `\xhh` below 0x20 and from 0x7f;
+  - a tuple of one ends `,)`.
+  `probe_folder()` is `PROBE_FOLDER` (`git-probe-db0b7b6ac9a10835`),
+  pinned by the fixture.
+- `PROBE_FILES`, `PROBE_FOLDERS`, `PROBE_LISTED`, `probe_stamped`,
+  `probe_children` and `is_probe_name` (`_PROBE_NAMES.fullmatch`) are
+  the module's constants.
+- On `Place`:
+  - `ask_folder()` is `_where`;
+  - `probe_repository(now)` is `_probe_repository`;
+  - `sweep_probes(now)` is `_sweep_probes`, `now` standing for
+    `time.time()`; `st_mtime` is built as CPython builds it,
+    `sec + nsec * 1e-9`;
+  - `probe_stamps`, `probe_holds` and `clear_probe`.
+- `clear_probe` lists with `std::fs::read_dir` and takes each entry's
+  kind from the listing, as `os.scandir` does (`d_type`, `lstat` only
+  where it is unknown). So a folder that can be listed but not searched
+  keeps its entries, as in the reference.
+- **Link and folder checks follow Python 3.13.** `Path.is_symlink` and
+  `Path.is_dir` read FileNotFoundError, NotADirectoryError, ELOOP,
+  EBADF and ValueError as False, and raise any other error (EACCES
+  through a folder that cannot be searched). The port does the same:
+  the clear and the sweep answer the class raised, and the build
+  answers None. The reference's answer here changes with the
+  interpreter: 3.14 reads every error as False. These cases are in the
+  Python-gated `gitsystem_probe_python.jsonl`.
+- **The Windows flavour is declined.** `ask_folder`,
+  `probe_repository`, `sweep_probes` and `clear_probe` answer
+  `NotPorted` (`Refusal::NotPorted` for the last two) before touching
+  anything, like the same-file helpers elsewhere in the port.
+  `gitsystem_probe_windows` checks this on any host: a scratch folder
+  comes out unchanged. `probe_name` and `probe_folder` answer
+  everywhere.
+- Reads, stamps and listings go through `Fs`, and `realpath` is
+  `fsdata::realpath`. Folders are made with `owner_only_dir`, files
+  written with `replace_retrying` and a chmod to 0600, and entries
+  removed with `std::fs::remove_dir_all` (it opens each folder without
+  following a link and unlinks a link) and `std::fs::remove_file`.
+- `ensure_owner_only_dir(root / name)` for a probe folder is called
+  without `parents`; `owner_only_dir` makes parents. The two agree: the
+  folders are made in order, so a parent is never missing unless it is
+  a dangling link, which fails both the same way.
+- **One divergence.** Where a probe file is a FIFO, the reference's
+  `read_bytes` waits for a writer, without end. `Fs::open` does not
+  wait, so the FIFO reads empty and is replaced like any file of other
+  bytes. No fixture case holds it; `gitsystem_probe_robustness` tests
+  it. The independent review confirmed that a FIFO at `P/HEAD`, a link
+  from `P/config` to a FIFO outside, and a FIFO in `remotes` are
+  replaced or removed without waiting, and that the FIFO outside is
+  untouched (`fifos_in_and_around_the_probe_are_never_waited_on`).
+
+#### What each removing function can remove
+
+Each statement is checked against random trees by
+`random_trees_stay_inside_the_state_directory`.
+
+- **`sweep_probes`** removes only entries directly in the state
+  directory. An entry is removed when:
+  - its name is `git-probe`, or `git-probe-` and 16 lowercase hex
+    digits;
+  - it is not `probe_folder()`;
+  - its own modification time, read without following a link, is
+    `REASK_SECONDS` or more before `now`.
+  A folder goes with all it holds; a link in it is unlinked, never
+  followed. Anything else, a link to a folder too, is unlinked. A
+  failure on one entry leaves it and goes on.
+- **`clear_probe`** removes only entries directly in the probe, its
+  `remotes` or its `compat-differ`. Each of the three is skipped where
+  it is a link or no folder. An entry goes unless it is one of the
+  probe's names there of the kind it keeps, read from the listing. A folder
+  goes with all it holds, anything else is unlinked. The first failure
+  stops it.
+- **`probe_repository`** removes what the sweep and the clear remove.
+  It also replaces a probe file's entry by rename, a link there too.
+- `ask_folder`, `probe_holds` and `probe_stamps` remove nothing.
+- **A stated difference: after a removal that fails partway, which
+  entries of the folder being removed remain is not pinned.**
+  `remove_dir_all` walks a folder forward and stops at the first
+  failure. 3.13's `shutil.rmtree` walks in reverse listing order (3.11
+  walks forward). The answer, and everything outside that folder, are
+  the same. `remove_dir_all` is kept because it never follows a folder
+  swapped for a link. The generator refuses any tree where a removal
+  can fail partway in a folder holding more than one entry, and
+  `a_removal_failing_partway_stays_inside_its_folder` checks that such
+  a failure changes nothing outside the folder.
+
+#### Tests
+
+- `golden_gitsystem_probe` runs every case of four fixtures:
+  - `gitsystem_probe_names.jsonl`: 32 cases, 5,797 bytes, every
+    system;
+  - `gitsystem_probe_names_unicode.jsonl`: 28 cases, 1,754 bytes,
+    Unicode-gated (what `repr` keeps is `isprintable`'s);
+  - `gitsystem_probe_python.jsonl`: 6 cases, 2,215 bytes, POSIX only
+    and Python-gated: a link or folder check made through a folder that
+    cannot be searched;
+  - `gitsystem_probe.jsonl`: 259 cases, 69,193 bytes, POSIX only.
+    Each case builds a tree in a fresh scratch folder holding the
+    state directory and a folder outside it, and runs one function.
+    The answer and every change the run made are compared: paths gone,
+    and entries new or changed (kind, group and other mode bits, a
+    file's bytes or a link's target).
+  The tree cases cover:
+  - a probe holding a link in place of a file or folder, a link to
+    outside the state directory, a FIFO where a file or folder should
+    be, an unreadable or unlistable child, a folder listed but not
+    searched (0444 and 0666 on `remotes` and `compat-differ`), an
+    extra file or folder, a
+    missing file or folder, a file with other bytes, and a folder
+    where a file should be;
+  - each of those under `probe_holds`, `probe_stamps`, `clear_probe`
+    and `probe_repository`;
+  - the sweep at the edge on both sides: whole seconds at
+    `nextafter(T + 3600, 0)` and `T + 3600`, and half seconds;
+  - the sweep over names that only resemble a probe's, links to a
+    folder, a file and nothing, a FIFO, a folder it cannot empty, and
+    a state directory it cannot list or that is a link;
+  - `ask_folder` when the folder is not empty, is a link, a file or a
+    FIFO, cannot be made, or the state directory is a link.
+  A time on a link or FIFO is set with `touch -h` in a child process.
+- `gitsystem_probe_kills` kills a child building and breaking the
+  probe at 40 fixed delays, each timed from a marker the child writes
+  as it enters its loop. At least half the kills must land while the
+  loop runs, and the scratch folder is removed on failure too. The
+  next native call must build a probe
+  that holds, with the stamps it took. Nothing outside the state
+  directory may change. The reference's `_probe_holds` must agree on
+  each tree a kill left, and its `_probe_repository` must rebuild it.
+- `gitsystem_probe_robustness`:
+  - 1,500 random trees under every function check the removal
+    statements above, and that nothing outside is removed;
+  - the FIFO divergence, and FIFOs in and around the probe;
+  - a removal failing partway, under the sweep and the clear;
+  - the cost of the clear, the holds, the build and the sweep, at
+    1,000 and 10,000 entries, best of three: the larger run must take
+    under 30 times the smaller plus 50 ms.
+
+#### What the reference does that looks wrong (not changed)
+
+- **The build writes through a link in the probe.** The build makes
+  folders and writes files before `_probe_holds` checks for links.
+  `ensure_owner_only_dir` and `atomic_write_bytes` follow a link at
+  `compat-differ` or `remotes`. So with `compat-differ` a link to a
+  folder elsewhere, the build makes `objects` and `refs` there and
+  writes `HEAD` and `config` there. With `remotes` a link, it writes
+  `p` there. The clear then unlinks the link and builds again; what was
+  written outside stays.
+- **It chmods through a link.** `ensure_owner_only_dir` tightens the
+  folder a link names. A link at the probe, at a probe folder or at
+  `git-ask` to a folder outside the state directory makes that folder
+  0700. For the probe itself the build then answers None, but the
+  chmod is done. For `git-ask`, `_where` answers the folder the link
+  names and gives its parent as `GIT_CEILING_DIRECTORIES`.
+- **A dangling link at a probe folder stops the probe for good.**
+  `ensure_owner_only_dir` raises FileExistsError on it before
+  `_clear_probe` can run. So every build answers None and the link is
+  never removed.
+- **A FIFO at a probe file hangs the build** (the divergence above).
+  `read_bytes` is also unbounded: a large file at a probe file's name
+  is read whole, where `len + 1` bytes decide.
+- **The clear stops at its first failure.** `rmtree` and `unlink`
+  raise out of `_clear_probe`. What is gone by then depends on the
+  order the folder is listed in. The fixture holds no such case with
+  more than one entry.
 
 ## A record id's text
 

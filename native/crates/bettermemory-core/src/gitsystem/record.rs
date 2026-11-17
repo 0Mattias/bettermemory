@@ -421,7 +421,7 @@ fn record_bytes(answer: &Answer, others: Vec<PyValue>) -> Result<Vec<u8>, PyErro
 }
 
 /// Bytes as the OS path they name.
-fn os_path(bytes: &[u8]) -> Option<PathBuf> {
+pub(super) fn os_path(bytes: &[u8]) -> Option<PathBuf> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
