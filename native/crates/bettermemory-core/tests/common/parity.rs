@@ -250,6 +250,14 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // A link or folder checked through a folder that cannot be
         // searched: 3.13's `Path.is_dir` raises, 3.14's answers False.
         "gitsystem_probe_python.jsonl" => &[Python],
+        // `str.strip` and `gitversion.parse` of git's text past ASCII
+        // (`gen_gitsystem_ask`).
+        "gitsystem_ask_unicode.jsonl" => &[Unicode],
+        // A version part past `int`'s 4,300 digits.
+        "gitsystem_ask_python.jsonl" => &[Python],
+        // `shutil.which` before 3.12 always searches the current folder
+        // and keeps a PATHEXT entry's trailing dot.
+        "gitsystem_which_windows_python.jsonl" => &[Python],
         _ => &[],
     }
 }

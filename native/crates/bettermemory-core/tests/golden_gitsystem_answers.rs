@@ -94,7 +94,7 @@ fn answer(case: &Value) -> Value {
     let fl = flavour(case);
     match case["f"].as_str().unwrap() {
         "version" => match parse_version(&text(&content(&case["i"]))) {
-            Ok(v) => json!(v),
+            Ok(v) => json!(v.map(|v| v.map(|p| p.as_str().to_owned()))),
             Err(r) => raised(r),
         },
         "absolute" => json!(absolute(fl, &passed(&content(&case["i"])))),

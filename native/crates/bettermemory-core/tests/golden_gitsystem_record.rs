@@ -16,7 +16,8 @@ use bettermemory_core::float_repr;
 use bettermemory_core::fsdata::{Flavour, Fs, MemFs, Node, StdFs};
 use bettermemory_core::gitconfig::legacy::{file_stamp, Stamp};
 use bettermemory_core::gitsystem::record::{
-    developer, key, surrogateescape, Answer, Place, RecordedStamp, Refused, Sources, RECORD,
+    developer, key, surrogateescape, Answer, Natural, Place, RecordedStamp, Refused, Sources,
+    RECORD,
 };
 use common::gitconfig_file::content;
 use common::jsonl;
@@ -655,9 +656,9 @@ fn answer<W: World>(world: &mut W, fx: &Fixture, case: &Value) -> Value {
                     prefix: txt(&spec["px"]),
                     compat_differ: flag("cd"),
                     hasconfig: flag("hc"),
-                    version: spec["v"]
-                        .as_array()
-                        .map(|v| std::array::from_fn(|i| v[i].as_u64().unwrap() as u32)),
+                    version: spec["v"].as_array().map(|v| {
+                        std::array::from_fn(|i| Natural::from(v[i].as_u64().unwrap() as u32))
+                    }),
                 },
                 tried: spec["t"].as_str().map(|t| t.parse().unwrap()),
             }
@@ -696,7 +697,7 @@ fn answer<W: World>(world: &mut W, fx: &Fixture, case: &Value) -> Value {
                 "px": lab(&src.prefix),
                 "cd": src.compat_differ,
                 "hc": src.hasconfig,
-                "v": src.version,
+                "v": src.version.as_ref().map(|v| v.iter().map(|p| p.as_str().parse::<u64>().unwrap()).collect::<Vec<_>>()),
                 "t": a.tried.map(float_repr::repr),
             });
             let mut diff = Map::new();

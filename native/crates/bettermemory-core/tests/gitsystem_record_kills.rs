@@ -26,7 +26,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use bettermemory_core::fsdata::{Flavour, StdFs};
-use bettermemory_core::gitsystem::record::{Answer, Place, Recorded, Sources, RECORD};
+use bettermemory_core::gitsystem::record::{Answer, Natural, Place, Recorded, Sources, RECORD};
 use common::created::{reference_python, run_reference};
 
 const ROOT_ENV: &str = "BM_TEST_GITSYS_KILL_ROOT";
@@ -47,7 +47,7 @@ fn answer(asked: f64) -> Answer {
             prefix: Some("/usr".chars().map(u32::from).collect()),
             compat_differ: Some(false),
             hasconfig: Some(true),
-            version: Some([2, 54, 0]),
+            version: Some([2, 54, 0].map(Natural::from)),
         },
         tried: None,
     }

@@ -16,6 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::record::Natural;
 use crate::fsdata::Flavour;
 use crate::pyvalue::{self, PyStr, PyValue};
 use crate::unicode;
@@ -317,7 +318,7 @@ pub fn reads_remotes(remote: Done, prefix: Done, compat: Option<i32>, held: bool
 /// prints first, each as its decimal text, patch 0 where it names none;
 /// None where it names none. Err (ValueError) for a part past `int()`'s
 /// 4,300 digits.
-pub fn parse_version(output: &[u32]) -> Result<Option<[String; 3]>, Raised> {
+pub fn parse_version(output: &[u32]) -> Result<Option<[Natural; 3]>, Raised> {
     let s = strip(output);
     let lead: Vec<u32> = unicode::cps("git version ");
     let Some(mut rest) = s.strip_prefix(&lead[..]) else {
@@ -347,7 +348,7 @@ pub fn parse_version(output: &[u32]) -> Result<Option<[String; 3]>, Raised> {
         _ => &zero,
     };
     let int = |d: &[u32]| match &pyvalue::int_from_str(d) {
-        Ok(PyValue::Int(t)) => Ok(t.clone()),
+        Ok(PyValue::Int(t)) => Natural::from_digits(t).ok_or(Raised::ValueError),
         _ => Err(Raised::ValueError),
     };
     Ok(Some([int(major)?, int(minor)?, int(patch)?]))

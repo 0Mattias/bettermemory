@@ -3487,7 +3487,7 @@ argument or a trait the caller implements.
 
 | Ambient thing | Where the reference reaches it | The port |
 |---|---|---|
-| The git executable | `_ask`: `shutil.which("git")` over PATH (PATHEXT on Windows), then `file_stamp` of it. `run_git` spawns `["git", *PINS, ...]` and lets the OS search PATH again. | INPUT. The PATH value comes from the environment map. The search itself (`which`: each PATH entry, an executable regular file, PATHEXT) reads through `Fs`. The command handed to the `Git` trait names the binary the search found. |
+| The git executable | `_ask`: `shutil.which("git")` over PATH (PATHEXT on Windows), then `file_stamp` of it. `run_git` spawns `["git", *PINS, ...]` and lets the OS search PATH again. | INPUT. The PATH value comes from the environment map. The search itself (`which`: each PATH entry, an executable regular file, PATHEXT) reads through `Fs`. The command handed to the `Git` trait is `git`, as the reference's is: the OS searches again (see unit 4's findings). |
 | Running git | `_git.run_git`. `subprocess.run` with `capture_output` (stdout and stderr unbounded), a timeout, the scrubbed environment (`GIT_OPTIONAL_LOCKS=0`; `SCRUBBED_ENV`, `RESHAPING_ENV` and the caller's `unset` removed; `NO_FETCH` set), and the `-c` pins. It is bounded by `git_read_budget`'s shared deadline, and `--git-dir=` is set where it is given. | A `Git` trait. The port builds the whole command: argv, working directory, the complete environment (from the environment map, as `run_git` builds it) and the timeout. The trait gives back one of three things: an exit status with output (bounded by a limit the command carries), not run, or timed out. `git_read_budget` is an input too: the allowance the caller grants. |
 | `git var GIT_CONFIG_SYSTEM` | `_ask`. The working directory is `git-ask`, with `GIT_CEILING_DIRECTORIES` set to its parent. `GIT_CONFIG_SYSTEM` and `GIT_CONFIG_NOSYSTEM` are unset. The timeout is `ASK_SECONDS` (0.3 s). Output is text. | A `Git` command. |
 | `git config --system --list --show-origin -z` | `_older_system`, when `var` exits non-zero (git before 2.42). `GIT_CONFIG_GLOBAL` is the null device, plus the ceiling; the overrides are unset. The timeout is what is left of the deadline. Output is bytes. | A `Git` command. |
@@ -3495,7 +3495,7 @@ argument or a trait the caller implements.
 | `git version` | `_version`. The ceiling is set and the overrides unset. The timeout is what is left. Output is text. | A `Git` command. |
 | `ls-remote --get-url p`, `config -z --type=path --get-regexp ^bettermemory\.`, `rev-parse --git-dir` | `_probe_ask`. `--git-dir` is the probe, or `compat-differ` inside it. The system and global files are the null device, `GIT_CONFIG_NOSYSTEM=1`, and the ceiling is set. `_PROBE_UNSET` is unset. The timeout is what is left. | `Git` commands. |
 | The wall clock | `time.time()`: the `now` of `sources`, which becomes `asked` and `tried` and is the clock `_current` and `_kept` compare against. `_sweep_probes` compares it with a probe's mtime. | INPUT: `now: f64` on each call. |
-| The monotonic clock | `time.monotonic()`: the deadline of `ASK_SECONDS` over every question. | A clock trait (`fn monotonic(&self) -> f64`), read where the reference reads it. A test drives it. |
+| The monotonic clock | `time.monotonic()`: the deadline of `ASK_SECONDS` over every question. | The `Clock` trait (`monotonic`, and `wall` for the sweep), read where the reference reads it. A test drives it. |
 | Environment variables | PATH (the key and `which`). DEVELOPER_DIR (the key on macOS). `BETTERMEMORY_STATE_DIR`, then `platformdirs` (HOME, XDG_STATE_HOME, LOCALAPPDATA), through `resolve_state_dir`. PATHEXT. The whole environment, which `run_git` passes to git. | INPUT: an environment map. The state directory is an input already resolved (`resolve_state_dir` belongs to the daemon client, not to this module). |
 | macOS's developer link | `_developer`: `os.readlink("/var/db/xcode_select_link")`. | Read through `Fs::readlink_result`. The link's path and whether this is macOS are arguments. |
 | The platform | `sys.platform` (`_MACOS`), `os.name` (`_FALLBACK`), `os.path` (`_absolute`), `os.devnull`. | INPUTS: `macos: bool` and the path `Flavour`. The null device's spelling is an argument. |
@@ -3520,7 +3520,7 @@ argument or a trait the caller implements.
    SHA-256 of a Python `repr`), `_probe_stamps`, `_probe_children`,
    `_probe_holds`, `_clear_probe`, `_sweep_probes`, `_probe_repository`,
    `_where`.
-4. **The ask**: the `Git` trait, `which`, `run_git`'s command shaping,
+4. **The ask** (built: `gitsystem::ask`): the `Git` trait, `which`, `run_git`'s command shaping,
    `_ask`, `_older_system`, `_version`, `_reads_remotes`, `_probe_ask`,
    and the monotonic deadline.
 5. **`sources`, `reads_compat` and `is_at_least`**, with the held answers.
@@ -3947,6 +3947,202 @@ Each statement is checked against random trees by
   raise out of `_clear_probe`. What is gone by then depends on the
   order the folder is listed in. The fixture holds no such case with
   more than one entry.
+
+### Unit 4, built (`gitsystem::ask`)
+
+- **The traits.** `Git::run(&Command) -> Ran` and `Clock` (`monotonic`,
+  `wall`).
+  - A `Command` is whole: argv (`git`, the eight `-c` pins,
+    `--git-dir=` where given, the question), the working directory, the
+    complete environment in `run_git`'s order, the timeout, and
+    `OUTPUT_LIMIT` (1 MiB).
+  - `Ran` is one of: `Exited { status, stdout }` (at most `limit + 1`
+    bytes), `NotRun` or `TimedOut`.
+  - The clock is read exactly where the reference reads
+    `time.monotonic` (`git_read_budget`'s `_clock` is the same clock)
+    and `time.time` (in the sweep, once, after the state directory is
+    found a folder: `Place::probe_repository_at`). The fixture pins the
+    number of reads of each.
+- **`which(fs, flavour, cwd, env, cs_path)`** is `shutil.which("git")` of
+  3.13:
+  - PATH from the map, else `cs_path` (what `os.confstr("CS_PATH")`
+    gives); an empty one finds nothing;
+  - each entry once by `normcase`; a candidate must stat, pass
+    `access(X_OK)` and be no folder, all through `Fs`;
+  - relative entries open against `cwd`; the answer is the joined name,
+    relative where the entry is;
+  - under Windows: `.` first unless `NoDefaultCurrentDirectoryInExePath`
+    is set, PATHEXT (empty or missing: the default list; empty entries
+    dropped, trailing dots stripped; the bare name first where it ends
+    in one of them), and the environment's names read without case (the
+    last of a name standing), as `os.environ` there reads them.
+- **`environment(env, extra, unset)`** is `_git._environment`:
+  `dict(os.environ)` in order, `unset` removed, `extra` set,
+  `GIT_OPTIONAL_LOCKS=0` and `NO_FETCH` set, `SCRUBBED_ENV` and
+  `RESHAPING_ENV` removed. A name keeps the place it first had.
+- **`Asker { place, git, clock, env, cs_path, budget }.ask(key, now)`** is
+  `_ask`, with `_older_system`, `_version`, `_reads_remotes` and
+  `_probe_ask`. It uses units 1 to 3 as built: `ask_folder` for `_where`,
+  `probe_repository_at`, `probe_stamps` and `probe_holds` for the probe,
+  and unit 2's parsers for every answer.
+- **`git_read_budget`** is an input, `Budget`: `Inactive`, or `Active`
+  with its deadline (None until the first read starts it at
+  `READ_SECONDS`). The allowance reads the clock, raises `ReadDeadline`
+  where none is left and shortens the timeout. A timeout under a shared
+  limit raises `ReadDeadline` once the deadline has passed.
+- **`Declined`.** `Raised(class)` is where the reference raises out of
+  `_ask`: `ReadDeadline`, an OSError's class from `_probe_holds`, or
+  ValueError from `gitversion.parse`. `NotPorted` is the Windows flavour.
+- `Sources.version` is now `[Natural; 3]` (unit 1's field was
+  `[u32; 3]`). `git version` may name a part past `u32`, and `_current`
+  reads only whether there is one. A `Natural` is built only from ASCII
+  digits with leading zeros dropped (`Natural::from_digits`), so a
+  `Sources` built by hand cannot write a part (`007`) the reference never
+  writes.
+- **One divergence.** The reference reads all of git's output. A command
+  here carries `OUTPUT_LIMIT`, and output past it is taken as an answer
+  git did not give (`run_git`'s None). Output exactly at the limit is in
+  the fixture; past it is `output_past_the_limit_is_no_answer`.
+
+#### What the caller hands in for unit 5
+
+- the `Place` (file system, flavour, state directory, working
+  directory);
+- the environment as `os.environ` holds it, in its order;
+- `cs_path`: `os.confstr("CS_PATH")`, or `os.defpath` where it is
+  unavailable, or None where it names nothing;
+- a `Git` that runs commands exactly as given and bounds each stream at
+  `limit + 1` bytes;
+- a `Clock`: the monotonic clock and the wall clock;
+- the `Budget` of an active `git_read_budget` scope, which the ask
+  updates (its deadline is compared after every budgeted case). Only the
+  deadline is ported: `ReadBudget.allowance` also sets `last_root` and
+  `first_home`, and `exhausted` sets `deferred`, from `_ROOT` or
+  `(cwd, True)`; unit 5 must carry those where its caller reads them;
+- the PATH key (unit 1's `key`) and `now`.
+
+`sources` itself (the held answers, `_current`, `_kept`, `_record`, the
+lock) is unit 5's.
+
+#### Declined under the Windows flavour
+
+The ask answers `NotPorted` before asking anything. Its stamp, the ask
+folder and the probe are not ported there, and `os.environ` there is
+another map (names upper-cased). `which` is ported. Its fixture runs on
+any host over a stand-in for Windows: `sys.platform`, `ntpath`, `;`,
+`NeedCurrentDirectoryForExePath` (True unless
+`NoDefaultCurrentDirectoryInExePath` is set, for a name with no `\`),
+and a file system of the case's, matched as written (so a name's case
+matters there, as in `MemFs`). Names are ASCII,
+since `ntpath.normcase` off Windows lower-cases where Windows asks
+`LCMapStringEx`.
+
+Where the stand-in is not a Windows host:
+- names match case-sensitively, where NTFS finds `git.EXE` for `.exe`;
+- a variable set to the empty string does not exist in a real Windows
+  process, and the real `NeedCurrentDirectoryForExePath` reads the
+  process's own environment, not the case's: the
+  `NoDefaultCurrentDirectoryInExePath=""` case answers otherwise on a
+  real host;
+- `\bin` and `C:\bin` are different keys, and `..` is not resolved.
+
+`which` under the Windows flavour is therefore compared with
+`shutil.which`'s logic only, not with a Windows host.
+
+The stand-in's fake `os.path` is `ntpath` whole, with only `exists`,
+`isdir` and `isfile` the case's, so every version's `shutil.which` finds
+what it reads. Cases whose answer `shutil.which`'s version changes go in
+`gitsystem_which_windows_python.jsonl` (Python-gated), placed by input:
+a PATHEXT entry ending in a dot (3.11 keeps the dot) or
+`NoDefaultCurrentDirectoryInExePath` named (3.11 always searches the
+current folder and has no `NeedCurrentDirectoryForExePath`). The
+ungated file is byte-identical under 3.11.15 and 3.13.13.
+
+#### Tests
+
+- `golden_gitsystem_ask` runs five fixtures:
+  - `gitsystem_which_windows.jsonl`: 23 cases, 2,039 bytes, every
+    system;
+  - `gitsystem_which_windows_python.jsonl`: 5 cases, 595 bytes, every
+    system, Python-gated;
+  - `gitsystem_ask.jsonl`: 145 cases, 101,199 bytes, POSIX only;
+  - `gitsystem_ask_unicode.jsonl`: 4 cases, 5,068 bytes, Unicode-gated
+    (git's text answer past ASCII, which `str.strip` and
+    `gitversion.parse` read);
+  - `gitsystem_ask_python.jsonl`: 1 case, 2,019 bytes, Python-gated (a
+    version part past `int`'s 4,300 digits).
+  The POSIX files drive `_ask` with `subprocess.run`, `time.monotonic`,
+  `time.time`, `os.environ` and `os.confstr` replaced by the case's
+  script (in the generator only). Every command is compared whole, with
+  the answer, each clock's number of reads and, under a budget, the
+  budget's deadline afterwards. The cases cover:
+  - every exit status and output shape at each question, not run and
+    timed out at each;
+  - `git var` failing so `_older_system` runs, and its answers;
+  - the deadline jumping before, between and during the questions, at
+    exactly the deadline, just short of it and past it;
+  - `max(left, 0)` at exactly zero and below;
+  - the budget: none, one not started, one past, one shorter than the
+    ask, a timeout under it before and after its deadline; a deadline
+    set by the first question deciding the second (time short, none
+    left, a timeout at it); time left exactly the timeout asked;
+  - an environment holding every scrubbed, reshaping and overriding
+    variable and names differing only in case;
+  - an empty map, PATH missing (with and without a default), empty,
+    with empty and relative entries;
+  - a folder named `git`, a `git` without the execute bit, links to
+    one, to a folder and to nothing, a FIFO, two candidates, an
+    unsearchable entry;
+  - the probe held and not held (git's answer writing into it);
+  - the listing at the output limit; output that is not UTF-8.
+  It also runs, natively over `MemFs`, a PATH entry holding an escaped
+  byte (U+DCFF) that leads to a git: no folder whose name is not UTF-8
+  can be made on macOS.
+- `gitsystem_ask_kills`: a child asking again and again is killed at 40
+  delays, each timed from a marker it writes as its loop starts; at
+  least half must land in the loop. The next ask answers as a fresh one,
+  with the same commands, and nothing outside the state directory
+  changes.
+- `gitsystem_ask_robustness`:
+  - 20,000 random environments through `environment`, and 400 random
+    asks (random scripts, clocks that jump, budgets). Every command
+    carries the pins, `GIT_OPTIONAL_LOCKS=0` and `NO_FETCH`, none of the
+    scrubbed or reshaping variables, nothing `unset` names unless the
+    run sets it, and every other variable as given;
+  - output past the limit;
+  - `environment` and `which` (both flavours) at 2,000 and 20,000
+    entries, best of three: the larger must take under 30 times the
+    smaller plus 50 ms.
+
+#### What the reference does that looks wrong (not changed)
+
+- **The git stamped is not the git run.** `_ask` finds `git` with
+  `shutil.which` and stamps it, then `run_git` spawns `"git"`. The OS
+  searches the child's PATH again: a binary put ahead of it in between
+  answers. On Windows, `CreateProcess` searches the application's
+  folder and the system folders before PATH, so it can run another git
+  than the one stamped, every time.
+- **`git var`'s answer is taken unchecked.** Where `git var` exits 0 its
+  output, stripped, is the system file, even relative, longer than
+  `_MAX_PATH`, or holding a newline (`/etc/a\n/etc/b`). `_older_system`
+  checks that its answer is absolute and within `_MAX_PATH`.
+- **Some of the caller's config variables reach git.** `git var` and
+  `git version` keep `GIT_CONFIG_GLOBAL`. All four questions outside the
+  probe keep `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT` with its
+  `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`, and `GIT_EXEC_PATH`. Only
+  the probe's questions unset the config ones. The listing keeps only
+  system and unknown scopes, so command-scope entries do not change
+  `own`.
+- **Errors escape `_ask`.**
+  - A `git_read_budget` scope active around `sources` makes `run_git`
+    raise `ReadDeadline` (no time left, or a timeout past the shared
+    deadline). It escapes `_ask` in place of the fallback.
+  - `_probe_holds` raising after git answered (a probe removed under
+    it) escapes too.
+  - So does `gitversion.parse`'s ValueError on a part past 4,300 digits.
+- **Output is unbounded.** `capture_output` reads all git writes, so a
+  hostile git can make the process hold any amount (the divergence
+  above).
 
 ## A record id's text
 

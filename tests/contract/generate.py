@@ -53,6 +53,7 @@ from . import (
     gen_location_spellings,
     gen_location_stamped,
     gen_gitsystem_answers,
+    gen_gitsystem_ask,
     gen_gitsystem_probe,
     gen_gitsystem_record,
     gen_githead,
@@ -152,6 +153,11 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitsystem_answers_unicode": gen_gitsystem_answers.generate_unicode,
     "gitsystem_answers_python": gen_gitsystem_answers.generate_python,
     "gitsystem_probe": gen_gitsystem_probe.generate,
+    "gitsystem_ask": gen_gitsystem_ask.generate,
+    "gitsystem_ask_unicode": gen_gitsystem_ask.generate_unicode,
+    "gitsystem_ask_python": gen_gitsystem_ask.generate_python,
+    "gitsystem_which_windows": gen_gitsystem_ask.generate_which_windows,
+    "gitsystem_which_windows_python": (gen_gitsystem_ask.generate_which_windows_python),
     "gitsystem_probe_python": gen_gitsystem_probe.generate_python,
     "gitsystem_probe_names": gen_gitsystem_probe.generate_names,
     "gitsystem_probe_names_unicode": gen_gitsystem_probe.generate_names_unicode,
@@ -209,6 +215,7 @@ UNICODE_GATED = frozenset(
         "gitsystem_record",
         "gitsystem_answers_unicode",
         "gitsystem_probe_names_unicode",
+        "gitsystem_ask_unicode",
     }
 )
 
@@ -243,12 +250,16 @@ PYTHON_VERSION = "3.13.13"
 #: begins (3.11's `ntpath.splitdrive` reads a drive there) and digit runs
 #: past `int`'s limit. ``gitsystem_probe_python`` checks links and folders
 #: through a folder that cannot be searched, where 3.13's `Path.is_dir`
-#: raises and 3.14's answers False.
+#: raises and 3.14's answers False. ``gitsystem_which_windows_python``
+#: names ``NoDefaultCurrentDirectoryInExePath`` or a PATHEXT entry ending in
+#: a dot, which `shutil.which` before 3.12 does not read as 3.13 does.
 PYTHON_GATED = frozenset(
     {
         "gitsystem_record_python",
         "gitsystem_answers_python",
         "gitsystem_probe_python",
+        "gitsystem_ask_python",
+        "gitsystem_which_windows_python",
         "python_edges",
         "models_rows",
         "models_stores",
@@ -380,6 +391,9 @@ POSIX_ONLY = frozenset(
         "gitsystem_record_python",
         "gitsystem_probe",
         "gitsystem_probe_python",
+        "gitsystem_ask",
+        "gitsystem_ask_unicode",
+        "gitsystem_ask_python",
         "gitfile_leaves_posix",
         "store_provenance",
         "fs_realpath",

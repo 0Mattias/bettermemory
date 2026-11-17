@@ -436,14 +436,17 @@ impl<F: Fs> Place<'_, F> {
         if self.windows() {
             return Err(Refusal::NotPorted);
         }
-        self.sweep(now).map_err(Refusal::from)
+        self.sweep(&mut || now).map_err(Refusal::from)
     }
 
-    fn sweep(&self, now: f64) -> Result<(), Stop> {
+    /// The sweep, `time.time()` read through `wall` where the reference
+    /// reads it: once, after the state directory is found a folder.
+    fn sweep(&self, wall: &mut dyn FnMut() -> f64) -> Result<(), Stop> {
         let state = self.state_dir;
         if !self.is_dir(state)? {
             return Ok(());
         }
+        let now = wall();
         let own = probe_folder();
         for name in self.fs.listdir(&self.os(state))? {
             if name == own.as_bytes() || !is_probe_name(&name) {
@@ -560,12 +563,22 @@ impl<F: Fs> Place<'_, F> {
     /// before its content was checked; None where it cannot be built to
     /// hold what it should in two tries, or is a link.
     pub fn probe_repository(&self, now: f64) -> Result<Option<Probe>, NotPorted> {
+        self.probe_repository_at(&mut || now)
+    }
+
+    /// [`Place::probe_repository`] with `time.time()` read through `wall`
+    /// where the sweep reads it (none where the state directory is no
+    /// folder).
+    pub fn probe_repository_at(
+        &self,
+        wall: &mut dyn FnMut() -> f64,
+    ) -> Result<Option<Probe>, NotPorted> {
         if self.windows() {
             return Err(NotPorted);
         }
         let built = (|| -> Result<Option<Probe>, Stop> {
             let root = self.under(self.state_dir, &probe_folder());
-            self.sweep(now)?;
+            self.sweep(wall)?;
             for _attempt in 0..2 {
                 make_owner_only(&self.os(&root))?;
                 if self.is_link(&root)? {

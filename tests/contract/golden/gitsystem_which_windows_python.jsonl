@@ -1,0 +1,6 @@
+{"cases":5,"cwd":"C:\\w","fixture":"gitsystem_which_windows_python"}
+{"d":[],"e":[["PATH","C:\\bin"],["PATHEXT",".EXE."]],"f":["C:\\bin\\git.EXE"],"r":"C:\\bin\\git.EXE"}
+{"d":[],"e":[["PATH","C:\\bin"],["PATHEXT","."]],"f":["C:\\bin\\git.EXE"],"r":null}
+{"d":[],"e":[["PATH","C:\\bin"],["PATHEXT","."]],"f":["C:\\bin\\git"],"r":"C:\\bin\\git"}
+{"d":[],"e":[["PATH","C:\\bin"],["NoDefaultCurrentDirectoryInExePath",""]],"f":["C:\\w\\git.EXE","C:\\bin\\git.EXE"],"r":"C:\\bin\\git.EXE"}
+{"d":[],"e":[["PATH","C:\\bin"],["NODEFAULTCURRENTDIRECTORYINEXEPATH","1"]],"f":["C:\\w\\git.EXE"],"r":null}

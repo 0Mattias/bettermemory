@@ -51,6 +51,35 @@ pub const VERSION_BOUND: u32 = 1 << 16;
 /// `XCODE_SELECT_LINK`.
 pub const XCODE_SELECT_LINK: &[u8] = b"/var/db/xcode_select_link";
 
+/// A non-negative Python int by its canonical decimal text: ASCII digits,
+/// no leading zero but in "0". Only `from_digits` builds one, so a record
+/// written holds only what `repr(int)` writes.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Natural(String);
+
+impl Natural {
+    /// The int of `digits` (ASCII decimal digits, leading zeros dropped);
+    /// None for an empty or non-digit text.
+    pub fn from_digits(digits: &str) -> Option<Natural> {
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let kept = digits.trim_start_matches('0');
+        Some(Natural(if kept.is_empty() { "0" } else { kept }.to_owned()))
+    }
+
+    /// Its canonical decimal text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<u32> for Natural {
+    fn from(v: u32) -> Natural {
+        Natural(v.to_string())
+    }
+}
+
 /// `gitsystem.Sources`. Text is Python's (code points, a lone surrogate
 /// allowed), as a record read back may hold it.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -62,7 +91,9 @@ pub struct Sources {
     pub prefix: Option<PyStr>,
     pub compat_differ: Option<bool>,
     pub hasconfig: Option<bool>,
-    pub version: Option<[u32; 3]>,
+    /// Three Python ints: `git version` may name a part of any size
+    /// (`gitversion.parse`).
+    pub version: Option<[Natural; 3]>,
 }
 
 /// A recorded stamp: five Python ints, each by its canonical decimal text
@@ -241,7 +272,7 @@ fn float_from_text(s: &[u32]) -> Option<f64> {
 
 /// `_recorded_version(raw)`: None for none, `Err` (ValueError) for
 /// anything but three ints (no bool) in `0..2**16`.
-fn recorded_version(raw: Option<&PyValue>) -> Result<Option<[u32; 3]>, ()> {
+fn recorded_version(raw: Option<&PyValue>) -> Result<Option<[Natural; 3]>, ()> {
     let Some(raw) = raw else {
         return Ok(None);
     };
@@ -261,7 +292,7 @@ fn recorded_version(raw: Option<&PyValue>) -> Result<Option<[u32; 3]>, ()> {
             _ => return Err(()),
         }
     }
-    Ok(Some(out))
+    Ok(Some(out.map(Natural::from)))
 }
 
 /// One entry of the PATH `key` names, read as `_recorded` reads it.
@@ -398,8 +429,12 @@ fn record_bytes(answer: &Answer, others: Vec<PyValue>) -> Result<Vec<u8>, PyErro
         (PyValue::str("hasconfig"), opt_bool(s.hasconfig)),
         (
             PyValue::str("version"),
-            s.version.map_or(PyValue::None, |v| {
-                PyValue::List(v.iter().map(|p| PyValue::int(i128::from(*p))).collect())
+            s.version.as_ref().map_or(PyValue::None, |v| {
+                PyValue::List(
+                    v.iter()
+                        .map(|p| PyValue::Int(p.as_str().to_owned()))
+                        .collect(),
+                )
             }),
         ),
         (
@@ -619,5 +654,23 @@ impl<F: Fs> Place<'_, F> {
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
         }
         Ok(Recorded::Written(data))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Natural;
+
+    #[test]
+    fn a_natural_is_only_canonical_decimal_text() {
+        let text = |d: &str| Natural::from_digits(d).map(|n| n.as_str().to_owned());
+        assert_eq!(text("007").as_deref(), Some("7"));
+        assert_eq!(text("000").as_deref(), Some("0"));
+        assert_eq!(text("0").as_deref(), Some("0"));
+        assert_eq!(text("120").as_deref(), Some("120"));
+        for bad in ["", "-1", "+1", "1_0", " 1", "\u{0662}", "1.0"] {
+            assert_eq!(text(bad), None, "{bad:?}");
+        }
+        assert_eq!(Natural::from(0).as_str(), "0");
     }
 }

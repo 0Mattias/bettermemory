@@ -19,5 +19,6 @@
 //! The questions asked of git and `sources` itself are the next units'.
 
 pub mod answers;
+pub mod ask;
 pub mod probe;
 pub mod record;
