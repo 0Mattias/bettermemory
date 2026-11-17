@@ -518,8 +518,20 @@ pub fn keep_copy(c: &Path, to: &Path, id: &str) {
     }
     let binding = to.join("keys").join(format!("{id}.path"));
     if let Ok(text) = fs::read_to_string(&binding) {
-        let from = fs::canonicalize(c).expect("c").display().to_string();
-        let into = fs::canonicalize(to).expect("to").display().to_string();
-        fs::write(&binding, text.replace(&from, &into)).expect("rebind");
+        // The binding is JSON and spells no verbatim prefix (as
+        // `Path.resolve` spells none), so on Windows the canonical path
+        // loses its `\\?\` and each backslash is written twice.
+        let spelled = |p: &Path| {
+            let s = fs::canonicalize(p)
+                .expect("canonical")
+                .display()
+                .to_string();
+            let plain = match s.strip_prefix(r"\\?\UNC\") {
+                Some(rest) => format!(r"\\{rest}"),
+                None => s.strip_prefix(r"\\?\").unwrap_or(&s).to_owned(),
+            };
+            plain.replace('\\', r"\\")
+        };
+        fs::write(&binding, text.replace(&spelled(c), &spelled(to))).expect("rebind");
     }
 }
