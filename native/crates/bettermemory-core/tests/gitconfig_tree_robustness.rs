@@ -10,7 +10,9 @@ use std::cell::Cell;
 
 use bettermemory_core::fsdata::{Flavour, Fs, Kind, MemFs, Node, PyErr, Stat};
 use bettermemory_core::gitconfig::paths::Machine;
-use bettermemory_core::gitconfig::tree::{config_tree, Ask, Branch, ConfigValues, Context};
+use bettermemory_core::gitconfig::tree::{
+    collected_urls, config_tree, Ask, Branch, ConfigValues, Context,
+};
 use bettermemory_core::gitconfig::FORMAT_LIMIT;
 
 fn none(_: &[u8]) -> Option<Vec<u8>> {
@@ -322,14 +324,9 @@ fn an_unknown_include_if_condition_reads_nothing_and_is_not_declined() {
         fs.insert(b"/r/c", Node::File(text.into_bytes()));
         fs.insert(b"/r/x", Node::File(b"[x]\n\ty = 1\n".to_vec()));
         let got = read(&fs, Flavour::Posix, b"/r/c");
-        // Evaluated, not settled with no git directory and no context;
-        // `hasconfig:remote.*.url:` is declined.
-        if sub.starts_with("hasconfig") {
-            assert_eq!(got.not_ported.as_deref(), Some(sub.as_bytes()));
-        } else {
-            assert_eq!(got.not_ported, None);
-            assert_eq!(got.undecided.len(), 1, "{sub}");
-        }
+        // Evaluated, not settled with no git directory and no context.
+        assert_eq!(got.not_ported, None);
+        assert_eq!(got.undecided.len(), 1, "{sub}");
     }
 }
 
@@ -356,6 +353,7 @@ fn read_with(fs: &MemFs, path: &[u8], git_dir: &[u8], branch: Branch) -> ConfigV
         context: Some(Context {
             prefix: None,
             branch,
+            ..Context::default()
         }),
         ..Ask::default()
     };
@@ -503,4 +501,127 @@ fn a_nul_reaching_realpath_raises_and_one_elsewhere_does_not() {
         assert!(got.undecided.is_empty());
         assert_eq!(got.values.len(), 1, "the includeIf path only");
     }
+}
+
+fn read_remotes(fs: &MemFs, flavour: Flavour, context: Context) -> ConfigValues {
+    let machine = Machine {
+        flavour,
+        home: None,
+        profile: None,
+        user_home: &none,
+    };
+    let ask = Ask {
+        stamp_self: true,
+        cwd: b"/".to_vec(),
+        context: Some(context),
+        ..Ask::default()
+    };
+    config_tree(fs, &machine, b"/r/c", &ask)
+}
+
+fn takes() -> Context {
+    Context {
+        hasconfig: Some(true),
+        ..Context::default()
+    }
+}
+
+#[test]
+fn ten_thousand_remotes_and_hasconfig_conditions_stay_bounded() {
+    on_small_stack(|| {
+        // 10,000 remotes and 10,000 conditions, none matching: both
+        // passes typed, one budget a read.
+        let mut text = String::new();
+        for i in 0..10_000 {
+            text.push_str(&format!(
+                "[remote \"r{i}\"]\n\turl = https://example.invalid/{i}\n"
+            ));
+            text.push_str(&format!(
+                "[includeIf \"hasconfig:remote.*.url:*/no{i}\"]\n\tpath = x\n"
+            ));
+        }
+        let mut fs = MemFs::new(Flavour::Posix);
+        fs.insert(b"/r/c", Node::File(text.into_bytes()));
+        fs.insert(b"/r/x", Node::File(b"[x]\n\ty = 1\n".to_vec()));
+        let plain = read_remotes(&fs, Flavour::Posix, takes());
+        assert!(plain.asks_remote_urls && plain.dies.is_none());
+        assert_eq!(plain.undecided.len(), 1);
+        // Collecting, every condition holds and is forbidding: x sets no
+        // URL, 64 files at most.
+        let collecting = read_remotes(&fs, Flavour::Posix, takes().collect());
+        assert!(!collecting.forbidden && !collecting.asks_remote_urls);
+        assert!(!collecting.complete && collecting.files.len() <= 64);
+        let urls = collected_urls([&collecting]);
+        // The read stops at the file bound: the remotes before it.
+        assert!((1..10_000).contains(&urls.len()));
+        assert!(urls.windows(2).all(|w| w[0] < w[1]), "sorted, each once");
+        let settled = read_remotes(&fs, Flavour::Posix, takes().with_urls(urls));
+        assert!(!settled.asks_remote_urls && settled.dies.is_none());
+        // Every pattern false, or the budget spent and not settled.
+        assert!(settled.undecided.len() <= 1 && settled.complete);
+        // A URL and a pattern of 1 MiB, then `**`.
+        let long = "a/".repeat(1 << 19);
+        let text = format!(
+            "[remote \"o\"]\n\turl = {long}\n\
+             [includeIf \"hasconfig:remote.*.url:{}x\"]\n\tpath = x\n\
+             [includeIf \"hasconfig:remote.*.url:**\"]\n\tpath = y\n",
+            "**/".repeat(1 << 18)
+        );
+        let mut fs = MemFs::new(Flavour::Posix);
+        fs.insert(b"/r/c", Node::File(text.into_bytes()));
+        fs.insert(b"/r/x", Node::File(b"[x]\n\ty = 1\n".to_vec()));
+        fs.insert(b"/r/y", Node::File(b"[y]\n\tz = 1\n".to_vec()));
+        let urls = vec![long.into_bytes()];
+        let got = read_remotes(&fs, Flavour::Posix, takes().with_urls(urls));
+        // As the reference answers (checked by hand): the long pattern
+        // not settled, x's values undecided; `**` takes no steps and holds.
+        assert!(got.dies.is_none() && got.maybe_dies.is_none() && got.complete);
+        assert_eq!(got.undecided.len(), 1, "x.y undecided");
+        assert!(got.values.iter().any(|(n, _)| n.section == "y"), "y.z held");
+    });
+}
+
+#[test]
+fn the_windows_flavour_evaluates_a_hasconfig_condition() {
+    let mut fs = MemFs::new(Flavour::Windows);
+    fs.insert(
+        b"/r/c",
+        Node::File(
+            b"[remote \"o\"]\n\turl = u\n[includeIf \"hasconfig:remote.*.url:u\"]\n\tpath = x\n"
+                .to_vec(),
+        ),
+    );
+    fs.insert(b"/r/x", Node::File(b"[x]\n\ty = 1\n".to_vec()));
+    let got = read_remotes(
+        &fs,
+        Flavour::Windows,
+        takes().with_urls(vec![b"u".to_vec()]),
+    );
+    assert_eq!(got.not_ported, None);
+    assert_eq!(got.values.len(), 3, "remote, path and the include's x.y");
+    let got = read_remotes(&fs, Flavour::Windows, takes().collect());
+    assert!(!got.forbidden && got.values.len() == 2);
+}
+
+#[test]
+fn the_urls_are_matched_sorted_and_each_once() {
+    // `x` sorts before the long URL and matches; the long one spends the
+    // steps. Given in the other order, they are still matched sorted.
+    let pattern = "**/".repeat(24);
+    let text = format!("[includeIf \"hasconfig:remote.*.url:{pattern}x\"]\n\tpath = x\n");
+    let mut fs = MemFs::new(Flavour::Posix);
+    fs.insert(b"/r/c", Node::File(text.into_bytes()));
+    fs.insert(b"/r/x", Node::File(b"[x]\n\ty = 1\n".to_vec()));
+    let long = format!("{}z", "z/".repeat(29)).into_bytes();
+    let urls = vec![long.clone(), b"x".to_vec(), long];
+    let got = read_remotes(&fs, Flavour::Posix, takes().with_urls(urls));
+    assert!(got.undecided.is_empty(), "settled");
+    assert_eq!(got.values.len(), 2, "held: the path and x.y");
+    // The long one alone: not settled.
+    let got = read_remotes(
+        &fs,
+        Flavour::Posix,
+        takes().with_urls(vec![format!("{}z", "z/".repeat(29)).into_bytes()]),
+    );
+    assert_eq!(got.undecided.len(), 1);
 }

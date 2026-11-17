@@ -2,14 +2,15 @@
 //! `config_tree` (`gitconfig.py` 255-289), `_read_config` (358-386),
 //! `_parse_config` (408-444), `_include` (463-525) with
 //! `_include_target` (594-609), and the `includeIf` conditions
-//! `gitdir:`, `gitdir/i:` and `onbranch:` (`_condition` 1081-1110,
-//! `_branch_condition` 1129-1147, `_gitdir_matches` 1177-1212). A
-//! `hasconfig:remote.*.url:` condition the reference acts on
-//! ([`acts_on`]) stops the read as [`ConfigValues::not_ported`]: the
-//! collecting and forbidding pass is the next unit's. So does a
-//! `gitdir:` condition under the Windows flavour, whose `realpath` is not
-//! ported. One whose condition git does not know is skipped, as the
-//! reference skips it.
+//! `gitdir:`, `gitdir/i:`, `onbranch:` and `hasconfig:remote.*.url:`
+//! (`_condition` 1081-1110, `_branch_condition` 1129-1147,
+//! `_remote_url_condition` 1150-1168, `_gitdir_matches` 1177-1212), with
+//! the pass that collects the remote URLs (`IncludeContext.collect`,
+//! 168-172) and its forbidding reads (`_forbidding` 683-700,
+//! `_remote_url_names` 703-706). A `gitdir:` condition under the Windows
+//! flavour stops the read as [`ConfigValues::not_ported`]: its `realpath`
+//! is not ported there. One whose condition git does not know is
+//! skipped, as the reference skips it.
 //!
 //! Where a condition is not settled here (no git directory given, the
 //! branch not known, a pattern the read's wildmatch steps do not settle,
@@ -70,7 +71,7 @@ pub enum Branch {
     Name(Vec<u8>),
 }
 
-/// The parts of `IncludeContext` this piece reads.
+/// `IncludeContext` (lines 126-178).
 #[derive(Clone, Debug, Default)]
 pub struct Context {
     /// `IncludeContext.prefix`: the directory, [`paths::AS_WRITTEN`], or
@@ -78,14 +79,43 @@ pub struct Context {
     pub prefix: Option<Vec<u8>>,
     /// `IncludeContext.branch`.
     pub branch: Branch,
+    /// `IncludeContext.hasconfig`: whether the git on PATH takes a
+    /// `hasconfig:` condition; None where it is not known.
+    pub hasconfig: Option<bool>,
+    /// `IncludeContext.remote_urls`: every remote URL collected, in any
+    /// order (read as a set, sorted); None until they are collected.
+    pub remote_urls: Option<Vec<Vec<u8>>>,
+    /// `IncludeContext.collecting`: the read that collects them.
+    pub collecting: bool,
+}
+
+impl Context {
+    /// `IncludeContext.collect()`: this context for the collecting read.
+    #[must_use]
+    pub fn collect(&self) -> Context {
+        Context {
+            remote_urls: None,
+            collecting: true,
+            ..self.clone()
+        }
+    }
+
+    /// `IncludeContext.with_urls(urls)`: this context with the URLs.
+    #[must_use]
+    pub fn with_urls(&self, urls: Vec<Vec<u8>>) -> Context {
+        Context {
+            remote_urls: Some(urls),
+            collecting: false,
+            ..self.clone()
+        }
+    }
 }
 
 /// Names with their values, in the order names were first set.
 pub type Values = Vec<(Name, Vec<Option<Vec<u8>>>)>;
 
-/// `config_tree`'s answer (`ConfigValues`, line 78), less what the next
-/// unit fills (`asks_remote_urls`, `forbidden`) and the stamps (only the
-/// paths are kept).
+/// `config_tree`'s answer (`ConfigValues`, line 78), less the stamps
+/// (only the paths are kept).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ConfigValues {
     /// Each name with its values (a value cut at its first NUL, None for
@@ -101,8 +131,14 @@ pub struct ConfigValues {
     /// Each file the read opened or looked for, in order (`files`' paths).
     pub files: Vec<Vec<u8>>,
     /// The `includeIf` subsection the read stopped at, its condition not
-    /// evaluated here.
+    /// evaluated here (a `gitdir:` one under the Windows flavour).
     pub not_ported: Option<Vec<u8>>,
+    /// A `hasconfig:remote.*.url:` condition met before the remote URLs
+    /// were collected.
+    pub asks_remote_urls: bool,
+    /// The collecting read met a remote URL in a file an `includeIf`
+    /// reads, which git refuses.
+    pub forbidden: bool,
     /// The exception the reference raises out of `config_tree` (a NUL in
     /// a path `realpath` states: `ValueError`).
     pub raised: Option<PyErr>,
@@ -164,6 +200,11 @@ struct Reading<'a, F: Fs> {
     files: usize,
     chain: Vec<FileId>,
     steps: Steps,
+    /// The context's remote URLs, sorted, each once.
+    urls: Option<Vec<Vec<u8>>>,
+    forbidding: bool,
+    asks_remote_urls: bool,
+    forbidden: bool,
 }
 
 fn words(parts: &[&[u8]]) -> Vec<u8> {
@@ -180,6 +221,18 @@ pub fn config_tree<F: Fs>(fs: &F, machine: &Machine, path: &[u8], ask: &Ask) -> 
         files: 0,
         chain: Vec::new(),
         steps: Steps::default(),
+        urls: ask
+            .context
+            .as_ref()
+            .and_then(|c| c.remote_urls.clone())
+            .map(|mut urls| {
+                urls.sort();
+                urls.dedup();
+                urls
+            }),
+        forbidding: false,
+        asks_remote_urls: false,
+        forbidden: false,
     };
     let mut out = Out::default();
     let stop = reading.read(path, &mut out, 0);
@@ -192,6 +245,8 @@ pub fn config_tree<F: Fs>(fs: &F, machine: &Machine, path: &[u8], ask: &Ask) -> 
         files: out.files,
         not_ported: None,
         raised: None,
+        asks_remote_urls: reading.asks_remote_urls,
+        forbidden: reading.forbidden,
     };
     match stop {
         Ok(()) => {}
@@ -263,7 +318,7 @@ impl<F: Fs> Reading<'_, F> {
             let name = entry.spelled();
             let value = entry.value_cut().map(<[u8]>::to_vec);
             out.values.push_all(&name, std::slice::from_ref(&value));
-            if self.ask.context.is_some() {
+            if self.remote_rules() && !self.forbidding {
                 if let Some(why) = remote_rules::remote_rule(&name, value.as_deref()) {
                     return Err(Stop::Dies(words(&[
                         path,
@@ -280,8 +335,9 @@ impl<F: Fs> Reading<'_, F> {
                 if let Some(sub) = &name.subsection {
                     if name.key == "path" {
                         self.include(path, Some(sub), value.as_deref(), out, depth)?;
-                    } else if acts_on(sub, &name.key, self.ask.context.is_some()) {
-                        return Err(Stop::NotPorted(sub.clone()));
+                    } else if sub.starts_with(REMOTE_URL) {
+                        // Evaluated at each key: it may ask for the URLs.
+                        self.condition(sub, path)?;
                     }
                 }
             }
@@ -307,10 +363,20 @@ impl<F: Fs> Reading<'_, F> {
             return Ok(());
         }
         if holds == Some(true) {
-            return self.include_into(including, condition.is_none(), value, out, depth);
+            let forbid = condition.is_some()
+                && !self.forbidding
+                && self.ask.context.as_ref().is_some_and(|c| c.collecting);
+            return self.include_into(including, condition.is_none(), forbid, value, out, depth);
         }
         let mut maybe = Out::default();
-        let read = self.include_into(including, condition.is_none(), value, &mut maybe, depth);
+        let read = self.include_into(
+            including,
+            condition.is_none(),
+            false,
+            value,
+            &mut maybe,
+            depth,
+        );
         match read {
             Ok(()) => {}
             Err(Stop::Dies(why)) => maybe.maybe_dies = Some(why),
@@ -332,6 +398,7 @@ impl<F: Fs> Reading<'_, F> {
         &mut self,
         including: &[u8],
         plain: bool,
+        forbid: bool,
         value: Option<&[u8]>,
         out: &mut Out,
         depth: usize,
@@ -353,7 +420,34 @@ impl<F: Fs> Reading<'_, F> {
             return Err(Stop::Overflow(value.to_vec()));
         }
         let target = self.target(value, including)?;
+        if forbid {
+            return self.forbidding_read(&target, out, depth);
+        }
         self.read(&target, out, depth + 1)
+    }
+
+    /// `_forbidding` (683-700): `target` read for the collecting pass,
+    /// its values dropped; a remote URL it or its includes set, taken or
+    /// undecided, marks the read forbidden.
+    fn forbidding_read(&mut self, target: &[u8], out: &mut Out, depth: usize) -> Result<(), Stop> {
+        let mut sink = Out::default();
+        self.forbidding = true;
+        let read = self.read(target, &mut sink, depth + 1);
+        self.forbidding = false;
+        out.undecided.merge(&sink.undecided);
+        if out.maybe_dies.is_none() {
+            out.maybe_dies = sink.maybe_dies;
+        }
+        out.files.append(&mut sink.files);
+        if sets_remote_url(&sink.values.list) || sets_remote_url(&sink.undecided.list) {
+            self.forbidden = true;
+        }
+        read
+    }
+
+    /// `_Reading.remote_rules`: a context that is not collecting.
+    fn remote_rules(&self) -> bool {
+        self.ask.context.as_ref().is_some_and(|c| !c.collecting)
     }
 
     fn target(&self, value: &[u8], including: &[u8]) -> Result<Vec<u8>, Stop> {
@@ -364,7 +458,7 @@ impl<F: Fs> Reading<'_, F> {
         })
     }
 
-    /// `_condition` (1081-1110), `hasconfig:remote.*.url:` declined.
+    /// `_condition` (1081-1110).
     fn condition(&mut self, sub: &[u8], including: &[u8]) -> Result<Option<bool>, Stop> {
         for (prefix, icase) in [(&b"gitdir:"[..], false), (b"gitdir/i:", true)] {
             if let Some(pattern) = sub.strip_prefix(prefix) {
@@ -377,10 +471,34 @@ impl<F: Fs> Reading<'_, F> {
         if let Some(pattern) = sub.strip_prefix(b"onbranch:") {
             return Ok(self.branch_condition(pattern));
         }
-        if sub.starts_with(b"hasconfig:remote.*.url:") {
-            return Err(Stop::NotPorted(sub.to_vec()));
+        if let Some(pattern) = sub.strip_prefix(REMOTE_URL) {
+            if let Some(context) = &self.ask.context {
+                if context.hasconfig != Some(true) {
+                    return Ok(context.hasconfig);
+                }
+            }
+            return Ok(self.remote_url_condition(pattern));
         }
         Ok(Some(false))
+    }
+
+    /// `_remote_url_condition` (1150-1168): the pattern as written (no
+    /// `**` added) against each URL, sorted.
+    fn remote_url_condition(&mut self, pattern: &[u8]) -> Option<bool> {
+        let context = self.ask.context.as_ref()?;
+        if context.collecting {
+            return Some(true);
+        }
+        let Some(urls) = &self.urls else {
+            self.asks_remote_urls = true;
+            return None;
+        };
+        any_match(
+            pattern,
+            urls.iter().map(Vec::as_slice),
+            &mut self.steps,
+            false,
+        )
     }
 
     /// `_branch_condition` (1129-1147).
@@ -476,21 +594,31 @@ impl<F: Fs> Reading<'_, F> {
     }
 }
 
-/// Whether the reference acts on an `includeIf.<sub>.<key>` (lines
-/// 436-444 and `_condition`, 1095-1110): at `path`, a condition starting
-/// (case-sensitively) `gitdir:`, `gitdir/i:`, `onbranch:` or
-/// `hasconfig:remote.*.url:` is evaluated and may read a file; any other
-/// condition is False and nothing is read, the value not even looked at.
-/// At another key only a `hasconfig:remote.*.url:` one is evaluated, and
-/// with no context that evaluation does nothing.
-pub fn acts_on(sub: &[u8], key: &str, context: bool) -> bool {
-    const REMOTE_URL: &[u8] = b"hasconfig:remote.*.url:";
-    if key == "path" {
-        return [&b"gitdir:"[..], b"gitdir/i:", b"onbranch:", REMOTE_URL]
-            .iter()
-            .any(|p| sub.starts_with(p));
-    }
-    context && sub.starts_with(REMOTE_URL)
+/// The one `hasconfig:` condition git knows (`_HAS_REMOTE_URL`).
+const REMOTE_URL: &[u8] = b"hasconfig:remote.*.url:";
+
+/// `_remote_url_names` (703-706): whether any name is a
+/// `remote.<name>.url` (a `remote.url` with no name is none).
+fn sets_remote_url(names: &Values) -> bool {
+    names
+        .iter()
+        .any(|(n, _)| n.section == "remote" && n.subsection.is_some() && n.key == "url")
+}
+
+/// The remote URLs the caller collects from the collecting reads
+/// (`location_git.remote_config` 608-616): every value of each
+/// `remote.<name>.url` they take, sorted, each once.
+#[must_use]
+pub fn collected_urls<'a>(reads: impl IntoIterator<Item = &'a ConfigValues>) -> Vec<Vec<u8>> {
+    let mut urls: Vec<Vec<u8>> = reads
+        .into_iter()
+        .flat_map(|read| read.values.iter())
+        .filter(|(n, _)| n.section == "remote" && n.subsection.is_some() && n.key == "url")
+        .flat_map(|(_, values)| values.iter().flatten().cloned())
+        .collect();
+    urls.sort();
+    urls.dedup();
+    urls
 }
 
 /// Why an include's value names no file.

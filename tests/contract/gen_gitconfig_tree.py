@@ -4,14 +4,13 @@
 
 The native build reads a config file with its ``include.path`` lines
 (``native/crates/bettermemory-core/src/gitconfig/tree.rs``); this pins it
-to `gitconfig.config_tree` without conditions: `_read_config`,
+to `gitconfig.config_tree`: `_read_config`,
 `_parse_config`, `_include`, `_include_target`, `_interpolate`,
 `_git_absolute`, `_native`, `_home`, `_user_home`, the depth of 10, the
 64 files, cycles by identity and the remote rules where a context asks
-for them, and the ``gitdir:``, ``gitdir/i:`` and ``onbranch:``
-conditions. A ``hasconfig:remote.*.url:`` one is the next unit's: a case
-holding one records the reference's answer, and the native read declines
-it.
+for them, and the ``gitdir:``, ``gitdir/i:``, ``onbranch:`` and
+``hasconfig:remote.*.url:`` conditions, the last with the read that
+collects the remote URLs and its forbidding reads.
 
 ``gitconfig_tree.jsonl``: each case is a tree as data, written as real
 files in a fresh directory of the scratch world (`_sandbox.world`), and
@@ -22,15 +21,17 @@ for, by name) and the context's ``%(prefix)`` given. A line holds
 ``stamp_self``, ``g``: ``gentle``, ``c``: whether a context is given,
 ``p``: its prefix, relative to the case's directory, ``"%(prefix)"``, or
 null; ``gd``: the git directory, relative; ``b``: the branch, null for HEAD
-elsewhere, left out for not known); ``"hm"``: HOME relative to the case's directory, or null for unset;
+elsewhere, left out for not known; ``hc``: whether git takes a
+``hasconfig:`` condition, left out for not known; ``st``: the pass, left
+out for the read before the URLs are collected, ``c`` for the read that
+collects them, ``u`` for the read with ``u``, the URLs that one collects
+as the caller takes them, sorted); ``"hm"``: HOME relative to the case's directory, or null for unset;
 ``"u"``: accounts, name to home relative to the case's directory; and
 ``"r"``: the answer: ``v`` the values as ``[section, subsection, key,
 [value, ...]]`` (bytes spelled as in ``gitconfig_file.jsonl``), ``c``
 complete, ``ud`` the undecided values and ``md`` ``maybe_dies`` where
-any, ``d`` why git dies, ``fl`` the files read in order, ``np`` the
-``includeIf`` subsection a native read stops at (computed here from the
-values, then the undecided ones: the first ``hasconfig:remote.*.url:``
-one at ``path``, or at any key under a context). Each case's directory is
+any, ``d`` why git dies, ``fl`` the files read in order, and ``ar``
+(``asks_remote_urls``) and ``fb`` (``forbidden``) where true. Each case's directory is
 taken as ``realpath`` gives it, so the only links a path passes through
 are the case's own. Texts name the case's directory
 ``<scratch>``. POSIX only (`generate.POSIX_ONLY`): links, FIFOs and
@@ -101,6 +102,8 @@ class Tree:
         prefix: str | None = None,
         git_dir: str | None = None,
         branch: str | None = "\0",
+        hasconfig: bool | None = None,
+        stage: str = "",
     ) -> None:
         self.target = target
         self.files = files
@@ -122,6 +125,12 @@ class Tree:
         if branch != "\0":
             # A branch name, null for HEAD elsewhere; left out: unsettled.
             self.ask["b"] = branch
+        if hasconfig is not None:
+            self.ask["hc"] = hasconfig
+        if stage:
+            # "c": the read that collects the remote URLs; "u": the read
+            # with the URLs that one collects (``k.u``, sorted).
+            self.ask["st"] = stage
 
     def record(self) -> dict[str, Any]:
         out: dict[str, Any] = {"f": {k: _content(v) for k, v in self.files.items()}}
@@ -141,21 +150,18 @@ class Tree:
         return out
 
 
-_KNOWN = ("gitdir:", "gitdir/i:", "onbranch:", "hasconfig:remote.*.url:")
-
-
-def _not_ported(read: gitconfig.ConfigValues, context: bool) -> str | None:
-    """The first ``hasconfig:remote.*.url:`` ``includeIf`` the reference
-    acts on, which a native read declines (the collecting and forbidding
-    pass is not ported): at ``path``, or at another key where a context is
-    given (`_parse_config` 436-444). Values first, then undecided ones."""
-    for names in (read, read.undecided):
-        for section, sub, key in names:
-            if section != "includeif" or sub is None:
-                continue
-            if sub.startswith(_KNOWN[3]) and (key == "path" or context):
-                return _b(gitconfig.subsection_bytes(sub))
-    return None
+def _collected(read: gitconfig.ConfigValues) -> list[bytes]:
+    """The remote URLs the caller takes from a collecting read
+    (`location_git.remote_config`), sorted as `_remote_url_condition`
+    sorts them."""
+    return sorted(
+        frozenset(
+            url
+            for name in gitconfig._remote_url_names(read)
+            for url in read[name]
+            if url is not None
+        )
+    )
 
 
 def _values(names: dict[Any, Any]) -> list[Any]:
@@ -217,7 +223,10 @@ def _tree_answer(case: Tree, root: Path) -> dict[str, Any]:
             if case.ask["b"] is None
             else os.fsencode(case.ask["b"])
         )
-        context = gitconfig.IncludeContext(lambda: branch, prefix=lambda: found)
+        takes: bool | None = case.ask.get("hc")
+        context = gitconfig.IncludeContext(
+            lambda: branch, prefix=lambda: found, hasconfig=lambda: takes
+        )
     pwd = __import__("importlib").import_module("pwd")
     try:
         with (
@@ -226,14 +235,26 @@ def _tree_answer(case: Tree, root: Path) -> dict[str, Any]:
         ):
             if case.home is None:
                 os.environ.pop("HOME", None)
-            read = gitconfig.config_tree(
-                prefix + "/" + case.target,
-                stamped=True,
-                stamp_self=bool(case.ask["s"]),
-                gentle=bool(case.ask["g"]),
-                context=context,
-                git_dir=None if "gd" not in case.ask else prefix + "/" + case.ask["gd"],
-            )
+            git_dir = None if "gd" not in case.ask else prefix + "/" + case.ask["gd"]
+
+            def tree(given: gitconfig.IncludeContext | None) -> gitconfig.ConfigValues:
+                return gitconfig.config_tree(
+                    prefix + "/" + case.target,
+                    stamped=True,
+                    stamp_self=bool(case.ask["s"]),
+                    gentle=bool(case.ask["g"]),
+                    context=given,
+                    git_dir=git_dir,
+                )
+
+            stage = case.ask.get("st")
+            if context is not None and stage == "c":
+                context = context.collect()
+            elif context is not None and stage == "u":
+                urls = _collected(tree(context.collect()))
+                case.ask["u"] = [_b(url) for url in urls]
+                context = context.with_urls(frozenset(urls))
+            read = tree(context)
     finally:
         for rel in by_depth:
             os.chmod(root / rel, 0o700)
@@ -242,11 +263,14 @@ def _tree_answer(case: Tree, root: Path) -> dict[str, Any]:
         out["ud"] = _values(read.undecided)
     if read.maybe_dies is not None:
         out["md"] = _text(os.fsencode(label(read.maybe_dies)))
+    if read.asks_remote_urls:
+        out["ar"] = True
+    if read.forbidden:
+        out["fb"] = True
     return out | {
         "c": read.complete,
         "d": None if read.dies is None else _text(os.fsencode(label(read.dies))),
         "fl": [_text(os.fsencode(label(p))) for p, _ in read.files or ()],
-        "np": _not_ported(read, bool(case.ask["c"])),
     }
 
 
@@ -565,6 +589,233 @@ def _trees() -> Iterator[Tree]:
             "c",
             {"c": b'[includeIf "hasconfig:remote.*.url:x"]\n\tother = 1\n' + P},
             context=context,
+        )
+    yield from _remote_url_trees()
+
+
+U = b"https://example.invalid/a"
+V = b"https://example.invalid/b"
+X = b"[x]\n\ty = 1\n"
+
+
+def _has(pattern: bytes, path: bytes = b"x") -> bytes:
+    return (
+        b'[includeIf "hasconfig:remote.*.url:'
+        + pattern
+        + b'"]\n\tpath = '
+        + path
+        + b"\n"
+    )
+
+
+def _remote(name: bytes, *urls: bytes, key: bytes = b"url") -> bytes:
+    lines = b"".join(b"\t" + key + b" = " + u + b"\n" for u in urls)
+    return b'[remote "' + name + b'"]\n' + lines
+
+
+def _staged(files: dict[str, _Content], **kw: Any) -> Iterator[Tree]:
+    """A tree read as the caller reads it: with a context whose git takes
+    ``hasconfig:``, before the URLs are collected, by the read that
+    collects them, and with the URLs that read collects."""
+    for stage in ("", "c", "u"):
+        yield Tree("c", files, context=True, hasconfig=True, stage=stage, **kw)
+
+
+def _remote_url_trees() -> Iterator[Tree]:
+    star = b"https://example.invalid/**"
+    # No hasconfig condition at all; a remote in the top file and in an
+    # included one.
+    yield from _staged({"c": _remote(b"o", U) + _inc(b"r"), "r": _remote(b"p", V)})
+    # The URL in the top file, before and after the condition; in a
+    # plain include; in none.
+    yield from _staged({"c": _remote(b"o", U) + _has(star), "x": X})
+    yield from _staged({"c": _has(star) + _remote(b"o", U), "x": X})
+    yield from _staged({"c": _inc(b"r") + _has(star), "r": _remote(b"o", U), "x": X})
+    yield from _staged({"c": _has(star) + P, "x": X})
+    # A URL in a file a hasconfig include reads (forbidden while
+    # collecting), directly, through a plain include, and a file that
+    # sets none (its values not taken while collecting); one that itself
+    # holds a hasconfig condition.
+    yield from _staged(
+        {"c": _remote(b"o", U) + _has(star, b"y"), "y": _remote(b"p", V)}
+    )
+    yield from _staged(
+        {
+            "c": _remote(b"o", U) + _has(star, b"y"),
+            "y": _inc(b"z") + X,
+            "z": _remote(b"p", V),
+        }
+    )
+    yield from _staged(
+        {"c": _remote(b"o", U) + _has(star, b"y"), "y": X + _inc(b"z"), "z": X}
+    )
+    yield from _staged(
+        {
+            "c": _remote(b"o", U) + _has(star, b"y"),
+            "y": _remote(b"p", V) + _has(b"**", b"z"),
+            "z": X,
+        }
+    )
+    # In a file a hasconfig include reads: a URL under an unsettled
+    # include (forbidden too), one that may die (``maybe_dies``), and a
+    # ``remote.url`` with no name (not forbidden).
+    yield from _staged(
+        {
+            "c": _remote(b"o", U) + _has(star, b"y"),
+            "y": _cond("onbranch:m", b"z"),
+            "z": _remote(b"p", V),
+        }
+    )
+    yield from _staged(
+        {
+            "c": _remote(b"o", U) + _has(star, b"y"),
+            "y": b'[includeIf "onbranch:m"]\n\tpath\n',
+        }
+    )
+    yield from _staged(
+        {
+            "c": _remote(b"o", U) + _has(star, b"y"),
+            "y": b"[remote]\n\turl = " + V + b"\n",
+        }
+    )
+    # A refusal inside a forbidding read: the collecting read dies (an
+    # include with no value, one level down too, a file over the bound, a
+    # cycle).
+    bare_inc = b"[include]\n\tpath\n"
+    for extra in (
+        {"y": bare_inc},
+        {"y": _inc(b"z"), "z": bare_inc},
+        {"y": [(b"#", (1 << 21) + 1)]},
+        {"y": _inc(b"y")},
+    ):
+        yield from _staged({"c": _remote(b"o", U) + _has(b"**", b"y"), **extra})
+    # An unsettled include inside a forbidding read inside another, two
+    # and three deep, the unsettled one first, in the middle and last.
+    unsettled = _cond("onbranch:m", b"u")
+    chains: list[tuple[bytes, ...]] = [
+        (b"y", b"z"),
+        (b"y", b"z", b"w"),
+    ]
+    for chain in chains:
+        for at in range(len(chain)):
+            files: dict[str, _Content] = {
+                "c": _remote(b"o", U) + _has(b"**", chain[0]),
+                "u": b"[u]\n\tv = 1\n",
+            }
+            for i, name in enumerate(chain):
+                text = b"[" + name + b"]\n\tk = 1\n"
+                if i == at:
+                    text = unsettled + text
+                if i + 1 < len(chain):
+                    text += _has(b"**", chain[i + 1])
+                files[name.decode()] = text
+            yield from _staged(files)
+    # A hasconfig include inside an unsettled include inside a forbidding
+    # read: read into the undecided values, not forbidding again; two and
+    # three deep.
+    yield from _staged(
+        {
+            "c": _remote(b"o", U) + _has(b"**", b"y"),
+            "y": unsettled + b"[y]\n\tk = 1\n",
+            "u": b"[u]\n\tv = 1\n" + _has(b"**", b"w"),
+            "w": b"[w]\n\tk = 1\n",
+        }
+    )
+    yield from _staged(
+        {
+            "c": _remote(b"o", U) + _has(b"**", b"y"),
+            "y": _has(b"**", b"z"),
+            "z": unsettled,
+            "u": _has(b"**", b"w") + b"[u]\n\tv = 1\n",
+            "w": _has(b"**", b"q") + b"[w]\n\tk = 1\n",
+            "q": b"[q]\n\tk = 1\n",
+        }
+    )
+    # A remote variable git's reader of remotes refuses: not while
+    # collecting.
+    yield from _staged({"c": b'[remote "o"]\n\tpushurl\n' + _has(star), "x": X})
+    # A URL under an unsettled onbranch and gitdir include, and under a
+    # gitdir one that holds (forbidden while collecting).
+    yield from _staged(
+        {"c": _cond("onbranch:m", b"r") + _has(star), "r": _remote(b"o", U), "x": X}
+    )
+    yield from _staged(
+        {"c": _cond("gitdir:**/g/", b"r") + _has(star), "r": _remote(b"o", U), "x": X}
+    )
+    yield from _staged(
+        {"c": _cond("gitdir:**/g", b"r") + _has(star), "r": _remote(b"o", U), "x": X},
+        dirs=("g",),
+        git_dir="g",
+    )
+    # Patterns: globs, case, a trailing slash (no ``**`` put after it),
+    # ``**`` alone, the URL itself, one matching none, an empty one.
+    for pattern in (
+        b"*example.invalid*",
+        b"HTTPS://EXAMPLE.INVALID/**",
+        b"https://example.invalid/",
+        b"https://example.invalid/*",
+        b"**",
+        U,
+        b"?ttps://[e]xample.invalid/[!b]",
+        b"https://other.invalid/**",
+        b"",
+    ):
+        yield from _staged({"c": _remote(b"o", U, V) + _has(pattern), "x": X})
+    # Set several times and reset by an empty value; pushurl only;
+    # insteadOf (matched as written, not as rewritten).
+    yield from _staged(
+        {"c": _remote(b"o", U, V, b"") + _has(b"") + _has(V, b"y"), "x": X, "y": X}
+    )
+    yield from _staged({"c": _remote(b"o", U, key=b"pushurl") + _has(star), "x": X})
+    yield from _staged(
+        {
+            "c": b'[url "https://example.invalid/"]\n\tinsteadOf = ex:\n'
+            + _remote(b"o", b"ex:a")
+            + _has(star)
+            + _has(b"ex:*", b"y"),
+            "x": X,
+            "y": X,
+        }
+    )
+    # Names: dots, upper case, a section and key in upper case, one that
+    # names no valid remote, and ``remote.url`` with no name.
+    yield from _staged(
+        {
+            "c": _remote(b"a.b", U)
+            + _remote(b"UP", V)
+            + b'[REMOTE "s"]\n\tURL = https://example.invalid/c\n'
+            + _has(b"**/c", b"y")
+            + _has(b"**/b"),
+            "x": X,
+            "y": X,
+        }
+    )
+    yield from _staged({"c": _remote(b"/x", U) + _has(star), "x": X})
+    yield from _staged({"c": b"[remote]\n\turl = " + U + b"\n" + _has(star), "x": X})
+    # Evaluated at a key that is not ``path``.
+    yield from _staged(
+        {
+            "c": _remote(b"o", U)
+            + b'[includeIf "hasconfig:remote.*.url:**"]\n\tother = 1\n'
+        }
+    )
+    # The wildmatch steps spent mid-pass: a later pattern not settled
+    # either.
+    long_url = b"https://example.invalid/" + b"/".join([b"a"] * 30)
+    yield from _staged(
+        {
+            "c": _remote(b"o", long_url) + _has(b"**/" * 24 + b"x") + _has(b"**", b"y"),
+            "x": X,
+            "y": X,
+        }
+    )
+    # A git that takes no hasconfig, and one not known.
+    for takes in (False, None):
+        yield Tree(
+            "c",
+            {"c": _remote(b"o", U) + _has(star), "x": X},
+            context=True,
+            hasconfig=takes,
         )
 
 

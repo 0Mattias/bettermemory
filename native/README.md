@@ -2467,7 +2467,7 @@ remotes (`gitconfig.py` at a983e3bb).
   at the open on Windows and at the fstat on POSIX; `_accessible` exists
   for the Windows path (343-351).
 
-## A git config tree with includes (pieces 1, 2 and 3a built)
+## A git config tree with includes (pieces 1, 2 and 3 built)
 
 Design for porting `config_tree`, its includes and conditions, and
 `read_git_config` (`src/bettermemory/gitconfig.py` at 7855277e). Piece 1 of
@@ -2845,7 +2845,7 @@ os), `gitconfig_tree_robustness.rs` (cycles, 10,000 includes opening 64
 files, depth, a 50 MB include, failing file systems, hostile values, hard
 links under both flavours).
 
-### Piece 3: the conditions (3a built, 3b designed)
+### Piece 3: the conditions (3a and 3b built)
 
 Read at b8a80ad4 (line numbers unchanged): `IncludeContext` 126-178,
 `_Reading` 224-252, `_include` 463-525, `_forbidding` 683-700,
@@ -2872,8 +2872,8 @@ and cannot be tested without it.
   reader only as one of the three). The wildmatch [`Steps`] are one
   budget for the whole read, as `_Reading.steps`.
 - `_condition`: `gitdir:`/`gitdir/i:` (case-sensitive prefixes) with no
-  git directory: not settled; `onbranch:`; `hasconfig:remote.*.url:`:
-  declined (3b); anything else False.
+  git directory: not settled; `onbranch:`; `hasconfig:remote.*.url:`
+  (3b); anything else False.
 - `_branch_condition`: no context or `Unsettled`: not settled;
   `Elsewhere`: False; else the pattern, `**` added after a trailing `/`
   (or `\` under Windows), matched against the name (`any_match`, a spent
@@ -2929,35 +2929,102 @@ and cannot be tested without it.
     difference was found. Not tested: a `GIT_DIR` holding `..` after a
     link, which `normpath` folds lexically.
 
-**3b (designed, not built: still declined).** `hasconfig:remote.*.url:`
-(`_condition` 1104-1109, `_remote_url_condition` 1150-1168, `_include`
+**3b (built, `gitconfig::tree`; read again at 3882f81d, line numbers
+confirmed).** `hasconfig:remote.*.url:` (`_condition` 1104-1109,
+`_remote_url_condition` 1150-1168), `IncludeContext` 126-178
+(`hasconfig`, `remote_urls`, `collecting`, `collect` 168-172,
+`with_urls` 174-178), `_Reading` 224-252 (`forbidding`,
+`asks_remote_urls`, `forbidden`, `remote_rules` 247-252), `_include`
 497-509, `_forbidding` 683-700, `_remote_url_names` 703-706,
-`_parse_config` 430 and 443-444, `IncludeContext.collect`/`with_urls`
-168-178, `_Reading.remote_rules`/`forbidding`/`asks_remote_urls`/
-`forbidden`).
+`_parse_config` 430 and 443-444, and the caller's two passes
+(`location_git.remote_config` 596-619).
 
-- Inputs to add to `Context`: `hasconfig` (`Option<bool>`, asked at the
-  first such condition: not True returns that answer, False or not
-  settled), `remote_urls` (`Option<Vec<bytes>>`, sorted as the reference
-  sorts them) and `collecting`.
-- Rule: with no context, not settled; collecting, True; URLs not
-  collected, `asks_remote_urls` set and not settled; else the pattern as
-  written (no `**` added) against each URL in sorted order (`any_match`).
-  It is evaluated at every key of such a section, not only `path`
-  (side effect `asks_remote_urls`).
-- The collecting pass: a held include under a collecting context, not
-  already forbidding, reads its target into a sink whose values are
-  dropped, `forbidding` set (and the remote rules off) for the subtree;
-  the sink's undecided values and first `maybe_dies` join the answer
-  (not its `dies`: a refusal propagates), its files too, and a
-  `remote.<name>.url` among the sink's values or undecided ones sets
-  `forbidden`.
-- The answer gains `asks_remote_urls` and `forbidden`; the caller runs
-  the read three ways (`remote_config` 576-600).
-- Fixture: trees crossed with the three contexts (plain, collecting,
-  with URLs), URLs matching and not, the remote defined before, after,
-  in an included file and in a file whose inclusion depends on it, a
-  `remote.url` with no name, `hasconfig` true, false and not known.
+- Inputs: `Context.hasconfig` (`Option<bool>`: anything but `Some(true)`
+  is the condition's answer, False or not settled), `Context.remote_urls`
+  (`Option<Vec<bytes>>`, in any order: the read sorts them and takes
+  each once, as `sorted(frozenset)`), `Context.collecting`;
+  `Context::collect` and `Context::with_urls` as the reference's.
+  `collected_urls` is the caller's set (every non-None value of each
+  `remote.<name>.url` the collecting reads take, sorted, each once).
+- Rule: no context, not settled; collecting, True; URLs not collected,
+  `asks_remote_urls` and not settled; else the pattern as written (no
+  `**` added, case-sensitive) against each URL sorted (`any_match`, one
+  budget). Evaluated at every key of such a section, not only `path`.
+- The remote rules hold only with a context that is not collecting.
+  While collecting, every `includeIf` that holds (a `gitdir:` or
+  `onbranch:` one too) reads its target forbidding: values dropped; the
+  sink's undecided values, first `maybe_dies` and files join the
+  answer; a `remote.<name>.url` among the sink's values or undecided ones
+  sets `forbidden`; a refusal still propagates.
+- What is declined after 3b: nothing on POSIX. On the Windows flavour
+  only a `gitdir:` or `gitdir/i:` condition with a git directory given
+  (its `realpath`); `hasconfig:` and `onbranch:` are evaluated there.
+- Answer to the brief's question: the reference matches the URL as
+  written, not as `url.<base>.insteadOf` rewrites it (the caller collects
+  the written values), and `pushurl` is not collected. git 2.54 agrees.
+- What a native caller must do (`location_git.remote_config` 596-619),
+  in order: run the collecting pass only if no read of the machine's
+  configs or the repository's own failed (`dies`, or not `complete`,
+  `_failed` 394-403) and some read `asks_remote_urls`; collect over the
+  named configs and then the repository's own paths, each with
+  `Context::collect`; stop if any collecting read has `dies` or is not
+  `complete`; stop if any is `forbidden`; stop if any has a
+  `remote.<name>.url` among its `undecided` names; otherwise take
+  `collected_urls` of the collecting reads, read the named configs and
+  the own paths again `with_urls(...)`, and check failure again. A stop
+  answers no remotes, with the files read and the reason. Not a stop:
+  `maybe_dies` alone, and undecided values other than remote URLs.
+- Fixture: `gitconfig_tree.jsonl` grows to 364 cases (200,877 bytes; the
+  `np` field dropped, since a POSIX read declines nothing): 44 trees each
+  read in the three passes (before the URLs, collecting, with what the
+  collecting read gives, `k.st` and `k.u`), plus a git that takes no
+  `hasconfig` and one not known. Shapes: no condition; the URL in the top
+  file before and after, in a plain include, in none; in a file a
+  hasconfig include reads (directly, through an include, under an
+  unsettled include, with `remote.url` alone, holding its own hasconfig
+  condition, one that may die); under an unsettled `onbranch`/`gitdir`
+  include and a held `gitdir` one; nine patterns (globs, case, trailing
+  `/`, `**`, the URL, brackets, none, empty); a URL set three times and
+  emptied; `pushurl`; `insteadOf`; names with dots, upper case, `/x`,
+  `remote.url`; a condition at another key; the steps spent mid-pass; a
+  remote variable the remote rules refuse (not while collecting); a
+  refusal inside a forbidding read (an include with no value, one level
+  down, a file over the bound, a cycle), which the collecting read dies
+  at; an unsettled include in a chain of forbidding reads two and three
+  deep (first, middle, last); and a `hasconfig:` include inside an
+  unsettled include inside a forbidding read (read into the undecided
+  values, not forbidding again), two and three deep. The
+  native harness runs the collecting read itself, checks that its
+  `collected_urls` are the reference's `k.u`, and reads with them.
+- Robustness (512 KiB thread, debug): 10,000 remotes and 10,000
+  conditions in all three passes; a 1 MiB URL against a 1 MiB pattern
+  (as the reference answers, checked by hand: not settled, and a later
+  `**` holds); URLs given unsorted and twice, where the order decides
+  the answer; the Windows flavour evaluating `hasconfig:`. Matching is
+  O(conditions x URLs) calls even after the wildmatch budget is spent
+  (10,000 by 10,000 took 4 s in a debug build), bounded by the file size
+  limit; the reference has the same shape.
+- Mutations (each made in the port, the golden and robustness tests run,
+  the source restored): 21 of 22 caught. Caught: unsettled with no
+  context; True while collecting; `asks_remote_urls`; the sink's values
+  dropped, its undecided values, `maybe_dies` and files kept; forbidden
+  from the sink's undecided values, never set, or counting `remote.url`;
+  the caller's URLs counting `pushurl` or `remote.url` or dropping the
+  empty one; the URLs sorted; forbidding under any held condition, not
+  only `hasconfig:`; the remote rules off while collecting; the
+  `hasconfig` answer; the condition at another key; a refusal inside a
+  forbidding read kept as `maybe_dies` (native would go on where the
+  reference stops); forbidding reads nesting. That last one is not
+  equivalent: a held `hasconfig:` include inside an unsettled include
+  inside a forbidding read is read into the undecided values by the
+  reference, and nesting would read it forbidding, its values dropped
+  (the review found it on 7 of 9,000 random reads; the fixture pins it
+  since). Survived, equivalent: the remote rules off while forbidding
+  (forbidding is only ever set while collecting, where they are off).
+- Checked against git 2.54 outside the fixture (neutral environment on
+  the child only): 33 `hasconfig` trees, the reference's two passes as
+  the caller runs them, against `git config --list --includes`: all
+  agree (values, and git dying where the collecting read is forbidden).
 
 ### Proposed split
 

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use bettermemory_core::fsdata::{Flavour, Fs};
 use bettermemory_core::gitconfig::paths::{self, Machine};
 use bettermemory_core::gitconfig::tree::{
-    config_tree, include_target, Ask, Branch, Context, Unexpanded, Values,
+    collected_urls, config_tree, include_target, Ask, Branch, Context, Unexpanded, Values,
 };
 use serde_json::{json, Value};
 
@@ -55,7 +55,7 @@ pub fn tree_answer<F: Fs>(fs: &F, case: &Value, root: &str) -> Value {
         user_home: &lookup,
     };
     let k = &case["k"];
-    let ask = Ask {
+    let mut ask = Ask {
         stamp_self: k["s"].as_bool().unwrap(),
         gentle: k["g"].as_bool().unwrap(),
         git_dir: k.get("gd").and_then(Value::as_str).map(|g| under(root, g)),
@@ -73,9 +73,34 @@ pub fn tree_answer<F: Fs>(fs: &F, case: &Value, root: &str) -> Value {
                     under(root, p)
                 }
             }),
+            hasconfig: k.get("hc").and_then(Value::as_bool),
+            ..Context::default()
         }),
     };
     let target = under(root, case["t"].as_str().unwrap());
+    // Both passes as the caller runs them: the collecting read, and the
+    // read with the URLs it collects, which must be the reference's.
+    if let Some(context) = ask.context.take() {
+        ask.context = Some(match k.get("st").and_then(Value::as_str) {
+            Some("c") => context.collect(),
+            Some("u") => {
+                let first = Ask {
+                    context: Some(context.collect()),
+                    ..ask.clone()
+                };
+                let urls = collected_urls([&config_tree(fs, &machine, &target, &first)]);
+                let want: Vec<Vec<u8>> = k["u"]
+                    .as_array()
+                    .expect("k.u")
+                    .iter()
+                    .map(|u| unspelled(u.as_str().unwrap()))
+                    .collect();
+                assert_eq!(urls, want, "the URLs collected");
+                context.with_urls(urls)
+            }
+            _ => context,
+        });
+    }
     let read = config_tree(fs, &machine, &target, &ask);
     let label = |bytes: &[u8]| -> Vec<u8> {
         let mut out = Vec::new();
@@ -89,18 +114,24 @@ pub fn tree_answer<F: Fs>(fs: &F, case: &Value, root: &str) -> Value {
         out
     };
     assert_eq!(read.raised, None, "no case raises");
+    assert_eq!(read.not_ported, None, "nothing is declined on POSIX");
     let mut answer = json!({
         "v": values(&read.values),
         "c": read.complete,
         "d": read.dies.as_deref().map(|d| text(&label(d))),
         "fl": read.files.iter().map(|f| text(&label(f))).collect::<Vec<_>>(),
-        "np": read.not_ported.as_deref().map(spelled),
     });
     if !read.undecided.is_empty() {
         answer["ud"] = json!(values(&read.undecided));
     }
     if let Some(md) = &read.maybe_dies {
         answer["md"] = text(&label(md));
+    }
+    if read.asks_remote_urls {
+        answer["ar"] = json!(true);
+    }
+    if read.forbidden {
+        answer["fb"] = json!(true);
     }
     answer
 }

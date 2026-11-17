@@ -50,11 +50,7 @@ mod posix {
     use common::gitconfig_file::{content, modes, world};
     use common::gitconfig_tree::tree_answer;
 
-    /// The answer compared: a declined read only as declined.
     fn compared(got: &Value, want: &Value) -> bool {
-        if !want["np"].is_null() {
-            return got["np"] == want["np"];
-        }
         got == want
     }
 
