@@ -42,6 +42,7 @@ from . import (
     gen_fs_samestat,
     gen_gitdir,
     gen_identity,
+    gen_trust,
     gen_fs_stat,
     gen_gitconfig,
     gen_gitconfig_file,
@@ -181,6 +182,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitdir_read_python": gen_gitdir.generate_python,
     "gitfile_identity": gen_identity.generate,
     "gitfile_identity_python": gen_identity.generate_python,
+    "gitfile_trust": gen_trust.generate,
+    "gitfile_trust_python": gen_trust.generate_python,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -273,6 +276,7 @@ PYTHON_GATED = frozenset(
         "gitconfig_legacy_python",
         "gitdir_read_python",
         "gitfile_identity_python",
+        "gitfile_trust_python",
     }
 )
 
@@ -354,6 +358,8 @@ PLATFORM_GATED = frozenset(
 #: read git directories over links, FIFOs and modes (`gen_gitdir`);
 #: ``gitfile_identity`` and ``gitfile_identity_python`` state and list
 #: trees with links, hard links and modes (`gen_identity`);
+#: ``gitfile_trust`` and ``gitfile_trust_python`` read configs and
+#: ``commondir`` files over links and modes (`gen_trust`);
 #: ``gitconfig_tree`` reads real trees with the host's ``os.path`` and ``pwd``;
 #: ``gitconfig_legacy`` and ``gitconfig_legacy_python`` read real trees with
 #: links, FIFOs and modes (`gen_gitconfig_legacy`; the second holds the link
@@ -409,6 +415,8 @@ POSIX_ONLY = frozenset(
         "gitdir_read_python",
         "gitfile_identity",
         "gitfile_identity_python",
+        "gitfile_trust",
+        "gitfile_trust_python",
     }
 )
 

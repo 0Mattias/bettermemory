@@ -25,6 +25,7 @@ pub mod gitdir;
 pub mod hostpath;
 pub mod identity;
 pub mod probe;
+pub mod trust;
 
 use crate::fsdata::{Flavour, Fs, Kind, PyErr};
 
@@ -65,7 +66,7 @@ fn py_strip(text: &str) -> &str {
 }
 
 /// `data.decode("utf-8", errors="replace").strip()`.
-fn stripped_text(data: &[u8]) -> String {
+pub(crate) fn stripped_text(data: &[u8]) -> String {
     py_strip(&String::from_utf8_lossy(data)).to_owned()
 }
 

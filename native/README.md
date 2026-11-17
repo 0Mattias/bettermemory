@@ -34,7 +34,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
-| `gitfile_rule` | units 1, 2a and 2b of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl` |
+| `gitfile_rule` | units 1, 2a, 2b and 3 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
@@ -5755,6 +5755,152 @@ and a NUL read as `Ok(None)`. Two are equivalent, said at the site:
 `lstat` for `stat` of `realpath`'s answer, and a `realpath` ValueError
 falling back to `git_dir`.
 
+### Unit 3: the format from files and the trust of a `commondir`, as built (confirmed at 33e6ca02)
+
+**The cut, confirmed.** The ranges did not move: 222-232 (`TreeFormat`),
+291-395 (`tree_format`, `_Format`, `_common_format`, `object_format_at`),
+550-573 (`reads_worktree_config`, `_take`), 599-699 (`FormatUnknown`,
+`_tree_refusal`, `own_refusal`, `inside_reading`, `inside_refusal`),
+985-1059 (`_common_of`, `_commondir`, `_not_registered`,
+`_foreign_commondir`, `_registered`, `_is_git_directory`). One module,
+`gitfile_rule::trust`; `_judge_format`, `_take` and `_dies` are unit 1's
+(`format::judge_format`). No change to the `Fs` trait.
+
+| Lines | Function | Native |
+|---|---|---|
+| 222-232 | `TreeFormat` | `trust::TreeFormat` |
+| 291-355 | `tree_format` | `trust::tree_format` |
+| 371-382 | `_common_format` | `trust::common_format` |
+| 385-395 | `object_format_at` | `trust::object_format_at` |
+| 550-570 | `reads_worktree_config` | `trust::reads_worktree_config` |
+| 599-608 | `FormatUnknown` | `trust::Refusal::format_unknown` |
+| 611-640 | `_tree_refusal` | `trust::tree_refusal` |
+| 643-668 | `own_refusal` | `trust::own_refusal` |
+| 671-694 | `inside_reading` (`inside_refusal` is its first half) | `trust::inside_reading` |
+| 985-997 | `_common_of` | `trust::common_of` (`GIT_COMMON_DIR` an argument) |
+| 1000-1009 | `_commondir` | `trust::commondir` |
+| 1012-1017 | `_not_registered` | `trust::not_registered` |
+| 1020-1032 | `_foreign_commondir` | `trust::foreign_commondir` |
+| 1035-1044 | `_registered` | `trust::registered` |
+| 1047-1059 | `_is_git_directory` | `trust::is_git_directory` |
+
+**Inputs.** Config is read through `gitconfig::file::read_git_config`
+(its path opened through `Ctx::at`, named in a reason as given). The git
+on PATH is data (`GitFacts`: the release for `_git_is_at_least`, and
+`_reads_compat`). `GIT_COMMON_DIR` is an argument (`env`), an empty one
+unset, never read from the environment. The working directory is the
+caller's contract, as in unit 2b.
+
+**Outcomes.** A reason is the reference's text, as bytes. A refusal is
+`Refusal { why, format_unknown }` (`FormatUnknown` is a `str` subclass
+there). `Failure::Value` where the reference lets a ValueError rise:
+`_commondir`'s `open` of a path with a NUL (so `common_of` and
+`foreign_commondir` too; `_is_git_directory` reaches it only after
+`lexists`, which catches it). `Failure::NotPorted` on Windows.
+
+**Windows flavour, declined whole** (`NotPorted`): every function here.
+The unit uses `ntpath`'s joins and `basename`, `realpath` (`_registered`)
+and `samefile`, none of them ported, and unit 2a's strict walk
+(`_git_common`).
+
+**A `commondir` FIFO or socket.** The reference's `open()` blocks on a
+FIFO and raises on a socket. The port opens without blocking and answers
+None for both, as unit 1's leaves do. Neither is in a shared fixture.
+
+**Fixtures** (POSIX only): `gitfile_trust.jsonl` (class i: 4 cases, 372
+queries, 38 KB) and `gitfile_trust_python.jsonl` (class ii, Python:
+1 case, 3 queries, 730 B). An `f`, `o` or `I` query (whose `_git_common`
+walks strictly) goes in the gated file by input: a query path, link
+target or `commondir` text with an empty, `.` or `..` part. No answer
+here is a function of bytes alone that unit 1's `object_format` fixture
+does not already hold, so there is no new ungated file. Cases
+(`tests/contract/gen_trust.py`):
+- the version missing, 0, 1, 2, -1, -2, -3 and -5, huge, `1k`, not a
+  number, duplicated both ways; `objectFormat` under -1, -2 and -3;
+- a `.git` folder with `core.bare` true under version 0 and no
+  `core.worktree`; git directories named `x.git` and `bare.git`;
+- a `HEAD` that is a dangling link and one that is a link to a file;
+- extensions known and unknown under no version, 0 and 1, a format-1
+  extension under 0, a bad `objectFormat`;
+- `worktreeConfig` true, bare, refused and below -1, with
+  `config.worktree` setting `core.worktree`, a bad `core.bare`, a key
+  with no value, an unparsable file;
+- an `[include]` (not followed), CRLF, a tab in `core.worktree` under git
+  2.54, 2.41 and an unnamed git;
+- a config that is mode 000, a folder, unparsable, and over nothing;
+- `core.worktree` here, elsewhere, relative, empty, with no `=`, with a
+  NUL, naming nothing;
+- a linked worktree's git directory with and without `worktreeConfig`;
+- `commondir` absolute, relative, with `..` and `./`, through a link,
+  naming itself, a file, nothing, a folder; empty; trailing whitespace;
+  CRLF; over 1 MiB (cut and used: answers recorded by digest); not UTF-8;
+  mode 000; a NUL in the path;
+- forged `commondir`s naming a repository, absolute and relative, one
+  naming a folder with `objects` but no `refs`;
+- `_registered` through links, against another and a missing common;
+- `GIT_COMMON_DIR` that agrees, disagrees, is relative or empty.
+
+**Tests.** `golden_gitfile_trust.rs`: both files through `MemFs` and
+`StdFs`, every field; on disk the ungated file is also asked of the
+reference Python live, with the git facts patched in (NOT RUN as
+`golden_gitfile_trust_stdfs_reference` without `BM_REFERENCE_PYTHON`).
+`trust_robustness.rs`:
+- hostile trees on a 512 KiB thread (endless `commondir` and config, a
+  loop, 200 links, 10 KB paths, non-UTF-8, a NUL);
+- a 50 MB `commondir` read to the bound only (counted);
+- `many_entries_cost_linearly`: 300 against 3,000 `config.worktree`
+  entries, best of five, judged at once when a run is past twice the
+  bound. A pass over the entries per entry fails it in 1.4 s (the whole
+  test binary);
+- Windows declines;
+- `GIT_COMMON_DIR` as an argument.
+
+`gitfile_trust_not_posix.rs` records the gap off POSIX.
+
+**Mutations, one per rule (40), each caught.** Nine survived the first
+run and were given cases:
+- `_Unsettled` not a reason (an empty `commondir`);
+- a bad `core.bare`, an unparsable file and a `core.worktree` with no
+  value in `config.worktree`;
+- `worktreeConfig` with no version;
+- a `core.worktree` naming nothing;
+- a forged common with `objects` but no `refs`, for `_foreign_commondir`
+  and `_is_git_directory`;
+- a relative path in a reason (relative `f` queries).
+
+Four more, from the review, each now caught by the golden tests:
+- `object_format_at` reading any negative version as none (`-2` and `-3`
+  with `objectFormat = sha256` answer `sha256`);
+- `inside_reading` rooting a bare `.git` folder;
+- `_is_git_directory` stating `HEAD` through its link (a dangling one);
+- `inside_reading` taking any name ending in `.git` for `.git`.
+
+Two are equivalent, said at the site: `core.bare` read as
+`!= Some(false)` (a value `git_bool` cannot read is refused when taken),
+and `read_head` without the folder check (a folder's `read` fails, which
+is None too).
+
+**What the reference does that git does not mean** (reported, not
+changed; the port follows the reference). The review checked each against
+git 2.54.0 in scratch repositories:
+- **A `commondir` longer than the bound:** git reads the whole file and
+  dies; `_commondir` cuts it at `_GITFILE_LIMIT` and uses the cut text.
+- **Stripping:** `../..` followed by CRLF works in both. `../..` followed
+  by a tab, or by NBSP, makes git die, where the reference strips it and
+  uses `../..`. A leading space makes git use the path literally (a
+  folder named ` ..`), where the reference strips it. Bytes that are not
+  UTF-8 are decoded with `replace` and name another path.
+- **`..` resolved lexically, in the joining direction:** git resolves
+  `..` in `commondir` through links; `_commondir` and `_common_of`
+  normalize it lexically (`normpath`). With `lnk -> evil/sub` and a
+  `commondir` holding `<S>/lnk/../r/.git`, git uses `evil/r/.git` while
+  `_common_of` trusts `r/.git`. That trusts a common directory git does
+  not use, which is the direction that joins two projects. A relative
+  `commondir` read through a link to a worktree's git directory escaped
+  the scratch root here, which is why that query is not in the fixture.
+- **A relative `GIT_COMMON_DIR`:** checked. git takes it from the
+  working directory; `_common_of` joins it to the git directory.
+
 ### Findings about the reference (reproduced, pinned; native agrees)
 
 Checked against git 2.54.0 (`git rev-parse --absolute-git-dir` in a
@@ -6240,7 +6386,7 @@ trait operations each unit uses, as the trait now stands:
 | 2a: git's reading of a git directory (built, `gitfile_rule::gitdir`) | `open_result` and `open_no_follow`, `fstat`, `read` (`_read`); `stat`/`lstat_result` (`_is_directory`), `lstat_result` with `placeholder()`, `readlink_result` (`_valid_headref`); `realpath_strict` (`_real`, `_real_to_last`); `access(EXECUTE)` (`_git_found`) |
 | 2b: identity helpers (built, `gitfile_rule::identity`) | `stat` and `samestat` (`_names_here`, `_names_folder`, `_same_folder`, `_tree_of`); `lstat_result` (`_names_folder`); `realpath` (`_tree_of`); `listdir` (`_working_tree_of`'s `scandir`, names only, read whole); `lstat_result` with `is_link()` (`_is_link`) |
 | 2 (as cut before, for reference): git's reading of a git directory, identity helpers | `open_no_follow`, `open`, `fstat`, `read` (`_read`); `lstat` (`_is_directory`), `lstat_result` with `placeholder()`, `readlink` (`_valid_headref`); `stat` and `samestat` (`_names_here`, `_names_folder`, `_same_folder`, `_tree_of`); `realpath_strict` (`_real`, `_real_to_last`) and `realpath` (`_tree_of`); `access(EXECUTE)` (`_git_found`); `listdir` (`_working_tree_of`'s `scandir`, names only); `lstat_result` with `is_link()` (`_is_link`) |
-| 3: the format, the trust of a `commondir` | `gitconfig::file::read_git_config` (its `open`, `fstat`, `read`, `access(READ)`); `open`/`read` (`_commondir`'s blocking `open()`); `stat` (`isdir`), `samefile` (`_registered`); `lstat` (`lexists`); `realpath` |
+| 3: the format, the trust of a `commondir` (built, `gitfile_rule::trust`) | `gitconfig::file::read_git_config`; `open`, `fstat`, `read` (`_commondir`, non-blocking); `stat` (`isdir`), `samefile` (`_registered`); `lstat_result` (`lexists`); `realpath` |
 | 4: records and the follow | `identity::is_link`, `identity::names_here`, `identity::same_folder` and `identity::working_tree_of` (built in 2b), `stat` with `placeholder()` (`_entry_names`); `open`, `read` (the `.git` file); `realpath`; unit 1's bounded reads |
 | 5: judge and discovery | `identity::is_link` and `identity::same_folder` (built in 2b), `lstat` (`lexists`); `realpath`; everything of units 2-4. Obligation of whoever builds the `Ctx`: `cwd` is what `os.getcwd()` returned (physical, free of links); where `getcwd` fails, build no `Ctx` and decline whole |
 
