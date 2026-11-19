@@ -110,13 +110,21 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
 
 
 @pytest.fixture
-def probes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
-    """The arguments of every git process `origin` runs, in order."""
+def probes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
+    """The arguments of every git process `origin` runs in this test's
+    directories (``tmp_path`` and below), in order, on whichever thread.
+
+    A git process `origin` runs elsewhere is not this test's: the spy
+    replaces the module's `_git_result` for the whole process, and a
+    thread an earlier test left running (a read past its budget, a
+    daemon's worker) can reach it while this test runs, with a probe of
+    its own directory, such as ``rev-parse --show-toplevel HEAD``."""
     calls: list[tuple[str, ...]] = []
     real = origin._git_result
 
     def spy(cwd: Path, *args: str, **kwargs: Any) -> Any:
-        calls.append(args)
+        if _ours(tmp_path, cwd):
+            calls.append(args)
         return real(cwd, *args, **kwargs)
 
     monkeypatch.setattr(origin, "_git_result", spy)
@@ -146,6 +154,14 @@ def _repo(path: Path, *, remote: str | None = _REMOTE) -> Path:
 
 def _commit(path: Path) -> None:
     _run(path, "commit", "--quiet", "--allow-empty", "--message", "commit")
+
+
+def _ours(tmp_path: Path, cwd: Path) -> bool:
+    """Whether `origin` ran git in this test's directories: a spy on
+    `origin._git_result` sees every thread's processes, and a thread an
+    earlier test left running is no part of this test (`probes`)."""
+    mine = Path(os.path.realpath(tmp_path))
+    return Path(os.path.realpath(cwd)).is_relative_to(mine)
 
 
 def _key(directory: Path) -> str:
@@ -915,7 +931,7 @@ def test_a_change_while_the_probes_run_is_not_cached(
     def switch_after_the_first_probe(cwd: Path, *args: str, **kwargs: Any) -> Any:
         nonlocal switched
         result = real(cwd, *args, **kwargs)
-        if not switched:
+        if not switched and _ours(tmp_path, cwd):
             switched = True
             _run(repo, "checkout", "--quiet", "-b", "moved")
         return result
@@ -983,7 +999,8 @@ def test_a_capture_git_could_not_run_for_is_not_cached(
     calls: list[tuple[str, ...]] = []
 
     def unavailable_until_told(cwd: Path, *args: str, **kwargs: Any) -> Any:
-        calls.append(args)
+        if _ours(tmp_path, cwd):
+            calls.append(args)
         return real(cwd, *args, **kwargs) if available else None
 
     monkeypatch.setattr(origin, "_git_result", unavailable_until_told)
