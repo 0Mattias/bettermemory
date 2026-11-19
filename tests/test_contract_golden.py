@@ -179,6 +179,38 @@ def test_golden_files_stay_small() -> None:
     assert total < 16 * 1024 * 1024
 
 
+def test_no_fixture_line_is_shaped_like_a_key() -> None:
+    """No line of a golden file, of a generator or of the native build's
+    sources and tests is a text the product's own detectors take for a
+    credential. The fixtures of the detectors hold key shapes by nature;
+    they are written in pieces (`gen_credentials_prefixed._s` and its
+    recipes, `concat!` in Rust), because a scanner that reads the
+    repository takes a whole one for a leaked key: GitHub's push
+    protection refused the push that first held them."""
+    from bettermemory import credentials
+
+    repo = Path(__file__).resolve().parents[1]
+    native = repo / "native"
+    paths = [
+        *sorted(p for p in GOLDEN.iterdir() if p.is_file()),
+        *sorted(GOLDEN.parent.glob("gen_*.py")),
+        *sorted((native / "crates").rglob("*.rs")),
+        native / "README.md",
+    ]
+    aws_example = "AKIA" + "IOSFODNN7EXAMPLE"
+    shaped = []
+    for path in paths:
+        if path.suffix == ".sqlite":
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for number, line in enumerate(text.splitlines(), 1):
+            # AWS's documented example key, which scanners let pass, is
+            # the one whole shape older fixtures hold.
+            if credentials.find_credential_markers(line.replace(aws_example, "")):
+                shaped.append(f"{path.relative_to(repo)}:{number}")
+    assert not shaped, shaped[:20]
+
+
 def _fixture_kinds() -> tuple[set[str], set[str]]:
     lines = (GOLDEN / "log_chain.jsonl").read_text(encoding="ascii").splitlines()
     header = json.loads(lines[0])
