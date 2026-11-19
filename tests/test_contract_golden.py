@@ -174,7 +174,9 @@ def test_golden_files_stay_small() -> None:
     # 7.8 MB once the write side and the first caller-resolution units had
     # their fixtures (2026-11-16); each new file is still held to a budget
     # of its own (a quarter of a megabyte at most) when its unit is cut.
-    assert total < 12 * 1024 * 1024
+    # 12.4 MB once seven more units landed together (2026-11-19): the
+    # bound moves with the units built, the budget per file does not.
+    assert total < 16 * 1024 * 1024
 
 
 def _fixture_kinds() -> tuple[set[str], set[str]]:
