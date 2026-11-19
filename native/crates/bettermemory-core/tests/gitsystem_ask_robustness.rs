@@ -7,9 +7,9 @@
 //! - Output past `OUTPUT_LIMIT` is taken as no answer (the stated
 //!   divergence: the reference reads it all).
 //! - `environment` and `which` are linear: ten times the variables or the
-//!   PATH entries cost under thirty times the time.
+//!   PATH entries cost under sixty times the time.
 
-use std::time::{Duration, Instant};
+mod timing;
 
 use bettermemory_core::fsdata::{Flavour, MemFs, Node};
 use bettermemory_core::gitsystem::ask::{
@@ -142,23 +142,12 @@ fn random_environments_keep_the_scrub() {
     assert_eq!(PINS.len(), 8);
 }
 
-fn timed(f: &dyn Fn()) -> Duration {
-    (0..3)
-        .map(|_| {
-            let s = Instant::now();
-            f();
-            s.elapsed()
-        })
-        .min()
-        .unwrap()
-}
-
 fn linear(name: &str, run: &dyn Fn(usize)) {
-    let small = timed(&|| run(2_000));
-    let large = timed(&|| run(20_000));
-    assert!(
-        large < small * 30 + Duration::from_millis(50),
-        "{name}: 2,000 {small:?}, 20,000 {large:?}"
+    timing::grows_within(
+        &format!("{name}: 2,000 and 20,000"),
+        timing::TENFOLD,
+        &mut || timing::once(|| run(2_000)),
+        &mut || timing::once(|| run(20_000)),
     );
 }
 

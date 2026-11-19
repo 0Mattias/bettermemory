@@ -4,6 +4,8 @@
 //! tests, no more), a 1 MiB URL and base, and hostile bytes in names and
 //! URLs.
 
+mod timing;
+
 use bettermemory_core::fsdata::{Flavour, MemFs, Node};
 use bettermemory_core::gitconfig::paths::Machine;
 use bettermemory_core::gitconfig::remotes::{Env, Inputs, Sources};
@@ -157,18 +159,6 @@ fn an_empty_key_is_no_key() {
     assert_eq!(keys.keys, vec![url_text(b"https://example.invalid/b")]);
 }
 
-/// The least of five runs of `f`.
-fn best_of(mut f: impl FnMut()) -> std::time::Duration {
-    (0..5)
-        .map(|_| {
-            let started = std::time::Instant::now();
-            f();
-            started.elapsed()
-        })
-        .min()
-        .expect("a run")
-}
-
 /// `read_remotes` over `n` URLs a machine rule aliases: linear, as the
 /// reference's set difference.
 #[test]
@@ -190,11 +180,15 @@ fn aliases_are_linear_in_the_urls_aliased() {
         }
     }
     let (small, large) = (found(5_000), found(50_000));
-    let s = best_of(|| assert_eq!(read_remotes(small.clone(), &hosted).aliases.len(), 5_000));
-    let l = best_of(|| assert_eq!(read_remotes(large.clone(), &hosted).aliases.len(), 50_000));
-    assert!(
-        l < s * 30 + std::time::Duration::from_millis(50),
-        "5,000 aliased {s:?}, 50,000 aliased {l:?}: more than linear"
+    let time = |found: &Remotes, n: usize| {
+        let given = found.clone();
+        timing::once(|| assert_eq!(read_remotes(given, &hosted).aliases.len(), n))
+    };
+    timing::grows_within(
+        "5,000 and 50,000 urls aliased",
+        timing::TENFOLD,
+        &mut || time(&small, 5_000),
+        &mut || time(&large, 50_000),
     );
 }
 
@@ -245,12 +239,13 @@ fn undecided_rules_against_many_bases_and_urls() {
         (read, best, rewrites)
     }
     let (small, large) = (world(1_000), world(10_000));
-    let run = |(read, best, rewrites): &World| {
-        best_of(|| assert_eq!(undecided_matters(&[read], best, false, rewrites), None))
+    let time = |(read, best, rewrites): &World| {
+        timing::once(|| assert_eq!(undecided_matters(&[read], best, false, rewrites), None))
     };
-    let (s, l) = (run(&small), run(&large));
-    assert!(
-        l < s * 30 + std::time::Duration::from_millis(50),
-        "1,000 {s:?}, 10,000 {l:?}: more than linear"
+    timing::grows_within(
+        "1,000 and 10,000 bases and urls",
+        timing::TENFOLD,
+        &mut || time(&small),
+        &mut || time(&large),
     );
 }

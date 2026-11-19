@@ -6,6 +6,8 @@
 //! process's; and a name in NFC against one in NFD is answered as the
 //! platform's own file system answers it.
 
+mod timing;
+
 use bettermemory_core::fsdata::{Flavour, Fs, MemFs, Node, StatResult};
 use bettermemory_core::gitfile_rule::gitdir::{Ctx, Failure};
 use bettermemory_core::gitfile_rule::identity::{
@@ -94,45 +96,35 @@ fn a_crowded_folder_is_not_scanned() {
         }
         fs
     }
-    let best = |fs: &MemFs| {
+    let time = |fs: &MemFs| {
         let c = ctx(fs);
-        (0..5)
-            .map(|_| {
-                let started = std::time::Instant::now();
-                for _ in 0..200 {
-                    assert_eq!(same_folder(&c, b"/w/.git/..", b"/w"), Ok(Some(true)));
-                    assert_eq!(names_here(&c, b".git", b"/w", b"/w/.git"), Ok(Some(true)));
-                    assert_eq!(tree_of(&c, b"/w/.git"), Ok(Some(b"/w".to_vec())));
-                }
-                started.elapsed()
-            })
-            .min()
-            .unwrap()
+        timing::once(|| {
+            for _ in 0..200 {
+                assert_eq!(same_folder(&c, b"/w/.git/..", b"/w"), Ok(Some(true)));
+                assert_eq!(names_here(&c, b".git", b"/w", b"/w/.git"), Ok(Some(true)));
+                assert_eq!(tree_of(&c, b"/w/.git"), Ok(Some(b"/w".to_vec())));
+            }
+        })
     };
     let (small, large) = (tree(10_000), tree(100_000));
-    let (s, l) = (best(&small), best(&large));
-    assert!(
-        l < s * 5 + std::time::Duration::from_millis(50),
-        "10,000 names {s:?}, 100,000 names {l:?}"
+    timing::grows_within(
+        "10,000 and 100,000 names",
+        5,
+        &mut || time(&small),
+        &mut || time(&large),
     );
     // `working_tree_of` reads the listing whole (`scandir` stops at the
     // first name other than `.git`): linear, so 10 times the names may
     // cost 10 times; a pass over the listing per name would be 100.
     let listing = |fs: &MemFs| {
         let c = ctx(fs);
-        (0..5)
-            .map(|_| {
-                let started = std::time::Instant::now();
-                assert_eq!(working_tree_of(&c, b"/w/.git"), Ok(Some(b"/w".to_vec())));
-                started.elapsed()
-            })
-            .min()
-            .unwrap()
+        timing::once(|| assert_eq!(working_tree_of(&c, b"/w/.git"), Ok(Some(b"/w".to_vec()))))
     };
-    let (s, l) = (listing(&small), listing(&large));
-    assert!(
-        l < s * 30 + std::time::Duration::from_millis(50),
-        "working_tree_of: 10,000 names {s:?}, 100,000 names {l:?}"
+    timing::grows_within(
+        "working_tree_of: 10,000 and 100,000 names",
+        timing::TENFOLD,
+        &mut || listing(&small),
+        &mut || listing(&large),
     );
 }
 

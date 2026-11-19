@@ -1395,7 +1395,7 @@ column, missing tables, columns and rows, malformed, nested and large
 native rows, native bytes of every short shape, resolutions that do not
 parse: typed outcomes, no panic; and `reading_native_rows_is_linear`
 (best of five reads of 2,000 and 20,000 legacy rows each replaced by a
-native row: at most thirty times as long plus 50 ms, where linear is ten
+native row: at most sixty times as long plus 50 ms, where linear is ten
 and quadratic a hundred).
 
 ## The settings
@@ -1741,6 +1741,31 @@ cases it checked is zero or differs from the file's. The test
 `BM_REFERENCE_PYTHON` or the repository's `.venv/bin/python`;
 no store test needs it.
 
+A robustness test that holds a time claim takes `tests/timing` (`mod
+timing;`). `grows_within` times a small and a large input in turn, keeps
+the least time of each (other work on the machine can only add to a
+time), and reads the claim "the large one takes under `factor` times the
+small one plus 50 ms" after three rounds and after each further round up
+to twelve; a claim missed by more than three times its bound fails at
+once. `ends_within` holds the least of up to twelve runs to a bound.
+For ten times the input the factor is `TENFOLD`, sixty: linear code
+costs ten times and quadratic a hundred, and thirty was missed by linear
+code on a busy machine, where the larger input leaves the processor's
+cache and each element costs up to 4.8 times more.
+Code that grows faster than its bound misses it in every round, and a
+machine busy with other builds, or a slow CI runner, does not fail the
+test. An input is built outside the timed part: allocating ten times the
+memory costs more than ten times as long once it leaves the cache, which
+is no fault of the code under test (`claims_robustness` built its inputs
+inside and missed its bound that way). The sixteen test files that compare two sizes are held this way
+(`gitconfig_robustness`, `gitsystem_probe_robustness`,
+`location_spellings_robustness` and `fs_realpath_robustness` failed on a
+loaded machine when their two sizes were timed one after the other);
+`timing_selftest` holds the helper itself to work of known growth: ten
+times the work passes a bound of thirty times and a hundred times the
+work fails it; forty times the work passes `TENFOLD` and a hundred times
+fails it.
+
 Timing the tokenizer against the reference: both take every input of
 `lexicon.jsonl` as text and return its tokens (`tokenize_str` on a `&str`;
 the inputs that hold a lone surrogate, which no `&str` can, as code points
@@ -1852,6 +1877,7 @@ that Unicode too.
 | `control_tokens_kills` (3), `control_tokens_robustness` (4) | none | i |
 | `golden_gitconfig`: `gitconfig_every_case` | `gitconfig.jsonl` | i |
 | `gitconfig_robustness` (7) | none | i |
+| `timing_selftest` (8): the time claims of `tests/timing` on work of known growth | none | i |
 | `golden_gitconfig_wildmatch`: `gitconfig_wildmatch_every_case` | `gitconfig_wildmatch.jsonl` | i |
 | `gitconfig_wildmatch_robustness` (8) | none | i |
 | `golden_origin_remote`: `origin_remote_every_case` | `origin_remote.jsonl` | i |
@@ -2843,8 +2869,8 @@ disagreement in 2,848 distinct texts of 1 MiB or less.
 `gitconfig_robustness` covers a 50 MB file, a 10 MB line, 4 Mi quotes,
 escapes, backslashes, NULs, 0xFF bytes and a 4 MiB subsection over 1 Mi
 keys. It also checks that six shapes read in time linear in their size:
-1M pieces take at most 30 times as long as 100k, plus 50 ms, the best of
-five runs each. Linear growth is 10 times and quadratic 100 times.
+1M pieces take at most 60 times as long as 100k, plus 50 ms, on the
+least times seen. Linear growth is 10 times and quadratic 100 times.
 
 ## git's wildmatch
 
@@ -4151,8 +4177,8 @@ The `Fs` trait has every operation unit A needs (`stat`, `lstat`,
   - Hostile bytes in names, bases and URLs.
   - The tie rule on a table.
   - An empty key counting as none.
-  - Two cost checks by ratio: the larger size must stay under 30 times
-    the smaller plus 50 ms, best of five runs. Both failed with the code
+  - Two cost checks by ratio: the larger size must stay under 60 times
+    the smaller plus 50 ms, on the least times seen. Both failed with the code
     they replaced, then passed.
     - `read_remotes` over 5,000 and 50,000 aliased URLs. Before: 175 ms
       and 15.9 s, from a list searched per alias. After: 29 ms and 348 ms,
@@ -4540,8 +4566,8 @@ Pure functions over what git printed: `own_files` (`_own_files`),
   - `gitsystem_answers_robustness.rs`:
     - 5,000 random inputs under both flavours.
     - A linear-cost check for each parser: 2,000 units against 20,000,
-      best of five, the large run under 30 times the small one plus
-      50 ms. A clean run takes under half a second. A quadratic
+      the large run under 60 times the small one plus 50 ms on the
+      least times seen. A clean run takes under half a second. A quadratic
       `variables` fails in 6.4 s and a quadratic `own_files` in 5.4 s.
       The version-digits check is removed: `int`'s 4,300-digit limit
       caps that input, so it could never fail.
@@ -4746,8 +4772,8 @@ Each statement is checked against random trees by
   - the FIFO divergence, and FIFOs in and around the probe;
   - a removal failing partway, under the sweep and the clear;
   - the cost of the clear, the holds, the build and the sweep, at
-    1,000 and 10,000 entries, best of three: the larger run must take
-    under 30 times the smaller plus 50 ms.
+    1,000 and 10,000 entries: the larger run must take under 60 times
+    the smaller plus 50 ms, on the least times seen.
 
 #### What the reference does that looks wrong (not changed)
 
@@ -4940,8 +4966,8 @@ ungated file is byte-identical under 3.11.15 and 3.13.13.
     run sets it, and every other variable as given;
   - output past the limit;
   - `environment` and `which` (both flavours) at 2,000 and 20,000
-    entries, best of three: the larger must take under 30 times the
-    smaller plus 50 ms.
+    entries: the larger must take under 60 times the smaller plus
+    50 ms, on the least times seen.
 
 #### What the reference does that looks wrong (not changed)
 
@@ -5101,7 +5127,7 @@ each hand in:
     in for a changed git, PATH or developer directory;
   - under the Windows flavour, `sources` declines and holds nothing;
   - the key over 2,000 against 20,000 environment variables: the larger
-    must take under 30 times the smaller plus 50 ms. A quadratic lookup
+    must take under 60 times the smaller plus 50 ms. A quadratic lookup
     fails it within seconds.
 
 #### What the reference does that looks wrong (not changed)
@@ -5414,8 +5440,8 @@ for `HEAD` and a loose ref, 64 MiB for `packed-refs`, as recipes).
 cycles and a chain of 1000 refs (counting reads: never more than five),
 NULs and bytes that are not UTF-8, a file system failing every call with
 each error, and the Windows flavour's answers to a link and ENOTDIR; and
-checks three hostile `packed-refs` shapes take at most 30 times as long
-for 10 times the size (best of five, plus 50 ms). `githead_stdfs`
+checks three hostile `packed-refs` shapes take at most 60 times as long
+for 10 times the size (plus 50 ms, on the least times seen). `githead_stdfs`
 writes a git directory in a scratch directory of its own.
 
 ### What only a Windows run can confirm
@@ -6817,8 +6843,8 @@ halves of a header path, `str.strip`'s spaces, the spelling cap);
 header paths and a reason at 200,000 code points, linear in their
 length; `claim_paths` over 200,000 distinct paths and
 `patch_header_path` over 200,000 distinct headers, linear in their
-count; each linearity check passes when any of three runs grows at most
-30 times, so other work on the machine does not fail it; a path of
+count; each linearity check holds the least times seen to 60 times
+(`timing`), so other work on the machine does not fail it; a path of
 10,000 components; the digit limit's edges; every seventh code point
 through every function).
 
@@ -7380,7 +7406,7 @@ inode (`a_stat_without_an_inode_is_declined`). The review's: `tree_of` answering
 both stats name other files (now caught by the `p/repo`, `r/.git` and
 `sib/x` cases), a counting pass over the listing per name in
 `working_tree_of` (caught by `a_crowded_folder_is_not_scanned`, which
-now times `working_tree_of`: linear allowed, under 30 times plus 50 ms),
+now times `working_tree_of`: linear allowed, under 60 times plus 50 ms),
 and a NUL read as `Ok(None)`. Two are equivalent, said at the site:
 `lstat` for `stat` of `realpath`'s answer, and a `realpath` ValueError
 falling back to `git_dir`.
@@ -8282,7 +8308,7 @@ constants, not a walk.
 - `fs_stat_not_posix.rs` records the gap off unix as os.
 - `fs_realpath_robustness.rs` adds `the_memfs_walk_is_linear_in_the_path`:
   10,000 and 100,000 links to `.` below a 511-deep folder, the larger
-  under 30 times the smaller plus 50 ms; and
+  under 60 times the smaller plus 50 ms; and
   `the_memfs_walk_is_at_most_quadratic_in_depth`: depth 4,000 and 8,000,
   the larger under 8 times the smaller plus 50 ms, which fails on cubic
   growth.

@@ -8,11 +8,13 @@
 //! - A probe file that is a FIFO: the reference waits on it for a writer;
 //!   the port reads it without waiting and replaces it.
 //! - The clear, the holds, the sweep and the build over many entries are
-//!   linear: ten times the entries cost under thirty times the time.
+//!   linear: ten times the entries cost under sixty times the time.
 //!
 //! Every tree is made in a fresh scratch folder.
 
 #![cfg(unix)]
+
+mod timing;
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -314,27 +316,21 @@ fn a_probe_file_that_is_a_fifo_is_replaced_without_waiting() {
     }
 }
 
-fn best_of(n: usize, f: &mut dyn FnMut() -> Duration) -> Duration {
-    (0..n).map(|_| f()).min().unwrap()
-}
-
-/// The time of `run` over a tree `make` builds with `n` entries, best of
-/// three, the tree made again before each run.
+/// The time of one `run` over a tree `make` builds with `n` entries, the
+/// tree made again for each run and its making not timed.
 fn timed(
     n: usize,
     make: &dyn Fn(&Path, usize),
     run: &dyn Fn(&Place<'_, StdFs>, &Path),
 ) -> Duration {
-    best_of(3, &mut || {
-        let base = scratch();
-        let state = base.0.join("state");
-        make(&state, n);
-        let text = state.to_str().unwrap().to_owned();
-        let p = place(&text);
-        let started = Instant::now();
-        run(&p, &state);
-        started.elapsed()
-    })
+    let base = scratch();
+    let state = base.0.join("state");
+    make(&state, n);
+    let text = state.to_str().unwrap().to_owned();
+    let p = place(&text);
+    let started = Instant::now();
+    run(&p, &state);
+    started.elapsed()
 }
 
 fn built(state: &Path) -> PathBuf {
@@ -350,11 +346,11 @@ fn built(state: &Path) -> PathBuf {
 }
 
 fn linear(name: &str, make: &dyn Fn(&Path, usize), run: &dyn Fn(&Place<'_, StdFs>, &Path)) {
-    let small = timed(1_000, make, run);
-    let large = timed(10_000, make, run);
-    assert!(
-        large < small * 30 + Duration::from_millis(50),
-        "{name}: 1,000 entries {small:?}, 10,000 {large:?}"
+    timing::grows_within(
+        &format!("{name}: 1,000 and 10,000 entries"),
+        timing::TENFOLD,
+        &mut || timed(1_000, make, run),
+        &mut || timed(10_000, make, run),
     );
 }
 

@@ -4,6 +4,8 @@
 //! ratio); the Windows flavour declines; `GIT_COMMON_DIR` is the argument
 //! alone.
 
+mod timing;
+
 use std::cell::Cell;
 
 use bettermemory_core::fsdata::{
@@ -165,7 +167,7 @@ fn a_commondir_is_read_to_its_bound_only() {
 }
 
 /// `config.worktree` of 3,000 entries costs about 10 times one of 300
-/// (best of five, under 30 times plus 50 ms): a pass over the entries per
+/// (under 60 times plus 50 ms on the least times seen, `timing`): a pass over the entries per
 /// entry would be 100 times and fails after one run of the larger tree,
 /// in a few seconds.
 #[test]
@@ -192,35 +194,24 @@ fn many_entries_cost_linearly() {
     }
     let once = |fs: &MemFs| {
         let c = ctx(fs);
-        let started = std::time::Instant::now();
-        assert_eq!(
-            tree_format(&c, b"/g", None, &GIT),
-            Ok(TreeFormat {
-                why: None,
-                worktree: Some(b"/g/w".to_vec()),
-                bare: false,
-            })
-        );
-        started.elapsed()
+        timing::once(|| {
+            assert_eq!(
+                tree_format(&c, b"/g", None, &GIT),
+                Ok(TreeFormat {
+                    why: None,
+                    worktree: Some(b"/g/w".to_vec()),
+                    bare: false,
+                })
+            )
+        })
     };
     let (small, large) = (tree(300), tree(3_000));
-    let s = (0..5).map(|_| once(&small)).min().unwrap();
-    let bound = s * 30 + std::time::Duration::from_millis(50);
-    // Best of five, stopping at the first run within the bound; a
-    // quadratic pass fails after one run of the larger tree.
-    let mut runs = Vec::new();
-    for _ in 0..5 {
-        let l = once(&large);
-        runs.push(l);
-        if l < bound {
-            return;
-        }
-        // Far past the bound: judged at once, not run five times.
-        if l > bound * 2 {
-            break;
-        }
-    }
-    panic!("300 entries {s:?}, 3,000 entries {runs:?}");
+    timing::grows_within(
+        "300 and 3,000 entries",
+        timing::TENFOLD,
+        &mut || once(&small),
+        &mut || once(&large),
+    );
 }
 
 #[test]

@@ -8,6 +8,7 @@
 //! and the answers that follow from the rule are asserted.
 
 mod common;
+mod timing;
 
 use bettermemory_core::store::caller::{
     Admission, Membership, ModelError, Resolution, Surface, Val,
@@ -260,7 +261,7 @@ fn hostile_native_rows() {
 }
 
 /// The read is linear in the rows: ten times the rows (legacy and
-/// native, every native key replacing a legacy row) take at most thirty
+/// native, every native key replacing a legacy row) take at most sixty
 /// times as long, plus 50 ms. Best of five runs at each size. Linear
 /// growth is ten times and quadratic a hundred, so the bound holds on a
 /// slow, noisy machine and still catches the quadratic read this replaced.
@@ -284,22 +285,19 @@ fn reading_native_rows_is_linear() {
         conn.execute_batch("COMMIT").expect("commit");
         conn
     }
-    let best = |conn: &Connection| {
-        (0..5)
-            .map(|_| {
-                let started = std::time::Instant::now();
-                let model = Membership::read(conn);
-                assert!(model.error().is_none());
-                started.elapsed()
-            })
-            .min()
-            .expect("a run")
+    let time = |conn: &Connection| {
+        timing::once(|| {
+            let model = Membership::read(conn);
+            assert!(model.error().is_none());
+            model
+        })
     };
     let (small, large) = (store(2_000), store(20_000));
-    let (s, l) = (best(&small), best(&large));
-    assert!(
-        l < s * 30 + std::time::Duration::from_millis(50),
-        "2,000 rows {s:?}, 20,000 rows {l:?}: more than linear"
+    timing::grows_within(
+        "2,000 and 20,000 rows",
+        timing::TENFOLD,
+        &mut || time(&small),
+        &mut || time(&large),
     );
 }
 

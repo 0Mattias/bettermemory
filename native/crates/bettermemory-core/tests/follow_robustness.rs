@@ -6,6 +6,8 @@
 //! store's views cost linearly (a quadratic pass fails in a few seconds);
 //! the Windows flavour declines.
 
+mod timing;
+
 use std::collections::BTreeSet;
 
 use bettermemory_core::fsdata::{
@@ -240,9 +242,9 @@ fn a_record_nested_too_deep_rises() {
     );
 }
 
-/// 1,000 views cost about 10 times 100 (best of five, under 30 times plus
-/// 50 ms, judged at once when a run is past twice the bound): a pass over
-/// the views per view would be 100 times.
+/// 1,000 views cost about 10 times 100 (under 60 times plus 50 ms on the
+/// least times seen, `timing`): a pass over the views per view would be
+/// 100 times.
 #[test]
 fn many_views_cost_linearly() {
     fn tree(n: usize) -> (MemFs, Vec<Vec<u8>>) {
@@ -256,28 +258,20 @@ fn many_views_cost_linearly() {
         (fs, views)
     }
     let once = |(fs, views): &(MemFs, Vec<Vec<u8>>)| {
-        let started = std::time::Instant::now();
-        assert_eq!(
-            earliest_naming(&ctx(fs), &Hung::default(), views, Some(b"/b"), b"/sep.git"),
-            Ok(None)
-        );
-        started.elapsed()
+        timing::once(|| {
+            assert_eq!(
+                earliest_naming(&ctx(fs), &Hung::default(), views, Some(b"/b"), b"/sep.git"),
+                Ok(None)
+            )
+        })
     };
     let (small, large) = (tree(100), tree(1_000));
-    let s = (0..5).map(|_| once(&small)).min().unwrap();
-    let bound = s * 30 + std::time::Duration::from_millis(50);
-    let mut runs = Vec::new();
-    for _ in 0..5 {
-        let l = once(&large);
-        runs.push(l);
-        if l < bound {
-            return;
-        }
-        if l > bound * 2 {
-            break;
-        }
-    }
-    panic!("100 views {s:?}, 1,000 views {runs:?}");
+    timing::grows_within(
+        "100 and 1,000 views",
+        timing::TENFOLD,
+        &mut || once(&small),
+        &mut || once(&large),
+    );
 }
 
 #[test]

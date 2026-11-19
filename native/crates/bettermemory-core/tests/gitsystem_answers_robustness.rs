@@ -1,10 +1,10 @@
 //! `gitsystem::answers` on hostile input: random bytes never panic, under
 //! either flavour, and each parser's cost is linear. The cost check runs
 //! each input at 2,000 units and at 20,000, takes the best of five runs
-//! of each, and asks the large run to stay under 30 times the small one
+//! of each, and asks the large run to stay under 60 times the small one
 //! plus 50 ms (a quadratic parser takes about 100 times as long).
 
-use std::time::{Duration, Instant};
+mod timing;
 
 use bettermemory_core::fsdata::Flavour;
 use bettermemory_core::gitsystem::answers::{
@@ -63,25 +63,14 @@ fn random_bytes_never_panic() {
     }
 }
 
-fn best_of_five(f: &dyn Fn()) -> Duration {
-    (0..5)
-        .map(|_| {
-            let start = Instant::now();
-            f();
-            start.elapsed()
-        })
-        .min()
-        .unwrap()
-}
-
 fn linear(name: &str, make: &dyn Fn(usize) -> Vec<u8>, run: &dyn Fn(&[u8])) {
     let small = make(2_000);
     let large = make(20_000);
-    let s = best_of_five(&|| run(&small));
-    let l = best_of_five(&|| run(&large));
-    assert!(
-        l < s * 30 + Duration::from_millis(50),
-        "{name}: {l:?} for ten times the input of {s:?}"
+    timing::grows_within(
+        &format!("{name}: 2,000 and 20,000"),
+        timing::TENFOLD,
+        &mut || timing::once(|| run(&small)),
+        &mut || timing::once(|| run(&large)),
     );
 }
 

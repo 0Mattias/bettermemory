@@ -5,6 +5,8 @@
 //! panic, and nothing is walked recursively (the deep cases run on a
 //! thread with a small stack).
 
+mod timing;
+
 use bettermemory_core::json;
 use bettermemory_core::pyvalue::PyValue;
 use bettermemory_core::records::rows::{self, Row};
@@ -341,10 +343,12 @@ fn time_actor(n: usize) -> std::time::Duration {
 /// small multiple of ten times what 10,000 take.
 #[test]
 fn dict_fields_validate_in_linear_time() {
-    let small = (0..3).map(|_| time_actor(10_000)).min().expect("timed");
-    let large = (0..3).map(|_| time_actor(100_000)).min().expect("timed");
-    let bound = small * 10 * 4 + std::time::Duration::from_millis(20);
-    assert!(large <= bound, "100k keys {large:?}, 10k keys {small:?}");
+    timing::grows_within(
+        "10,000 and 100,000 keys",
+        timing::TENFOLD,
+        &mut || time_actor(10_000),
+        &mut || time_actor(100_000),
+    );
 }
 
 /// The record keeps keys as given (last wins in place for an exact

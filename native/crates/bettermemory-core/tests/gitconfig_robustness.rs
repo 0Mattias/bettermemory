@@ -3,6 +3,8 @@
 //! pins the shape (only NULs, only 0xFF bytes, an odd run of quotes and
 //! an even one, a value of escapes, a long subsection over many keys).
 
+mod timing;
+
 use std::time::{Duration, Instant};
 
 use bettermemory_core::gitconfig::{git_bool, git_entries, git_int, Refused};
@@ -81,18 +83,24 @@ fn nuls_and_bytes_that_are_not_utf8() {
 fn a_long_subsection_over_many_keys_is_kept_once() {
     let mut data = with(b"[s \"", b"y", 4 << 20, b"\"]\n");
     data.extend(with(b"", b"k\n", 1 << 20, b""));
-    let (entries, took) = timed(|| git_entries(&data).expect("read"));
-    assert_eq!(entries.len(), 1 << 20);
-    assert!(took < Duration::from_secs(20), "{took:?}");
+    let mut count = 0;
+    timing::ends_within("a long subsection", Duration::from_secs(20), &mut || {
+        let (entries, took) = timed(|| git_entries(&data).expect("read"));
+        count = entries.len();
+        took
+    });
+    assert_eq!(count, 1 << 20);
 }
 
-/// Ten times the input takes at most 30 times as long (plus 50 ms), for
+/// Ten times the input takes at most 60 times as long (plus 50 ms), for
 /// each shape whose cost might grow faster: many headers, many keys, a
 /// long value of quotes and escapes, a long comment, a long subsection.
-/// Linear growth is 10 times and quadratic 100 times, so the margin is
-/// three times linear and a third of quadratic; each time is the best of
-/// five runs, and the inputs (100k and 1M pieces) are large enough that
-/// the small one takes milliseconds even in an optimized build.
+/// Linear growth is 10 times and quadratic 100 times; the bound leaves
+/// room for the larger input leaving the processor's cache
+/// (`timing::TENFOLD`). The two sizes are timed in
+/// turn and the least time of each is kept (`timing`), and the inputs
+/// (100k and 1M pieces) are large enough that the small one takes
+/// milliseconds even in an optimized build.
 #[test]
 fn texts_read_in_linear_time() {
     let shapes: [(&[u8], &[u8], &[u8]); 6] = [
@@ -106,14 +114,12 @@ fn texts_read_in_linear_time() {
     for (head, piece, tail) in shapes {
         let small = with(head, piece, 100_000, tail);
         let large = with(head, piece, 1_000_000, tail);
-        let best = |data: &[u8]| {
-            (0..5)
-                .map(|_| timed(|| git_entries(data).map(|e| e.len())).1)
-                .min()
-                .expect("timed")
-        };
-        let (s, l) = (best(&small), best(&large));
-        let bound = s * 30 + Duration::from_millis(50);
-        assert!(l <= bound, "{piece:?}: 1M {l:?}, 100k {s:?}");
+        let time = |data: &[u8]| timed(|| git_entries(data).map(|e| e.len())).1;
+        timing::grows_within(
+            &format!("{piece:?} 100k and 1M times"),
+            timing::TENFOLD,
+            &mut || time(&small),
+            &mut || time(&large),
+        );
     }
 }

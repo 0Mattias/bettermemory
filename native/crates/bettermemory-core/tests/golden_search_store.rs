@@ -18,6 +18,7 @@
 //! as the reference's `in_memory_equal` says they are.
 
 mod common;
+mod timing;
 
 use std::collections::HashMap;
 
@@ -683,8 +684,10 @@ fn time_catch_up(n: usize) -> std::time::Duration {
 /// 50,000 in a debug build against 0.16 s for 5,000).
 #[test]
 fn catching_up_is_linear_in_the_unseen_rows() {
-    let small = (0..3).map(|_| time_catch_up(5_000)).min().expect("timed");
-    let large = (0..3).map(|_| time_catch_up(50_000)).min().expect("timed");
-    let bound = small * 10 * 4 + std::time::Duration::from_millis(20);
-    assert!(large <= bound, "50k rows {large:?}, 5k rows {small:?}");
+    timing::grows_within(
+        "5,000 and 50,000 unseen rows",
+        timing::TENFOLD,
+        &mut || time_catch_up(5_000),
+        &mut || time_catch_up(50_000),
+    );
 }

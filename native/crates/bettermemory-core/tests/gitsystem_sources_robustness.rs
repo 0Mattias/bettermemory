@@ -10,9 +10,9 @@
 //!   does meanwhile.
 //! - Under the Windows flavour `sources` declines and holds nothing.
 //! - The key is linear in the environment: ten times the variables cost
-//!   under thirty times the time.
+//!   under sixty times the time.
 
-use std::time::{Duration, Instant};
+mod timing;
 
 use bettermemory_core::fsdata::{Flavour, MemFs, Node};
 use bettermemory_core::gitsystem::ask::{Budget, Clock, Command, Declined, Env, Git, Ran};
@@ -200,17 +200,6 @@ fn under_windows_a_record_is_read_before_declining() {
     }
 }
 
-fn timed(f: &dyn Fn()) -> Duration {
-    (0..3)
-        .map(|_| {
-            let s = Instant::now();
-            f();
-            s.elapsed()
-        })
-        .min()
-        .unwrap()
-}
-
 #[test]
 fn the_key_is_linear_in_the_environment() {
     let run = |n: usize| {
@@ -243,11 +232,11 @@ fn the_key_is_linear_in_the_environment() {
         };
         assert_eq!(caller.key().len(), 32);
     };
-    let small = timed(&|| run(2_000));
-    let large = timed(&|| run(20_000));
-    assert!(
-        large < small * 30 + Duration::from_millis(50),
-        "key: 2,000 {small:?}, 20,000 {large:?}"
+    timing::grows_within(
+        "key: 2,000 and 20,000 variables",
+        timing::TENFOLD,
+        &mut || timing::once(|| run(2_000)),
+        &mut || timing::once(|| run(20_000)),
     );
 }
 

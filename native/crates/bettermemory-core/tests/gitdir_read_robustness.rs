@@ -4,6 +4,8 @@
 //! one name); and a FIFO where `HEAD` or `commondir` should be never
 //! waits.
 
+mod timing;
+
 use std::cell::Cell;
 
 use bettermemory_core::fsdata::{
@@ -179,31 +181,27 @@ fn a_crowded_folder_is_not_scanned() {
         fs.insert(b"/g/commondir", Node::File(b"/g".to_vec()));
         fs
     }
-    let best = |fs: &MemFs| {
+    let time = |fs: &MemFs| {
         let ctx = Ctx {
             fs,
             flavour: Flavour::Posix,
             cwd: b"/",
         };
-        (0..5)
-            .map(|_| {
-                let started = std::time::Instant::now();
-                for _ in 0..200 {
-                    assert_eq!(
-                        git_read(&ctx, b"/g", true, true),
-                        Ok(GitRead::Found(b"/g".to_vec(), true))
-                    );
-                }
-                started.elapsed()
-            })
-            .min()
-            .unwrap()
+        timing::once(|| {
+            for _ in 0..200 {
+                assert_eq!(
+                    git_read(&ctx, b"/g", true, true),
+                    Ok(GitRead::Found(b"/g".to_vec(), true))
+                );
+            }
+        })
     };
     let (small, large) = (tree(10_000), tree(100_000));
-    let (s, l) = (best(&small), best(&large));
-    assert!(
-        l < s * 5 + std::time::Duration::from_millis(50),
-        "10,000 names {s:?}, 100,000 names {l:?}"
+    timing::grows_within(
+        "10,000 and 100,000 names",
+        5,
+        &mut || time(&small),
+        &mut || time(&large),
     );
 }
 

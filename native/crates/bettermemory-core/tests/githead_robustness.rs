@@ -4,8 +4,9 @@
 //! answers to links and ENOTDIR. No panic, and the work stays within the
 //! bounds: the file system counts what it serves.
 
+mod timing;
+
 use std::cell::{Cell, RefCell};
-use std::time::Instant;
 
 use bettermemory_core::githead::{
     self, fs::Node, Flavour, FsError, GitDir, HeadCommit, MemFs, RefFs, Stop, MAX_READS,
@@ -291,17 +292,6 @@ fn the_windows_flavour_follows_links_and_reads_enotdir_as_missing() {
     );
 }
 
-/// Best of five runs of `work`, in seconds.
-fn best_of_five(work: &dyn Fn()) -> f64 {
-    (0..5)
-        .map(|_| {
-            let start = Instant::now();
-            work();
-            start.elapsed().as_secs_f64()
-        })
-        .fold(f64::INFINITY, f64::min)
-}
-
 #[test]
 fn packed_refs_scale_linearly() {
     // Shapes that make a naive search slow: near matches of a long name,
@@ -314,20 +304,23 @@ fn packed_refs_scale_linearly() {
     ];
     let gd = gd();
     for (i, shape) in shapes.iter().enumerate() {
-        let time = |n: usize| {
+        let files = |n: usize| {
             let mut data = shape(n);
             data.push(b'\n');
-            let fs = mem(&[("g/HEAD", b"ref: refs/heads/a\n"), ("g/packed-refs", &data)]);
-            best_of_five(&|| {
-                let _ = githead::resolve(&fs, &gd);
-                let _ = githead::packed_names(&fs, &gd, &name);
+            mem(&[("g/HEAD", b"ref: refs/heads/a\n"), ("g/packed-refs", &data)])
+        };
+        let (small, large) = (files(200_000), files(2_000_000));
+        let time = |fs: &_| {
+            timing::once(|| {
+                let _ = githead::resolve(fs, &gd);
+                let _ = githead::packed_names(fs, &gd, &name);
             })
         };
-        let small = time(200_000);
-        let large = time(2_000_000);
-        assert!(
-            large <= small * 30.0 + 0.05,
-            "shape {i}: {small:.4}s for 200 KB, {large:.4}s for 2 MB"
+        timing::grows_within(
+            &format!("shape {i}: 200 KB and 2 MB"),
+            timing::TENFOLD,
+            &mut || time(&small),
+            &mut || time(&large),
         );
     }
 }

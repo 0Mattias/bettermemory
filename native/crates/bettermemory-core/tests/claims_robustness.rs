@@ -1,7 +1,9 @@
 //! `claims`' leaves over hostile input: very long lines, long runs that a
 //! backtracking reading of the patterns would retry, every code point, and
 //! the digit limit's edge. No panic, and time linear in the input: ten
-//! times the input costs under thirty times the time.
+//! times the input costs under sixty times the time.
+
+mod timing;
 
 use std::time::{Duration, Instant};
 
@@ -11,112 +13,127 @@ fn c(s: &str) -> Vec<u32> {
     s.chars().map(u32::from).collect()
 }
 
-fn timed(f: impl Fn(usize)) -> (Duration, Duration) {
-    f(1_000);
-    let t = Instant::now();
-    f(20_000);
-    let small = t.elapsed();
-    let t = Instant::now();
-    f(200_000);
-    (small, t.elapsed())
-}
-
-/// Compares the fastest run seen of each size over up to five rounds, so
-/// time stolen by other work on the machine, which only ever adds, drops
-/// out; a quadratic path stays a hundred times slower in every round.
-fn linear(name: &str, f: impl Fn(usize)) {
-    let mut best: Option<(Duration, Duration)> = None;
-    for _ in 0..5 {
-        let (small, big) = timed(&f);
-        let (s, b) = best.map_or((small, big), |(s, b)| (s.min(small), b.min(big)));
-        best = Some((s, b));
-        if b <= s * 30 + Duration::from_millis(50) {
-            return;
-        }
-    }
-    panic!("{name}: fastest {best:?}");
+/// Ten times the input within sixty times the time, on the least times
+/// seen (`timing`): time stolen by other work on the machine only ever
+/// adds, and a quadratic path stays a hundred times slower in every round.
+/// `make` builds an input once per size, outside the timed part, so the
+/// claim is about the code under test and not about allocating a larger
+/// input; `run` is given the input and its size.
+fn linear<T>(name: &str, make: impl Fn(usize) -> T, run: impl Fn(&T, usize)) {
+    run(&make(1_000), 1_000);
+    let (small, large) = (make(20_000), make(200_000));
+    timing::grows_within(
+        name,
+        timing::TENFOLD,
+        &mut || timing::once(|| run(&small, 20_000)),
+        &mut || timing::once(|| run(&large, 200_000)),
+    );
 }
 
 #[test]
 fn many_distinct_claim_paths_are_linear() {
-    linear("claim_paths", |n| {
-        let cs: Vec<claims::Claim> = (0..n)
-            .map(|i| claims::Claim {
-                kind: claims::Kind::Path,
-                rel_path: c(&format!("p{i}")),
-                name: vec![],
-                value: vec![],
-            })
-            .collect();
-        assert_eq!(claims::claim_paths(&cs).len(), n);
-    });
+    linear(
+        "claim_paths",
+        |n| -> Vec<claims::Claim> {
+            (0..n)
+                .map(|i| claims::Claim {
+                    kind: claims::Kind::Path,
+                    rel_path: c(&format!("p{i}")),
+                    name: vec![],
+                    value: vec![],
+                })
+                .collect()
+        },
+        |cs, n| assert_eq!(claims::claim_paths(cs).len(), n),
+    );
 }
 
 #[test]
 fn many_distinct_patch_headers_are_linear() {
-    linear("patch_header_path", |n| {
-        let (mut f, mut d) = (claims::PathSet::new(), claims::PathSet::new());
-        for i in 0..n {
-            let line = c(&format!("+++ b/f{i}"));
-            let _ = claims::patch_header_path(&line, &[], &mut f, &mut d);
-        }
-        assert_eq!(f.len(), n);
-    });
+    linear(
+        "patch_header_path",
+        |n| -> Vec<Vec<u32>> { (0..n).map(|i| c(&format!("+++ b/f{i}"))).collect() },
+        |lines, n| {
+            let (mut f, mut d) = (claims::PathSet::new(), claims::PathSet::new());
+            for line in lines {
+                let _ = claims::patch_header_path(line, &[], &mut f, &mut d);
+            }
+            assert_eq!(f.len(), n);
+        },
+    );
 }
 
 #[test]
 fn long_reasons_are_searched_in_linear_time() {
-    linear("claim_reason_is_indeterminate", |n| {
-        let reason = c(&"could not be rea".repeat(n));
-        assert!(!claims::claim_reason_is_indeterminate(&reason));
-    });
+    linear(
+        "claim_reason_is_indeterminate",
+        |n| c(&"could not be rea".repeat(n)),
+        |reason, _| assert!(!claims::claim_reason_is_indeterminate(reason)),
+    );
 }
 
 #[test]
 fn assign_annotation_without_equals_is_linear() {
     // `x:` then a long annotation that never meets `=`: a backtracking
     // engine retries every split of `[^=\n]+`.
-    linear("annotation", |n| {
-        let mut line = c("x:");
-        line.extend(std::iter::repeat_n(u32::from(b'a'), n));
-        line.extend(c("=="));
-        assert!(claims::binding_token(&line).is_none());
-    });
+    linear(
+        "annotation",
+        |n| {
+            let mut line = c("x:");
+            line.extend(std::iter::repeat_n(u32::from(b'a'), n));
+            line.extend(c("=="));
+            line
+        },
+        |line, _| assert!(claims::binding_token(line).is_none()),
+    );
 }
 
 #[test]
 fn long_identifiers_and_blanks_are_linear() {
-    linear("ident", |n| {
-        let mut line = c("def ");
-        line.extend(std::iter::repeat_n(u32::from(b'a'), n));
-        line.extend(std::iter::repeat_n(0x20, n));
-        assert!(claims::binding_token(&line).is_none());
-        assert!(claims::is_identifier(&line[4..4 + n]));
-    });
+    linear(
+        "ident",
+        |n| {
+            let mut line = c("def ");
+            line.extend(std::iter::repeat_n(u32::from(b'a'), n));
+            line.extend(std::iter::repeat_n(0x20, n));
+            line
+        },
+        |line, n| {
+            assert!(claims::binding_token(line).is_none());
+            assert!(claims::is_identifier(&line[4..4 + n]));
+        },
+    );
 }
 
 #[test]
 fn long_hunk_headers_are_linear() {
-    linear("hunk", |n| {
-        let line = c(&format!("@@ -{} +1 @@", "7".repeat(n)));
-        assert_eq!(claims::hunk_lines(&line).unwrap().as_deref(), Some("2"));
-    });
+    linear(
+        "hunk",
+        |n| c(&format!("@@ -{} +1 @@", "7".repeat(n))),
+        |line, _| assert_eq!(claims::hunk_lines(line).unwrap().as_deref(), Some("2")),
+    );
 }
 
 #[test]
 fn long_header_paths_are_linear() {
-    linear("header", |n| {
-        let p = "x".repeat(n);
-        let rest = c(&format!("a/{p} b/{p}"));
-        assert_eq!(claims::header_path(&rest).len(), n);
-        let mut line = c("+++ b/");
-        line.extend(std::iter::repeat_n(0x3000, n));
-        let (mut f, mut d) = (claims::PathSet::new(), claims::PathSet::new());
-        assert_eq!(
-            claims::patch_header_path(&line, &[], &mut f, &mut d),
-            Some(vec![])
-        );
-    });
+    linear(
+        "header",
+        |n| {
+            let p = "x".repeat(n);
+            let rest = c(&format!("a/{p} b/{p}"));
+            let mut line = c("+++ b/");
+            line.extend(std::iter::repeat_n(0x3000, n));
+            (rest, line)
+        },
+        |(rest, line), n| {
+            assert_eq!(claims::header_path(rest).len(), n);
+            let (mut f, mut d) = (claims::PathSet::new(), claims::PathSet::new());
+            assert_eq!(
+                claims::patch_header_path(line, &[], &mut f, &mut d),
+                Some(vec![])
+            );
+        },
+    );
 }
 
 #[test]

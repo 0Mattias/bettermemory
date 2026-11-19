@@ -2,6 +2,7 @@
 //! outcomes, no panic, no stack growing with the input.
 
 mod common;
+mod timing;
 
 use bettermemory_core::fsdata::realpath::{abspath, realpath, Unresolved};
 use bettermemory_core::fsdata::{Flavour, Fs, MemFs, Node, PyErr};
@@ -251,21 +252,15 @@ fn the_memfs_walk_is_linear_in_the_path() {
         p.extend_from_slice(b"/");
         p
     };
-    let best = |n: usize| {
-        let p = path(n);
-        (0..3)
-            .map(|_| {
-                let started = std::time::Instant::now();
-                assert_eq!(fs.lstat(&p), Ok(bettermemory_core::fsdata::Kind::Directory));
-                started.elapsed()
-            })
-            .min()
-            .expect("a run")
+    let (small, large) = (path(10_000), path(100_000));
+    let time = |p: &[u8]| {
+        timing::once(|| assert_eq!(fs.lstat(p), Ok(bettermemory_core::fsdata::Kind::Directory)))
     };
-    let (s, l) = (best(10_000), best(100_000));
-    assert!(
-        l < s * 30 + std::time::Duration::from_millis(50),
-        "10,000 components {s:?}, 100,000 components {l:?}: more than linear"
+    timing::grows_within(
+        "10,000 and 100,000 components",
+        timing::TENFOLD,
+        &mut || time(&small),
+        &mut || time(&large),
     );
     // Within the default limits the same tree answers at once.
     let mut bounded = fs.clone();
@@ -277,7 +272,8 @@ fn the_memfs_walk_is_linear_in_the_path() {
 /// The walk is quadratic in depth, as its documentation says: each
 /// component looks up a key as long as the path so far. Doubling the
 /// depth may at most quadruple the time; the bound is eight times plus
-/// 50 ms (best of three), so it fails on cubic growth and not on noise.
+/// 50 ms on the least times seen (`timing`), so it fails on cubic growth
+/// and not on noise.
 /// Within `PATH_MAX` the depth is at most 512, which bounds the cost.
 #[test]
 fn the_memfs_walk_is_at_most_quadratic_in_depth() {
@@ -288,23 +284,21 @@ fn the_memfs_walk_is_at_most_quadratic_in_depth() {
         }
         p
     };
-    let best = |n: usize| {
+    let tree = |n: usize| {
         let p = deep(n);
         let mut fs = MemFs::new(Flavour::Posix);
         fs.path_max = usize::MAX;
         fs.insert(&p, Node::Dir);
-        (0..3)
-            .map(|_| {
-                let started = std::time::Instant::now();
-                assert_eq!(fs.lstat(&p), Ok(bettermemory_core::fsdata::Kind::Directory));
-                started.elapsed()
-            })
-            .min()
-            .expect("a run")
+        (fs, p)
     };
-    let (s, l) = (best(4_000), best(8_000));
-    assert!(
-        l < s * 8 + std::time::Duration::from_millis(50),
-        "depth 4,000 {s:?}, depth 8,000 {l:?}: more than quadratic"
+    let (small, large) = (tree(4_000), tree(8_000));
+    let time = |(fs, p): &(MemFs, Vec<u8>)| {
+        timing::once(|| assert_eq!(fs.lstat(p), Ok(bettermemory_core::fsdata::Kind::Directory)))
+    };
+    timing::grows_within(
+        "depth 4,000 and 8,000",
+        8,
+        &mut || time(&small),
+        &mut || time(&large),
     );
 }
