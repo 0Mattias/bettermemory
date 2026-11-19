@@ -231,6 +231,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // trees holding one are gated by the standing rule.
         "gitconfig_legacy_python.jsonl" => &[Python],
         "models_stores.jsonl" => &[Python, Sqlite, Pydantic],
+        // `re`'s `\d` and `int` of a hunk count past ASCII or past 4,300
+        // digits (`gen_origin_gitfiles`).
+        "origin_gitfiles_leaves_python.jsonl" => &[Python],
         // The restore lock is a directory `flock` on POSIX, a record file
         // and a handle on Windows; the generator runs on POSIX only.
         "store_restore_lock.json" => &[Platform],

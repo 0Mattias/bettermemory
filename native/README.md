@@ -33,6 +33,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
+| `origin_gitfiles` | unit 1 of `origin_gitfiles.py`, the pure decoders: `_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs` | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`) | `gitobjects.jsonl`, `gitobjects_python.jsonl` |
 | `gitfile_rule` | units 1, 2a, 2b and 3 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl` |
@@ -1275,6 +1276,9 @@ that Unicode too.
 | `gitconfig_wildmatch_robustness` (8) | none | i |
 | `golden_gitconfig_remote_rules`: `gitconfig_remote_rules_every_case` | `gitconfig_remote_rules.jsonl` | i |
 | `gitconfig_remote_rules_robustness` (2) | none | i |
+| `golden_origin_gitfiles`: `origin_gitfiles_leaves_every_case` | `origin_gitfiles_leaves.jsonl` | i |
+| `golden_origin_gitfiles`: `origin_gitfiles_leaves_python_every_case` | `origin_gitfiles_leaves_python.jsonl` | ii (Python) |
+| `origin_gitfiles_kills` (12), `origin_gitfiles_robustness` (7) | none | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_every_case` | `capture_vocabulary.jsonl` | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_python_every_case` | `capture_vocabulary_python.jsonl` | ii (Python) |
 | `capture_vocabulary_robustness` (5) | none | i |
@@ -2388,6 +2392,127 @@ ref-name rows without a NUL. The 2 that differ are `-a`, which that command's
 line reads as an option. git accepts a ref named `-a` (the review showed it
 through the refspec route), as the reference does. `gitconfig_remote_rules_robustness`
 gives 10 MB names, values and refspecs an answer in one pass.
+
+## The repository files origin reads in-process (`origin_gitfiles.py`)
+
+`origin_gitfiles` ports `src/bettermemory/origin_gitfiles.py` (1,553
+lines). The whole module does not fit one unit of about 600 lines of Rust,
+so it is cut into units, leaves first.
+
+### The module by function
+
+| function | reference lines | what it needs from the machine | status |
+| --- | --- | --- | --- |
+| `_unquote_c_path` | 463-526 | nothing | built (unit 1) |
+| `_quoted_header_path` | 529-542 | nothing | built (unit 1) |
+| `_dequote_named_header` | 545-564 | nothing | built (unit 1) |
+| `_dequote_patch_headers`, `claims.hunk_lines` | 567-639; claims 158, 877-885 | nothing | built (unit 1) |
+| `_decode_varint` | 1240-1258 | nothing | built (unit 1) |
+| `_gitmodules_entries` | 1197-1202, 1261-1328 | nothing | built (unit 1) |
+| `_shortening_refs` | 297-332 | nothing | built (unit 1) |
+| `_read_prefix` | 1331-1343 | a seek and reads of an open file | unit 2 |
+| `relative_to_root` | 335-361 | `stat` of the root and of each parent; pathlib's `relative_to` and `parents` | unit 2 |
+| `_spelled_as_git` | 262-294 | the platform; `F_GETPATH` on macOS | unit 2 |
+| `_facts_of`, `_ConfigFacts`, `_BARE_FALSE` | 42-111 | nothing (a regular expression over bytes) | unit 3 |
+| `_fd_stamp`, `_read_flags`, `_config_facts` and its memo | 114-210 | open, `fstat`, reads, a bounded memo | unit 3 |
+| `_worktree_config_facts`, `_config_moves_worktree` | 213-259 | `githead.GitDir`, the config facts | unit 3 |
+| `refused_worktree_root` | 364-403 | the git on PATH | unit 4 |
+| `first_not_a_directory` and its memo | 406-431 | `stat` | unit 4 |
+| `capture_files` | 434-460 | `githead`'s signature and discovery | unit 4 |
+| `_hold_directory`, `directories_held`, `_global_attributes_path` | 645-726 | `stat`, the environment | unit 5 |
+| `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies` | 729-999 | the git on PATH's version (`gitsystem`) | unit 5 |
+| `_config_entries`, `_config_variable_names` | 1002-1028 | nothing (`gitconfig`) | unit 5 |
+| `attribute_files_signature`, `gitattributes_signature` | 1031-1194 | `stat`, reads, `gitconfig`'s tree | unit 6 |
+| `_index_gitmodules` and its memo, `_gitdir_at_root` | 1205-1237, 1346-1427 | open, `fstat`, the prefix reads | unit 6 |
+| `walk_files_signature`, `located_head`, `files_held` | 1430-1553 | `stat`, `githead` | unit 7 |
+
+Later units reuse `gitconfig`, `githead` and `fsdata` (its `Fs` trait,
+extended where a unit needs a call it lacks) and `gitsystem` for the git on
+PATH; none writes a second copy of them.
+
+### Unit 1, built (`origin_gitfiles`)
+
+A text is a Python `str` as code points (`PyStr`), since the reference's
+text may hold a lone surrogate; bytes are bytes.
+
+- `unquote_c_path` (`_unquote_c_path`): the input must be one quoted
+  string with no unescaped interior quote. Each unescaped character is its
+  UTF-8 bytes; a lone surrogate raises `UnicodeEncodeError` where the walk
+  reaches it (an unknown escape before it answers None first). The nine
+  single-character escapes are their bytes; an octal escape is one to three
+  digits, masked to a byte (`\400` is NUL). The bytes decode as strict
+  UTF-8 once at the end (a surrogate's or an overlong spelling is None, as
+  Python's decoder refuses both, and so does `std::str::from_utf8`).
+- `quoted_header_path`: that, None where the path holds LF or CR.
+- `dequote_named_header`: a `diff --git "` line is split at each `" "`
+  from the left (`range(1, len(rest) - 2)`), both sides decoded, the first
+  split whose sides are `a/P` and `b/P` rewritten; a rename or copy line
+  whose remainder is one quoted path. Both sides are decoded before the
+  test, so a surrogate in the new side raises even when the old side is
+  None, as in the reference.
+- `dequote_patch_headers`: the fast path (no mark in the stream gives the
+  stream back), the split on LF only, the hunk count read past (a line
+  starting with a backslash does not count; `-` or `+` does; anything else
+  ends it), the named headers, then `---`/`+++` headers with one label TAB
+  dropped and the side's `a/` or `b/` required.
+- `hunk_lines` (`claims.hunk_lines`): `_HUNK_RE` is
+  `^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@` under `re.match`. It is
+  reproduced by a hand-written matcher, no regex crate. A run of `\d` is
+  followed only by `,` or a space, neither of which is `\d`, so the
+  greedy run is the only one any backtracking match can take; the matcher
+  takes the maximal run and answers as `re` does for every input. `\d` is
+  `re`'s Unicode decimal class (`unicode::is_re_digit`); nothing follows
+  the closing `@@`, as `match` needs none. Each count is `int` of its run
+  (`pyvalue::int_from_str`: Unicode digits, the 4,300-digit limit raising
+  `ValueError`), a missing one 1, and the sum is exact decimal text, since
+  Python's `int` has no bound. The stream walk saturates the count at
+  `u64::MAX`, which no stream's line count reaches.
+- `decode_varint`: git's `decode_varint`, with the `value >> 57` refusal;
+  the sum is held in `u128`, since the `+ 1` after a full shift reaches
+  2\*\*64 where a `u64` would wrap.
+- `gitmodules_entries`: versions 2 to 4, the extended flags (refused in
+  version 2, any bit past `CE_SKIP_WORKTREE` and `CE_INTENT_TO_ADD`
+  refused), version 4's prefix compression, a 0xFFF length found by its NUL
+  (shorter names included, as git's `strlen` does), the eight-byte padding,
+  the stop at the first name after `.gitmodules`, and `_IndexShort`
+  against `_IndexUnsettled` by `complete`.
+- `shortening_refs`: the rules from the last to the second, each match's
+  short name under every other rule, first seen first.
+
+Decisions. The exceptions are `Raised` (`UnicodeEncodeError`,
+`ValueError`) and `IndexFault` (`_IndexUnsettled`, `_IndexShort`), named as
+the reference's classes. `_read_prefix`, `relative_to_root` and
+`_spelled_as_git` are listed as leaves in the reference's docstring order
+but each reads the machine (a seek, `stat`, `F_GETPATH`), and the crate's
+`Fs` trait has no seek and no `F_GETPATH`; they go to unit 2 with the
+trait's extension.
+
+Fixtures: `gen_origin_gitfiles.py` writes `origin_gitfiles_leaves.jsonl`
+(about 160 KB: every escape, octal runs of each length, quote bounds,
+header lines and streams, hunk headers at the count limit, varints at each
+bound, three five-entry indexes cut at every byte in both modes, and
+crafted indexes for each refusal) and `origin_gitfiles_leaves_python.jsonl`
+(gated on the Python release: hunk counts in digits past ASCII, whose
+reading is the release's Unicode data, or past 4,300 digits, the release's
+limit). The rows hold no line number, path, time or random value.
+
+Reference findings, reproduced and pinned:
+
+- `_unquote_c_path('"\\1"')` is `'\x01'` and `_unquote_c_path('"\\400"')`
+  is `'\x00'`: one or two octal digits are read, and a first digit past 3
+  is masked. git's `unquote_c_style` reads exactly three digits, the first
+  0 to 3, and refuses the rest; `quote_c_style` only writes that shape.
+- `_unquote_c_path('"\ud800"')` raises `UnicodeEncodeError`, where its
+  docstring says anything that is not one decodable quoted string returns
+  None.
+- `_dequote_patch_headers('@@ -1,' + '1' * 4301 + ' +1 @@\n--- "a/x"\n')`
+  raises `ValueError` out of `claims.hunk_lines`, where the docstring
+  promises the stream with its headers rewritten.
+- `claims.hunk_lines('@@ -1,\u0663 +1 @@')` is 4: `\d` reads any Unicode
+  decimal digit, where git writes ASCII only.
+
+Prediction for this unit: at most 600 lines of Rust source outside tests
+(492 lines, met).
 
 ## Design notes for the rest of the tree half
 

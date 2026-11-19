@@ -45,6 +45,7 @@ pub mod json;
 pub mod lexicon;
 pub mod log;
 pub mod membership_lines;
+pub mod origin_gitfiles;
 pub mod printable;
 pub mod pyvalue;
 pub mod records;
