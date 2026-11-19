@@ -181,6 +181,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "settings_paths_python.json"
         | "membership_lines_python.jsonl"
         | "capture_vocabulary_python.jsonl" => &[Python],
+        // `str.isspace` and `str.isalnum` past ASCII (`gen_control_tokens`).
+        "control_tokens_unicode.jsonl" => &[Unicode],
         "lexicon.jsonl"
         | "lexicon_spelling_tables.json"
         | "unicode.jsonl"

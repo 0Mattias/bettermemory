@@ -30,6 +30,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
+| `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
@@ -1151,6 +1152,86 @@ after canonicalising, `expanduser` takes only `~` and `~/`, `under` is
 case-sensitive and `is_dir` follows symlinks. No entry point uses it by
 default; every compared case goes through the test's world.
 
+## Chat-template control tokens (`control_tokens.py`)
+
+`control_tokens` reproduces `src/bettermemory/control_tokens.py` (529
+lines at 465bc600) whole, in one unit. Texts are code points, so every
+offset is a Python `str` index and a lone surrogate is a character like
+any other. Nothing in the module reads the machine: no file, clock,
+environment or process.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_CONTROL_TOKENS`, `_CONTROL_TOKEN_KIND`, `_TURN_MARKER_KIND` | 116-179 | nothing | built (`CONTROL_TOKENS`) |
+| `_CONTROL_TOKEN_RE` | 203-210 | Unicode data (`\s`) | built (hand-written matcher) |
+| `ControlTokenHit`, `to_dict` | 213-223 | nothing | built (`Hit`) |
+| `_matches` | 226-243 | nothing | built |
+| `find_control_tokens` | 246-257 | nothing | built |
+| `control_token_offsets` | 260-275 | nothing | built |
+| `_touches` | 283-291 | Unicode data (`isspace`, `isalnum`) | built |
+| `_named` | 301-323 | nothing | built |
+| `defang_control_tokens` | 326-353 | nothing | built |
+| `folded_quote` | 356-365 | Unicode data (`str.split`) | built |
+| `_children`, `_Visit`, `_rebuilt`, `named_tokens` | 369-444 | nothing | built over `PyValue` |
+| `_FIELD_WHY`, `BARE_NAME_REMEDY`, `ControlTokenError`, `refuse_control_tokens` | 463-516 | nothing | built |
+
+### The pattern, matched by hand
+
+No regex crate is used. `_CONTROL_TOKEN_RE` is six alternatives, and
+each delimited one is a fixed opener, an optional `/`, a run of a class
+bounded `{1,32}` and a closer the class excludes. A greedy bounded run
+that backtracks gives back only class members, none of which is the
+closer, so the alternative matches exactly when the whole run (not capped
+at 32) is 1 to 32 long and the closer follows; the matcher reads at most
+33 class members. The alternatives start on distinct second characters
+(`|`, `｜`, `<`, a lowercase letter or `_`), so trying them in the
+pattern's order is one decision. The turn alternative is `\A\s*` only
+at index 0 (finditer and sub from 0) and `\n[ \t\r]*\n` at a newline,
+each followed by `Human:` or `Assistant:`; their runs give back only
+whitespace, which neither name starts with, so only the full run can
+match. `\s` is `str.isspace` (`unicode::is_space`), as `re` reads it on
+a `str` pattern. Matches are scanned as `finditer` and `sub` scan: from
+the end of the last match, an unlisted shape (`<b>`, `<|foo|>`) consumed
+like a listed one.
+
+### Decisions
+
+- `named_tokens` walks `PyValue` with its own stack and clones each
+  unchanged subtree once, where its parent is rebuilt. A rebuilt dict
+  merges keys as `dict(zip(...))` does: the first key kept, the last
+  value. Key equality is Python's across `bool`, `int` and `float`, and
+  element by element in tuples; a NaN key equals nothing, since two keys
+  here are never one object. A path and a datetime pass through, as the
+  reference passes a `Path`; the reference's identity results (`is`) are
+  equal values here.
+- `refuse_control_tokens` returns `ControlTokenError` with the message;
+  `remedy` and `why` are arguments, `BARE_NAME_REMEDY` and `FIELD_WHY`
+  the defaults the caller passes.
+
+### Tests
+
+`control_tokens.jsonl` (not gated) pins the table, the two texts, every
+listed token alone and in contexts, each shape at and past its bound,
+nested and adjacent tokens, the turn markers in every whitespace context,
+350 texts drawn from fixed fragments by a seeded generator, refusals with
+other fields, remedies and whys, and `named_tokens` over nested values
+with merging keys. Its texts hold only ASCII, surrogates, U+FF5C and
+U+2581. `control_tokens_unicode.jsonl` (Unicode-gated) holds texts with
+other code points and a sweep of every code point beside a token, inside
+a DeepSeek delimiter and before `Human:`, hashed per block of 0x1000.
+`control_tokens_kills.rs` holds cases a wrong reading fails (the bound,
+consumption of unlisted shapes, `\A` at index 0 only, `\s` past ASCII,
+a vertical tab in a blank line, code point offsets, the second defang
+pass, a speaker set apart, a single fold, key merging).
+`control_tokens_robustness.rs` reads a megabyte of each opener within
+three times the reference's measured time in release, checks linear
+growth, every code point, names past the bound and a value nested
+100,000 deep.
+
+Nothing is left for a later unit. No reference defect was found: 300,000
+random texts gave no defanged text and no folded quote that still carries
+a listed token.
+
 ## Running the tests (offline)
 
 ```sh
@@ -1273,6 +1354,9 @@ that Unicode too.
 | `golden_search`: `search_ranker_tables` | `search_ranker.jsonl` header (word lists) | i |
 | `parity_provenance`: both tests | `generate.py`, the manifest | i |
 | `golden_toml`: `toml_every_document` | `toml.jsonl` | ii (Python) |
+| `golden_control_tokens`: `control_tokens_every_case` | `control_tokens.jsonl` | i |
+| `golden_control_tokens`: `control_tokens_unicode_every_case` | `control_tokens_unicode.jsonl` | ii (Unicode) |
+| `control_tokens_kills` (3), `control_tokens_robustness` (4) | none | i |
 | `golden_gitconfig`: `gitconfig_every_case` | `gitconfig.jsonl` | i |
 | `gitconfig_robustness` (7) | none | i |
 | `golden_gitconfig_wildmatch`: `gitconfig_wildmatch_every_case` | `gitconfig_wildmatch.jsonl` | i |

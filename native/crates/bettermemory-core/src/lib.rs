@@ -19,6 +19,8 @@
 //!   contract, the tables, the key ring from a keys directory, the chain
 //!   verified on disk, the FTS5 prefilter;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
+//! - [`control_tokens`]: the chat-template delimiters a stored text may
+//!   not carry, found, counted, refused and written by their bare names;
 //! - [`gitconfig`]: the text of a git config file as the reference reads it;
 //! - [`githead`]: HEAD and refs read from a git directory's files;
 //! - [`gitobjects`]: git objects read from a repository's files, its
@@ -39,6 +41,7 @@ pub mod capture;
 pub mod checkout_token;
 pub mod config;
 pub mod credentials;
+pub mod control_tokens;
 pub mod datetime;
 pub mod float_repr;
 pub mod fsdata;
