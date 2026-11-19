@@ -902,6 +902,7 @@ def _git_object_format(repo: Path) -> bytes | None:
     return done.stdout.strip() if done.returncode == 0 else None
 
 
+@pytest.mark.usefixtures("git_answered")
 def test_the_object_format_is_read_as_git_reads_it(tmp_path: Path) -> None:
     """ENG-207: the object format is git's, read from the config's bytes
     as setup.c reads a repository's format (`gitfile_rule.object_format`).
@@ -909,7 +910,10 @@ def test_the_object_format_is_read_as_git_reads_it(tmp_path: Path) -> None:
     ``core.repositoryformatversion`` is set, which git clears (sha1), and
     under format 0, where git dies; and lowercased a value git refuses.
     git before 2.45 knows no ``compatObjectFormat`` and reads on past one
-    git 2.45 dies on, where the reader refuses it still (ENG-227)."""
+    git 2.45 dies on, where the reader refuses it still (ENG-227).
+    Whether git reads a compat format is git's answer (`git_answered`):
+    asked under the product's own budget, a slow runner ran out of it and
+    the reader declined a format a git built with Rust reads (ENG-209)."""
     compat_known = _git_version() >= (2, 45)
     repo = _init(tmp_path / "repo")
     config = repo / ".git" / "config"
