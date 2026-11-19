@@ -9,6 +9,8 @@
 //!   (the log payload's canonical text among them) and `json.loads`;
 //! - [`float_repr`]: Python's `float.__repr__`;
 //! - [`datetime`]: the datetime spellings and readings;
+//! - [`origin_history`]: how `origin` reads a repository's history, its
+//!   first unit (the leaves and the memo of author dates);
 //! - [`unicode`]: normalization, case mapping and the character classes,
 //!   over tables generated from the reference Python's Unicode 15.1.0;
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
@@ -71,6 +73,7 @@ pub mod log;
 pub mod membership_lines;
 pub mod origin_gitfiles;
 pub mod origin_remote;
+pub mod origin_history;
 pub mod printable;
 pub mod pyvalue;
 pub mod records;

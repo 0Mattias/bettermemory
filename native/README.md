@@ -23,6 +23,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `json` | `json.dumps` as each call site spells values (`log.canonical_payload` and nine more forms, `review.canonical_json`), `json.loads` | `canonical_json.jsonl`, `json_edges.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns, pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
+| `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d` | `unicode.jsonl`, `unicode_sequences.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
@@ -1610,6 +1611,7 @@ that Unicode too.
 | --- | --- | --- |
 | `golden_canonical_json`: `canonical_json_every_case` | `canonical_json.jsonl` | i |
 | `golden_datetime`: `datetime_every_case` | `datetime.jsonl` | i |
+| `golden_origin_history`: `origin_history_every_case`; `origin_history_kills` (12), `origin_history_robustness` (5) | `origin_history.jsonl` (the last two none) | i |
 | `golden_log_chain`: `log_chain_every_row_and_variant` | `log_chain.jsonl` | i |
 | `golden_log_keyring`: `log_keyring_every_case` | `log_keyring.jsonl` | i |
 | `golden_search`: `search_ranker_tables` | `search_ranker.jsonl` header (word lists) | i |
@@ -4934,6 +4936,90 @@ the truncation edges (each side of `m / 1000`, `(m + 0.5) / 1000`,
 and 27, lowercase, each first character). `ulid_order_and_round_trip`
 checks that text order is the order of `(ms, bytes)` and that `ulid_ms`
 reads back the milliseconds, over 3,004 rule-built pairs.
+
+## How origin reads a repository's history (`origin_history.py`)
+
+`origin_history.py` (733 lines) is ported in two units, leaves first.
+The first is built (`src/origin_history.rs`, 487 lines); the module's
+`instant` and `seconds` were already in `datetime` (`git_instant`,
+`git_seconds`) and are reused, not copied.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `AS_STORED_ENV`, `AS_STORED_CONFIG`, `AS_STORED_DIFF`, `AS_STORED_PATHS`, the caps, `_FAILURE_SECONDS`, `_CUTS_MAX`, `_HISTORY_ENV` | 91-143, 236, 463-468, 508 | `os.devnull` (a constant per platform) | unit 1, built |
+| `HistoryUnread` | 146-188 | nothing | unit 1, built |
+| `git_counts` | 191-195 | the runner's per-thread counts (`_git`) | unit 2 (with the runner) |
+| `unanswered` | 198-210 | the counts, as arguments | unit 1, built |
+| `note_unread` | 213-222 | the runner's notes, returned as data | unit 1, built |
+| `_Entry`, `recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`, `_clear_timestamps_memo` | 239-362 | the monotonic clock, as an argument | unit 1, built |
+| `seconds`, `instant` | 378-401 | nothing | already in `datetime` |
+| `read_lines` | 407-422 | nothing | unit 1, built |
+| `author_dates`, `author_instant` | 425-437 | nothing | unit 1, built |
+| `located_key` | 440-454 | the environment, `githead.locate`, `head_sha` | unit 2 |
+| `history_guard` | 471-504 | `gitdir_at`, `locate`, `stamp`, the environment | unit 2 |
+| `cuts`, `shallow_file`, `cuts_in` | 511-562 | the file system, `object_format_at` | unit 2 |
+| `log_stdin` | 565-590 | nothing | unit 1, built |
+| `ReachableWalk`, `shas_touching` | 593-652 | nothing | unit 1, built |
+| `_Unwalked`, `unwalked`, `given_up_since`, `note_unwalked` | 662-698 | a per-thread tally, as a value | unit 1, built |
+
+What unit 1 reproduces:
+
+- The pins, with `os.devnull` as `DEVNULL` (`/dev/null`, or `nul` on
+  Windows) inside `AS_STORED_ENV` and `AS_STORED_DIFF`'s `-O`.
+- `unanswered(before, now, named)`: the reference reads `now` from
+  `git_counts`; here the caller passes both pairs. `note_unread` returns
+  the note (`RunnerNote::TimedOut` or `Failed`) the runner is to make.
+- `read_lines` splits on LF alone, drops one final empty record, and
+  declines the whole read on the first record its reader declines.
+- `author_instant` adds the seconds to the epoch in UTC; past the range a
+  datetime holds it answers `datetime.max` in UTC (with its 999999
+  microseconds) for a positive value and `datetime.min` otherwise. The
+  value is an `i128`: a Python int past it clamps the same way.
+  `author_dates` sorts, then maps.
+- `log_stdin` checks every element for emptiness, LF and CR, then every
+  revision for a leading dash, then encodes UTF-8 with
+  `surrogateescape` (U+DC80 to U+DCFF become a byte; any other surrogate
+  is None).
+- `ReachableWalk.touched` is a `BTreeMap` over code points, which is the
+  order `_sorted_paths` sorts in, so the descendants of
+  `spec.rstrip("/") + "/"` are a range scan, as the bisection is.
+- `TimestampsMemo<G>` holds the two ordered dictionaries as vectors,
+  oldest first (16 entries at most each). The lock becomes the caller's:
+  the value is owned and `&mut`. `recall` and `remember_failure` take
+  `time.monotonic()` as `now`. The dates are an `Arc`, so `recall` and
+  `base_for` return the stored list itself, as the reference does. The
+  guard is any `G: PartialEq`, compared as Python compares the tuples;
+  `None` is `Option::None`, and two `None` guards are equal, as in Python.
+  A failure under another guard, or past its window, or with the clock
+  gone back (or `now` NaN), is removed on the recall that finds it.
+- `Unwalked` is the thread-local tally as a value; `given_up_since`
+  answers the last reason whenever the count differs from `before`,
+  whichever way.
+
+Text (keys, paths, commits, cuts) is code points (`PyStr`), so a lone
+surrogate is one more value. No regular expression is involved.
+
+Pinned by `origin_history.jsonl` (class i, every platform: `os.devnull`
+is written `{devnull}`): the constants, `unanswered` over the count pairs,
+`note_unread` for every member, `read_lines` with `seconds` and `instant`
+over 27 texts, `author_instant` and `author_dates` across the bounds,
+`log_stdin` over 20 element lists, `shas_touching` over 17 spec lists
+listed and unlisted, 37 memo sequences (each step's answer, then the
+entries and failures in order; the slot bound with lists of 2,000,000 and
+2,000,001 dates) and the tally. `origin_history_kills` and
+`origin_history_robustness` hold the rest.
+
+Reference finding: `log_stdin` says it answers None where a line cannot
+carry an element as git reads it, but it passes an element holding a NUL.
+git's `read_revisions_from_stdin` reads each line into a C string, so the
+element is cut at the NUL: `log_stdin(["HEAD\x00x"], ["p\x00"])` returns
+`b"HEAD\x00x\n--\np\x00\n"`, which git reads as revision `HEAD` and
+pathspec `p`. The port reproduces it.
+
+Left for unit 2: `git_counts` (with the runner's counters),
+`located_key`, `history_guard`, `cuts`, `shallow_file` and `cuts_in`, over
+the `fsdata` file system trait and the `githead` and `gitfile_rule`
+readers already ported.
 
 ## HEAD and refs from a git directory's files
 
