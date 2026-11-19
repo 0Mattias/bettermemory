@@ -38,6 +38,9 @@ pub enum Failure {
     /// Not ported (the Windows flavour's resolutions, or a relative path
     /// there): a caller declines.
     NotPorted,
+    /// Another exception the reference does not catch, by class name
+    /// (RecursionError from a pin record's JSON, unit 4).
+    Raised(&'static str),
 }
 
 impl From<OsError> for Failure {

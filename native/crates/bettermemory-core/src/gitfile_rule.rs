@@ -20,6 +20,7 @@
 //! read through [`Fs`].
 
 pub mod bounded;
+pub mod follow;
 pub mod format;
 pub mod gitdir;
 pub mod hostpath;

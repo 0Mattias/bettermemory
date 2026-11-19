@@ -89,6 +89,7 @@ fn text(value: &Value, root: &str) -> Vec<u8> {
 fn failure(f: Failure) -> Value {
     match f {
         Failure::Unsettled => json!({"e": "_Unsettled"}),
+        Failure::Raised(name) => json!({"e": name}),
         Failure::Value => json!({"e": "ValueError"}),
         Failure::Os(e) => match e.errno {
             Some(n) => json!({"e": e.class.name(), "n": n}),
@@ -377,6 +378,7 @@ fn native_live<F: Fs>(fs: &F, root: &str, limit: usize, query: &str) -> Value {
     };
     let name = |f: Failure| match f {
         Failure::Unsettled => json!("_Unsettled"),
+        Failure::Raised(name) => json!(name),
         Failure::Value => json!("ValueError"),
         Failure::Os(e) => json!([e.class.name(), e.errno]),
         Failure::NotPorted => json!("NotPorted"),

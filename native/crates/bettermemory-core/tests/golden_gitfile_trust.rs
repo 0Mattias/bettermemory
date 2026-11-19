@@ -174,6 +174,7 @@ fn failure(f: Failure) -> Value {
         Failure::NotPorted => json!({"native": "NotPorted"}),
         Failure::Value => json!({"e": "ValueError"}),
         Failure::Unsettled => json!({"e": "_Unsettled"}),
+        Failure::Raised(name) => json!({"e": name}),
         Failure::Os(e) => match e.errno {
             Some(n) => json!({"e": e.class.name(), "n": n}),
             None => json!({"e": e.class.name()}),

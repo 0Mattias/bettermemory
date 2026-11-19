@@ -89,7 +89,7 @@ fn load_error(e: LoadError) -> RecordError {
 
 /// `json.detect_encoding` and the `surrogatepass` decode `json.loads`
 /// gives bytes.
-fn decode_json_bytes(b: &[u8]) -> Result<Vec<u32>, RecordError> {
+pub(crate) fn decode_json_bytes(b: &[u8]) -> Result<Vec<u32>, RecordError> {
     let fail = RecordError::Raised("UnicodeDecodeError");
     if b.starts_with(&[0, 0, 0xFE, 0xFF]) {
         return utf32(&b[4..], true).ok_or(fail);

@@ -6062,6 +6062,140 @@ git 2.54.0 in scratch repositories:
 - **A relative `GIT_COMMON_DIR`:** checked. git takes it from the
   working directory; `_common_of` joins it to the git directory.
 
+### Unit 4: the pin records and the follow of a `.git` entry, as built (confirmed at 671a140d)
+
+**The cut, confirmed.** The ranges did not move: `gitfile_rule.py`
+147-219 (`gitfile_refusal`, `_refusal`) and 702-905 (`_recorded_refusal`,
+`_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`,
+`_view`, `names_git_dir`, `_entry_names`), with `gitdir_pin.recorded`
+(82-93) and `_read` (186-). One module, `gitfile_rule::follow`. No change
+to the `Fs` trait; `records::rows::decode_json_bytes` is now `pub(crate)`
+and `Failure` has a new variant, `Raised(&'static str)`.
+
+| Lines | Function | Native |
+|---|---|---|
+| 147-183 | `gitfile_refusal` | `follow::gitfile_refusal` |
+| 186-219 | `_refusal` | `follow::refusal` (answers `(refusal, provisional)`) |
+| 702-715 | `_recorded_refusal` | inside `follow::refusal` |
+| 718-755 | `_recorded_reading` | `follow::recorded_reading` |
+| 758-767 | `_spells` | `follow::spells` |
+| 770-785 | `_read_recorded` | `follow::read_recorded` |
+| 788-842 | `earliest_naming` | `follow::earliest_naming` |
+| 845-853 | `_view` | `follow::view` |
+| 856-860 | `names_git_dir` | `follow::names_git_dir` |
+| 863-905 | `_entry_names` | `follow::entry_names` (`Names::{Names, Other, Gone, Unknown}`) |
+| `gitdir_pin` 82-93 | `recorded` | `follow::recorded` |
+| `gitdir_pin` 186- | `_read` | `follow::pin_text` |
+
+**Inputs.** The record store is data: a `Records` trait answers a git
+directory's record bytes by its stat (`NoRecords` holds none). The
+store's place (`pins_dir`), its writes (`put`, `writable`) and its file
+names are not ported here. The git on PATH is data as in unit 3;
+`GIT_COMMON_DIR` is an argument. Bounded reads (the recorded tree's and
+each view's) go through unit 1's `Answers`, so a read that does not
+answer gives way as the reference's budget does. The `.git` file itself
+is read unbounded, as the reference reads it, up to `_GITFILE_LIMIT + 1`
+bytes however short each read comes back.
+
+**Outcomes.** A reason is the reference's text, as bytes, a recorded
+path in it encoded with `surrogateescape`, and a surrogate that cannot be
+so encoded kept in UTF-8's three-byte form. Where `os.fsencode` of a
+record's text raises (a lone surrogate outside U+DC80-U+DCFF) the
+reference catches the ValueError: the record reads as nothing found, the
+tree as gone. `Failure::Value` only where `realpath` of a view raises it,
+any other class it reports rising as that class.
+`Failure::Raised("RecursionError")`
+where `json.loads` of a deeply nested record raises: it escapes
+`recorded` and `gitfile_refusal` uncaught in the reference, and so here.
+`Failure::NotPorted` on Windows.
+
+**Recorded paths are `str`s.** `_spells` compares the record's `str`
+with the decoded folder and its decoded `realpath`, so the port compares
+code points, not encoded bytes: a record holding `\udcc3\udca9` encodes
+to the bytes of `\u00e9` yet spells no decoded folder, and is read as any
+other recorded tree is (refused where its `.git` cannot be read, a
+provisional follow where it is absent).
+
+**Windows flavour, declined whole** (`NotPorted`): every function here.
+The unit stands on units 2a, 2b and 3, which decline on Windows, and on
+`ntpath` joins, `realpath` and the record store's stat names, none
+ported.
+
+**`.git` entries that are not regular.** A FIFO, socket, endless file or
+dataless placeholder at `.git` is not read past the bound and never
+blocks; pinned in `follow_robustness.rs`, not in a shared fixture.
+
+**Fixtures.**
+- `gitfile_pin_text.jsonl` (ungated, every platform; 48 cases, 6,024 B):
+  a record's own text, to a pin or not. Byte-identical under 3.11 and
+  3.13. Long texts are spelled by shape (`pad`, `digits`); the `digits`
+  row is generated at the default integer digit limit whatever
+  `PYTHONINTMAXSTRDIGITS` says.
+- `gitfile_follow.jsonl` (POSIX; 5 cases, 86 queries, 14,747 B) and
+  `gitfile_follow_python.jsonl` (POSIX and Python; 1 case, 5 queries,
+  788 B). A case goes in the gated file by input: a tree with a loop, a
+  record nested deeper than 500 (3.11 raises at 1000, 3.13 at 10000), or
+  a `g` query whose strict walk meets an empty, `.` or `..` part in a
+  path, link or `commondir` text (a `commondir` of `..` parts alone, as
+  git writes it, climbs only through folders and is not gated). Cases (`tests/contract/gen_follow.py`):
+  - records for a separate git directory: valid, the tree rewritten,
+    locked, a stale object, damaged, another format, empty, not UTF-8, a
+    tree with a trailing slash, a lone surrogate;
+  - `.git` as a folder, a file naming here, elsewhere or nothing, a link
+    to each, a link owned by another tree (`w2/.git` to `own/.git`);
+  - linked worktrees (one with `config.worktree`, one with git's default
+    relative `../..` commondir), submodules, one moved;
+  - records whose tree holds escaped surrogates that encode to a real
+    name, under a locked folder and absent; a tree alone that cannot be
+    encoded (U+D800, and U+DC7F just below the escaped range);
+  - `_spells` with and without the spelling;
+  - gated: a loop, a deep record.
+
+**Tests.** `golden_gitfile_pin_text.rs` (every platform).
+`golden_gitfile_follow.rs` (unix): both POSIX files through `MemFs` and
+`StdFs`, records keyed by stat; on disk the answers are also asked of the
+reference live under `BM_REFERENCE_PYTHON`. `gitfile_follow_not_posix.rs`
+records the gap off unix. `follow_robustness.rs` (every platform):
+- hostile trees on a 512 KiB stack;
+- a tree changed underneath (rewritten, remade, other bytes of the same
+  length, a link swapped, removed and remade): judged as it is now;
+- a recorded tree or view that does not answer gives way;
+- a record nested too deep rises as `Raised("RecursionError")`;
+- `many_views_cost_linearly`: 100 against 1,000 views; a scan of the
+  views per view fails it in 3.0 s;
+- Windows declines; entries that are not read;
+- the escaped range's edges, and a reason that keeps a surrogate;
+- a `.git` file read in short pieces (over the bound and at it);
+- a link whose owner reaches nothing (`_same_folder` None).
+
+What a non-unix build uses: every item of `golden_gitfile_pin_text.rs`
+and `follow_robustness.rs`, the one test of `gitfile_follow_not_posix.rs`,
+nothing of `golden_gitfile_follow.rs`. A scratch copy with `cfg(unix)`
+as `cfg(any())` passes `clippy --all-targets -D warnings`.
+
+**Mutations, one per rule (37), each caught but one.** The equivalent
+one is said at the site: the dict test in `pin_text` (`get` of a
+non-dict is None). Survivors of the first run, given cases: the
+surrogate range (a record with a lone surrogate), the link's owner
+(`w2`), entries that are not regular and placeholders (robustness),
+`_spells` without the spelling, the recorded tree's folder sameness (a
+trailing slash), a linked worktree's `config.worktree`, a moved
+submodule. Survivors of a later review, given cases: a tree alone that
+cannot be encoded, the escaped range's lower edge, an owner that reaches
+nothing, the read loop under short reads.
+
+**What the reference does that git does not mean** (reported, not
+changed; the port follows the reference). Not checked against git in
+this unit; these are the reference's own answers:
+- `_refusal` of a target that does not exist follows provisionally
+  (`(None, True)`) rather than refusing.
+- A deeply nested record raises RecursionError out of `recorded` and
+  `gitfile_refusal`; the depth depends on the Python version.
+- `json.loads` takes `format` as `1.0` or `true`, records in UTF-16 and
+  UTF-32, and lone surrogates.
+- A record whose tree holds a lone surrogate names a tree that is
+  "gone", so the follow is allowed.
+
 ### Findings about the reference (reproduced, pinned; native agrees)
 
 Checked against git 2.54.0 (`git rev-parse --absolute-git-dir` in a
@@ -6548,7 +6682,7 @@ trait operations each unit uses, as the trait now stands:
 | 2b: identity helpers (built, `gitfile_rule::identity`) | `stat` and `samestat` (`_names_here`, `_names_folder`, `_same_folder`, `_tree_of`); `lstat_result` (`_names_folder`); `realpath` (`_tree_of`); `listdir` (`_working_tree_of`'s `scandir`, names only, read whole); `lstat_result` with `is_link()` (`_is_link`) |
 | 2 (as cut before, for reference): git's reading of a git directory, identity helpers | `open_no_follow`, `open`, `fstat`, `read` (`_read`); `lstat` (`_is_directory`), `lstat_result` with `placeholder()`, `readlink` (`_valid_headref`); `stat` and `samestat` (`_names_here`, `_names_folder`, `_same_folder`, `_tree_of`); `realpath_strict` (`_real`, `_real_to_last`) and `realpath` (`_tree_of`); `access(EXECUTE)` (`_git_found`); `listdir` (`_working_tree_of`'s `scandir`, names only); `lstat_result` with `is_link()` (`_is_link`) |
 | 3: the format, the trust of a `commondir` (built, `gitfile_rule::trust`) | `gitconfig::file::read_git_config`; `open`, `fstat`, `read` (`_commondir`, non-blocking); `stat` (`isdir`), `samefile` (`_registered`); `lstat_result` (`lexists`); `realpath` |
-| 4: records and the follow | `identity::is_link`, `identity::names_here`, `identity::same_folder` and `identity::working_tree_of` (built in 2b), `stat` with `placeholder()` (`_entry_names`); `open`, `read` (the `.git` file); `realpath`; unit 1's bounded reads |
+| 4: records and the follow (built, `gitfile_rule::follow`) | `identity::is_link`, `identity::names_here`, `identity::same_folder` and `identity::working_tree_of` (built in 2b), `stat` with `placeholder()` (`_entry_names`); `open`, `read` (the `.git` file); `realpath`; unit 1's bounded reads |
 | 5: judge and discovery | `identity::is_link` and `identity::same_folder` (built in 2b), `lstat` (`lexists`); `realpath`; everything of units 2-4. Obligation of whoever builds the `Ctx`: `cwd` is what `os.getcwd()` returned (physical, free of links); where `getcwd` fails, build no `Ctx` and decline whole |
 
 ### Tests (part 4)

@@ -224,6 +224,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "gitfile_identity_python.jsonl" => &[Python],
         // The strict walk of `_git_common` by input shape (`gen_trust.gated`).
         "gitfile_trust_python.jsonl" => &[Python],
+        // `_git_common`'s strict walk, a loop, a record past the JSON
+        // decoder's recursion limit, by input (`gen_follow.gated`).
+        "gitfile_follow_python.jsonl" => &[Python],
         // A link loop's class name is read as 3.11 and 3.13 read it, but
         // trees holding one are gated by the standing rule.
         "gitconfig_legacy_python.jsonl" => &[Python],
