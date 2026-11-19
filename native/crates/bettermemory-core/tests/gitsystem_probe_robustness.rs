@@ -317,7 +317,10 @@ fn a_probe_file_that_is_a_fifo_is_replaced_without_waiting() {
 }
 
 /// The time of one `run` over a tree `make` builds with `n` entries, the
-/// tree made again for each run and its making not timed.
+/// tree made again for each run and its making not timed. By the wall
+/// clock (`timing::wall`): each run makes, lists and removes files on
+/// disk, and time spent waiting on the file system is no time of the
+/// thread's own.
 fn timed(
     n: usize,
     make: &dyn Fn(&Path, usize),
@@ -328,9 +331,7 @@ fn timed(
     make(&state, n);
     let text = state.to_str().unwrap().to_owned();
     let p = place(&text);
-    let started = Instant::now();
-    run(&p, &state);
-    started.elapsed()
+    timing::wall(|| run(&p, &state))
 }
 
 fn built(state: &Path) -> PathBuf {

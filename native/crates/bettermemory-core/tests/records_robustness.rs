@@ -333,10 +333,11 @@ fn sources_of(n: usize) -> PyValue {
 
 fn time_actor(n: usize) -> std::time::Duration {
     let data = PyValue::Dict(vec![(PyValue::str("sources"), sources_of(n))]);
-    let start = std::time::Instant::now();
-    let actor = Actor::from_value(&data).expect("valid");
-    assert_eq!(actor.sources.len(), n);
-    start.elapsed()
+    timing::once(|| {
+        let actor = Actor::from_value(&data).expect("valid");
+        assert_eq!(actor.sources.len(), n);
+        actor
+    })
 }
 
 /// A dict field validates in linear time: 100,000 keys take at most a

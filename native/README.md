@@ -1753,7 +1753,22 @@ the least time of each (other work on the machine can only add to a
 time), and reads the claim "the large one takes under `factor` times the
 small one plus 50 ms" after three rounds and after each further round up
 to twelve; a claim missed by more than three times its bound fails at
-once. `ends_within` holds the least of up to twelve runs to a bound.
+once. The claims of one test process take turns. The time is the calling
+thread's own (`timing::once`): the processor time it used, read by
+`bettermemory_sys::thread_cpu_time` (`clock_gettime` with
+`CLOCK_THREAD_CPUTIME_ID`, on Linux, macOS and the other unix systems),
+and the wall clock where there is no such clock (Windows). On a loaded
+machine the wall clock counts the other processes too, and more on a
+large input than on a small one: a 10 ms run fits in one turn on a
+processor and a 400 ms run is shared the whole way, so forty times the
+work measured 88 to 236 times as long by the wall clock with load
+averages of 30 to 40 on 12 cores. The thread's clock does not count the
+time the thread waits (a sleep, another thread, a child process, a
+device), so a claim whose timed part waits takes `timing::wall`, or its
+cost would go uncounted: `gitsystem_probe_robustness` (files made, listed
+and removed on disk) and `golden_search_store` (an SQLite file read from
+disk). `ends_within` holds the least of up to twelve runs to a bound on
+the wall clock, the time a caller waits.
 For ten times the input the factor is `TENFOLD`, sixty: linear code
 costs ten times and quadratic a hundred, and thirty was missed by linear
 code on a busy machine, where the larger input leaves the processor's
@@ -1770,7 +1785,8 @@ loaded machine when their two sizes were timed one after the other);
 `timing_selftest` holds the helper itself to work of known growth: ten
 times the work passes a bound of thirty times and a hundred times the
 work fails it; forty times the work passes `TENFOLD` and a hundred times
-fails it.
+fails it; on unix the thread's clock moves with work and not across a
+sleep.
 
 Timing the tokenizer against the reference: both take every input of
 `lexicon.jsonl` as text and return its tokens (`tokenize_str` on a `&str`;
@@ -1883,7 +1899,7 @@ that Unicode too.
 | `control_tokens_kills` (3), `control_tokens_robustness` (4) | none | i |
 | `golden_gitconfig`: `gitconfig_every_case` | `gitconfig.jsonl` | i |
 | `gitconfig_robustness` (7) | none | i |
-| `timing_selftest` (8): the time claims of `tests/timing` on work of known growth | none | i |
+| `timing_selftest` (9): the time claims of `tests/timing` on work of known growth, and its clock | none | i |
 | `golden_gitconfig_wildmatch`: `gitconfig_wildmatch_every_case` | `gitconfig_wildmatch.jsonl` | i |
 | `gitconfig_wildmatch_robustness` (8) | none | i |
 | `golden_origin_remote`: `origin_remote_every_case` | `origin_remote.jsonl` | i |

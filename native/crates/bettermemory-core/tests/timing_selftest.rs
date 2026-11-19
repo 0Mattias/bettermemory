@@ -5,6 +5,12 @@
 //! times fails it; a claim missed by far fails in three rounds. The amount
 //! of work is sized on the machine first, so the small size takes about
 //! ten milliseconds in any build.
+//!
+//! The work is arithmetic on the test's own thread, which waits on
+//! nothing, so `timing::once` reads all of its cost on the thread's clock
+//! and these claims hold however loaded the machine is. Where unix gives
+//! the thread a clock, that clock moves with work and not across a sleep;
+//! elsewhere `once` is the wall clock.
 
 mod timing;
 
@@ -20,8 +26,8 @@ fn work(steps: u64) -> u64 {
     acc
 }
 
-/// The steps that take about `ms` milliseconds here, from the least of
-/// five timed probes.
+/// The steps that take about `ms` milliseconds here, by `timing::once`,
+/// from the least of five timed probes.
 fn steps_for(ms: u64) -> u64 {
     const PROBE: u64 = 2_000_000;
     let took = (0..5)
@@ -96,7 +102,7 @@ fn a_bound_is_held_by_the_least_run() {
     timing::ends_within(
         "ten milliseconds of work",
         Duration::from_secs(5),
-        &mut || timing::once(|| work(small)),
+        &mut || timing::wall(|| work(small)),
     );
 }
 
@@ -107,8 +113,39 @@ fn work_past_its_bound_fails() {
     timing::ends_within(
         "ten milliseconds of work",
         Duration::from_micros(100),
-        &mut || timing::once(|| work(small)),
+        &mut || timing::wall(|| work(small)),
     );
+}
+
+/// The thread's clock counts the thread's work and not its waits: about
+/// a hundred milliseconds of work reads at least twenty, and 200 ms asleep
+/// reads under ten, though the wall clock sees all of the sleep.
+#[cfg(unix)]
+#[test]
+fn the_clock_counts_work_and_not_a_sleep() {
+    let small = steps_for(10);
+    let worked = timing::once(|| work(small * 10));
+    assert!(
+        worked >= Duration::from_millis(20),
+        "a hundred milliseconds of work read {worked:?}"
+    );
+    let nap = || std::thread::sleep(Duration::from_millis(200));
+    let slept = timing::once(nap);
+    assert!(
+        slept < Duration::from_millis(10),
+        "200 ms asleep read {slept:?}"
+    );
+    let waited = timing::wall(nap);
+    assert!(waited >= Duration::from_millis(200), "{waited:?}");
+}
+
+/// Without a clock of the thread's own, `once` is the wall clock and
+/// counts a sleep.
+#[cfg(not(unix))]
+#[test]
+fn elsewhere_the_clock_is_the_wall_clock() {
+    let slept = timing::once(|| std::thread::sleep(Duration::from_millis(200)));
+    assert!(slept >= Duration::from_millis(200), "{slept:?}");
 }
 
 #[test]

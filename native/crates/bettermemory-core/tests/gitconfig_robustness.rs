@@ -5,15 +5,9 @@
 
 mod timing;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bettermemory_core::gitconfig::{git_bool, git_entries, git_int, Refused};
-
-fn timed<T>(f: impl FnOnce() -> T) -> (T, Duration) {
-    let start = Instant::now();
-    let out = f();
-    (out, start.elapsed())
-}
 
 fn with(head: &[u8], piece: &[u8], n: usize, tail: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(head.len() + piece.len() * n + tail.len());
@@ -85,9 +79,11 @@ fn a_long_subsection_over_many_keys_is_kept_once() {
     data.extend(with(b"", b"k\n", 1 << 20, b""));
     let mut count = 0;
     timing::ends_within("a long subsection", Duration::from_secs(20), &mut || {
-        let (entries, took) = timed(|| git_entries(&data).expect("read"));
-        count = entries.len();
-        took
+        timing::wall(|| {
+            let entries = git_entries(&data).expect("read");
+            count = entries.len();
+            entries
+        })
     });
     assert_eq!(count, 1 << 20);
 }
@@ -114,7 +110,7 @@ fn texts_read_in_linear_time() {
     for (head, piece, tail) in shapes {
         let small = with(head, piece, 100_000, tail);
         let large = with(head, piece, 1_000_000, tail);
-        let time = |data: &[u8]| timed(|| git_entries(data).map(|e| e.len())).1;
+        let time = |data: &[u8]| timing::once(|| git_entries(data).map(|e| e.len()));
         timing::grows_within(
             &format!("{piece:?} 100k and 1M times"),
             timing::TENFOLD,

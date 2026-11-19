@@ -642,7 +642,9 @@ fn awkward_queries_never_panic() {
 
 /// The time of the first pool drawn from the small store whose digest is
 /// current, after `n` unseen `memory_delete` rows naming distinct records
-/// the store does not hold: the catch-up reads every one.
+/// the store does not hold: the catch-up reads every one. By the wall
+/// clock (`timing::wall`): the rows are read from an SQLite file on disk,
+/// and time spent waiting on a read is no time of the thread's own.
 fn time_catch_up(n: usize) -> std::time::Duration {
     let lines = jsonl(FILE);
     let header = &lines[0];
@@ -660,22 +662,22 @@ fn time_catch_up(n: usize) -> std::time::Duration {
         admissions(&entry["admissions"]),
     );
     let reader = PoolReader::new(&fx.store);
-    let start = std::time::Instant::now();
-    let drawn = reader
-        .resolve_search_pool(
-            "docker",
-            &Filters::default(),
-            pool::POOL_SIZE,
-            Some(&fx.fingerprint),
-        )
-        .expect("a pool");
-    let stats = drawn
-        .statistics(&["docker".to_owned()])
-        .expect("statistics")
-        .expect("some");
-    let took = start.elapsed();
-    assert!(stats.avgdl.is_some(), "the digest is brought forward");
-    took
+    timing::wall(|| {
+        let drawn = reader
+            .resolve_search_pool(
+                "docker",
+                &Filters::default(),
+                pool::POOL_SIZE,
+                Some(&fx.fingerprint),
+            )
+            .expect("a pool");
+        let stats = drawn
+            .statistics(&["docker".to_owned()])
+            .expect("statistics")
+            .expect("some");
+        assert!(stats.avgdl.is_some(), "the digest is brought forward");
+        (drawn, stats)
+    })
 }
 
 /// The catch-up's ids are kept in first-seen order with a set beside

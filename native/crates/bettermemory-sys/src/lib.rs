@@ -158,9 +158,93 @@ pub fn errno_name(_code: i32) -> Option<&'static str> {
     None
 }
 
+/// The processor time the calling thread has used so far, in user and
+/// kernel mode alike: `clock_gettime(CLOCK_THREAD_CPUTIME_ID)`. Only
+/// differences between two readings on the same thread mean anything.
+///
+/// The test suite's growth claims read it (`tests/timing` of
+/// `bettermemory-core`): time the thread waits (on the scheduler while
+/// other processes run, on a sleep, on another thread or process, on a
+/// device) is not counted, so on a loaded machine it measures the work
+/// itself where the wall clock measures the load too.
+///
+/// None where the clock is refused (the call fails, or answers a value
+/// no `Duration` holds).
+#[cfg(unix)]
+pub fn thread_cpu_time() -> Option<std::time::Duration> {
+    // SAFETY: `timespec` holds integers only (on some targets also an
+    // integer padding field), for which all-zero bytes are a valid value.
+    let mut now: libc::timespec = unsafe { std::mem::zeroed() };
+    // SAFETY: `now` is a live `timespec` on this stack, borrowed mutably for
+    // the length of the call, and `clock_gettime` writes that struct and no
+    // other memory of this process.
+    let status = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut now) };
+    if status != 0 {
+        return None;
+    }
+    let seconds = u64::try_from(now.tv_sec).ok()?;
+    let nanos = u32::try_from(now.tv_nsec)
+        .ok()
+        .filter(|n| *n < 1_000_000_000)?;
+    Some(std::time::Duration::new(seconds, nanos))
+}
+
+/// Not POSIX: no thread clock here (Windows has `GetThreadTimes`, which
+/// the standard library does not reach), so None, and a caller times by
+/// the wall clock.
+#[cfg(not(unix))]
+pub fn thread_cpu_time() -> Option<std::time::Duration> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::fsync;
+
+    /// The thread clock moves with work done on this thread and not while
+    /// the thread sleeps or waits on another thread's work.
+    #[cfg(unix)]
+    #[test]
+    fn the_thread_clock_counts_this_threads_work_only() {
+        use super::thread_cpu_time;
+        use std::hint::black_box;
+        use std::time::{Duration, Instant};
+        let spin = |d: Duration| {
+            let until = Instant::now() + d;
+            let mut n = 0u64;
+            while Instant::now() < until {
+                n = black_box(n.wrapping_add(1));
+            }
+            n
+        };
+        // Spun for 100 ms of the wall clock: the thread runs for some of it
+        // however loaded the machine is, and for no more than all of it.
+        let wall = Instant::now();
+        let start = thread_cpu_time().expect("a thread clock on unix");
+        black_box(spin(Duration::from_millis(100)));
+        let worked = thread_cpu_time().expect("a thread clock") - start;
+        let elapsed = wall.elapsed();
+        assert!(
+            worked > Duration::ZERO && worked <= elapsed + Duration::from_millis(1),
+            "{worked:?} of the thread's time in {elapsed:?}"
+        );
+        let before = thread_cpu_time().expect("a thread clock");
+        std::thread::sleep(Duration::from_millis(300));
+        std::thread::spawn(move || spin(Duration::from_millis(300)))
+            .join()
+            .expect("the other thread");
+        let waited = thread_cpu_time().expect("a thread clock") - before;
+        assert!(
+            waited < Duration::from_millis(100),
+            "300 ms asleep and 300 ms waiting on another thread moved it {waited:?}"
+        );
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn there_is_no_thread_clock_elsewhere() {
+        assert_eq!(super::thread_cpu_time(), None);
+    }
 
     /// `access` on this test's own file: the bits as set, a missing path
     /// false. Root reads and writes past the bits, so only the execute
