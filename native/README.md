@@ -25,6 +25,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns, pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d` | `unicode.jsonl`, `unicode_sequences.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
+| `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report | `log_chain.jsonl`, `log_keyring.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
@@ -64,6 +65,151 @@ Dependencies: `sha2`, `subtle` (constant-time MAC comparison), `zeroize`
 `bundled`, `limits` and `hooks` (its bundled SQLite is 3.54.1; nothing
 async); the tests also use `serde_json` to read the
 golden files.
+
+## Path candidates (`verify_candidates.py`)
+
+The candidate logic path verification stands on. The module imports
+nothing from the package except `_caches` (the memo's clearer), so it is
+built leaves first. It holds about 1,250 lines of Python; its port is more
+than 600 lines of Rust, so it is cut into four units.
+
+### The module by function
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| the caps, `_TRAILING_PUNCT`, `_WELLKNOWN_ROUTE_SEGMENTS`, `_PLACEHOLDER_PATHS`, `_PLACEHOLDER_PREFIXES`, `_CHECKABLE_CITATION_EXTENSIONS`, `BODY_PARSE_ENTRIES` | 37-72, 133-145, 250-323, 487 | nothing | unit 1, built |
+| `_refused_spelling` | 880-903 | nothing | unit 1, built |
+| `_escapes_root` (with `_DRIVE_PREFIX_RE`) | 906-942 | nothing | unit 1, built |
+| `_fold_altsep` | 970-988 | nothing (the separators are arguments) | unit 1, built |
+| `_is_placeholder_path` | 1210-1236 | nothing | unit 1, built |
+| `_is_single_segment_routelike` | 945-967 | nothing | unit 1, built |
+| `_bounded_scan_text` | 529-546 | nothing | unit 1, built |
+| `_trim_candidate` | 680-715 | nothing | unit 1, built |
+| `_command_shaped` | 718-770 | nothing | unit 1, built |
+| `_anchored_candidate` | 773-803 | nothing | unit 1, built |
+| `_LINE_SUFFIX_RE` | 125 | nothing | unit 1, built (hand matcher) |
+| `_normalize_candidate` | 806-877 | nothing | unit 1, built |
+| `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE`, `_RELATIVE_CITATION_RE` | 87, 107-119, 184-186, 238-243 | nothing | unit 2 |
+| `_normalize_for_compare` | 326-343 | the home directory (`Path.expanduser`) | unit 3 |
+| `_scan_candidates`, `_extract_candidates` | 549-677 | the home directory, through `_normalize_for_compare` | unit 3 |
+| `_body_key`, `_recall_parse`, `_keep_parse`, `_clear_body_parses`, `_CANDIDATES`, `_ANCHORS` | 487-526 | the home directory (in the key); a lock | unit 3 |
+| `_claim_key`, `_ClaimKeys` | 346-450 | the home directory, `realpath` and `lstat` (the file-system trait), `os.name` and `normcase` | unit 4 |
+| `_is_under_home`, `_home_ignores_case` | 991-1095 | the home directory, `os.sep`/`os.altsep`, `samefile` | unit 4 |
+| `_is_multi_segment_routelike` | 1098-1207 | the above and `isdir` | unit 4 |
+| `_path_exists` | 1239-1248 | `Path.expanduser().exists()` | unit 4 |
+
+Unit 2 is the four extraction patterns as hand matchers; unit 3 the
+candidate scan and the body parse memo, with the home directory an
+argument; unit 4 the reads of the home and the disk, through the
+file-system trait in `fsdata`. `_RELATIVE_CITATION_RE` and
+`_CHECKABLE_CITATION_EXTENSIONS` are read by `verify_anchoring.py`, not
+here.
+
+### Unit 1, built (`verify_candidates::validate`)
+
+Text is code points (`&[u32]`), as a Python `str` is: a body may hold a
+lone surrogate, and every length, cap and index counts code points.
+
+- `refused_spelling`: two separators first (either slash in either
+  place), a NUL, or `://` anywhere.
+- `escapes_root`: refused; rooted after `\` is folded to `/`; a drive
+  prefix (`_DRIVE_PREFIX_RE`, `^[A-Za-z]:`, ASCII letters only, two
+  comparisons); or a `..` that takes the depth below zero at any point
+  of the walk.
+- `fold_altsep`: `str.replace(altsep, sep)` (leftmost, not overlapping)
+  when `altsep` is given and not empty.
+- `is_placeholder_path`: a listed placeholder or under a listed prefix,
+  as spelled or with the text after its last `.` cut, when that `.` is in
+  the last segment.
+- `is_single_segment_routelike`: exactly one `/` anywhere, and `s[1:]`
+  non-empty and either a well-known web file name after `str.lower`
+  (the crate's `unicode::lower`, so `İ` and the Kelvin sign fold as
+  Python folds them) or without a dot.
+- `bounded_scan_text`: at most 32,768 code points; past that, cut at the
+  last space, newline or tab when it is past index 0.
+- `trim_candidate`: `str.strip` (the crate's `str.isspace` table),
+  `\ ` read as a space, `$HOME/` and `${HOME}/` spelled `~/`, trailing
+  punctuation cut with a `)` cut only while `)` outnumbers `(`, then
+  trailing slashes cut down to one code point. The reference counts both
+  parentheses again for each `)` it looks at; the port counts once and
+  decrements, which answers the same (no `(` is ever cut) in linear time.
+- `command_shaped`: only a space or a tab makes a candidate spaced;
+  `str.split` (any whitespace) cuts it into words. The first word's
+  boundaries are its slashes and backslashes, one more for a drive
+  (`str.isalpha` of its first code point) or a `~/` start; a later word
+  without a slash is an argument when it starts with `-`, or is
+  `str.isalpha` and its first code point `str.islower`. An empty split
+  raises `IndexError` (`Err(IndexError)`), as the reference does.
+- `anchored_candidate`: home (`~/`, longer than two code points, no
+  placeholder), root (`/`, at least three, no placeholder, no single
+  segment route), drive (`str.isalpha`, `:`, a separator), else None.
+- `line_suffix`: `_LINE_SUFFIX_RE.match(s).group(1)`.
+- `normalize_candidate`: the gates in the reference's order: over 576
+  code points raw, empty or over 512 trimmed, refused, `://`, the remote
+  `@` before the first colon and the first slash, the line suffix cut,
+  a glob or template character, a command, the anchor.
+- `is_lower`: `str.islower` of one code point: category `Ll` (the
+  crate's table) or the 28 `Other_Lowercase` ranges of Unicode 15.1.0,
+  written out here and pinned against every code point by the golden
+  file.
+
+**The one pattern.** `_LINE_SUFFIX_RE`,
+`^(.+[\\/][^\\/:]+):\d+(?:[-:]\d+)?$`, is a hand matcher, not the
+`regex` crate (whose `$` and `\d` differ). The tail after the group can
+hold no separator, so whatever start the engine's backtracking tries
+first, the only start that can succeed has the group end at the first `:`
+after the last separator. That separator must be past index 0 with no
+newline before it (`.` refuses a newline), and at least one code point
+must sit between it and the colon (`[^\\/:]` accepts a newline). The tail
+is `\d+` (Unicode decimal digits, the crate's `re` digit table),
+optionally `-` or `:` and `\d+`, then the end or a newline that is the
+last code point (`$`). The exhaustive run of the golden file (every text
+of up to six code points over `a / \ : 1 - newline`) pins this reading.
+
+No crate was added.
+
+### What the reference does that looks wrong (not changed)
+
+- A candidate that trims to whitespace alone raises. `\ \ .` in
+  backticks strips to itself, reads as two spaces and a period, loses the
+  period, and `_command_shaped` takes `parts[0]` of an empty split:
+  `IndexError` out of `_normalize_candidate`, and so out of
+  `_scan_candidates` for any body holding `` `\ \ .` ``. Reproduce:
+  `verify_candidates._normalize_candidate("\\ \\ .")`. The port answers
+  `Err(IndexError)`.
+- `$` admits a final newline: `_normalize_candidate("/a/foo.py:1\n.")`
+  is `/a/foo.py` (the period trimmed, the newline left, the suffix cut).
+- `_MAX_BODY_SCAN_BYTES` counts code points, not bytes, and the cut
+  looks only for a space, a newline or a tab: a body whose only
+  whitespace past index 0 is `\r` or U+00A0 keeps the hard cut its
+  docstring says never happens mid-token. Whitespace at index 0 alone
+  also keeps the hard cut.
+- `_normalize_candidate`'s own `"://" in s` test can never refuse
+  anything: `_refused_spelling` refused it one line before.
+- `_is_single_segment_routelike` reads `s[1:]` whatever `s[0]` is:
+  `a/b` is routelike. Its only caller passes texts that start with `/`.
+- Only a space or a tab marks a spaced candidate, so a no-break space
+  inside an argument-shaped path (`/a/b x c/d`) splits it as
+  whitespace yet the candidate is refused as a command, while
+  `/a/b x/c` alone is kept with the no-break space in it.
+
+### Tests
+
+| test | golden file | class |
+| --- | --- | --- |
+| `golden_verify_candidates`: `verify_candidates_every_case`, `verify_candidates_constants` | `verify_candidates.jsonl` | i |
+| `golden_verify_candidates`: `verify_candidates_unicode_every_case` | `verify_candidates_unicode.jsonl` | ii (Unicode) |
+| `verify_candidates_kills` (14) | none | i |
+| `verify_candidates_robustness` (5) | none | i |
+
+`gen_verify_candidates.py` writes two files. A case whose texts are all
+ASCII goes in `verify_candidates.jsonl` (every table answers ASCII the
+same in every Unicode release); one with a code point past ASCII, and the
+ranges `str.islower` holds over every code point, go in
+`verify_candidates_unicode.jsonl`, gated on the Unicode data. No case
+depends on the Python release or the platform. Exhaustive runs record
+only the texts whose answer is not the default, and the test enumerates
+the same texts in `itertools.product`'s order, so a missing hit fails.
 
 ## Limits and key material
 
@@ -1403,6 +1549,8 @@ that Unicode too.
 | `golden_datetime_edges`: `datetime_edges_every_case` | `datetime_edges.jsonl` | ii (Python) |
 | `golden_json_edges`: `json_edges_every_case` | `json_edges.jsonl` | ii (Python) |
 | `golden_lexicon`: `lexicon_every_case`, `lexicon_fingerprint` | `lexicon.jsonl` | ii (Unicode) |
+| `golden_verify_candidates`: `verify_candidates_every_case`, `verify_candidates_constants` | `verify_candidates.jsonl` | i |
+| `golden_verify_candidates`: `verify_candidates_unicode_every_case` | `verify_candidates_unicode.jsonl` | ii (Unicode) |
 | `golden_fold`: `fold_every_case` | `fold.jsonl` | ii (Unicode, pydantic-core) |
 | `golden_fold`: `hostile_inputs_never_panic` | `fold.jsonl` as input only | i |
 | `fold_writer` | `fold.jsonl`'s `populated` prelude as input only | i |

@@ -68,6 +68,7 @@ from . import (
     gen_gitfile_leaves,
     gen_json,
     gen_lexicon,
+    gen_verify_candidates,
     gen_log,
     gen_log_ring,
     gen_mcp,
@@ -103,6 +104,8 @@ GOLDEN = Path(__file__).parent / "golden"
 
 GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "lexicon": gen_lexicon.generate,
+    "verify_candidates": gen_verify_candidates.generate,
+    "verify_candidates_unicode": gen_verify_candidates.generate_unicode,
     "canonical_json": gen_json.generate,
     "log_chain": gen_log.generate,
     "log_keyring": gen_log_ring.generate,
@@ -222,6 +225,7 @@ UNIDATA_VERSION = "15.1.0"
 UNICODE_GATED = frozenset(
     {
         "lexicon",
+        "verify_candidates_unicode",
         "unicode",
         "unicode_sequences",
         "store",

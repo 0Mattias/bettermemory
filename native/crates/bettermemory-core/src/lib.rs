@@ -10,6 +10,8 @@
 //! - [`unicode`]: normalization, case mapping and the character classes,
 //!   over tables generated from the reference Python's Unicode 15.1.0;
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
+//! - [`verify_candidates`]: the path candidates verification reads, its
+//!   first unit (one candidate validated);
 //! - [`log`]: the row MAC, the key ring and `verify_chain`;
 //! - [`search`]: `search.search` over records in memory, bit for bit;
 //! - [`records`]: the reference's record models (memory, tombstone,
@@ -73,3 +75,4 @@ pub mod search;
 pub mod store;
 pub mod toml;
 pub mod unicode;
+pub mod verify_candidates;

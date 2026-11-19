@@ -185,6 +185,7 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `str.isspace` and `str.isalnum` past ASCII (`gen_control_tokens`).
         "control_tokens_unicode.jsonl" => &[Unicode],
         "lexicon.jsonl"
+        | "verify_candidates_unicode.jsonl"
         | "lexicon_spelling_tables.json"
         | "unicode.jsonl"
         | "unicode_sequences.jsonl"
