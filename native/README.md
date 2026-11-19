@@ -8470,12 +8470,18 @@ What the reference has and this build does not, by area:
   past its text (the reads, the write, the remint), the origin's
   settling (`origin.py`), `location.py` and the rest of
   `location_git.py`.
-- Membership's writes and the caller's resolution (its admission is
-  `store::caller`).
-- Each hit's snippet, signals and drift report.
-- The write gates past the control tokens: `credentials.py` after its
-  vendor-prefixed detectors (the value gate, the generic and URI
-  patterns, spans and markers), and the review.
+- Membership's writes, and of the caller's resolution its file roots
+  and workspace declaration (`identity` resolves the rest; its
+  admission is `store::caller`).
+- Each hit's signals and drift report: `claims.py` past its leaves (the
+  literal reader, the drift index, the declare-time oracle),
+  `verify_candidates.py` past the validation of one candidate, and
+  `verify.py`. The history readers of `origin_history.py` (its leaves
+  and memo are built).
+- The write gates past the control tokens and the dedup: `credentials.py`
+  after its vendor-prefixed detectors (the value gate, the generic and
+  URI patterns, spans and markers), and the review. The dedup's store
+  side reads through a trait not yet wired to `store::digest`.
 - The daemon, the MCP tools, the hooks and the command line.
 - Reading and writing the key ring's files on disk (the ring here holds
   their bytes); `datetime.astimezone` of a naive value (the reference
