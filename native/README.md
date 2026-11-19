@@ -30,6 +30,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report | `log_chain.jsonl`, `log_keyring.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
+| `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
@@ -336,6 +337,108 @@ string, and the only limit before it is the MCP SDK's 4 MiB request body
 (about 400,000 such terms). What upstream does bound is the records: the
 handler ranks a pool it draws from FTS5 (`handlers/search.py`,
 `POOL_SIZE` 200), not the whole store. No cap is added here.
+
+## Write-time dedup (`search_dedup.py`)
+
+`search_dedup` reproduces the whole reference module (559 lines), built
+as one unit: it needs nothing from the machine but the tokenizer, and
+its store half reads a store only through methods the caller supplies.
+
+### Map, by function
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `HIGH_SIMILARITY`, `MEDIUM_SIMILARITY`, `_CONTAINMENT_MIN_TOKENS`, `_CONTAINMENT_CEILING` | 47-66 | nothing | built (constants) |
+| `_content_token_set` | 69-85 | the tokenizer | built (`content_token_set`) |
+| `_raw_content_token_set` | 88-93 | the tokenizer | built (`raw_content_token_set`) |
+| `RAW_TOKEN_SET_ENTRIES`, `_RAW_TOKEN_SETS`, `clear_raw_token_set_cache`, `raw_content_tokens` | 117-148 | a process-wide cache and its lock | built (`RawTokenCache`, a value the caller holds; `_caches.register` has no counterpart) |
+| `_pairwise_content_jaccard` | 151-229 | nothing | built |
+| `similarity_bound` | 232-253 | nothing | built (counts as `i64`) |
+| `find_similar`, `_find_similar_jaccard` | 256-287, 415-431 | the cache | built |
+| `_score_similar_jaccard`, `_build_active_hit`, `_build_tombstone_hit`, `_active_sort_key`, `_tombstone_sort_key` | 314-412 | the cache | built (private; `Pass` picks the builder, labels and key) |
+| `find_similar_tombstones`, `_find_similar_tombstones_jaccard` | 454-499 | the cache | built |
+| `_similar_in`, `find_similar_in`, `find_similar_tombstones_in` | 513-559 | a store's digest | built (`DigestStore`) |
+| `models.snippet_for`, `_truncate_at_word` (default 200) | models 1057-1068, 1111-1127 | nothing | built (`snippet_for`) |
+
+### What each part reproduces, and the decisions
+
+- **The cache.** `RawTokenCache` is the reference's `OrderedDict` LRU
+  keyed on the text: a hit moves the key to the end, a miss tokenizes
+  outside the lock and inserts at the end (a key another thread inserted
+  meanwhile keeps its place and takes the new value, as `d[k] = v` does),
+  then the oldest keys go while more than `entries` are held. `entries`
+  is the reference's `RAW_TOKEN_SET_ENTRIES`, a Python int its tests
+  patch; under a negative bound the loop empties the cache and then
+  `popitem` raises `KeyError` (`DedupError::EmptyCache`), which the port
+  reproduces. The process-wide cache becomes a value every entry point
+  takes, so no state is ambient; `keys()` shows the order for the tests.
+  Only the order and the bound are observable: a held set equals a
+  recomputed one.
+- **The score.** `pairwise_content_jaccard` expands a compound only where
+  the other side lacks it, drops stopword parts, and divides two counts
+  (each exact in an `f64`, so one correctly rounded division, as Python's
+  `int / int`). `max` and `min` pick as Python's do between equal values.
+  `similarity_bound` takes its counts as `i64` and divides them with
+  `search::num::int_true_div` (exact for magnitudes under 2**72, so
+  `n + m - shared` is computed in `i128`).
+- **The sort.** The reference sorts hits on `(similarity, datetime)`
+  tuples with `reverse=True` (the rounded similarity, so two raw scores
+  that round alike tie). A tie compares the datetimes, and Python raises
+  `TypeError` for a naive against an aware one. Which pairs CPython's
+  `list.sort` compares depends on its algorithm, but within a group of
+  equal similarity holding both kinds it must compare one of each: if it
+  never did, every comparison it made would answer the same whether every
+  naive value lay before every aware one or after, so it would order the
+  group alike in two orders that need different answers. So the port
+  raises (`DedupError::NaiveAware`) exactly when such a group exists, and
+  otherwise answers the stable descending order. Aware values order by
+  their instant; naive by their wall clock. `records::Memory` can hold a
+  naive datetime (pydantic keeps one), so the case is reachable.
+- **The hits.** `SimilarHit` carries the fields the model does;
+  `confidence` is the enum, `relevance` one of the four labels, and the
+  tombstone pass alone fills `removed_at` and `removed_reason`. Records
+  reach the scorer through `Candidate`, implemented for `Memory` and
+  `Tombstone`; a store's `LightRecord` is the store's own type.
+- **Order of effects.** `find_similar_tombstones` of an empty list answers
+  before the body is tokenized (the cache is untouched); `find_similar`
+  of an empty list tokenizes the body. A record with no tokens is skipped
+  before scoring, a score of zero is dropped whatever the medium
+  threshold, and a threshold is reached at equality (NaN reaches none).
+- **The store.** `DigestStore` names the five methods `_similar_in` calls:
+  `digest_candidates`, `light_records`, `digest_memo` (given the
+  computation as a closure over the store), `load_all` and
+  `load_tombstones`. The scoring dict keeps an id's first place and its
+  last tokens, so `light_records` is handed the ids in that order; a
+  record the light reader returns whose id was not scored raises
+  `KeyError` (`DedupError::MissingKey`), as `scoring[record.id]` does. A
+  memo answer of `None` falls back to the full scan. Wiring the trait to
+  `store::digest` is left for the unit that ports `store_digest`'s
+  `digest_candidates`, `light_records` and `digest_memo`.
+- **`snippet_for`.** `str.strip` reads `str.isspace` (the crate's Unicode
+  15.1 table); the back-off reads only a space, a newline and a tab at or
+  past offset 160; `rstrip(" ,;:.-")` then `"..."`.
+
+No regular expression is used by this module; the tokenizer's are the
+`lexicon` module's.
+
+### Fixtures and tests
+
+`tests/contract/gen_search_dedup.py` writes `search_dedup.jsonl` (120
+cases, ASCII text only, class i) and `search_dedup_unicode.jsonl` (18
+cases, text past ASCII and lone surrogates, gated on Unicode: the
+tokenizer and `str.strip` read it). Each case starts from an empty cache;
+the scripted store logs every call. `golden_search_dedup` compares each
+case whole; `search_dedup_kills` (12) pins inputs a plausible wrong port
+answers otherwise (symmetric expansion, a kept stopword part, the
+containment gate at 7, sorting the unrounded score, wall-clock order of
+aware values, a tie of naive and aware, the cache's touch and negative
+bound, the snippet's back-off at 159, a dict's first place and last
+value); `search_dedup_robustness` (6) feeds a body of 100,000 words, 6,000
+records past the cache bound, compounds of 50,000 parts and 100,000
+dashes, 3,000 tied records, the `i64` and float extremes and a million
+ideographic spaces. The reference takes 1.76 s, 1.22 s, 0.49 s and 0.10 s
+on the first four (Apple M-series); the whole robustness file runs in
+2.7 s in a debug build.
 
 ## The store, read only
 
@@ -1678,6 +1781,9 @@ that Unicode too.
 | `golden_unicode`: `unicode_every_part`, `unicode_sequences_every_record` | `unicode.jsonl`, `unicode_sequences.jsonl` | ii (Unicode) |
 | `unicode_tables_regen`: `regenerating_the_unicode_tables_gives_the_same_bytes` | `src/unicode/tables.rs` | ii (Unicode) |
 | `golden_search`: `search_every_query_every_mode` | `search.jsonl` | iii |
+| `golden_search_dedup`: `search_dedup_every_case` | `search_dedup.jsonl` | i |
+| `golden_search_dedup`: `search_dedup_unicode_every_case` | `search_dedup_unicode.jsonl` | ii (Unicode) |
+| `search_dedup_kills` (12), `search_dedup_robustness` (6) | none | i |
 | `golden_search`: `search_ranker_every_query_every_mode` | `search_ranker.jsonl` | iii |
 | `sqlite_spike`: `fts5_prefilter_matches_the_reference_sqlite` | `search.jsonl` (bm25 bits) | iii |
 | `golden_search_store`: `every_query_every_caller_pool_and_hits`, `every_store_line`, `offline_runs_equal_the_in_memory_ranking` (and three class (i) checks: the clamp, the digest's fingerprint, awkward queries) | `search_store.jsonl`, `search.jsonl` | iii |

@@ -18,6 +18,8 @@
 //!   first unit (one candidate validated);
 //! - [`log`]: the row MAC, the key ring and `verify_chain`;
 //! - [`search`]: `search.search` over records in memory, bit for bit;
+//! - [`search_dedup`]: write-time dedup, the Jaccard scorer and its
+//!   token cache;
 //! - [`records`]: the reference's record models (memory, tombstone,
 //!   episode, origin, actor, link) validated from a payload or a row and
 //!   written back, with pydantic's errors;
@@ -78,6 +80,7 @@ pub mod printable;
 pub mod pyvalue;
 pub mod records;
 pub mod search;
+pub mod search_dedup;
 pub mod store;
 pub mod toml;
 pub mod unicode;

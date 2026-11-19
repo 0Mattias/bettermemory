@@ -200,6 +200,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_admission.json"
         | "store_real.json"
         | "store_real.sqlite" => &[Unicode, Platform],
+        // The tokenizer and `str.strip` past ASCII (`gen_search_dedup`).
+        "search_dedup_unicode.jsonl" => &[Unicode],
         "models.jsonl" => &[Pydantic],
         // `str.strip`, `str.lower` and NFKC past ASCII (`gen_origin_remote`).
         "origin_remote_unicode.jsonl" => &[Unicode],
