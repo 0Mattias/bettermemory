@@ -227,6 +227,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitfile_trust": gen_trust.generate,
     "gitfile_trust_python": gen_trust.generate_python,
     "gitfile_pin_text": gen_follow.generate_text,
+    "gitfile_pin_text_python": gen_follow.generate_text_python,
     "gitfile_follow": gen_follow.generate,
     "gitfile_follow_python": gen_follow.generate_python,
 }
@@ -312,6 +313,9 @@ PYTHON_VERSION = "3.13.13"
 #: a dot, which `shutil.which` before 3.12 does not read as 3.13 does.
 #: ``origin_remote_python`` holds URLs with a bracket, whose host checks in
 #: `urlsplit` and `ipaddress` are the release's (`gen_origin_remote`).
+#: ``gitfile_pin_text_python`` holds pin records read through ``ntpath``
+#: whose path is rooted without a drive (``/g``): `ntpath.isabs` reads it
+#: as absolute in 3.11 and 3.12 and as relative from 3.13 (`gen_follow`).
 PYTHON_GATED = frozenset(
     {
         "gitsystem_record_python",
@@ -338,6 +342,7 @@ PYTHON_GATED = frozenset(
         "gitfile_identity_python",
         "gitfile_trust_python",
         "gitfile_follow_python",
+        "gitfile_pin_text_python",
         "gitobjects_python",
     }
 )

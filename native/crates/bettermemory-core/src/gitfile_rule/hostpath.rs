@@ -7,7 +7,9 @@
 //! as they are. `ntpath` indexes code points (a drive is the second code
 //! point being `:`), so a Windows path is read as code points, UTF-8
 //! decoded with each byte that does not decode kept as itself
-//! (`surrogateescape`), and written back the same way.
+//! (`surrogateescape`), and written back the same way. A path that is a
+//! `str` already ([`isabs_str`]) is read as its code points, a lone
+//! surrogate included.
 //!
 //! Where 3.11 and 3.12 read otherwise (`ntpath.isabs` of a path starting
 //! with one separator, absolute before 3.13; `normpath` of a `\\?\` or
@@ -20,9 +22,21 @@ use crate::fsdata::Flavour;
 pub fn isabs(flavour: Flavour, path: &[u8]) -> bool {
     match flavour {
         Flavour::Posix => path.first() == Some(&b'/'),
+        Flavour::Windows => isabs_str(flavour, &units(path)),
+    }
+}
+
+/// `os.path.isabs` of a `str`, as code points. `posixpath`: the first is
+/// `/`. `ntpath` (3.13 and later): the first three, `/` read as `\`,
+/// start with two separators (UNC, device) or hold a colon and a
+/// separator after the first (a drive and root); a path rooted without a
+/// drive (`/g`, `\g`) is not absolute, where 3.11 and 3.12 read it as
+/// absolute.
+pub fn isabs_str(flavour: Flavour, path: &[u32]) -> bool {
+    match flavour {
+        Flavour::Posix => path.first() == Some(&ALTSEP),
         Flavour::Windows => {
-            let p = units(path);
-            let head: Vec<u32> = p.iter().take(3).map(|&u| alt(u)).collect();
+            let head: Vec<u32> = path.iter().take(3).map(|&u| alt(u)).collect();
             head.get(1..3) == Some(&[COLON, SEP][..]) || head.get(..2) == Some(&[SEP, SEP][..])
         }
     }

@@ -30,10 +30,20 @@ dict whose order the reference keeps is written as a list of pairs.
   weakly), ``nosession``), the environment ``e`` as pairs, the working
   directory ``cwd`` (null when it cannot be read); ``env`` is the keys the
   environment was asked, in order, and ``ncwd`` how often the working
-  directory was.
+  directory was. ``"nt": true`` where the working directory is a Windows
+  path (below).
 - ``{"f": "seq", "s", "o"}``: steps over the published caller (``bind``,
   ``transcript``, ``publish``, ``reset``), each answered by `current`,
   `current_actor`'s record and `current_harness_session`.
+
+`resolve` names the workspace ``str(Path.cwd())`` where nothing else does
+(identity.py, `resolve`), and ``str`` of a concrete `Path` is the host's
+spelling: on Windows `Path("/cwd")` is a `WindowsPath`, ``\\cwd``. So
+`Path.cwd` is patched to answer a pure path of the case's flavour, built
+from ``cwd``: `PurePosixPath`, or `PureWindowsPath` for an ``nt`` case,
+which is the reference's answer on Windows. Both are made on every host,
+so the file is the same on every platform, and its ``nt`` spellings
+(``\\``, a drive) read alike from 3.11 to 3.15.
 
 ``identity_caller_unicode.jsonl`` holds what `_clean` does with each code
 point in the middle and at the end of a value, as runs over the whole
@@ -46,7 +56,7 @@ from __future__ import annotations
 
 import weakref
 from collections.abc import Iterator
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
@@ -420,15 +430,20 @@ def _caller_out(c: I.Caller) -> list[Any]:
 
 
 class _Cwd:
-    def __init__(self, cwd: str | None) -> None:
+    """`Path.cwd`: a pure path of the case's flavour built from `cwd`, the
+    same on every host (a concrete `Path` is the host's), or
+    FileNotFoundError where `cwd` is None."""
+
+    def __init__(self, cwd: str | None, nt: bool = False) -> None:
         self.cwd = cwd
+        self.flavour = PureWindowsPath if nt else PurePosixPath
         self.n = 0
 
-    def __call__(self) -> Path:
+    def __call__(self) -> PurePath:
         self.n += 1
         if self.cwd is None:
             raise FileNotFoundError(2, "gone")
-        return Path(self.cwd)
+        return self.flavour(self.cwd)
 
 
 def _principal(q: dict[str, Any] | None) -> Any:
@@ -443,11 +458,11 @@ def _principal(q: dict[str, Any] | None) -> Any:
 
 
 def _run_resolve(
-    q: dict[str, Any] | None, e: list[list[str]], cwd: str | None
+    q: dict[str, Any] | None, e: list[list[str]], cwd: str | None, nt: bool = False
 ) -> dict[str, Any]:
     ctx, roots = _request(q)
     env = _Env(e)
-    where = _Cwd(cwd)
+    where = _Cwd(cwd, nt)
     with (
         mock.patch.object(I, "_ROOTS", roots),
         mock.patch.object(Path, "cwd", where),
@@ -613,17 +628,35 @@ _RESOLVES: list[tuple[Any, list[list[str]], str | None]] = [
         [],
         "/cwd",
     ),
+    # `str(PurePosixPath(...))` respells: separators collapse, `.` and a
+    # trailing separator go.
+    (None, [], "/w//x/./"),
+]
+
+#: Resolutions whose working directory is a `PureWindowsPath`, as
+#: `Path.cwd()` answers on Windows: `/` is spelled `\`, a drive is kept.
+#: A path a header, the environment or a root declares is not respelled.
+_RESOLVES_NT: list[tuple[Any, list[list[str]], str | None]] = [
+    (None, [], "/cwd"),
+    (None, [], "C:/w//x/."),
+    (None, [], "c:"),
+    (None, [], "a/b"),
+    (None, [], None),
+    (None, [["BETTERMEMORY_WORKSPACE", "/e/f"]], "/cwd"),
+    ({"root": "/root"}, [], "/cwd"),
 ]
 
 
 def _resolves() -> Iterator[dict[str, Any]]:
-    for q, e, cwd in _RESOLVES:
-        out = _run_resolve(_resolve_q(q), e, cwd)
+    cases = [(*c, False) for c in _RESOLVES] + [(*c, True) for c in _RESOLVES_NT]
+    for q, e, cwd, nt in cases:
+        out = _run_resolve(_resolve_q(q), e, cwd, nt)
         yield {
             "f": "resolve",
             "q": _spell_q(q),
             "e": [[k, sp(v)] for k, v in e],
             "cwd": cwd,
+            **({"nt": True} if nt else {}),
             **out,
         }
 

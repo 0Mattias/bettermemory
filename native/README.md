@@ -42,7 +42,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_gitfiles` | unit 1 of `origin_gitfiles.py`, the pure decoders: `_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs` | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`) | `gitobjects.jsonl`, `gitobjects_python.jsonl` |
-| `gitfile_rule` | units 1, 2a, 2b, 3 and 4 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl` |
+| `gitfile_rule` | units 1, 2a, 2b, 3 and 4 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail` | `checkout_token.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
@@ -1715,14 +1715,20 @@ Regular expressions: none in this unit.
 
 | test (file: function) | golden file | class |
 | --- | --- | --- |
-| `golden_identity_caller`: `identity_caller_every_case` | `identity_caller.jsonl` (447 cases: the leaves, 58 resolutions with their environment reads and working directory reads, 12 sequences over the published caller) | i |
+| `golden_identity_caller`: `identity_caller_every_case` | `identity_caller.jsonl` (455 cases: the leaves, 66 resolutions with their environment reads and working directory reads, 7 of them with a Windows working directory, 12 sequences over the published caller) | i |
 | `golden_identity_caller`: `identity_caller_unicode_every_code_point` | `identity_caller_unicode.jsonl` (what `_clean` does with every code point inside and at the end of a value, both ways, as runs) | ii (Unicode) |
 | `identity_caller_kills` (14) | none | i |
 | `identity_caller_robustness` (5): 4 MB values, 200,000 headers, deep JSON, every code point boundary, a registry key of 4 MB | none | i |
 
 The class (i) file's texts use only code points whose category and
 spacing are the same from Unicode 14.0 to 16.0. Nothing in either file
-depends on the Python release or the platform.
+depends on the Python release or the platform. `resolve` names the
+workspace `str(Path.cwd())` where nothing else does, and `str` of a
+concrete `Path` is the host's spelling (`\cwd` on Windows for `/cwd`), so
+the generator's `Path.cwd` answers a pure path of the case's flavour
+(`PurePosixPath`, or `PureWindowsPath` where the case says `nt`) on every
+host; the test's world spells it with `config::pure_path` of that
+flavour. `resolve` itself takes the spelled text from its caller.
 
 ## Running the tests (offline)
 
@@ -7580,7 +7586,7 @@ and `Failure` has a new variant, `Raised(&'static str)`.
 | 856-860 | `names_git_dir` | `follow::names_git_dir` |
 | 863-905 | `_entry_names` | `follow::entry_names` (`Names::{Names, Other, Gone, Unknown}`) |
 | `gitdir_pin` 82-93 | `recorded` | `follow::recorded` |
-| `gitdir_pin` 186- | `_read` | `follow::pin_text` |
+| `gitdir_pin` 186- | `_read` | `follow::pin_text_under` (`os.path` of either flavour; `pin_text` is POSIX's) |
 
 **Inputs.** The record store is data: a `Records` trait answers a git
 directory's record bytes by its stat (`NoRecords` holds none). The
@@ -7611,21 +7617,35 @@ to the bytes of `\u00e9` yet spells no decoded folder, and is read as any
 other recorded tree is (refused where its `.git` cannot be read, a
 provisional follow where it is absent).
 
-**Windows flavour, declined whole** (`NotPorted`): every function here.
-The unit stands on units 2a, 2b and 3, which decline on Windows, and on
-`ntpath` joins, `realpath` and the record store's stat names, none
-ported.
+**Windows flavour, declined whole** (`NotPorted`): every function here
+but `pin_text_under`, which reads a record's own text under either
+flavour (`hostpath::isabs_str`). The unit stands on units 2a, 2b and 3,
+which decline on Windows, and on `ntpath` joins, `realpath` and the
+record store's stat names, none ported.
 
 **`.git` entries that are not regular.** A FIFO, socket, endless file or
 dataless placeholder at `.git` is not read past the bound and never
 blocks; pinned in `follow_robustness.rs`, not in a shared fixture.
 
 **Fixtures.**
-- `gitfile_pin_text.jsonl` (ungated, every platform; 48 cases, 6,024 B):
-  a record's own text, to a pin or not. Byte-identical under 3.11 and
-  3.13. Long texts are spelled by shape (`pad`, `digits`); the `digits`
-  row is generated at the default integer digit limit whatever
-  `PYTHONINTMAXSTRDIGITS` says.
+- `gitfile_pin_text.jsonl` (ungated, every platform; 63 cases, 8,529 B)
+  and `gitfile_pin_text_python.jsonl` (Python, every platform; 41 cases,
+  5,682 B): a record's own text, to a pin or not, with `gitdir_pin`'s
+  `os.path` taken as `posixpath` (`px`) and as `ntpath` (`nt`) on every
+  host, so the files are the same on every platform. `_read` asks
+  `os.path.isabs`, so the reference's answer is the host's flavour: on
+  Windows `/g` is not absolute and a record holding it is not one (CI
+  run on windows-latest, 25 cases). `ntpath.isabs` of a path rooted
+  without a drive is True in 3.11 and 3.12 and False from 3.13, so a
+  text whose record holds one has its `nt` answer in the gated file
+  (`gen_follow._nt_gated`, by input); native reads 3.13's. Besides the
+  POSIX records, Windows spellings: a drive and root with either
+  separator, a drive without a root, a UNC share, `\\?\` and `\\.\`
+  paths, two leading slashes and a colon after a root (absolute to both),
+  a drive that is a code point past ASCII (escaped, an escaped pair, raw
+  UTF-8, a lone surrogate), UTF-16. Long texts are spelled by shape
+  (`pad`, `digits`); the `digits` row is generated at the default
+  integer digit limit whatever `PYTHONINTMAXSTRDIGITS` says.
 - `gitfile_follow.jsonl` (POSIX; 5 cases, 86 queries, 14,747 B) and
   `gitfile_follow_python.jsonl` (POSIX and Python; 1 case, 5 queries,
   788 B). A case goes in the gated file by input: a tree with a loop, a
@@ -7646,7 +7666,8 @@ blocks; pinned in `follow_robustness.rs`, not in a shared fixture.
   - `_spells` with and without the spelling;
   - gated: a loop, a deep record.
 
-**Tests.** `golden_gitfile_pin_text.rs` (every platform).
+**Tests.** `golden_gitfile_pin_text.rs` (every platform, both flavours
+and both files).
 `golden_gitfile_follow.rs` (unix): both POSIX files through `MemFs` and
 `StdFs`, records keyed by stat; on disk the answers are also asked of the
 reference live under `BM_REFERENCE_PYTHON`. `gitfile_follow_not_posix.rs`

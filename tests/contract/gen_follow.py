@@ -1,6 +1,7 @@
 """Fixtures: the pin records and the follow of a ``.git`` entry, as
 `gitfile_rule` reads them (``gitfile_pin_text.jsonl``,
-``gitfile_follow.jsonl``, ``gitfile_follow_python.jsonl``).
+``gitfile_pin_text_python.jsonl``, ``gitfile_follow.jsonl``,
+``gitfile_follow_python.jsonl``).
 
 Unit 4 (``native/.../gitfile_rule/follow.rs``) ports `gitfile_rule.gitfile_refusal`,
 `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`,
@@ -10,10 +11,24 @@ file is found).
 
 ``gitfile_pin_text.jsonl`` (ungated, every platform): a record file's
 bytes (``"b"``, hex, or a long one by shape: ``{"pad": n}``,
-``{"digits": n}``, `long_text`) and what `gitdir_pin._read` makes of them: ``null``
-(not a record) or ``[git_dir, tree]``, each the `str` encoded UTF-8 with
-``surrogatepass`` (hex), so a lone surrogate is kept. It is a function of
-the bytes alone.
+``{"digits": n}``, `long_text`) and what `gitdir_pin._read` makes of them
+with the host's ``os.path`` taken as ``posixpath`` (``px``) and as
+``ntpath`` (``nt``), the module's ``os`` swapped for one whose ``path``
+is the flavour's (`_read` reads nothing else of ``os``): ``null`` (not a
+record) or ``[git_dir, tree]``, each the `str` encoded UTF-8 with
+``surrogatepass`` (hex), so a lone surrogate is kept. `_read` takes a
+path as absolute by ``os.path.isabs``, so the reference's own answer is
+the host's: ``px`` on POSIX, ``nt`` on Windows, where ``/g`` is not
+absolute. Both are recorded on every host, so the file is a function of
+the bytes alone and the same on every platform.
+
+``ntpath.isabs`` of a path rooted without a drive (``/g``, ``\\g``) is
+True in 3.11 and 3.12 and False from 3.13, so the ``nt`` answer of a
+text whose record's ``git_dir`` or ``tree`` (as `json.loads` decodes it)
+starts with one separator alone (`_lone_root`) goes, by that input, in
+``gitfile_pin_text_python.jsonl`` (Python-gated, every platform; ``b`` or
+the shape and ``nt``) and not in the ungated file. ``posixpath.isabs`` is
+the same in every release.
 
 ``gitfile_follow.jsonl`` and ``gitfile_follow_python.jsonl`` (POSIX):
 each case is a tree written in a fresh directory of the scratch world and
@@ -54,11 +69,15 @@ Nothing depends on root, the umask, the host's users, home, the environment, cas
 
 from __future__ import annotations
 
+import json
+import ntpath
 import os
+import posixpath
 import shutil
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -135,6 +154,52 @@ def _texts() -> Iterator[bytes]:
     yield b'{"format": 1, "git_dir": "/g", "tree": "/t", "x": [[[[[[[[[[1]]]]]]]]]]}'
     yield b"\x00\x00"
     yield b"\x00{"
+    # Windows spellings, where `posixpath` and `ntpath` part: a drive and
+    # root (each separator), a drive without a root, a drive alone, a UNC
+    # share, device paths, two leading slashes (absolute to both), a colon
+    # after a root (absolute to both), a drive that is a code point past
+    # ASCII (escaped, an escaped pair, raw UTF-8, a lone surrogate), a NUL,
+    # a record in UTF-16; then rooted without a drive (`_lone_root`).
+    yield b'{"format": 1, "git_dir": "C:\\\\g", "tree": "D:\\\\t"}'
+    yield b'{"format": 1, "git_dir": "C:/g", "tree": "c:/t"}'
+    yield b'{"format": 1, "git_dir": "C:g", "tree": "C:\\\\t"}'
+    yield b'{"format": 1, "git_dir": "C:", "tree": "C:\\\\t"}'
+    yield b'{"format": 1, "git_dir": "\\\\\\\\srv\\\\sh\\\\g", "tree": "//srv/sh/t"}'
+    yield b'{"format": 1, "git_dir": "\\\\\\\\?\\\\C:\\\\g", "tree": "\\\\\\\\.\\\\C:\\\\t"}'
+    yield b'{"format": 1, "git_dir": "//g", "tree": "//t"}'
+    yield b'{"format": 1, "git_dir": "/:/g", "tree": "/:\\\\t"}'
+    yield b'{"format": 1, "git_dir": "\\u00e9:\\\\g", "tree": "\\ud83d\\ude00:/t"}'
+    yield b'{"format": 1, "git_dir": "\xc3\xa9:\\\\g", "tree": "\xf0\x9f\x98\x80:/t"}'
+    yield b'{"format": 1, "git_dir": "\\ud800:\\\\g", "tree": "C:\\\\t\\u0000"}'
+    yield b"\xff\xfe" + '{"format": 1, "git_dir": "C:\\\\g", "tree": "C:/t"}'.encode(
+        "utf-16-le"
+    )
+    yield b'{"format": 1, "git_dir": "\\\\g", "tree": "\\\\t"}'
+    yield b'{"format": 1, "git_dir": "C:\\\\g", "tree": "/t"}'
+    yield b'{"format": 1, "git_dir": "/g", "tree": "C:\\\\t"}'
+
+
+def _lone_root(path: object) -> bool:
+    """Whether `path` is a `str` rooted without a drive: one separator,
+    then neither another nor a colon and a separator. `ntpath.isabs`
+    answers True for it in 3.11 and 3.12 and False from 3.13."""
+    if not isinstance(path, str):
+        return False
+    head = path[:3].replace("/", "\\")
+    return head[:1] == "\\" and head[1:2] != "\\" and head[1:3] != ":\\"
+
+
+def _nt_gated(data: bytes) -> bool:
+    """Whether a text's ``nt`` answer goes in the Python-gated file: its
+    record's ``git_dir`` or ``tree``, as `json.loads` decodes them, is a
+    `_lone_root`."""
+    try:
+        body = json.loads(data)
+    except (ValueError, RecursionError):
+        return False
+    return isinstance(body, dict) and any(
+        _lone_root(body.get(key)) for key in ("git_dir", "tree")
+    )
 
 
 #: Long texts, spelled by shape: ``{"pad": n}`` is the plain record with
@@ -152,11 +217,14 @@ def long_text(spec: dict[str, int]) -> bytes:
     return head + b"9" * spec["digits"] + b"}"
 
 
-def _read_text(data: bytes, scratch: Path) -> Any:
+def _read_text(data: bytes, scratch: Path, flavour: ModuleType) -> Any:
+    """`gitdir_pin._read` of `data` with ``os.path`` the `flavour`
+    module."""
     path = scratch / "record.json"
     path.write_bytes(data)
     try:
-        pin = gitdir_pin._read(path)
+        with patch.object(gitdir_pin, "os", SimpleNamespace(path=flavour)):
+            pin = gitdir_pin._read(path)
     except (OSError, ValueError, RecursionError) as exc:
         return {"e": type(exc).__name__}
     if pin is None:
@@ -168,30 +236,52 @@ def _read_text(data: bytes, scratch: Path) -> Any:
 
 
 def generate_text() -> dict[str, bytes]:
-    lines: list[dict[str, Any]] = []
+    """``gitfile_pin_text.jsonl``: not gated."""
+    lines, _ = _pin_lines()
+    header = {"fixture": "gitfile_pin_text", "cases": len(lines)}
+    return {"gitfile_pin_text.jsonl": jsonl([header, *lines])}
+
+
+def generate_text_python() -> dict[str, bytes]:
+    """``gitfile_pin_text_python.jsonl``: gated on the Python release."""
+    _, lines = _pin_lines()
+    header = {"fixture": "gitfile_pin_text_python", "cases": len(lines)}
+    return {"gitfile_pin_text_python.jsonl": jsonl([header, *lines])}
+
+
+def _pin_lines() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     # `json.loads` refuses an integer past the digit limit, which
     # PYTHONINTMAXSTRDIGITS or -X int_max_str_digits move: the default
     # is the reference's limit.
     saved = sys.get_int_max_str_digits()
     sys.set_int_max_str_digits(sys.int_info.default_max_str_digits)
     try:
-        lines = _text_lines()
+        return _text_lines()
     finally:
         sys.set_int_max_str_digits(saved)
-    header = {"fixture": "gitfile_pin_text", "cases": len(lines)}
-    return {"gitfile_pin_text.jsonl": jsonl([header, *lines])}
 
 
-def _text_lines() -> list[dict[str, Any]]:
-    lines: list[dict[str, Any]] = []
+def _text_lines() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The ungated lines (``px`` and, where it does not depend on the
+    release, ``nt``) and the gated ones (the other ``nt`` answers)."""
+    plain: list[dict[str, Any]] = []
+    gated: list[dict[str, Any]] = []
+    cases: list[tuple[dict[str, Any], bytes]] = [
+        ({"b": data.hex()}, data) for data in _texts()
+    ]
+    cases += [(dict(spec), long_text(spec)) for spec in LONG]
     with _sandbox.world() as world:
         scratch = world.root / "pin-text"
         scratch.mkdir()
-        for data in _texts():
-            lines.append({"b": data.hex(), "v": _read_text(data, scratch)})
-        for spec in LONG:
-            lines.append({**spec, "v": _read_text(long_text(spec), scratch)})
-    return lines
+        for key, data in cases:
+            px = _read_text(data, scratch, posixpath)
+            nt = _read_text(data, scratch, ntpath)
+            if _nt_gated(data):
+                plain.append({**key, "px": px})
+                gated.append({**key, "nt": nt})
+            else:
+                plain.append({**key, "nt": nt, "px": px})
+    return plain, gated
 
 
 # --- trees ------------------------------------------------------------------

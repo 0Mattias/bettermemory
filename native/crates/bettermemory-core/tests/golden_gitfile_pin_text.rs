@@ -1,15 +1,22 @@
-//! Every case of `gitfile_pin_text.jsonl` (class i, every platform): what
-//! `gitdir_pin._read` makes of a record file's bytes, against
-//! `gitfile_rule::follow::pin_text`.
+//! Every case of `gitfile_pin_text.jsonl` (class i, every platform) and
+//! `gitfile_pin_text_python.jsonl` (class ii, Python): what
+//! `gitdir_pin._read` makes of a record file's bytes with `os.path` taken
+//! as `posixpath` (`px`) and as `ntpath` (`nt`), against
+//! `gitfile_rule::follow::pin_text_under` of each flavour. Both are read on
+//! every platform: the files are the same wherever they are made.
 
 mod common;
 
-use bettermemory_core::gitfile_rule::follow::{pin_text, PinText};
+use bettermemory_core::fsdata::Flavour;
+use bettermemory_core::gitfile_rule::follow::{pin_text, pin_text_under, PinText};
 use common::jsonl;
 use common::parity::Ledger;
 use serde_json::{json, Value};
 
 const FILE: &str = "gitfile_pin_text.jsonl";
+/// The `nt` answers 3.11 and 3.12 give otherwise (a path rooted without a
+/// drive).
+const GATED: &str = "gitfile_pin_text_python.jsonl";
 
 /// A `str`'s code points encoded UTF-8 with `surrogatepass`, as hex.
 fn passed(text: &[u32]) -> String {
@@ -45,26 +52,54 @@ fn long_text(case: &Value) -> Vec<u8> {
     out
 }
 
-#[test]
-fn pin_text_every_case() {
-    let lines = jsonl(FILE);
+fn answer(data: &[u8], flavour: Flavour) -> Value {
+    let got = pin_text_under(data, flavour);
+    if flavour == Flavour::Posix {
+        assert_eq!(pin_text(data), got, "pin_text is the POSIX reading");
+    }
+    match got {
+        PinText::Pin(pin) => json!([passed(&pin.git_dir), passed(&pin.tree)]),
+        PinText::NotAPin => Value::Null,
+        PinText::Raised(name) => json!({"e": name}),
+    }
+}
+
+/// Every case of `file`; each must hold the flavours `must`.
+fn every_case(test: &str, file: &str, must: &[&str]) {
+    let lines = jsonl(file);
     let cases = &lines[1..];
     assert_eq!(lines[0]["cases"].as_u64(), Some(cases.len() as u64));
-    let ledger = Ledger::new("golden_gitfile_pin_text", FILE);
+    let ledger = Ledger::new(test, file);
     let mut failures = Vec::new();
+    let mut compared = 0;
     for (i, case) in cases.iter().enumerate() {
+        for key in must {
+            assert!(case.get(*key).is_some(), "{file} #{i} has no {key}");
+        }
         let data = match case.get("b").and_then(Value::as_str) {
             Some(hex) => common::unhex(hex),
             None => long_text(case),
         };
-        let got = match pin_text(&data) {
-            PinText::Pin(pin) => json!([passed(&pin.git_dir), passed(&pin.tree)]),
-            PinText::NotAPin => Value::Null,
-            PinText::Raised(name) => json!({"e": name}),
-        };
-        if got != case["v"] {
-            failures.push(format!("#{i}: native {got} reference {}", case["v"]));
+        for (key, flavour) in [("px", Flavour::Posix), ("nt", Flavour::Windows)] {
+            let Some(want) = case.get(key) else {
+                continue;
+            };
+            compared += 1;
+            let got = answer(&data, flavour);
+            if &got != want {
+                failures.push(format!("#{i} {key}: native {got} reference {want}"));
+            }
         }
     }
-    ledger.settle(cases.len(), &failures);
+    ledger.settle(compared, &failures);
+}
+
+#[test]
+fn pin_text_every_case() {
+    every_case("golden_gitfile_pin_text", FILE, &["px"]);
+}
+
+#[test]
+fn pin_text_gated_every_case() {
+    every_case("golden_gitfile_pin_text_gated", GATED, &["nt"]);
 }

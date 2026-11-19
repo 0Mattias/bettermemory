@@ -3,9 +3,13 @@
 //! `identity`. The spelling is the generator's
 //! (`tests/contract/gen_identity_caller.py`): a text is a string or
 //! `{"r": [[piece, n], ...]}`, and an ordered dict is a list of pairs.
+//! The working directory is `str(PurePath(cwd))` of the case's flavour
+//! (`PureWindowsPath` where the case says `nt`), as the generator's
+//! `Path.cwd` answers on every host.
 
 mod common;
 
+use bettermemory_core::config::{self, Flavour};
 use bettermemory_core::identity::{self as id, Actor, Caller, Published, Request, Token};
 use bettermemory_core::json;
 use bettermemory_core::pyvalue::{PyStr, PyValue};
@@ -178,7 +182,8 @@ pub fn caller_out(c: &Caller) -> PyValue {
 }
 
 /// An environment of pairs that records the keys it is asked, and a
-/// working directory that counts its reads.
+/// working directory that counts its reads: `str(Path.cwd())`, where the
+/// generator's `Path.cwd` answers a pure path of the case's flavour.
 pub struct World {
     pub env: Vec<(String, PyStr)>,
     pub asked: Vec<String>,
@@ -187,7 +192,14 @@ pub struct World {
 }
 
 impl World {
-    pub fn new(e: Option<&PyValue>, cwd: Option<&PyValue>) -> World {
+    /// `cwd` is the text the working directory is built from (`/cwd` where
+    /// a step names none), spelled as `str` of `flavour`'s pure path:
+    /// `PureWindowsPath("/cwd")` is `\cwd`.
+    pub fn new(e: Option<&PyValue>, cwd: Option<&PyValue>, flavour: Flavour) -> World {
+        let spelled = |t: &[u32]| {
+            let t = unicode::to_string(t).expect("a working directory without a surrogate");
+            unicode::cps(&config::pure_path(&t, flavour))
+        };
         World {
             env: e.map_or(Vec::new(), |e| {
                 list(e)
@@ -200,8 +212,8 @@ impl World {
             }),
             asked: Vec::new(),
             cwd: match cwd {
-                None => Some(unicode::cps("/cwd")),
-                Some(v) => opt(v),
+                None => Some(spelled(&unicode::cps("/cwd"))),
+                Some(v) => opt(v).map(|t| spelled(&t)),
             },
             ncwd: 0,
         }
@@ -277,7 +289,11 @@ pub fn answer(case: &PyValue) -> PyValue {
         }
         PyValue::Str(n) if *n == unicode::cps("resolve") => {
             let q = request_of(f("q"));
-            let mut world = World::new(Some(f("e")), Some(f("cwd")));
+            let flavour = match case.get("nt") {
+                Some(PyValue::Bool(true)) => Flavour::Windows,
+                _ => Flavour::Posix,
+            };
+            let mut world = World::new(Some(f("e")), Some(f("cwd")), flavour);
             let caller = world.run(|e, c| id::resolve(q.as_ref(), e, c));
             PyValue::List(vec![
                 caller_out(&caller),
@@ -290,7 +306,7 @@ pub fn answer(case: &PyValue) -> PyValue {
             let mut tokens: Vec<Option<Token>> = Vec::new();
             let mut out = Vec::new();
             for step in list(f("s")) {
-                let mut world = World::new(step.get("e"), step.get("cwd"));
+                let mut world = World::new(step.get("e"), step.get("cwd"), Flavour::Posix);
                 let does = text(get(step, "do"));
                 let does = unicode::to_string(&does).expect("a step");
                 match does.as_str() {

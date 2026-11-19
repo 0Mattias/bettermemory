@@ -22,7 +22,7 @@
 //!
 //! The Windows flavour is declined whole ([`Failure::NotPorted`]):
 //! `normcase`, `realpath`, `samestat` and unit 3's rules are not ported
-//! there.
+//! there. A record's own text is read under either ([`pin_text_under`]).
 
 use crate::fsdata::realpath::{realpath, Unresolved};
 use crate::fsdata::{samestat, Flavour, Fs, Kind, OsError, StatResult};
@@ -91,15 +91,26 @@ fn is_one(value: Option<&PyValue>) -> bool {
     }
 }
 
-fn absolute_str(value: Option<&PyValue>) -> Option<PyStr> {
+fn absolute_str(value: Option<&PyValue>, flavour: Flavour) -> Option<PyStr> {
     match value {
-        Some(PyValue::Str(s)) if s.first() == Some(&u32::from(b'/')) => Some(s.clone()),
+        Some(PyValue::Str(s)) if hostpath::isabs_str(flavour, s) => Some(s.clone()),
         _ => None,
     }
 }
 
-/// `gitdir_pin._read`'s judgement of the bytes read.
+/// `gitdir_pin._read`'s judgement of the bytes read where `os.path` is
+/// `posixpath`: [`pin_text_under`] with [`Flavour::Posix`], the reading
+/// [`recorded`] makes (it declines Windows before).
 pub fn pin_text(data: &[u8]) -> PinText {
+    pin_text_under(data, Flavour::Posix)
+}
+
+/// `gitdir_pin._read`'s judgement of the bytes read, with `os.path.isabs`
+/// the flavour's ([`hostpath::isabs_str`]). On Windows a record whose
+/// path is rooted without a drive (`/g`) is not a record: `ntpath.isabs`
+/// reads such a path as relative from CPython 3.13, as absolute in 3.11
+/// and 3.12. This is 3.13's reading.
+pub fn pin_text_under(data: &[u8], flavour: Flavour) -> PinText {
     if data.len() > PIN_MAX_BYTES {
         return PinText::NotAPin;
     }
@@ -116,8 +127,8 @@ pub fn pin_text(data: &[u8]) -> PinText {
         return PinText::NotAPin;
     }
     let (Some(git_dir), Some(tree)) = (
-        absolute_str(body.get("git_dir")),
-        absolute_str(body.get("tree")),
+        absolute_str(body.get("git_dir"), flavour),
+        absolute_str(body.get("tree"), flavour),
     ) else {
         return PinText::NotAPin;
     };
