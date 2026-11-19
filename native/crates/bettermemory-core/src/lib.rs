@@ -39,11 +39,16 @@
 //! - [`checkout_token`]: the checkout token, its first unit (the text);
 //! - [`gitfile_rule`]: the rule a `.git` entry is followed by, up to the
 //!   follow of an entry and its pin records.
+//! - [`claims`]: what a memory claims, its first unit (the claim record,
+//!   the path spellings and the patterns a patch is read by);
+//! - [`gitfile_rule`]: the rule a `.git` entry is followed by, its first
+//!   unit (the leaves).
 
 #![forbid(unsafe_code)]
 
 pub mod capture;
 pub mod checkout_token;
+pub mod claims;
 pub mod config;
 pub mod control_tokens;
 pub mod credentials;

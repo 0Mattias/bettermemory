@@ -44,6 +44,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
+| `claims` | unit 1 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path` | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
@@ -1379,6 +1380,10 @@ that Unicode too.
 | `golden_membership_lines`: `membership_lines_unicode_every_case` | `membership_lines_unicode.jsonl` | ii (Unicode) |
 | `golden_membership_lines`: `membership_lines_python_every_case` | `membership_lines_python.jsonl` | ii (Python) |
 | `membership_lines_robustness` (8) | none | i |
+| `golden_claims`: `claims_every_case` | `claims.jsonl` | i |
+| `golden_claims`: `claims_unicode_every_case` | `claims_unicode.jsonl` | ii (Unicode) |
+| `golden_claims`: `claims_python_every_case` | `claims_python.jsonl` | ii (Python) |
+| `claims_kills` (9), `claims_robustness` (10) | none | i |
 | `golden_ulid`: `ulid_every_case`, `ulid_order_and_round_trip` | `ulid.jsonl` (the second none) | i |
 | `golden_githead`: `githead_every_case` (both flavours) | `githead.jsonl` | i |
 | `golden_githead`: `githead_posix_every_case` (unix) | `githead_posix.jsonl` | i; os elsewhere (`githead_not_posix`) |
@@ -6095,6 +6100,163 @@ points past U+10FFFF, a hand-built `Match` whose body lies outside the text).
 Units 2 to 4 above. Unit 4 sorts `prefixed_spans`' output with the generic
 and URI spans (a stable sort by start, so the order among equal starts is
 this function's order) before merging.
+## What a memory claims (`claims.py`)
+
+Read at 465bc600 (`claims.py`, 1,159 lines). The module holds the claim
+record and its wire string, the path spellings a claim is looked for
+under, the declare-time oracle that reads the worktree, and the drift
+index that reads a `git log -p -U0` stream. Most of it needs
+`ast.literal_eval` and `repr` of the values it returns, which the crate
+does not have yet, so the module is cut into units, leaves first.
+
+### The map, function by function
+
+| function | lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `MAX_CLAIMS`, `MAX_CLAIM_LEN`, `COMMIT_MARK`, `MAX_SPELLINGS`, `INDETERMINATE_REASON_MARKER` | 137-145, 386, 598 | nothing | built (unit 1) |
+| `_DEF_RE`, `_ASSIGN_RE`, `_HUNK_RE`, `_MARK_HASH_RE`, `_IDENT_RE` | 153-169 | Unicode tables (`\w`, `\d`) | built (unit 1) |
+| `Claim`, `Claim.render` | 178-201 | nothing | built (unit 1) |
+| `_canonical_repr` | 204-231 | `repr` of literal values, set and dict order | unit 2 |
+| `parse_claim` | 234-303 | `ast.literal_eval`, `repr` | unit 2 |
+| `control_character`, `lone_surrogate` | 306-320 | nothing | built (unit 1) |
+| `parse_claims`, `load_claims` | 323-382 | `parse_claim` | unit 2 |
+| `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings` | 389-437 | Unicode tables (NFC, NFD) | built (unit 1) |
+| `claim_paths` | 440-445 | nothing | built (unit 1) |
+| `claim_is_addressable`, `governed_claim_paths` | 448-518 | `ast.literal_eval` | unit 2 |
+| `_resolve_claim_path`, `_occupancy`, `_is_regular_file` | 521-586 | the file system (`resolve`, `lstat`, `stat`), `path_missing` | unit 4 |
+| `claim_reason_is_indeterminate` | 601-604 | nothing | built (unit 1) |
+| `check_claim` | 607-715 | the file system, `ast.parse` of a module | unit 4 (and a Python parser) |
+| `_binding_token` | 718-733 | Unicode tables | built (unit 1) |
+| `_rhs_repr`, `string_fragment`, `anchors_from_value` | 736-803 | `ast.literal_eval`, `repr` | unit 2 |
+| `_header_path` | 815-822 | nothing | built (unit 1) |
+| `_Headers` | 825-874 | nothing | unit 3 |
+| `hunk_lines` | 877-885 | Unicode tables, `int`'s digit limit | built (unit 1) |
+| `_patch_header_path` | 888-906 | Unicode tables (`str.strip`) | built (unit 1) |
+| `build_binding_index`, `claim_level_drift` | 909-1159 | units 1 to 3 | unit 3 |
+
+Unit 2 is the literal reader: `ast.literal_eval` over the expressions a
+claim value and a changed line can hold (with the interpreter's
+tokenizer, string prefixes and escapes, numbers, containers, unary and
+binary `+`/`-` on numbers, the recursion limit) and `_canonical_repr`
+over what it returns (float `repr` is `float_repr`; set order is the
+sort of the canonical texts). Unit 3 is the index and the scoring, pure
+over a stream of text. Unit 4 is the oracle, with the file system as the
+`fsdata` trait; its symbol and literal kinds need `ast.parse` of a
+module's top level, which is a unit of its own.
+
+### Unit 1, built (`claims`)
+
+`src/claims.rs` (499 lines, no dependency added). Text is `&[u32]`, as in
+`unicode`, since a claim path may hold a lone surrogate.
+
+- `Claim { kind, rel_path, name, value }` with `Kind` (`path`, `symbol`,
+  `literal`, `absent`) and `render`. The reference's `kind` is any `str`
+  and renders the literal form for any kind it does not name; the port
+  holds the four kinds `parse_claim` makes, so another kind cannot be
+  written.
+- `control_character`, `lone_surrogate`: the first such code point.
+- `is_identifier` is `_IDENT_RE.match`.
+- `claim_reason_is_indeterminate`: a substring test.
+- `path_key`, `spellings_capped`, `stored_spellings` over `unicode`'s
+  NFC and NFD, with `_component_forms`' order (as written, composed,
+  decomposed, repeats dropped) and `itertools.product`'s order (the
+  first component outermost). The product is taken with a saturating
+  multiply: past `MAX_SPELLINGS` only the comparison is read.
+- `claim_paths`: distinct paths in declaration order.
+- `binding_token` (`_binding_token`), `hunk_lines`, `is_mark_hash`
+  (`_MARK_HASH_RE.fullmatch`), `header_path` (`_header_path`) and
+  `patch_header_path` (`_patch_header_path`, its two `set[str]` as
+  `PathSet`s, hash sets, so each add is constant time as in the
+  reference; order is no part of the answer).
+- `claim_paths` drops repeats through a hash set, and
+  `claim_reason_is_indeterminate` searches for the marker by Knuth,
+  Morris and Pratt, both linear in their input as the reference is.
+- `hunk_lines` answers the Python int as its decimal text: the two
+  counts are summed digit by digit, so a count of any length within the
+  limit is exact. `Err(IntTooLong)` is `int()`'s ValueError on a digit
+  run past 4,300 digits, leading zeros counted. Only the two counts are
+  read as ints: a start line of any length is accepted.
+
+Each pattern is a hand-written matcher; no `regex` crate is used.
+
+- `_IDENT_RE` `^[A-Za-z_]\w*$`: `re`'s `$` matches at the end and before
+  one final line feed, so `"name\n"` matches; `\w` is `unicode::is_word`.
+- `_DEF_RE`: `async` and one or more blanks (space or tab) are optional;
+  then `def` or `class`, blanks, an identifier, blanks, then `(`, `[` or
+  `:`. No backtracking can change the answer: every step after the
+  identifier needs a character `\w` does not hold, and `async` without
+  the blanks begins neither keyword.
+- `_ASSIGN_RE`: the identifier and blanks are as above. The annotation
+  `(?::[^=\n]+)?` can end anywhere before the first `=` or line feed
+  after the colon, and the operator group holds no `=`, so a match
+  through the annotation exists exactly when that first stop is a `=`
+  at least two code points after the colon and not followed by another
+  `=`. Without the annotation, a match is one of the twelve operators or
+  none, then `=` not followed by `=`. Only existence and the identifier
+  are read.
+- `_HUNK_RE`: each `\d+` is maximal (the next character must be `,`, a
+  space or nothing a digit is), and the optional `,\d+` is taken when
+  present and skipped otherwise; skipping it where it is present always
+  fails. `\d` is `unicode::is_re_digit`, and a digit's value is its
+  place in its run of ten (as `int` reads it).
+- `_MARK_HASH_RE` with `fullmatch`: exactly 40 or 64 of `[0-9a-f]`.
+
+### Fixtures and tests
+
+`tests/contract/gen_claims.py`, three files:
+
+- `claims.jsonl` (444 cases, not gated, class i): the values of
+  `MAX_CLAIMS`, `MAX_CLAIM_LEN`, `MAX_SPELLINGS`, `COMMIT_MARK` and
+  `INDETERMINATE_REASON_MARKER`, then every function above
+  over cases chosen per branch and bound (each operator, each annotation
+  shape, line feeds and non-blank spaces inside each pattern, counts of
+  `0`, leading zeros, past `u64`, digit runs of 4,299 and 4,300, the
+  spelling cap at 27 and 81 combinations, header paths whose halves hold
+  ` b/`). Every text is made of code points below U+0100, the surrogates,
+  the Arabic-Indic and Devanagari digits and a fixed list assigned by
+  Unicode 6.3, so no Unicode table of another release changes it.
+- `claims_unicode.jsonl` (408 blocks, gated on Unicode, class ii): every
+  code point through six probes (`_PROBES`: the identifier, the def and
+  assign patterns, a hunk count, a `+++` header, the spellings of
+  `cp/é`) in blocks of 0x4000, by SHA-256.
+- `claims_python.jsonl` (36 cases, gated on the Python release, class
+  ii): digit runs of 4,300, 4,301 and 5,000 in each place of a hunk
+  header; `int`'s limit is the 4,300-digit default (3.11 on, and the
+  3.10.7, 3.9.14, 3.8.14 and 3.7.14 releases). Both generators set the
+  limit to 4,300 while they run, so `PYTHONINTMAXSTRDIGITS` or
+  `-X int_max_str_digits` does not change their bytes; the port
+  hardcodes 4,300.
+
+Tests: `golden_claims` (`claims_every_case`, `claims_unicode_every_case`,
+`claims_python_every_case`); `claims_kills` (9: the end anchor, Unicode
+`\w` and `\d`, the walrus and comparison shapes, an operator after an
+annotation, `int("0")`, the digit limit counting leading zeros, the
+halves of a header path, `str.strip`'s spaces, the spelling cap);
+`claims_robustness` (10: annotations, identifiers, blanks, hunk digits,
+header paths and a reason at 200,000 code points, linear in their
+length; `claim_paths` over 200,000 distinct paths and
+`patch_header_path` over 200,000 distinct headers, linear in their
+count; each linearity check passes when any of three runs grows at most
+30 times, so other work on the machine does not fail it; a path of
+10,000 components; the digit limit's edges; every seventh code point
+through every function).
+
+### Reference findings (reproduced and pinned)
+
+- `hunk_lines` reads any Unicode decimal digit: `hunk_lines("@@ -1,٩
+  +1 @@")` is 10, and `build_binding_index` reads a hunk there. git
+  prints ASCII digits only, so a file line shaped so is read as a hunk
+  header. Pinned in `claims.jsonl`.
+- `_patch_header_path` strips the target with `str.strip()`: a path
+  ending in a space or in any Unicode space loses it (`"+++ b/x \t"`
+  names `x`, `"+++ b/x　"` names `x`), so the index names a path
+  that is not the file git changed. Pinned in `claims.jsonl`.
+- `_IDENT_RE` accepts one trailing line feed (`"a\n"`). `parse_claim`
+  strips the name first, so no claim reaches it with one.
+
+### Left for later units
+
+Units 2 to 4 above. Nothing in unit 1 reads a file, a clock or git.
 
 ## The store's row writers
 
