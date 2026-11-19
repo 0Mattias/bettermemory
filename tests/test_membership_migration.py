@@ -132,11 +132,21 @@ def git(cwd: str | Path, *args: str, input_text: str | None = None) -> str:
 _SEQ = [0]
 
 
+def _quiet(path: Path) -> None:
+    """No automatic maintenance in the repository. `git commit` starts a
+    detached `git maintenance run --auto` that outlives it; when that
+    child repacks, it writes and renames `objects/pack/tmp_*` files while
+    the fixture copies or snapshots the tree."""
+    git(path, "config", "maintenance.auto", "false")
+    git(path, "config", "gc.auto", "0")
+
+
 def make_repo(path: Path, *, commits: int = 1, remote: str | None = None) -> list[str]:
     """A repository with a history of its own; returns its commits, oldest
     first."""
     path.mkdir(parents=True, exist_ok=True)
     git(path, "init", "-q", "-b", "main")
+    _quiet(path)
     (path / "src").mkdir(exist_ok=True)
     _SEQ[0] += 1
     marker = f"{os.getpid()}-{_SEQ[0]}-{time.time_ns()}"
@@ -324,6 +334,7 @@ def world(tmp_path: Path) -> Iterator[World]:
     alpha2 = dev / "alpha-clone"
     git(tmp, "clone", "-q", alpha.as_uri(), str(alpha2))
     git(alpha2, "remote", "set-url", "origin", _ALPHA_URL)
+    _quiet(alpha2)
     beta_head = make_repo(beta, commits=2)[-1]
     beta_copy = dev / "beta-copy"
     shutil.copytree(beta, beta_copy, symlinks=True)
