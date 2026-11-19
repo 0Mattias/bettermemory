@@ -41,6 +41,7 @@ from bettermemory import (
     location,
     location_audit,
     location_git,
+    location_reads,
     origin,
 )
 from bettermemory._location_probe import path_gone
@@ -151,7 +152,23 @@ def _within_the_bound(
     finally:
         release.set()
     assert time.monotonic() - started < bound, "a read waited on a path that hung"
+    _landed(bound)
     return value
+
+
+def _landed(bound: float) -> None:
+    """Wait, within `bound`, for every bounded read still in flight (the
+    reads of a share that hung, released) to land. While such a read is in
+    flight every later read of its path answers `UNANSWERED` at once
+    (`location_reads.bounded_read`), so a test that says the share answers
+    now reads it only once those threads have finished, however late a
+    loaded runner wakes them."""
+    deadline = time.monotonic() + bound
+    with location_reads._LANDED:
+        while location_reads._FLIGHTS:
+            left = deadline - time.monotonic()
+            assert left > 0, f"hung reads still in flight: {location_reads._FLIGHTS}"
+            location_reads._LANDED.wait(left)
 
 
 def test_a_planted_git_file_naming_a_separate_git_dir_yields_no_membership(
