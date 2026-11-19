@@ -262,6 +262,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // What `repr` keeps unescaped is the Unicode data's `isprintable`
         // (`gen_gitsystem_probe`).
         "gitsystem_probe_names_unicode.jsonl" => &[Unicode],
+        // `\b` past ASCII is `re`'s `\w` of the Unicode data
+        // (`gen_credentials_prefixed`).
+        "credentials_prefixed_unicode.jsonl" => &[Unicode],
         // A link or folder checked through a folder that cannot be
         // searched: 3.13's `Path.is_dir` raises, 3.14's answers False.
         "gitsystem_probe_python.jsonl" => &[Python],

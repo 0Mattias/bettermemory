@@ -42,6 +42,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
+| `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
@@ -5855,6 +5856,161 @@ involved stable from Unicode 14 to 16):
 - None where a str is expected raises (TypeError or AttributeError) in the
   reference; the native signatures take `&[u32]` there, so that call
   cannot be written.
+
+## The credential detectors
+
+Read at 465bc600. `credentials.py` (639 lines). Nothing in it reads the
+machine: no file, clock, environment variable, random source or child
+process. Every function is a function of its text; the only data consulted
+is `re`'s word class (`\w`, behind `\b`), which is the interpreter's
+Unicode 15.1 data and the crate's `unicode::is_word`. No trait is needed
+and none was extended.
+
+### The module by function
+
+| function or table | lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_PREFIXED_DETECTORS` (twelve patterns) | 85-175 | nothing (Unicode `\b`) | built, unit 1 |
+| `_MIN_BODY_DIVERSITY`, `_is_masked_token` | 184-189 | nothing | built, unit 1 |
+| `_is_spent_run` | 192-197 | nothing | built, unit 1 |
+| `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS`, `_NUMBER_SUFFIX_RE`, `_is_placeholder` | 269-319, 362-378 | nothing (`str.lower`) | unit 2 |
+| `_DATETIME_SHAPE_RE`, `_looks_like_secret` | 332-336, 381-472 | nothing (`str.isupper`, `isalpha`, `isdigit`, `\w`, `\d`) | unit 2 |
+| `_GENERIC_KEYWORD_RE`, `_URI_USERINFO_RE` | 238-265 | nothing (`re.IGNORECASE`, `\s`, `\b`, a lookbehind) | unit 3 |
+| `CredentialMatch`, `_CONTEXT_CHARS`, `_merged_secret_spans`, `secret_spans` | 475-546 | nothing | unit 4 |
+| `_redact_all`, `_safe_snippet`, `find_credential_markers` | 549-632 | nothing (`\s` in `re.sub`) | unit 4 |
+
+The whole module is more than 600 lines of Rust: the generic rule's
+pattern alone (an IGNORECASE alternation with a bounded prefix repetition,
+a lookbehind and conversational separators) and the value gate's six
+patterns each need a hand-written matcher. The cut is by leaves: unit 1
+(the prefixed shapes) stands alone; unit 2 (the value gate) stands alone;
+unit 3 (the two value patterns) calls nothing but returns the spans unit 2
+judges; unit 4 joins them into spans, snippets and markers.
+
+### Unit 1, built (`credentials::prefixed`)
+
+`Detector` (twelve variants in `_PREFIXED_DETECTORS`' order, `DETECTORS`),
+`Detector::kind` (the reference's labels: both GitHub patterns are
+`github-token`, both Slack patterns `slack-token`), `Detector::find_iter`
+(`regex.finditer(text)`: each `Match` with its span, its `body` group's
+span where the pattern names one, and whether the `spent` group took
+part), `Detector::pattern` (the reference's pattern text, checked
+against the golden header), `is_masked_token` (`_is_masked_token`: a body of fewer than
+`MIN_BODY_DIVERSITY` distinct characters; a body span outside the text,
+which only a hand-built `Match` can carry, is no mask), `is_spent_run`, and
+`prefixed_spans` (the first loop of `_merged_secret_spans`: every hit,
+detectors in order and each detector's matches in order, spent runs and
+masks left out, before the sort and merge of unit 4). Texts are code
+points and offsets are code point indices, as a `str` match's are.
+
+Each pattern is a hand-written matcher; no regex crate is used and none was
+added. Per pattern, why the matcher answers as `re` does for every input:
+
+- Every pattern but the PEM header opens with `\b` before an ASCII letter,
+  so a start needs the previous code point to be no word character
+  (`unicode::is_word`, Unicode `\w`: a Latin-1 letter or a CJK ideograph
+  before `AKIA` is a word character, a lone surrogate is not). Every
+  closing `\b` is read the same way at the end.
+- AWS, the classic GitHub token, Google and SendGrid have fixed-length
+  bodies: the matcher checks the literal prefix, the exact count of the
+  ASCII class and `\b` after it. With no repetition of variable length
+  there is nothing to backtrack into.
+- Stripe (`[0-9A-Za-z]{24,}\b`) and the fine-grained GitHub token
+  (`[0-9A-Za-z_]{22,}\b`, its class all word characters): greedy over the
+  class's run, then giving back one character at a time to the minimum
+  until `\b` holds. Inside a run of word characters `\b` never holds, so
+  only the run's end can close; the matcher still gives back in general.
+- `sk-`: the two lookaheads ask whether the `[A-Za-z0-9_-]` run after
+  `sk-` holds an uppercase letter and a digit (the run is the same set of
+  characters the lookahead's `*` reads), then the body gives back from the
+  run's end to 20 until `\b` holds (`-` is no word character, so a
+  boundary can fall inside the run). When that fails the `spent`
+  alternative takes the rest of the run. The optional `(?:ant-|proj-)?`
+  needs no start of its own: both prefixes lie inside the run, add no
+  uppercase letter or digit, and only move the minimum end later, so the
+  largest boundary the option finds is the largest the bare start finds,
+  and the match spans the same text either way.
+- Slack (`xox[abceprs]-`) and the app token (`xapp-`): the same with one
+  digit lookahead and a minimum of 10 over `[0-9A-Za-z-]`.
+- Vault (`hv[sbr]\.`): greedy over `[A-Za-z0-9_-]` with give-back to 24.
+- JWT: the first two parts' `{8,}` repetitions stop only at a `.`, which
+  their class excludes, so each part ends where its run ends and giving
+  back cannot find another `.`; the third part gives back to 8 until `\b`;
+  otherwise `spent` takes the run after `eyJ`.
+- The PEM header: `-----BEGIN `, at most one of the six labels (none of
+  them a prefix of `PRIVATE`, so trying the empty option after a label
+  never matches), `PRIVATE KEY-----`, then the lookahead: spaces and tabs,
+  an optional carriage return, a line feed, and either 16 characters of
+  `[A-Za-z0-9+/=_-]` or `Proc-Type:` or `DEK-Info:`. Giving back spaces or
+  the carriage return leaves a space, tab or carriage return where a line
+  feed is needed, so the first reading is the only one. The match ends at
+  the header.
+- The scan: no pattern matches the empty string, so after a match the
+  next search starts at its end, otherwise one code point on, as
+  `finditer` does.
+
+Time: each attempt reads at most the run after its prefix, and a spent run
+or a token moves the scan past that run, so the scan is linear in the text
+as the reference's is (its `spent` alternatives exist for this). On
+inputs of about 300 KB (a run of nothing but one prefix, a body giving back
+across 300,000 hyphens, repeated tokens and headers) the reference takes
+14 to 24 ms each on darwin-arm64 with CPython 3.13.13; the release build is
+held to 0.25 s per input (the fastest of three runs, so a busy runner
+fails no run that one quiet run passes) and takes under 10 ms.
+
+#### Fixtures
+
+`tests/contract/gen_credentials_prefixed.py`:
+
+- `credentials_prefixed.jsonl`, not gated: a header pinning the kinds, the
+  pattern texts and `_MIN_BODY_DIVERSITY`, then 1,038 texts with every
+  match of every detector (span and hit, mask or spent): hand cases for
+  every bound (each minimum and fixed length one under, at and one over),
+  each lookahead failing, each PEM label and line ending, masks at four
+  and five distinct characters, spent runs; 900 texts joined from 51
+  fragments, the choice read from SHA-256 of the case number; and twelve
+  long recipes. Every character past ASCII has the same `\w` in every
+  Unicode version since 6.3, so the file holds on every runner.
+- `credentials_prefixed_unicode.jsonl`, gated on the Unicode version: every
+  code point before an AWS key, after one, and after a Slack token whose
+  last hyphen leaves a boundary to fall back to, hashed per block of
+  0x4000.
+
+#### Tests
+
+`golden_credentials_prefixed.rs` (every case of both files, the count
+checked against the file's, the header's pattern texts against
+`Detector::pattern`, and `prefixed_spans` against the hits),
+`credentials_prefixed_kills.rs` (an ASCII-only `\b`, a mask threshold off
+by one, a body that never gives back, a
+lone carriage return, a JWT restarting inside its token, the fixed
+lengths), `credentials_prefixed_robustness.rs` (the 300 KB inputs above
+in debug and release, the empty text, every prefix cut at the end, code
+points past U+10FFFF, a hand-built `Match` whose body lies outside the text).
+
+#### What the reference does that looks wrong (not changed)
+
+- The AWS comment says "16 base32 chars"; the class is `[0-9A-Z]`, which
+  admits `0`, `1`, `8` and `9`. Reproduction:
+  `find_credential_markers("AKIA" + "0189ABCDEFGHIJKL")` reports
+  `aws-access-key-id`.
+- The masked-token guard reads only the patterns that name a `body` group
+  (AWS and both GitHub patterns), though its comment speaks of masks of
+  "bounded-body detectors". A Google or SendGrid mask fires:
+  `find_credential_markers("AIza" + "X" * 35)` reports `google-api-key`,
+  `find_credential_markers("SG." + "x" * 22 + "." + "x" * 43)` reports
+  `sendgrid-api-key`.
+- `\b` is Unicode: a key followed or preceded by a letter past ASCII is not
+  seen. `find_credential_markers("AKIAIOSFODNN7EXAMPLEé")` is empty.
+- The `sk-`, Slack and Vault bodies include a trailing hyphen when a word
+  character past ASCII follows it: in `"sk-A" + "BCDEFGHIJ0123456789-é"`
+  the match is code points 0 to 24, the hyphen inside.
+
+#### Left for later units
+
+Units 2 to 4 above. Unit 4 sorts `prefixed_spans`' output with the generic
+and URI spans (a stable sort by start, so the order among equal starts is
+this function's order) before merging.
 
 ## The store's row writers
 

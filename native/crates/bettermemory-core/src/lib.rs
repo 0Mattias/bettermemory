@@ -28,6 +28,8 @@
 //!   the lines shown about which project a folder belongs to;
 //! - [`origin_remote`]: a remote URL read into the triple `origin`
 //!   compares, with `urllib.parse.urlparse` as CPython 3.13.13 has it;
+//! - [`credentials`]: the write gate's credential detectors, its first
+//!   unit (the vendor-prefixed shapes);
 //! - [`gitfile_rule`]: the rule a `.git` entry is followed by, its first
 //!   unit (the leaves).
 
@@ -36,6 +38,7 @@
 pub mod capture;
 pub mod checkout_token;
 pub mod config;
+pub mod credentials;
 pub mod datetime;
 pub mod float_repr;
 pub mod fsdata;
