@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from bettermemory import verify_basis
 from bettermemory.verify import (
     BASIS_AUTHOR_DATE,
     BASIS_REACHABILITY,
@@ -123,10 +124,21 @@ def test_every_spelling_of_the_home_is_one_anchor(home: Path) -> None:
 
 @pytest.mark.parametrize("basis", [BASIS_REACHABILITY, BASIS_AUTHOR_DATE])
 def test_an_attested_file_counts_its_commit_under_every_spelling(
-    home: Path, basis: str
+    home: Path, basis: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, head = _repo(home)
     root = Path(os.path.realpath(repo))
+    # The root and head the reachability count keys on, read here with no
+    # time bound. Where the repository's files do not settle them (as on
+    # Windows), the product asks `git rev-parse` under a one-second bound,
+    # and a slow runner's timeout there reads as no repository and moves
+    # the count to author-date space. This test pins the spellings, not
+    # that probe, so the probe answers as git does.
+    located = (
+        Path(_git(repo, "rev-parse", "--show-toplevel")).resolve(),
+        _git(repo, "rev-parse", "HEAD"),
+    )
+    monkeypatch.setattr(verify_basis, "repo_toplevel_and_head", lambda _cwd: located)
     for spelled in _spellings(home):
         status = compute_commit_drift(
             _VERIFIED,
