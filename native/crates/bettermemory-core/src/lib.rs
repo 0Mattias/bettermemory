@@ -3,6 +3,8 @@
 //!
 //! - [`config`]: the settings: the config file's loader, the managed
 //!   file's pins, and `config check|show|path --json`;
+//! - [`identity`]: a request's caller as the reference resolves it, its
+//!   leaves first (the declared-value check, the actor rule, `resolve`);
 //! - [`json`]: `json.dumps` as the reference's call sites spell values
 //!   (the log payload's canonical text among them) and `json.loads`;
 //! - [`float_repr`]: Python's `float.__repr__`;
@@ -62,6 +64,7 @@ pub mod gitfile_rule;
 pub mod githead;
 pub mod gitobjects;
 pub mod gitsystem;
+pub mod identity;
 pub mod json;
 pub mod lexicon;
 pub mod log;

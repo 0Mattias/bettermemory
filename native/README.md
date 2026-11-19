@@ -42,6 +42,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitfile_rule` | units 1, 2a, 2b, 3 and 4 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail` | `checkout_token.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
+| `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
@@ -1378,6 +1379,119 @@ growth, every code point, names past the bound and a value nested
 Nothing is left for a later unit. No reference defect was found: 300,000
 random texts gave no defanged text and no folded quote that still carries
 a listed token.
+## A request's caller (`identity.py`)
+
+`identity.py` (797 lines) resolves who is calling and where it works, from
+a request's headers, its handshake, the environment, the roots a client
+offers and the working directory, and publishes the result for the rest of
+the request.
+
+### Map, by function
+
+| function | reference lines | what it needs from the machine | status |
+| --- | --- | --- | --- |
+| `Actor.is_empty`, `Actor.to_record` | 177-195 | nothing | unit 1, built |
+| `actor_matches` | 198-236 | nothing | unit 1, built |
+| `Workspace.declared` | 251-254 | nothing | unit 1, built |
+| `_strip_format_characters` | 278-286 | `unicodedata.category` (the crate's `unicode`) | unit 1, built |
+| `_clean` | 289-325 | `str.strip`, `str.isspace` (the crate's `unicode`) | unit 1, built |
+| `_headers_of`, `_carries_http` | 328-353 | the request (data) | unit 1, built (as `Request::headers`) |
+| `_client_info_of`, `_request_id_of` | 356-365, 385-387 | the request (data) | unit 1, built (as `Request` fields) |
+| `_principal_of` | 368-382 | the SDK's `authenticated_principal` | unit 1, built (its answer is `Request::principal`) |
+| `_json_workspace` | 390-405 | `json.loads` (the crate's `json`) | unit 1, built |
+| `_first_file_root` | 408-426 | `urllib.parse.urlparse`, `unquote` | unit 2 |
+| `_ROOTS`, `_roots_of` | 433-445 | a weak table keyed by the SDK session | unit 1, built (the table's entry is `Request::root`; the table is the caller's) |
+| `resolve` | 448-550 | `os.environ`, `Path.cwd()` | unit 1, built (both are arguments) |
+| `_CURRENT`, `current`, `publish`, `reset` | 557-571 | a context variable | unit 1, built (`Published`, owned by the caller) |
+| `bind`, `bind_transcript` | 574-625 | as `resolve` | unit 1, built |
+| `current_actor`, `current_harness_session` | 628-642 | the published caller | unit 1, built |
+| `workspace_declaration` | 645-657 | `Path.expanduser` (`HOME`, the password database) | unit 2 |
+| `registry_key` | 660-683 | nothing | unit 1, built |
+| `prime_roots`, `middleware` | 691-754 | the SDK's session, `roots/list`, `anyio` | not ported: the MCP server's wire path, built with the server |
+
+### The cut
+
+The whole module's pure part is about 500 lines of Rust; what is left
+needs a URL parser and the home directory, so the module is two units,
+leaves first.
+
+- Unit 1 (built, `identity`): everything the map marks built.
+- Unit 2: `_first_file_root` (`urlparse` and `unquote(errors=
+  "surrogateescape")` of a `file://` URI, the drive letter and UNC host
+  rules) feeding the roots entry, and `workspace_declaration` with
+  `expanduser` taking the environment and the password database as
+  arguments (POSIX and Windows flavours). `prime_roots` and `middleware`
+  wait for the server.
+
+### Unit 1, as built (`identity`)
+
+- `clean` is `_clean`: `str.strip` (the `str.isspace` code points, the
+  ASCII ones answered without the tables), then for a value holding a
+  code point past ASCII when format characters are stripped: refused
+  past 1,024 code points (counted after the first strip, before any
+  format character goes), category Cf removed, stripped again. Then
+  refused when empty, past 256 code points, or holding a space other
+  than U+0020, a code point below 32 or U+007F. A value that is not a
+  `str` is `None`. A lone surrogate is kept (`os.environ` gives one).
+- `json_workspace` is `_json_workspace`: refused past 1,538 code points
+  of JSON text, then the crate's `json::loads` (ValueError and
+  RecursionError are both a refusal), then a non-empty `str` of at most
+  256 code points without NUL.
+- `Actor` keeps `sources` as pairs in insertion order (`set_source`
+  replaces in place, as a dict does), so `to_record` gives the
+  reference's key order, `sources` last and only when non-empty.
+  `registry_key` joins its parts with `|` exactly as the reference does.
+- `resolve` takes the request as data (`Request`: the header pairs with
+  `str` key and value, Some only over HTTP; the handshake's name and
+  version; what the principal binding returned; `str(request_id)`; the
+  roots entry), the environment as a lookup that is never called over
+  HTTP, and the working directory as a function called only when no
+  header, environment variable or root names the workspace (None is
+  `Path.cwd()` raising). Header keys are folded with `str.lower`
+  (`unicode::lower`), so U+212A KELVIN SIGN folds to `k` as in the
+  reference, and a later pair with the same folded key wins, as the
+  reference's dict keeps the last. The order of environment reads is
+  the reference's (client, client version, model, workspace, harness
+  session), and the golden file pins it.
+- `Published` is `_CURRENT`: `publish` returns a `Token` holding the
+  caller published before, and `reset` consumes it, so a token cannot
+  be used twice (the reference raises RuntimeError there; the type rules
+  that use out). `bind` and `bind_transcript` resolve and publish;
+  `TRANSCRIPT_CLIENT` is `bind_transcript`'s default client.
+
+Regular expressions: none in this unit.
+
+### Findings about the reference (reproduced, pinned)
+
+- `_json_workspace` bounds the JSON text, not the path: an ASCII header
+  (`json.dumps` escapes every code point past ASCII) naming a path of 129
+  code points past U+FFFF is 12 characters each, 1,550 in all, and is
+  refused, though the path is within the 256 its docstring promises to
+  carry. Reproduction: `_json_workspace('"' + "\\ud83d\\ude00" * 129 +
+  '"')` is None; with 128 it is the path. Pinned in
+  `identity_caller.jsonl` and `identity_caller_kills.rs`.
+- `registry_key` joins unescaped parts with `|`, so two different header
+  declarations share a bucket: client `a|model=b` alone and client `a`
+  with model `b` both key `client=a|model=b`. Reproduction:
+  `registry_key(Actor(client="a|model=b", sources={"client": "header"}))
+  == registry_key(Actor(client="a", model="b", sources={"client":
+  "header", "model": "header"}))`. Pinned in both.
+- `_clean` measures the walk bound before format characters are
+  stripped, so 1,024 zero-width spaces and one letter are refused though
+  they read as one letter, while 1,023 and a letter give the letter.
+
+### Tests
+
+| test (file: function) | golden file | class |
+| --- | --- | --- |
+| `golden_identity_caller`: `identity_caller_every_case` | `identity_caller.jsonl` (447 cases: the leaves, 58 resolutions with their environment reads and working directory reads, 12 sequences over the published caller) | i |
+| `golden_identity_caller`: `identity_caller_unicode_every_code_point` | `identity_caller_unicode.jsonl` (what `_clean` does with every code point inside and at the end of a value, both ways, as runs) | ii (Unicode) |
+| `identity_caller_kills` (14) | none | i |
+| `identity_caller_robustness` (5): 4 MB values, 200,000 headers, deep JSON, every code point boundary, a registry key of 4 MB | none | i |
+
+The class (i) file's texts use only code points whose category and
+spacing are the same from Unicode 14.0 to 16.0. Nothing in either file
+depends on the Python release or the platform.
 
 ## Running the tests (offline)
 

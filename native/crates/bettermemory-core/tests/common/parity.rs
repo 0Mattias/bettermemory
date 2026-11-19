@@ -189,6 +189,7 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "lexicon_spelling_tables.json"
         | "unicode.jsonl"
         | "unicode_sequences.jsonl"
+        | "identity_caller_unicode.jsonl"
         | "membership_lines_unicode.jsonl"
         | "claims_unicode.jsonl" => &[Unicode],
         "search.jsonl"
