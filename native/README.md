@@ -38,7 +38,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_gitfiles` | unit 1 of `origin_gitfiles.py`, the pure decoders: `_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs` | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`) | `gitobjects.jsonl`, `gitobjects_python.jsonl` |
-| `gitfile_rule` | units 1, 2a, 2b and 3 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl` |
+| `gitfile_rule` | units 1, 2a, 2b, 3 and 4 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail` | `checkout_token.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
@@ -7713,17 +7713,30 @@ recorded in any fixture.
 
 ## Not built yet
 
-The store's writes past `create`, the writing open's plain states and
-the write transaction (`mutate`, `begin`, its `returned` marks),
-`put_memory`, `tombstone`, `delete_tombstone` and the row writers
-(`store::home`, `store::tables`): the rest of the public record API
-(the episode prune), the membership kinds, schema steps, rekey, reclaim,
-the origin's settling, a
-restore's rows, re-spelling the index), membership's writes and
-the caller's resolution (its admission is `store::caller`), and each hit's snippet, signals and drift report,
-the daemon, the MCP tools and the hooks; reading and writing the key ring's
-files on disk (the ring here holds their bytes); `datetime.astimezone` of a
-naive value (the reference reads it as the machine's local time).
+What the reference has and this build does not, by area:
+
+- The store's writes past `create`, the writing open's plain states, the
+  write transaction (`mutate`, `begin`, its `returned` marks),
+  `put_memory`, `tombstone`, `delete_tombstone` and the row writers
+  (`store::home`, `store::tables`): the rest of the public record API
+  (the episode prune), the membership kinds, schema steps, rekey,
+  reclaim, a restore's rows, re-spelling the index.
+- Reading a checkout: the judge and discovery of the `.git` rule,
+  `gitobjects.py` past its byte parsers (inflating, the files, the
+  reader), `origin_gitfiles.py` past its decoders, `checkout_token.py`
+  past its text (the reads, the write, the remint), the origin's
+  settling (`origin.py`), `location.py` and the rest of
+  `location_git.py`.
+- Membership's writes and the caller's resolution (its admission is
+  `store::caller`).
+- Each hit's snippet, signals and drift report.
+- The write gates past the control tokens: `credentials.py` after its
+  vendor-prefixed detectors (the value gate, the generic and URI
+  patterns, spans and markers), and the review.
+- The daemon, the MCP tools, the hooks and the command line.
+- Reading and writing the key ring's files on disk (the ring here holds
+  their bytes); `datetime.astimezone` of a naive value (the reference
+  reads it as the machine's local time).
 
 ## Records and their errors
 

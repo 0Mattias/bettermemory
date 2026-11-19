@@ -32,16 +32,21 @@
 //!   compares, with `urllib.parse.urlparse` as CPython 3.13.13 has it;
 //! - [`credentials`]: the write gate's credential detectors, its first
 //!   unit (the vendor-prefixed shapes);
-//! - [`gitfile_rule`]: the rule a `.git` entry is followed by, its first
-//!   unit (the leaves).
+//! - [`control_tokens`]: the chat-template control tokens a text may not
+//!   carry;
+//! - [`origin_gitfiles`]: the repository files `origin` reads in-process,
+//!   its first unit (the pure decoders);
+//! - [`checkout_token`]: the checkout token, its first unit (the text);
+//! - [`gitfile_rule`]: the rule a `.git` entry is followed by, up to the
+//!   follow of an entry and its pin records.
 
 #![forbid(unsafe_code)]
 
 pub mod capture;
 pub mod checkout_token;
 pub mod config;
-pub mod credentials;
 pub mod control_tokens;
+pub mod credentials;
 pub mod datetime;
 pub mod float_repr;
 pub mod fsdata;
