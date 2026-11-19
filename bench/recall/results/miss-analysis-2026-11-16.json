@@ -1,0 +1,202 @@
+{
+  "program": "bench/recall/miss_analysis.py",
+  "program_sha256": "9147383f07d4e4461256cc65292b939ceaf65d84ec214b9d4054ea6968384c15",
+  "commit": "76fc726f69430cbd49023616735f04dc0f20ac7b",
+  "at": "2026-11-16T06:16:16+00:00",
+  "store": {
+    "records": 1492,
+    "events": 31699,
+    "first_event": "2026-05-08T02:41:13.604080Z",
+    "last_event": "2026-11-16T06:07:49.713986Z"
+  },
+  "transcripts": {
+    "search_queries": 1265,
+    "prompts": 4215
+  },
+  "audit_rows": {
+    "verdicts": {
+      "no_signal": 1314,
+      "ok": 3365,
+      "miss": 179
+    },
+    "note": "the audit's probe is lexical, so its misses share words with the turn by construction and cannot show a vocabulary gap"
+  },
+  "search": {
+    "headline": {
+      "window_seconds": 600,
+      "counts": {
+        "opened_from_search": 2411,
+        "opened_from_search_and_applied": 295,
+        "first_ask_returned_it": 1231,
+        "first_ask_returned_it_and_applied": 207,
+        "opened_not_from_a_recent_search": 4476,
+        "asked_again": 1180,
+        "asked_again_query_not_in_transcripts": 527
+      },
+      "first_ask_rate": {
+        "numerator": 1231,
+        "denominator": 2411,
+        "rate": 0.5106
+      },
+      "first_ask_rate_applied": {
+        "numerator": 207,
+        "denominator": 295,
+        "rate": 0.7017
+      },
+      "classes": {
+        "outranked": 515,
+        "no_shared_term": 110,
+        "ranked_within_width": 24,
+        "record_gone": 4
+      },
+      "classes_applied": {
+        "outranked": 71,
+        "ranked_within_width": 5,
+        "no_shared_term": 4,
+        "record_gone": 1
+      },
+      "outranked_by_rank": {
+        "11-50": 103,
+        "51+": 402,
+        "4-10": 10
+      }
+    },
+    "other_windows": [
+      {
+        "window_seconds": 120,
+        "counts": {
+          "opened_from_search": 2411,
+          "opened_from_search_and_applied": 295,
+          "first_ask_returned_it": 1353,
+          "first_ask_returned_it_and_applied": 230,
+          "opened_not_from_a_recent_search": 4476,
+          "asked_again": 1058,
+          "asked_again_query_not_in_transcripts": 500
+        },
+        "first_ask_rate": {
+          "numerator": 1353,
+          "denominator": 2411,
+          "rate": 0.5612
+        },
+        "first_ask_rate_applied": {
+          "numerator": 230,
+          "denominator": 295,
+          "rate": 0.7797
+        },
+        "classes": {
+          "outranked": 432,
+          "no_shared_term": 102,
+          "ranked_within_width": 20,
+          "record_gone": 4
+        },
+        "classes_applied": {
+          "outranked": 52,
+          "no_shared_term": 4,
+          "ranked_within_width": 3,
+          "record_gone": 1
+        },
+        "outranked_by_rank": {
+          "11-50": 86,
+          "51+": 337,
+          "4-10": 9
+        }
+      },
+      {
+        "window_seconds": 1800,
+        "counts": {
+          "opened_from_search": 2411,
+          "opened_from_search_and_applied": 295,
+          "first_ask_returned_it": 1141,
+          "first_ask_returned_it_and_applied": 192,
+          "opened_not_from_a_recent_search": 4476,
+          "asked_again": 1270,
+          "asked_again_query_not_in_transcripts": 555
+        },
+        "first_ask_rate": {
+          "numerator": 1141,
+          "denominator": 2411,
+          "rate": 0.4732
+        },
+        "first_ask_rate_applied": {
+          "numerator": 192,
+          "denominator": 295,
+          "rate": 0.6508
+        },
+        "classes": {
+          "outranked": 568,
+          "no_shared_term": 116,
+          "ranked_within_width": 24,
+          "record_gone": 5,
+          "record_newer_than_ask": 2
+        },
+        "classes_applied": {
+          "outranked": 82,
+          "no_shared_term": 6,
+          "ranked_within_width": 5,
+          "record_gone": 2
+        },
+        "outranked_by_rank": {
+          "11-50": 112,
+          "51+": 446,
+          "4-10": 10
+        }
+      }
+    ]
+  },
+  "hook": {
+    "counts": {
+      "recall_turns": 722,
+      "turns_with_a_record_opened": 218,
+      "opened_and_the_recall_had_shown_it": 85,
+      "opened_shown_and_applied": 30,
+      "opened_from_search_not_shown_by_the_recall": 405,
+      "opened_not_shown_and_applied": 93,
+      "opened_from_elsewhere": 625,
+      "not_shown_prompt_not_in_transcripts": 5
+    },
+    "classes": {
+      "outranked": 335,
+      "no_shared_term": 20,
+      "ranked_within_width": 17,
+      "no_topic_words": 14,
+      "record_newer_than_ask": 9,
+      "record_gone": 5
+    },
+    "classes_applied": {
+      "outranked": 73,
+      "no_topic_words": 5,
+      "ranked_within_width": 5,
+      "record_gone": 5,
+      "no_shared_term": 4,
+      "record_newer_than_ask": 1
+    },
+    "shared_term_misses_by_rank": {
+      "11-50": 59,
+      "4-10": 18,
+      "51+": 261,
+      "1-3": 14
+    }
+  },
+  "predictions": {
+    "P1_no_shared_term_share_of_search_misses_under_0.25": {
+      "numerator": 110,
+      "denominator": 649,
+      "rate": 0.1695
+    },
+    "P2_no_shared_term_share_of_hook_misses_under_0.25": {
+      "numerator": 20,
+      "denominator": 386,
+      "rate": 0.0518
+    },
+    "P3_first_ask_rate_at_least_0.70": {
+      "numerator": 1231,
+      "denominator": 2411,
+      "rate": 0.5106
+    }
+  },
+  "caveats": [
+    "need is read from what the model opened, so a record no ask ever reached is not counted in either population",
+    "no_shared_term holds vocabulary gaps and asks about another topic alike; the private rows carry both asks for a reader to separate them",
+    "records are classed as they are in the copy, not as they were at the ask"
+  ]
+}
