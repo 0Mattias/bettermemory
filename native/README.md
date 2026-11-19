@@ -32,6 +32,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
+| `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `origin_gitfiles` | unit 1 of `origin_gitfiles.py`, the pure decoders: `_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs` | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
@@ -1275,6 +1276,10 @@ that Unicode too.
 | `gitconfig_robustness` (7) | none | i |
 | `golden_gitconfig_wildmatch`: `gitconfig_wildmatch_every_case` | `gitconfig_wildmatch.jsonl` | i |
 | `gitconfig_wildmatch_robustness` (8) | none | i |
+| `golden_origin_remote`: `origin_remote_every_case` | `origin_remote.jsonl` | i |
+| `golden_origin_remote`: `origin_remote_unicode_every_case` | `origin_remote_unicode.jsonl` | ii (Unicode) |
+| `golden_origin_remote`: `origin_remote_python_every_case` | `origin_remote_python.jsonl` | ii (Python, Unicode) |
+| `origin_remote_kills` (6), `origin_remote_robustness` (3) | none | i |
 | `golden_gitconfig_remote_rules`: `gitconfig_remote_rules_every_case` | `gitconfig_remote_rules.jsonl` | i |
 | `gitconfig_remote_rules_robustness` (2) | none | i |
 | `golden_origin_gitfiles`: `origin_gitfiles_leaves_every_case` | `origin_gitfiles_leaves.jsonl` | i |
@@ -2350,6 +2355,108 @@ directories.
 - The depth test on a 512 KiB thread.
 
 Every number in it was taken from the reference.
+
+## A remote URL's triple (`origin_remote.py`)
+
+`origin_remote` ports the whole of `origin_remote.py` (at 465bc600) in one
+unit, 596 lines of source. It needs nothing from the machine: no file
+system, clock, environment or child process. Its texts are code points
+(`PyStr`), since a record's remote is a Python `str` and may hold a lone
+surrogate.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_SSH_REMOTE_RE` | 48-50 | nothing | built (`scp_match`, by hand) |
+| `_HOST_ALIASES`, `_VENDOR_ROUTE_PREFIXES` | 57-78 | nothing | built (`alias`, `vendor_hint`) |
+| `_parse_remote` | 81-136 | nothing | built (`parse_remote`) |
+| `urllib.parse.urlparse`, `.hostname` | CPython 3.13.13 | nothing | built (`urlparse`, `hostname`) |
+| `ipaddress.ip_address` of a bracketed host | CPython 3.13.13 | nothing | built (`ipv4`, `ipv6`, validity only) |
+| `_canonicalize` | 139-152 | nothing | built (`canonicalize`) |
+| `_canonicalize_azure` | 155-198 | nothing | built (`canonicalize_azure`) |
+
+### What each function reproduces
+
+- `parse_remote`: `str.strip()` with the Unicode data's whitespace (so
+  U+3000 and U+2028 are stripped, U+200B and NUL are not), the scp-like
+  pattern, then the six scheme prefixes (case as written) through
+  `urlparse`, the path's slashes and `.git`, the single-segment owner, and
+  the vendor prefix strip (`scm` on a host holding `bitbucket`, `a` on one
+  holding `gerrit`, owner lowered by `str.lower`, http and https only, and
+  only while the rest holds a `/`).
+- `scp_match`: `_SSH_REMOTE_RE` is matched by a hand-written matcher, not
+  a regex crate. Its proof is in the function's comment: every quantifier
+  in the pattern is decided by the next delimiter, so the backtracking
+  order leaves one answer, found in linear time. The user prefix is the
+  leading run of `[a-zA-Z0-9_.+-]` when an `@` follows; the host is the
+  run of `[^/:@]` (newline included) up to a `:`, at least two long; the
+  `(?!//)` lookahead; the optional slash tried first; the owner a run of
+  `[^/]` up to a `/`; the lazy name ends at the first of `.git/`, `.git`,
+  `/` or the end that leaves it non-empty, and fails where the rest holds
+  a newline (`.` excludes it; the stripped text cannot end in one, so `$`
+  is the end).
+- `urlparse`: `urlsplit`'s C0 lstrip, the removal of tab, CR and LF, the
+  scheme test, `_splitnetloc`, the bracket checks
+  (`_check_bracketed_netloc`, `_check_bracketed_host` with its IPvFuture
+  pattern, matched by hand), the fragment and query splits,
+  `_checknetloc` (NFKC from the crate's tables), and `_splitparams` for the
+  schemes of `uses_params`. Each `ValueError` is a `UrlError` kind.
+  `hostname` is `_hostinfo` and the lowering before a `%`.
+- `ipaddress`: `IPv4Address` and `IPv6Address` parsing as booleans: the
+  scope split, the 45 code point bound, `split(':', maxsplit=9)`, the
+  embedded IPv4 tail, the `::` rules and the hextets.
+- `canonicalize`, `canonicalize_azure`: as written, with `str.lower` from
+  the crate's tables.
+
+### Decisions
+
+- The port reads `str.strip`, `str.lower` and NFKC from the crate's Unicode
+  15.1 tables, so rows past ASCII go to a Unicode-gated file.
+- The bracketed-host checks are the Python release's (3.11 before 3.11.4
+  had none), so every row whose URL holds a bracket goes to the file gated
+  on the Python release (and the Unicode data, since some hold text past
+  ASCII). Under 3.11.15, 3.12.13 and 3.13.13 every row of all three files
+  is the same; the gate is a precaution for releases not checked.
+- The port is never read: `ParseResult.port` is not consulted by the
+  reference, so a port past 65535 parses.
+
+### What the reference does that looks wrong (not changed)
+
+- The scp host keeps its case while the URL host is lowered:
+  `GitHub.com:o/n` gives `('GitHub.com', 'o', 'n')` and
+  `https://GitHub.com/o/n` gives `('github.com', 'o', 'n')`, though git
+  and DNS compare hosts without case. A false negative only.
+- The scp form keeps a doubled slash in the name: `hh:o//n` gives
+  `('hh', 'o', '/n')`, while `https://h//o/n` gives `('h', 'o', 'n')`.
+- The scp host may hold a newline or a space (`h x:o/n` gives
+  `('h x', 'o', 'n')`), and a name may end in NUL
+  (`https://h/o/n\x00` gives `('h', 'o', 'n\x00')`).
+- A one-character scp host is refused even after a user prefix
+  (`git@h:o/n` gives None), which the comment justifies only for drive
+  letters.
+
+### Tests
+
+`origin_remote.jsonl` (`gen_origin_remote.py`, 256 KB, not gated),
+`origin_remote_unicode.jsonl` (13 KB, Unicode) and
+`origin_remote_python.jsonl` (15 KB, Python and Unicode) hold 2,185
+`_parse_remote` cases, 1,204 `urlparse` cases and 400 each of
+`_canonicalize` and `_canonicalize_azure`. `golden_origin_remote` checks
+every case of each file and its counts. `origin_remote_kills` (6 tests)
+holds remotes a plausible wrong port answers otherwise: a greedy name, a
+lowered scp host, a newline at `$`, tab kept, a bracketed IPv4, a lowered
+zone, the vendor strip on any host or scheme, NFKC unchecked (U+2100,
+U+FE13, U+FF1A), ASCII whitespace, the final sigma, an IPvFuture with
+nothing after its dot, a second `%` in a scope id, and a leading space
+kept by `urlparse`. These run on every machine, so the bracketed-host
+rules of the Python-gated file are also pinned without it. `origin_remote_robustness` (3 tests): eight
+megabyte shapes with the reference's answer lengths (release at most
+60 ms each, the reference up to 743 ms), 10,000 nested brackets, the
+address grammar's bounds, and 50,000 random texts over the delimiters and
+surrogates without a panic. Outside the fixture, random remotes
+(200,000) were compared with the reference, none differing.
+
+Nothing of the module is left for later units; `origin.repos_match`, its
+caller, is not ported.
 
 ## The remote rules
 

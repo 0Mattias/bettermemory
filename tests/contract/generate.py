@@ -53,6 +53,7 @@ from . import (
     gen_gitconfig_remote_rules,
     gen_origin_gitfiles,
     gen_gitconfig_wildmatch,
+    gen_origin_remote,
     gen_location_remotes,
     gen_location_spellings,
     gen_location_stamped,
@@ -140,6 +141,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitconfig": gen_gitconfig.generate,
     "caller_admission": gen_caller_admission.generate,
     "gitconfig_wildmatch": gen_gitconfig_wildmatch.generate,
+    "origin_remote": gen_origin_remote.generate,
+    "origin_remote_unicode": gen_origin_remote.generate_unicode,
+    "origin_remote_python": gen_origin_remote.generate_python,
     "gitconfig_remote_rules": gen_gitconfig_remote_rules.generate,
     "origin_gitfiles_leaves": gen_origin_gitfiles.generate,
     "origin_gitfiles_leaves_python": gen_origin_gitfiles.generate_python,
@@ -227,6 +231,8 @@ UNICODE_GATED = frozenset(
         "store_records_d",
         "store_records_e",
         "membership_lines_unicode",
+        "origin_remote_unicode",
+        "origin_remote_python",
         "store_rows_written",
         "store_provenance",
         "store_bulk",
@@ -271,6 +277,8 @@ PYTHON_VERSION = "3.13.13"
 #: raises and 3.14's answers False. ``gitsystem_which_windows_python``
 #: names ``NoDefaultCurrentDirectoryInExePath`` or a PATHEXT entry ending in
 #: a dot, which `shutil.which` before 3.12 does not read as 3.13 does.
+#: ``origin_remote_python`` holds URLs with a bracket, whose host checks in
+#: `urlsplit` and `ipaddress` are the release's (`gen_origin_remote`).
 PYTHON_GATED = frozenset(
     {
         "gitsystem_record_python",
@@ -287,6 +295,7 @@ PYTHON_GATED = frozenset(
         "settings_python",
         "settings_paths_python",
         "membership_lines_python",
+        "origin_remote_python",
         "capture_vocabulary_python",
         "fs_realpath_python",
         "fs_realpath_strict_python",

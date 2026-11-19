@@ -298,12 +298,31 @@ fn compose_in_place(text: &mut Vec<u32>) {
 /// a starter, and is no composition's second half.
 fn nfkc_is_identity(text: &[u32]) -> bool {
     let bmp = bmp();
+    let stable = nfkc_stable();
     text.iter().all(|&cp| {
         cp < 0xA0
             || cp < 0x10000
-                && !(0xAC00..0xD7A4).contains(&cp)
                 && bmp.ccc[cp as usize] == 0
-                && bmp.flags[cp as usize] & (F_NFKD | F_COMP2) == 0
+                && bmp.flags[cp as usize] & F_COMP2 == 0
+                && (bmp.flags[cp as usize] & F_NFKD == 0 || stable[cp as usize])
+    })
+}
+
+/// The Basic Multilingual Plane code points that decompose under NFKC and
+/// compose back to themselves alone (U+0130, the Hangul syllables): a
+/// starter of these, next to no composition's second half, is left as it
+/// is, the quick check `unicodedata.normalize` makes.
+fn nfkc_stable() -> &'static [bool] {
+    static STABLE: OnceLock<Vec<bool>> = OnceLock::new();
+    STABLE.get_or_init(|| {
+        let mut stable = vec![false; 0x10000];
+        let hangul = (S_BASE..S_BASE + S_COUNT).map(|cp| (cp, 0));
+        for (cp, _) in tables::NFKD_INDEX.iter().copied().chain(hangul) {
+            if cp < 0x10000 {
+                stable[cp as usize] = compose(decompose(&[cp], true)) == [cp];
+            }
+        }
+        stable
     })
 }
 

@@ -26,6 +26,8 @@
 //! - [`fsdata`]: the file system as the config readers ask it, as data;
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
 //!   the lines shown about which project a folder belongs to;
+//! - [`origin_remote`]: a remote URL read into the triple `origin`
+//!   compares, with `urllib.parse.urlparse` as CPython 3.13.13 has it;
 //! - [`gitfile_rule`]: the rule a `.git` entry is followed by, its first
 //!   unit (the leaves).
 
@@ -47,6 +49,7 @@ pub mod lexicon;
 pub mod log;
 pub mod membership_lines;
 pub mod origin_gitfiles;
+pub mod origin_remote;
 pub mod printable;
 pub mod pyvalue;
 pub mod records;

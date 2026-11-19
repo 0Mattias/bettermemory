@@ -195,6 +195,11 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_real.json"
         | "store_real.sqlite" => &[Unicode, Platform],
         "models.jsonl" => &[Pydantic],
+        // `str.strip`, `str.lower` and NFKC past ASCII (`gen_origin_remote`).
+        "origin_remote_unicode.jsonl" => &[Unicode],
+        // A bracketed host: `urlsplit`'s and `ipaddress`'s checks are the
+        // release's; some of these URLs also hold text past ASCII.
+        "origin_remote_python.jsonl" => &[Python, Unicode],
         // The tokenizer's and the digest's fingerprints read `unicodedata`.
         "store_create.json" => &[Unicode],
         // The tokenizer's fingerprint decides a re-spelling; the digest's
