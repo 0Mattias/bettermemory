@@ -12,11 +12,29 @@
 //! times its bound fails without further rounds, so code that has turned
 //! quadratic fails in three rounds and not twelve.
 //!
+//! Claims in one test file take turns: the tests of a file run on threads
+//! of one process, and ten claims timed at once make each other's large
+//! sizes slower (a claim missed by 219 times with the ten claims of
+//! `claims_robustness` at once on a loaded machine, met alone on the same
+//! machine). Each claim holds [`TURN`] while it is timed.
+//!
 //! A test file takes this with `mod timing;`.
 
 #![allow(dead_code)]
 
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+
+/// Held by a claim while it is timed, so the claims of one test process
+/// are timed one at a time.
+static TURN: Mutex<()> = Mutex::new(());
+
+/// The turn, also after a claim that panicked while holding it (a claim
+/// that fails panics, and the next claim still runs).
+fn turn() -> MutexGuard<'static, ()> {
+    TURN.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// Rounds timed before the claim is first read.
 pub const LEAST: usize = 3;
@@ -61,6 +79,7 @@ pub fn grows_within(
     small: &mut dyn FnMut() -> Duration,
     large: &mut dyn FnMut() -> Duration,
 ) {
+    let held = turn();
     let (mut s, mut l) = (Duration::MAX, Duration::MAX);
     let mut rounds = 0;
     while rounds < MOST {
@@ -71,12 +90,14 @@ pub fn grows_within(
             continue;
         }
         if within(s, l, factor) {
+            drop(held);
             return;
         }
         if !within(s, l, factor.saturating_mul(HOPELESS)) {
             break;
         }
     }
+    drop(held);
     panic!(
         "{name}: the large size took {l:?} and the small one {s:?}, the least \
          of {rounds} rounds: more than {factor} times plus {SLACK:?}"
@@ -86,12 +107,15 @@ pub fn grows_within(
 /// Panics unless one of up to [`MOST`] runs ends within `bound`. `run`
 /// returns the time of one run.
 pub fn ends_within(name: &str, bound: Duration, run: &mut dyn FnMut() -> Duration) {
+    let held = turn();
     let mut least = Duration::MAX;
     for _ in 0..MOST {
         least = least.min(run());
         if least < bound {
+            drop(held);
             return;
         }
     }
+    drop(held);
     panic!("{name}: the least of {MOST} runs took {least:?}, the bound is {bound:?}");
 }
