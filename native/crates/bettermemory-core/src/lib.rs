@@ -21,6 +21,8 @@
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
 //! - [`gitconfig`]: the text of a git config file as the reference reads it;
 //! - [`githead`]: HEAD and refs read from a git directory's files;
+//! - [`gitobjects`]: git objects read from a repository's files, its
+//!   first unit (the byte parsers);
 //! - [`fsdata`]: the file system as the config readers ask it, as data;
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
 //!   the lines shown about which project a folder belongs to;
@@ -37,6 +39,7 @@ pub mod fsdata;
 pub mod gitconfig;
 pub mod gitfile_rule;
 pub mod githead;
+pub mod gitobjects;
 pub mod gitsystem;
 pub mod json;
 pub mod lexicon;

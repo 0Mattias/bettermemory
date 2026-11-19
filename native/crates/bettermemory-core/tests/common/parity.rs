@@ -237,6 +237,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // The rows hold the tokenizer's spelling; the records are built
         // through the models.
         "store_provenance.jsonl" => &[Unicode, Pydantic],
+        // A loose header's size past `int`'s 4,300 digits (`gen_gitobjects`).
+        "gitobjects_python.jsonl" => &[Python],
         // `int()` and `float()` of a recorded stamp or time read non-ASCII
         // digits and spaces from `unicodedata` (`gen_gitsystem_record`).
         "gitsystem_record.jsonl" => &[Unicode],

@@ -34,6 +34,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
+| `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`) | `gitobjects.jsonl`, `gitobjects_python.jsonl` |
 | `gitfile_rule` | units 1, 2a, 2b and 3 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
@@ -1285,6 +1286,9 @@ that Unicode too.
 | `golden_githead`: `githead_every_case` (both flavours) | `githead.jsonl` | i |
 | `golden_githead`: `githead_posix_every_case` (unix) | `githead_posix.jsonl` | i; os elsewhere (`githead_not_posix`) |
 | `githead_robustness` (7), `githead_stdfs` (2 on unix, 1 elsewhere) | none | i |
+| `golden_gitobjects`: `gitobjects_every_case` | `gitobjects.jsonl` | i |
+| `golden_gitobjects`: `gitobjects_python_every_case` | `gitobjects_python.jsonl` | ii (Python) |
+| `gitobjects_kills` (13), `gitobjects_robustness` (5) | none | i |
 | `golden_gitfile_leaves`: `gitfile_leaves_every_case` | `gitfile_leaves.jsonl` | i |
 | `golden_gitfile_leaves_posix`: in memory and on disk (unix) | `gitfile_leaves_posix.jsonl` | i; os elsewhere (`gitfile_leaves_not_posix`) |
 | `gitfile_leaves_robustness` (9; 8 off unix) | none | i |
@@ -4560,6 +4564,141 @@ other 11, which native reproduces:
 - A `config` naming `extensions.refStorage = reftable` beside files-backend
   refs: git reads no files there; the reference reads no config
   (`head_ref`, 1080). A real reftable repository's `HEAD` declines.
+
+## Git objects read from a repository's files (`gitobjects.py`)
+
+`src/bettermemory/gitobjects.py` (1,234 lines, read at 465bc600) reads
+commits, trees and object names from a repository's loose objects, pack
+indexes, packs and alternates, with no git process. Its Rust port is well
+over 600 lines, so it is cut into units, leaves first. Unit 1 is built
+(`gitobjects`); the rest is designed below.
+
+### Map, by function
+
+| function | lines | what it needs from the machine | unit, status |
+| --- | --- | --- | --- |
+| `committed_at`, `parent_lines`, `_hex_at` | 176-251 | nothing | 1, built |
+| `commit_fingerprint` | 254-269 | nothing (sha256, `sha2`) | 1, built |
+| `_PackIndex.find`, `starting`, `offset`; `_parse_index` | 749-861 | nothing | 1, built |
+| `_alternate_entries`, `_unquote_c` | 1006-1055 | nothing | 1, built |
+| `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta` | 1058-1178 | nothing | 1, built |
+| `_hex_name`, `_parse_commit`, `_parse_tree` | 1181-1234 | nothing | 1, built |
+| `_Stream.read`, `read_to_end`, `_inflate_at` | 947-986 | zlib inflate over a file handle (seek, read) | 2 |
+| `_chain`, `_listed_in`, `_take` | 864-944 | a pack file handle (seek, read), zlib | 2 |
+| `_is_evicted`, `_open`, `_read_whole` | 579-614, 989-992 | `stat` (`st_flags`, `st_file_attributes`), an open that does not wait on a FIFO, `fstat`, `readall` | 3 |
+| `_dir_key`, `_object_dirs`, `_link_alternates` | 500-535, 995-999 | `realpath`, `normcase`, `normpath`, `isabs`, `isdir` | 3 |
+| `_object_format`, `_list_new`, `_rescan`, `_load` | 477-498, 537-575 | `listdir`, `isfile`, `gitfile_rule.object_format` (ported) | 3 |
+| `ObjectReader`: `has`, `has_many`, `_take_loose`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `name_length`, `complete`, `evicted`, `object_dirs`, `_raw`, `_places`, `_object`, `_loose`, `_packed` | 272-746 | all of the above, and `listdir` of a fanout directory | 4 |
+
+Units 2 to 4: unit 2 is the zlib streams and the delta chain over a file
+handle the caller gives (a trait with `seek` and `read`), with the choice
+of inflate backend shown equal to CPython's `zlib.decompressobj` on
+corrupt, truncated and trailing-garbage streams; unit 3 is the file
+reads through `fsdata`'s `Fs` (extended with `st_flags` and
+`st_file_attributes` for eviction), the object format and the
+alternates walk; unit 4 is `ObjectReader` itself.
+
+### Unit 1, built (`gitobjects`)
+
+Every function of unit 1 is a function of its arguments: no file, no
+clock, no environment. Each answers as the reference for every input in
+its domain, including the ones it answers oddly:
+
+- `loose_header`: `<type> <size>\0`, the type one of the four names, the
+  size canonical decimal (no sign, no space, no leading zero but `0`
+  itself). The size is any width (`Wide`); a size of more than 4,300
+  digits is `Raised::ValueError`, as CPython 3.11 and later's `int()`
+  raises (pinned in the Python-gated file).
+- `varint`, `entry_header`, `delta_sizes`: the reference's integers are
+  unbounded, and a header can state a size or a distance past 64 bits, so
+  these answer `Wide`, an exact unsigned integer with `hex()` for
+  `format(v, "x")` and `to_u64()`. The OFS_DELTA distance adds one before
+  each shift, as git's. A REF_DELTA base needs the whole name in the
+  buffer.
+- `apply_delta`: git's `patch_delta` checks as the reference states them:
+  the source size equal to the base's length, a copy inside the base, a
+  copy of size 0 is 65,536 bytes, opcode 0 refused, the result over the
+  target refused at the instruction that passes it, and the result
+  exactly the target. A target past 64 bits is never met.
+- `hex_at`, `hex_name`, `parent_lines`, `committed_at`: the fixed-length
+  `tree` and `parent` lines of git's `parse_commit_buffer`, and the
+  committer time as `strtoumax` reads it (leading zeros skipped, a `-`
+  wrapping modulo 2**64, saturation at 2**64 - 1, 0 where git reads
+  none).
+- `parse_commit`, `parse_tree`, `commit_fingerprint`: as the reference;
+  object names lowercased; a tree mode of one to six octal digits.
+- `unquote_c`, `alternate_entries`: git's `unquote_c_style` (the octal
+  escape `\0` to `\3` and two octal digits) and `parse_alt_odb_entry` (the
+  byte after a closing quote is skipped, whatever it is).
+- `parse_index` and `PackIndex::find`, `starting`, `offset`: the size
+  checks of `check_packed_git_idx` (sizes computed in 128 bits, so no
+  fanout can overflow them), the binary searches, and where the reference
+  raises: `find` of an empty name is `Raised::IndexError`, `offset` past
+  the data is `Raised::StructError` (`struct.error`), and a prefix that
+  `int(prefix[:2], 16)` or `bytes.fromhex` refuses is
+  `Raised::ValueError` (ASCII whitespace as both read it: space, tab, LF,
+  VT, FF, CR).
+
+Decisions:
+
+- Counts and indexes (`hexsz`, `hash_len`, `at`, `start`, `position`) are
+  `usize`. The reference takes Python ints; a negative one indexes from
+  the end there. Its callers pass the object format's lengths and indexes
+  they computed, never a negative one, so negatives are outside the port's
+  domain.
+- `PackIndex::starting` takes `&str`; a prefix outside ASCII is
+  `Raised::ValueError`, as in the reference: `int` of the first two
+  characters reads Unicode digits but yields a value inside the fanout or
+  raises ValueError, and `bytes.fromhex` then refuses any text outside
+  ASCII. Its one caller (`resolve`) passes text `_HEX` has matched.
+- `Wide` holds 32-bit limbs. The OFS distance's step is a multiply and
+  an add over every limb, so a distance of n bytes costs O(n**2), as the
+  reference's own big integers do; the varint's step is an OR at a
+  position, linear in the varint's length (the reference's is quadratic:
+  64 KiB of continuation bytes take it 1.6 s; 4 MiB take the port well
+  under a second in debug). The loose size is read nine decimal digits
+  per multiply, as CPython's `int` reads them, so 4,300 digits take
+  478 passes over the limbs rather than 4,300.
+- No regular expression is compiled: `_HEX_RUN`, `_DIGITS`, `_MODE`,
+  `_OCTAL_PAIR`, `_HEX_BYTES` and `_HEX` are bytes patterns over ASCII
+  classes (`[0-9a-fA-F]`, `[0-9]`, `[0-7]`), each written by hand as a
+  byte test; `match(body, pos, endpos)`'s clamping of positions past the
+  end is reproduced as a bound check (a zero-length match past the end
+  never ends at `at + hexsz`).
+- No crate is added. `sha2` was already a dependency. Nothing inflates in
+  this unit, so no zlib backend is chosen yet.
+
+Reference findings (reproduced, pinned):
+
+- `_PackIndex.starting` with a one-character prefix searches the fanout
+  bucket of that digit's value, not of the names that start with it:
+  `starting("a", limit=2)` reads bucket 0x0a with the low bound 0xa0 and
+  answers `[]` even where a name starts `a0`. `resolve` passes at least
+  four characters, so no answer of the reader changes. Reproduction: the
+  kills test `a_one_digit_prefix_searches_the_bucket_of_its_value`.
+- `_loose_header` reads a size of any width, where git's
+  `parse_loose_header` refuses a size that overflows `size_t`
+  (`unsigned_mult_overflows`). `ObjectReader.header` of a loose object
+  whose header says `blob 18446744073709551616` answers that size; git
+  reports a bad object header. Reproduction: the golden `lh` case of
+  `blob 18446744073709551616\0`, and the kills test
+  `a_loose_size_is_canonical_decimal_of_any_width`.
+
+Fixtures and tests:
+
+- `gitobjects.jsonl` (class i, 1,032 cases, 231 KB) and
+  `gitobjects_python.jsonl` (class ii, Python, 3 cases), written by
+  `tests/contract/gen_gitobjects.py`. Every input is fixed text or built
+  by fixed arithmetic; a repeated byte is spelled as a run, so the
+  65,536-byte copies stay small.
+- `golden_gitobjects` (2 tests: every case of each file, the count
+  checked against the header and not zero, every kind present),
+  `gitobjects_kills` (13 tests: answers a plausible wrong port misses),
+  `gitobjects_robustness` (5 tests: every count and index argument at
+  `usize::MAX` and near it, a 4 MiB varint, an 8 KiB OFS distance, a
+  1 MiB size past `int`'s limit, a 16 MiB delta result, 20,000 parents,
+  200,000 tree entries, an index of 200,000 objects; each under a time
+  bound, in debug and release).
 
 ## A location capture's vocabulary
 

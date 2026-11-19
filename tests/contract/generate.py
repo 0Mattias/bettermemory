@@ -60,6 +60,7 @@ from . import (
     gen_gitsystem_probe,
     gen_gitsystem_record,
     gen_githead,
+    gen_gitobjects,
     gen_gitfile_leaves,
     gen_json,
     gen_lexicon,
@@ -140,6 +141,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitconfig_remote_rules": gen_gitconfig_remote_rules.generate,
     "ulid": gen_ulid.generate,
     "githead": gen_githead.generate,
+    "gitobjects": gen_gitobjects.generate,
+    "gitobjects_python": gen_gitobjects.generate_python,
     "githead_posix": gen_githead.generate_posix,
     "capture_vocabulary": gen_capture_vocabulary.generate,
     "capture_vocabulary_python": gen_capture_vocabulary.generate_python,
@@ -286,6 +289,7 @@ PYTHON_GATED = frozenset(
         "gitfile_identity_python",
         "gitfile_trust_python",
         "gitfile_follow_python",
+        "gitobjects_python",
     }
 )
 
