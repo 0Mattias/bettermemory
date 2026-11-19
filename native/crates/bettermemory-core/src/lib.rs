@@ -32,6 +32,7 @@
 #![forbid(unsafe_code)]
 
 pub mod capture;
+pub mod checkout_token;
 pub mod config;
 pub mod datetime;
 pub mod float_repr;

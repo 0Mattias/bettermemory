@@ -37,6 +37,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`) | `gitobjects.jsonl`, `gitobjects_python.jsonl` |
 | `gitfile_rule` | units 1, 2a, 2b and 3 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl` |
+| `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail` | `checkout_token.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
@@ -1282,6 +1283,8 @@ that Unicode too.
 | `golden_capture_vocabulary`: `capture_vocabulary_every_case` | `capture_vocabulary.jsonl` | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_python_every_case` | `capture_vocabulary_python.jsonl` | ii (Python) |
 | `capture_vocabulary_robustness` (5) | none | i |
+| `golden_checkout_token`: `checkout_token_every_case` | `checkout_token.jsonl` | i |
+| `checkout_token_kills` (9), `checkout_token_robustness` (5) | `checkout_token.jsonl` (kills) | i |
 | `golden_membership_lines`: `membership_lines_every_case` | `membership_lines.jsonl` | i |
 | `golden_membership_lines`: `membership_lines_unicode_every_case` | `membership_lines_unicode.jsonl` | ii (Unicode) |
 | `golden_membership_lines`: `membership_lines_python_every_case` | `membership_lines_python.jsonl` | ii (Python) |
@@ -4957,6 +4960,118 @@ Left for later: part (c) is built in "Text made safe to show" below,
 with `line_restated`; the local
 branch of `remote_key`, `_file_url_path`, the capture's discovery, its
 cache and `checkout_token`, which read files.
+
+## The checkout token (`checkout_token.py`)
+
+Read at 465bc600. The module is 1,015 lines; its write protocol stands on
+the file system, so it is cut into units, leaves first.
+
+### Map, by function
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `random_crockford`, `mint` | 234-243 | randomness (`secrets.randbits`) | built: the bytes are an argument |
+| `valid`, `Lineage`, `Lineage.read`, `lineage` | 246-284 | nothing | built |
+| `successor`, `succeeds`, `_link` | 287-325 | randomness (`successor`) | built |
+| `token_path`, `render`, `parse` | 328-350 | nothing (the path flavour is data) | built |
+| `_cut_short`, `_malformed_detail` | 851-871 | nothing | built |
+| `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock` | 353-363, 753-848 | open, read, fstat, fcntl, a clock and a pause | unit 2 |
+| `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_sweep`, `_place`, `_after_race`, `_failed`, `_os_text`, `_unlink_quietly` | 366-400, 466-486, 874-1015 | mkdir, exclusive create, fsync, hard link, unlink, owner, the file system's clock | unit 3 |
+| `remint`, `_replace_named`, `_claim`, `_wait_for`, `_take`, `_blocked`, `_holder`, `_claim_read`, `_break`, `_break_marks`, `_fs_now`, `_release`, `_remove_holding` | 401-465, 487-750 | rename, exclusive create, unlink, a clock and a pause | unit 4 |
+
+### Unit 1, built (`checkout_token`)
+
+- `random_crockford(length, urandom)`: `secrets.randbits(5 * length)`
+  reads `(5 * length + 7) // 8` bytes from `os.urandom` and drops the low
+  surplus bits; the port takes those bytes and writes the top
+  `5 * length` bits, five at a time, most significant first. A negative
+  length is ValueError (`Raised::NegativeBits`); a byte count other than
+  the one asked for is the caller's error (`Raised::RandomBytes`).
+  `random_bytes_needed` gives the count. `mint` is 26 characters from 17
+  bytes.
+- `valid`: a `str` of exactly 26 Crockford characters.
+  `_TOKEN_RE.fullmatch` is written by hand: an exact count of members of
+  an ASCII set, which `re` reads the same way for every input (no flag,
+  no anchor, no class shorthand).
+- `lineage`, `Lineage::read`: a valid token and a list or tuple whose
+  first two items are `str` matching `-?[0-9]+` under `fullmatch`,
+  written by hand: an optional minus then one or more ASCII digits (an
+  explicit range, so `re` reads no Unicode digit). `Lineage::read` takes a
+  list or tuple of exactly three.
+- `link` (`_link`): BLAKE2b with a 16-byte digest and the personalization
+  `bm-token-remint` over the four fields, each its UTF-8 length, `:`, its
+  bytes and `,`; the digest's low 65 bits as 13 characters. BLAKE2b is
+  written out (`checkout_token::blake2b`, RFC 7693, unkeyed, with a digest
+  length and a personalization): no crate for it is in the local cache.
+  A field with a lone surrogate raises UnicodeEncodeError
+  (`Raised::Encode`), as `str.encode` does.
+- `successor(replaced, urandom)`: 13 characters from nine bytes, then the
+  link. `succeeds`: false for no lineage, a value that is not a valid
+  token, or the token replaced; else whether the last 13 characters are
+  the link of the first 13. The link is computed only past those checks,
+  so a surrogate in the lineage raises only there, as in the reference.
+- `token_path(git_dir, flavour)`: the text of
+  `Path(git_dir) / "info" / "bettermemory"`, as `os.path.join` of the
+  three (`gitfile_rule::hostpath::join`) spelled by `config::pure_path`.
+  The flavour is an argument, so a POSIX world reads the same on every
+  runner.
+- `render`: the two lines, ASCII encoded; a character past ASCII raises
+  UnicodeEncodeError. `parse`: split at `\n`, one empty last piece
+  dropped, exactly two pieces, one trailing `\r` removed from each, the
+  header and a valid token. `cut_short` and `malformed_detail` as the
+  reference writes them.
+
+Decisions. `Lineage` holds three texts: the reference's `NamedTuple`
+takes any object, and a field that is not a `str` would raise
+AttributeError in `_link`; the port admits text only, since every caller
+builds one through `lineage` or `Lineage.read`. `token_path` takes Rust
+text: a path with a lone surrogate is not expressible there.
+
+Findings about the reference (reproduced, pinned):
+
+- `parse` accepts a token line ending in `\r` with no line end after it
+  (`"<header>\n<token>\r"`), where its documentation says a CR is accepted
+  before each line end. Repro: `parse(TOKEN_HEADER + "\n" + "0"*26 + "\r")`
+  is the token.
+- `_cut_short` reads only `\n` line ends, so a writer's partial file
+  written with CRLF (`"<header>\r\n"`) is "not a ... file", not "cut
+  short", although `parse` accepts the CRLF form when whole. Repro:
+  `_malformed_detail(TOKEN_HEADER + "\r\n")`.
+- `lineage` accepts a device or inode that is not canonical decimal
+  (`"-0"`, `"007"`), so two spellings of one key name two lineages with
+  different links. Repro: `lineage("0"*26, ("007", "1"))` is not None.
+- `random_crockford` costs time quadratic in its length (a shift of a
+  big integer per character): 0.02 s for 20,000 characters, 0.36 s for
+  40,000. Every caller asks for 13 or 26. The port is linear.
+
+Fixtures (`tests/contract/gen_checkout_token.py`): `checkout_token.jsonl`
+(909 rows, not gated) pins every function above over random bytes from a
+seeded generator, values of every type, keys at every bound, lineages
+with long and non-ASCII fields (BLAKE2b over more than one block),
+successors and near misses, file texts around each branch of `parse` and
+`_cut_short`, tokens of code points whose low byte is a Crockford
+character, and POSIX and Windows paths. The Windows paths are drives,
+roots and relative forms, which come out the same under CPython 3.9, 3.13
+and 3.15, so the file is not gated. UNC shares and device paths are left
+out, since the golden guard
+(`gen_store_files.host_fact`) reads a doubled backslash as a host path;
+`hostpath::join` and `pure_path` are pinned over them by their own
+fixtures.
+
+Tests: `golden_checkout_token` (`checkout_token.jsonl`, every row);
+`checkout_token_kills` (mutants: bits read least significant first or
+from the low end, no length prefixes, no personalization, the digest's
+high bits, case-folded or loose token checks, a trimmed integer parse,
+CR handling of `parse`, the final empty line kept, `<= 26` in
+`_cut_short`, naive path concatenation, UTF-8 for ASCII, a code point
+read by its low byte; each answers differently on some row; and BLAKE2b
+with a 16-byte person against two hashlib digests); `checkout_token_robustness` (integer bounds,
+byte counts, nesting 100,000 deep, inputs to 1.6 million characters
+linear in time, surrogates and code points past Unicode).
+
+Left for later units: the reads (unit 2), `write` (unit 3), `remint` and
+the claim (unit 4), each over the `fsdata` file-system trait with the
+clock and the pause as arguments.
 
 ## The plain record writers
 

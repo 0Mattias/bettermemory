@@ -32,6 +32,7 @@ from pathlib import Path
 from . import (
     gen_caller_admission,
     gen_capture_vocabulary,
+    gen_checkout_token,
     gen_cli,
     gen_config,
     gen_daemon,
@@ -149,6 +150,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "githead_posix": gen_githead.generate_posix,
     "capture_vocabulary": gen_capture_vocabulary.generate,
     "capture_vocabulary_python": gen_capture_vocabulary.generate_python,
+    "checkout_token": gen_checkout_token.generate,
     "gitconfig_file": gen_gitconfig_file.generate,
     "gitconfig_tree": gen_gitconfig_tree.generate,
     "gitconfig_tree_rules": gen_gitconfig_tree.generate_rules,
