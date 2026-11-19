@@ -34,6 +34,8 @@
 //! - [`gitobjects`]: git objects read from a repository's files, its
 //!   first unit (the byte parsers);
 //! - [`fsdata`]: the file system as the config readers ask it, as data;
+//! - [`verify_status`] and [`attribution`]: a memory's verification
+//!   staleness, and phrase-match attribution of memories to a reply;
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
 //!   the lines shown about which project a folder belongs to;
 //! - [`origin_remote`]: a remote URL read into the triple `origin`
@@ -54,6 +56,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod attribution;
 pub mod capture;
 pub mod checkout_token;
 pub mod claims;
@@ -85,3 +88,4 @@ pub mod store;
 pub mod toml;
 pub mod unicode;
 pub mod verify_candidates;
+pub mod verify_status;

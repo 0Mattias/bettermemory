@@ -30,6 +30,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from . import (
+    gen_attribution,
     gen_caller_admission,
     gen_capture_vocabulary,
     gen_checkout_token,
@@ -99,6 +100,7 @@ from . import (
     gen_control_tokens,
     gen_ulid,
     gen_unicode,
+    gen_verify_status,
     gen_store_provenance,
     gen_store_bulk,
 )
@@ -157,6 +159,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_records_e": gen_store_records_e.generate,
     "store_rows_written": gen_store_rows_written.generate,
     "gitconfig": gen_gitconfig.generate,
+    "attribution": gen_attribution.generate,
+    "attribution_unicode": gen_attribution.generate_unicode,
     "caller_admission": gen_caller_admission.generate,
     "gitconfig_wildmatch": gen_gitconfig_wildmatch.generate,
     "origin_remote": gen_origin_remote.generate,
@@ -166,6 +170,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "origin_gitfiles_leaves": gen_origin_gitfiles.generate,
     "origin_gitfiles_leaves_python": gen_origin_gitfiles.generate_python,
     "ulid": gen_ulid.generate,
+    "verify_status": gen_verify_status.generate,
     "githead": gen_githead.generate,
     "gitobjects": gen_gitobjects.generate,
     "gitobjects_python": gen_gitobjects.generate_python,
@@ -232,6 +237,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
 UNIDATA_VERSION = "15.1.0"
 UNICODE_GATED = frozenset(
     {
+        "attribution_unicode",
         "lexicon",
         "verify_candidates_unicode",
         "unicode",

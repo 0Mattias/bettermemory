@@ -1,0 +1,80 @@
+{"count":79,"k":"header"}
+{"a":"Caf\u00e9 au lait is served at the corner shop every single morning","f":"cand","o":["Caf\u00e9 au lait is served at the corner shop every single morning"]}
+{"a":"Caf\u00e9 au lait is served at the corner shop every single morning","f":"norm","o":"caf\u00e9 au lait is served at the corner shop every single morning"}
+{"a":"Caf\u00e9 au lait is served at the corner shop every single morning","f":"tok","o":["au","caf","corner","every","lait","morning","served","shop","single"]}
+{"a":"Cafe\u0301 au lait is served at the corner shop every single morning","f":"cand","o":["Cafe\u0301 au lait is served at the corner shop every single morning"]}
+{"a":"Cafe\u0301 au lait is served at the corner shop every single morning","f":"norm","o":"caf\u00e9 au lait is served at the corner shop every single morning"}
+{"a":"Cafe\u0301 au lait is served at the corner shop every single morning","f":"tok","o":["au","caf","corner","every","lait","morning","served","shop","single"]}
+{"a":"na\u00efve r\u00e9sum\u00e9 handling in the parser module for this release","f":"cand","o":["na\u00efve r\u00e9sum\u00e9 handling in the parser module for this release"]}
+{"a":"na\u00efve r\u00e9sum\u00e9 handling in the parser module for this release","f":"norm","o":"na\u00efve r\u00e9sum\u00e9 handling in the parser module for this release"}
+{"a":"na\u00efve r\u00e9sum\u00e9 handling in the parser module for this release","f":"tok","o":["handling","module","na","parser","r","release","sum","ve"]}
+{"a":"\u0130stanbul office runs the deploy pipeline for every release now","f":"cand","o":["\u0130stanbul office runs the deploy pipeline for every release now"]}
+{"a":"\u0130stanbul office runs the deploy pipeline for every release now","f":"norm","o":"i\u0307stanbul office runs the deploy pipeline for every release now"}
+{"a":"\u0130stanbul office runs the deploy pipeline for every release now","f":"tok","o":["deploy","every","now","office","pipeline","release","runs","stanbul"]}
+{"a":"The \u212a scale and \u00c5ngstr\u00f6m units appear in the physics module here","f":"cand","o":["The \u212a scale and \u00c5ngstr\u00f6m units appear in the physics module here"]}
+{"a":"The \u212a scale and \u00c5ngstr\u00f6m units appear in the physics module here","f":"norm","o":"the k scale and \u00e5ngstr\u00f6m units appear in the physics module here"}
+{"a":"The \u212a scale and \u00c5ngstr\u00f6m units appear in the physics module here","f":"tok","o":["appear","here","k","m","module","ngstr","physics","scale","units"]}
+{"a":"\u039f\u0394\u03a5\u03a3\u03a3\u0395\u03a5\u03a3 \u03a3 sigma words in greek text here are long","f":"cand","o":["\u039f\u0394\u03a5\u03a3\u03a3\u0395\u03a5\u03a3 \u03a3 sigma words in greek text here are long"]}
+{"a":"\u039f\u0394\u03a5\u03a3\u03a3\u0395\u03a5\u03a3 \u03a3 sigma words in greek text here are long","f":"norm","o":"\u03bf\u03b4\u03c5\u03c3\u03c3\u03b5\u03c5\u03c2 \u03c3 sigma words in greek text here are long"}
+{"a":"\u039f\u0394\u03a5\u03a3\u03a3\u0395\u03a5\u03a3 \u03a3 sigma words in greek text here are long","f":"tok","o":["greek","here","long","sigma","text","words"]}
+{"a":"Stra\u00dfe names in German addresses get folded by the lowercase step","f":"cand","o":["Stra\u00dfe names in German addresses get folded by the lowercase step"]}
+{"a":"Stra\u00dfe names in German addresses get folded by the lowercase step","f":"norm","o":"stra\u00dfe names in german addresses get folded by the lowercase step"}
+{"a":"Stra\u00dfe names in German addresses get folded by the lowercase step","f":"tok","o":["addresses","e","folded","german","get","lowercase","names","step","stra"]}
+{"a":"Non\u00a0breaking\u00a0spaces\u00a0join\u00a0these\u00a0words\u00a0together\u00a0now","f":"cand","o":["Non\u00a0breaking\u00a0spaces\u00a0join\u00a0these\u00a0words\u00a0together\u00a0now"]}
+{"a":"Non\u00a0breaking\u00a0spaces\u00a0join\u00a0these\u00a0words\u00a0together\u00a0now","f":"norm","o":"non breaking spaces join these words together now"}
+{"a":"Non\u00a0breaking\u00a0spaces\u00a0join\u00a0these\u00a0words\u00a0together\u00a0now","f":"tok","o":["breaking","join","non","now","spaces","together","words"]}
+{"a":"Ideographic\u3000space\u3000between\u3000these\u3000words\u3000of\u3000text","f":"cand","o":["Ideographic\u3000space\u3000between\u3000these\u3000words\u3000of\u3000text"]}
+{"a":"Ideographic\u3000space\u3000between\u3000these\u3000words\u3000of\u3000text","f":"norm","o":"ideographic space between these words of text"}
+{"a":"Ideographic\u3000space\u3000between\u3000these\u3000words\u3000of\u3000text","f":"tok","o":["between","ideographic","space","text","words"]}
+{"a":"Line\u2028separator\u2029and paragraph separator split these words apart","f":"cand","o":["Line\u2028separator\u2029and paragraph separator split these words apart"]}
+{"a":"Line\u2028separator\u2029and paragraph separator split these words apart","f":"norm","o":"line separator and paragraph separator split these words apart"}
+{"a":"Line\u2028separator\u2029and paragraph separator split these words apart","f":"tok","o":["apart","line","paragraph","separator","split","words"]}
+{"a":"Next\u0085line control between words of this sentence goes here","f":"cand","o":["Next\u0085line control between words of this sentence goes here"]}
+{"a":"Next\u0085line control between words of this sentence goes here","f":"norm","o":"next line control between words of this sentence goes here"}
+{"a":"Next\u0085line control between words of this sentence goes here","f":"tok","o":["between","control","goes","here","line","next","sentence","words"]}
+{"a":"Zero\u200bwidth space does not split these words of the sentence at all","f":"cand","o":["Zero\u200bwidth space does not split these words of the sentence at all"]}
+{"a":"Zero\u200bwidth space does not split these words of the sentence at all","f":"norm","o":"zero\u200bwidth space does not split these words of the sentence at all"}
+{"a":"Zero\u200bwidth space does not split these words of the sentence at all","f":"tok","o":["sentence","space","split","width","words","zero"]}
+{"a":"\uff21\uff22\uff23 fullwidth letters and \uff11\uff12\uff13 digits in the text here","f":"cand","o":["\uff21\uff22\uff23 fullwidth letters and \uff11\uff12\uff13 digits in the text here"]}
+{"a":"\uff21\uff22\uff23 fullwidth letters and \uff11\uff12\uff13 digits in the text here","f":"norm","o":"\uff41\uff42\uff43 fullwidth letters and \uff11\uff12\uff13 digits in the text here"}
+{"a":"\uff21\uff22\uff23 fullwidth letters and \uff11\uff12\uff13 digits in the text here","f":"tok","o":["digits","fullwidth","here","letters","text"]}
+{"a":"\u00bfQu\u00e9? \u00a1Hola! se\u00f1or, the punctuation is not ASCII here at all","f":"cand","o":["se\u00f1or, the punctuation is not ASCII here at all"]}
+{"a":"\u00bfQu\u00e9? \u00a1Hola! se\u00f1or, the punctuation is not ASCII here at all","f":"norm","o":"\u00bfqu\u00e9? \u00a1hola! se\u00f1or, the punctuation is not ascii here at all"}
+{"a":"\u00bfQu\u00e9? \u00a1Hola! se\u00f1or, the punctuation is not ASCII here at all","f":"tok","o":["ascii","here","hola","punctuation","qu","se"]}
+{"a":"\u201cCurly quotes\u201d and \u2018single ones\u2019 wrap these tokens of words","f":"cand","o":["\u201cCurly quotes\u201d and \u2018single ones\u2019 wrap these tokens of words"]}
+{"a":"\u201cCurly quotes\u201d and \u2018single ones\u2019 wrap these tokens of words","f":"norm","o":"\u201ccurly quotes\u201d and \u2018single ones\u2019 wrap these tokens of words"}
+{"a":"\u201cCurly quotes\u201d and \u2018single ones\u2019 wrap these tokens of words","f":"tok","o":["curly","ones","quotes","single","tokens","words","wrap"]}
+{"a":{"c":[76,111,110,101,32,55296,32,115,117,114,114,111,103,97,116,101,32,105,110,115,105,100,101,32,97,32,115,101,110,116,101,110,99,101,32,111,102,32,101,110,111,117,103,104,32,119,111,114,100,115,32,116,111,32,99,111,117,110,116,32,104,101,114,101]},"f":"cand","o":[{"c":[76,111,110,101,32,55296,32,115,117,114,114,111,103,97,116,101,32,105,110,115,105,100,101,32,97,32,115,101,110,116,101,110,99,101,32,111,102,32,101,110,111,117,103,104,32,119,111,114,100,115,32,116,111,32,99,111,117,110,116,32,104,101,114,101]}]}
+{"a":{"c":[76,111,110,101,32,55296,32,115,117,114,114,111,103,97,116,101,32,105,110,115,105,100,101,32,97,32,115,101,110,116,101,110,99,101,32,111,102,32,101,110,111,117,103,104,32,119,111,114,100,115,32,116,111,32,99,111,117,110,116,32,104,101,114,101]},"f":"norm","o":{"c":[108,111,110,101,32,55296,32,115,117,114,114,111,103,97,116,101,32,105,110,115,105,100,101,32,97,32,115,101,110,116,101,110,99,101,32,111,102,32,101,110,111,117,103,104,32,119,111,114,100,115,32,116,111,32,99,111,117,110,116,32,104,101,114,101]}}
+{"a":{"c":[76,111,110,101,32,55296,32,115,117,114,114,111,103,97,116,101,32,105,110,115,105,100,101,32,97,32,115,101,110,116,101,110,99,101,32,111,102,32,101,110,111,117,103,104,32,119,111,114,100,115,32,116,111,32,99,111,117,110,116,32,104,101,114,101]},"f":"tok","o":["count","enough","here","inside","lone","sentence","surrogate","words"]}
+{"a":{"c":[57343,32,116,114,97,105,108,105,110,103,32,108,111,119,32,115,117,114,114,111,103,97,116,101,32,115,101,110,116,101,110,99,101,32,119,105,116,104,32,101,110,111,117,103,104,32,119,111,114,100,115,32,116,111,32,99,111,117,110,116,32,104,101,114,101]},"f":"cand","o":[{"c":[57343,32,116,114,97,105,108,105,110,103,32,108,111,119,32,115,117,114,114,111,103,97,116,101,32,115,101,110,116,101,110,99,101,32,119,105,116,104,32,101,110,111,117,103,104,32,119,111,114,100,115,32,116,111,32,99,111,117,110,116,32,104,101,114,101]}]}
+{"a":{"c":[57343,32,116,114,97,105,108,105,110,103,32,108,111,119,32,115,117,114,114,111,103,97,116,101,32,115,101,110,116,101,110,99,101,32,119,105,116,104,32,101,110,111,117,103,104,32,119,111,114,100,115,32,116,111,32,99,111,117,110,116,32,104,101,114,101]},"f":"norm","o":{"c":[57343,32,116,114,97,105,108,105,110,103,32,108,111,119,32,115,117,114,114,111,103,97,116,101,32,115,101,110,116,101,110,99,101,32,119,105,116,104,32,101,110,111,117,103,104,32,119,111,114,100,115,32,116,111,32,99,111,117,110,116,32,104,101,114,101]}}
+{"a":{"c":[57343,32,116,114,97,105,108,105,110,103,32,108,111,119,32,115,117,114,114,111,103,97,116,101,32,115,101,110,116,101,110,99,101,32,119,105,116,104,32,101,110,111,117,103,104,32,119,111,114,100,115,32,116,111,32,99,111,117,110,116,32,104,101,114,101]},"f":"tok","o":["count","enough","here","low","sentence","surrogate","trailing","words"]}
+{"a":"Hangul \u1100\u1161\u11a8 jamo compose under NFC into one syllable here now","f":"cand","o":["Hangul \u1100\u1161\u11a8 jamo compose under NFC into one syllable here now"]}
+{"a":"Hangul \u1100\u1161\u11a8 jamo compose under NFC into one syllable here now","f":"norm","o":"hangul \uac01 jamo compose under nfc into one syllable here now"}
+{"a":"Hangul \u1100\u1161\u11a8 jamo compose under NFC into one syllable here now","f":"tok","o":["compose","hangul","here","into","jamo","nfc","now","one","syllable","under"]}
+{"a":"Combining marks a\u0328\u0301 reorder under NFC canonical ordering rules here","f":"cand","o":["Combining marks a\u0328\u0301 reorder under NFC canonical ordering rules here"]}
+{"a":"Combining marks a\u0328\u0301 reorder under NFC canonical ordering rules here","f":"norm","o":"combining marks \u0105\u0301 reorder under nfc canonical ordering rules here"}
+{"a":"Combining marks a\u0328\u0301 reorder under NFC canonical ordering rules here","f":"tok","o":["canonical","combining","here","marks","nfc","ordering","reorder","rules","under"]}
+{"a":"\u0661\u0662\u0663 Arabic-Indic digits are word characters in re here","f":"cand","o":["\u0661\u0662\u0663 Arabic-Indic digits are word characters in re here"]}
+{"a":"\u0661\u0662\u0663 Arabic-Indic digits are word characters in re here","f":"norm","o":"\u0661\u0662\u0663 arabic-indic digits are word characters in re here"}
+{"a":"\u0661\u0662\u0663 Arabic-Indic digits are word characters in re here","f":"tok","o":["arabic","characters","digits","here","indic","re","word"]}
+{"a":"Emoji \ud83d\ude00 and \ud83d\ude80 rockets are not word characters at all","f":"cand","o":["Emoji \ud83d\ude00 and \ud83d\ude80 rockets are not word characters at all"]}
+{"a":"Emoji \ud83d\ude00 and \ud83d\ude80 rockets are not word characters at all","f":"norm","o":"emoji \ud83d\ude00 and \ud83d\ude80 rockets are not word characters at all"}
+{"a":"Emoji \ud83d\ude00 and \ud83d\ude80 rockets are not word characters at all","f":"tok","o":["characters","emoji","rockets","word"]}
+{"a":"Deseret \ud801\udc00\ud801\udc01 capitals lower to small letters in this text","f":"cand","o":["Deseret \ud801\udc00\ud801\udc01 capitals lower to small letters in this text"]}
+{"a":"Deseret \ud801\udc00\ud801\udc01 capitals lower to small letters in this text","f":"norm","o":"deseret \ud801\udc28\ud801\udc29 capitals lower to small letters in this text"}
+{"a":"Deseret \ud801\udc00\ud801\udc01 capitals lower to small letters in this text","f":"tok","o":["capitals","deseret","letters","lower","small","text"]}
+{"a":"\u2126 ohm sign maps to omega under NFC normalization in this text","f":"cand","o":["\u2126 ohm sign maps to omega under NFC normalization in this text"]}
+{"a":"\u2126 ohm sign maps to omega under NFC normalization in this text","f":"norm","o":"\u03c9 ohm sign maps to omega under nfc normalization in this text"}
+{"a":"\u2126 ohm sign maps to omega under NFC normalization in this text","f":"tok","o":["maps","nfc","normalization","ohm","omega","sign","text","under"]}
+{"a":"\u00c0\u00c1\u00c2 accented capitals lowercase into accented small letters","f":"cand","o":["\u00c0\u00c1\u00c2 accented capitals lowercase into accented small letters"]}
+{"a":"\u00c0\u00c1\u00c2 accented capitals lowercase into accented small letters","f":"norm","o":"\u00e0\u00e1\u00e2 accented capitals lowercase into accented small letters"}
+{"a":"\u00c0\u00c1\u00c2 accented capitals lowercase into accented small letters","f":"tok","o":["accented","capitals","into","letters","lowercase","small"]}
+{"a":"dash\u2014joined\u2013words and\u2026ellipsis inside this long sentence","f":"cand","o":["dash\u2014joined\u2013words and\u2026ellipsis inside this long sentence"]}
+{"a":"dash\u2014joined\u2013words and\u2026ellipsis inside this long sentence","f":"norm","o":"dash\u2014joined\u2013words and\u2026ellipsis inside this long sentence"}
+{"a":"dash\u2014joined\u2013words and\u2026ellipsis inside this long sentence","f":"tok","o":["dash","ellipsis","inside","joined","long","sentence","words"]}
+{"a":["caf\u00e9 cr\u00e8me br\u00fbl\u00e9e dessert menu","cafe\u0301 cre\u0300me"],"f":"match","o":false}
+{"a":["caf\u00e9 au lait menu item","CAFE\u0301 AU LAIT MENU ITEM"],"f":"match","o":true}
+{"a":["caf\u00e9 menu item list today","caf menu item list today"],"f":"match","o":true}
+{"f":"uses","m":[[{"c":[55296,105,100]},"The auth middleware lives in src/auth/middleware.py today."],["caf\u00e9","Deploys run from the release branch through the staging pipeline."]],"o":[[{"c":[55296,105,100]},"The auth middleware lives in src/auth/middleware.py today"],["caf\u00e9","Deploys run from the release branch through the staging pipeline"]],"t":"The auth middleware lives in src/auth/middleware.py today. Deploys run from the release branch through the staging pipeline."}

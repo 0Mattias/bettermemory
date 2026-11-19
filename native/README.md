@@ -29,6 +29,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report | `log_chain.jsonl`, `log_keyring.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
+| `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
@@ -213,6 +214,132 @@ ranges `str.islower` holds over every code point, go in
 depends on the Python release or the platform. Exhaustive runs record
 only the texts whose answer is not the default, and the test enumerates
 the same texts in `itertools.product`'s order, so a missing hit fails.
+## Verification staleness and phrase-match attribution
+
+`src/bettermemory/verify_status.py` (247 lines) and
+`src/bettermemory/attribution.py` (342 lines), read at 465bc600, are two
+leaves: neither imports the package. Both are built whole, in one unit
+(`verify_status.rs` and `attribution.rs`, 525 lines of source).
+
+### The map
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `VerificationStatus.to_dict` | verify_status 88-111 | nothing | built |
+| `_stale_recommendation`, `_remote_recommendation`, `_NEVER_RECOMMENDATION` | verify_status 115-142 | nothing | built |
+| `remote_verification_status` | verify_status 146-169 | nothing | built |
+| `compute_verification_status` | verify_status 172-240 | the clock, as the argument `now` | built |
+| `_candidate_sentences`, `_SENTENCE_SPLIT_RE` (190), `_PUNCT_STRIP_RE` (194), `_TOKEN_RE` (173) | attribution 197-234 | Unicode data (`\s`, `\w`, `str.lower`) | built |
+| `_normalize` | attribution 237-252 | Unicode data (NFC, `str.lower`, `\s`) | built |
+| `_content_token_set` | attribution 255-273 | Unicode data (through `_normalize`) | built |
+| `attribute_uses` | attribution 276-308 | nothing more | built |
+| `_sentence_matches` | attribution 311-342 | nothing more | built |
+
+### verify_status
+
+- `compute_verification_status(last_verified_at, now, stale_after_days)`
+  answers `Ok(VerificationStatus)` or `Err(NaiveAwareMix)`, the
+  reference's TypeError when a naive `now` meets a stamp (a naive stamp is
+  made UTC first; a missing stamp asks nothing of the clock, so a naive
+  `now` then answers `never`). The clock is an argument, as in the
+  reference.
+- The elapsed time is the exact microsecond difference of the two
+  instants divided by 10^6 and rounded once to nearest even
+  (`micros_to_seconds`, `timedelta.total_seconds` as CPython's `int /
+  int`). Past 2^53 microseconds (about 285 years) a float conversion
+  before the division would round twice; the long
+  division keeps one rounding. `age_days` is CPython's float floor
+  division (`float_floor_div`, `_float_div_mod` line for line) of the
+  rounded seconds, so 3,000,000 days less a microsecond counts 3,000,000
+  days, as the reference does, where integer arithmetic counts one fewer.
+- The stale test is the reference's float-against-int comparison, exact
+  (`float_gt_int`): elapsed seconds strictly greater than the threshold's
+  seconds. A threshold below zero is clamped to zero.
+- `stale_after_days` is an `i64`. The reference takes any `int` (a
+  `bool` too, which `max(0, True)` keeps as `True` and `to_dict` writes
+  as `true`); every caller passes the constant 30, so values outside
+  64 bits and booleans are outside the port's domain.
+- `to_dict` is a `PyValue` dict in the reference's key order, the stamp
+  spelled by `DateTime::isoformat_utc` (`isoformat()` with each `+00:00`
+  made `Z`).
+
+### attribution
+
+Texts are code points, so a lone surrogate passes as in the reference.
+`attribute_uses` takes the memories as `(id, body)` pairs in the dict's
+order. The three patterns are hand-written matchers; no regex crate is
+used and none is added:
+
+- `_SENTENCE_SPLIT_RE`, `(?:[.!?]\s+|\n+)` with `re.split`: a scan that
+  tries the first alternative at each position, then the second, each run
+  greedy; no capture group, so only the pieces are kept. `\s` is
+  `str.isspace` (`Py_UNICODE_ISSPACE`, which `re`'s Unicode `\s`,
+  `str.split()` and `str.strip()` all read; it includes U+001C to U+001F
+  and U+0085), so the semantics are equal for every input.
+- `_PUNCT_STRIP_RE`, `^[^\w]+|[^\w]+$` with `sub("")`, applied to tokens
+  `str.split()` made: the leading run of non-word code points, then the
+  trailing run of what is left. `$` also matches before a final newline,
+  and no such token holds one. `\w` is `unicode::is_word`, `re`'s table.
+- `_TOKEN_RE`, `[a-z0-9_]+` with `findall`: maximal ASCII runs.
+
+`needle in haystack` is a Knuth-Morris-Pratt search over code points,
+linear, so a needle built to make a naive search quadratic costs what it
+costs the reference (whose search is CPython's two-way and Horspool mix).
+The ratios are `int / int` of counts below 2^53, so IEEE division of the
+two counts is the reference's quotient. `_STOPWORDS` is written out sorted
+and pinned to the reference's set by the golden header.
+
+### Reference findings (reproduced)
+
+1. An offset with seconds keeps them after `Z`: a stamp at `+00:00:30`
+   spells `2026-01-01T00:00:00Z:30` in `to_dict` and in the remote
+   recommendation (`str.replace` replaces the prefix of the offset).
+   Reproduction: `remote_verification_status(datetime(2026, 1, 1,
+   tzinfo=timezone(timedelta(seconds=30)))).to_dict()["last_verified_at"]`.
+2. `to_dict`'s docstring says the stamp is normalised to `Z`; an aware
+   stamp at another offset is kept at that offset (`+02:00`), never
+   converted to UTC. Reproduction: `compute_verification_status(
+   datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=2))),
+   now=datetime(2026, 3, 1, tzinfo=timezone.utc)).to_dict()`.
+3. The verbatim tier compares the excerpt, which is cut to 500 code
+   points before matching, so a reply holding only the first 500 code
+   points of a longer sentence is attributed that sentence. Reproduction:
+   `b = "start " + "alpha " * 120 + " end"; attribute_uses({"m": b},
+   b[:500])` answers a match.
+4. `_content_token_set` keeps only ASCII `[a-z0-9_]`, so after NFC a
+   precomposed letter drops out of a token (`café` gives `caf`), and a
+   sentence of words outside ASCII has no content tokens and can match
+   only verbatim. The docstring describes this; it is recorded because
+   the containment tier is silent for such text.
+
+### Fixtures and tests
+
+- `tests/contract/gen_verify_status.py` writes `verify_status.jsonl`
+  (not gated, 436 cases, about 100 KB): never verified over thirteen
+  thresholds; thirteen distances around the 30-day bound in microseconds
+  over six thresholds; eleven offsets on the stamp against eleven on the
+  clock (naive among them, the TypeError included); remote stamps; the
+  ends of the calendar, where the microsecond count passes 2^53; and 120
+  seeded pairs. Recommendations are written by reference to the header's
+  texts, which pin each recommendation function.
+- `tests/contract/gen_attribution.py` writes `attribution.jsonl` (cases
+  whose inputs are ASCII, not gated) and `attribution_unicode.jsonl`
+  (every other case, gated on the Unicode version): each of the four
+  inner functions on its own and `attribute_uses` whole, over hand-picked
+  bodies for every bound (30 characters before and after the terminal
+  strip, 6 tokens, the 0.80 stopword ratio, the 0.60 containment ratio,
+  the 4-token floor, the 500-character cut) and seeded random bodies.
+- Rust: `golden_verify_status.rs`, `golden_attribution.rs` (both files),
+  `verify_status_kills.rs`, `attribution_kills.rs` and
+  `attribution_robustness.rs` (2,000,000-character replies, 7,800,000-
+  character bodies, 20,000 sentences, 10,000 memories, the calendar's
+  ends with offsets of a day less a microsecond, `i64::MIN` and
+  `i64::MAX` thresholds; each bounded at three times the reference's
+  time, twenty times that in a debug build).
+
+Nothing of either module is left for a later unit. The callers
+(`verify.py`'s re-export, `_response.ResponseBuilder.apply_trust`, the
+Stop hook) are not ported here.
 
 ## Limits and key material
 

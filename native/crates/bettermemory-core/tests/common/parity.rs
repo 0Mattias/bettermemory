@@ -174,6 +174,8 @@ pub enum Gate {
 pub fn gates_of(file: &str) -> &'static [Gate] {
     use Gate::*;
     match file {
+        // NFC, `str.lower`, `str.isspace` and `re`'s `\w` past ASCII.
+        "attribution_unicode.jsonl" => &[Unicode],
         "datetime_edges.jsonl"
         | "json_edges.jsonl"
         | "toml.jsonl"
