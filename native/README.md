@@ -7597,9 +7597,11 @@ error, both retry errnos, the plain open's every branch, the read
 retry's `fcntl` failures and the `win32` platform, sizes 4,095 to
 5,000, chunked and byte-at-a-time reads, the reread's every outcome,
 close failures, NULs and a relative path. `checkout_token_read_posix.jsonl`
-(16 rows, POSIX only) reads a real scratch tree: a token, a link to it,
-a dangling link, a loop, a FIFO and a link to it, a folder, a name of
-300 bytes, a path through a file, `/dev/null`, and `read` of a git
+(17 rows, POSIX only) reads a real scratch tree: a token, an empty
+file, files of 5,000 and 4,096 bytes, a file holding the single byte
+0xFF and one holding 0x80, a FIFO, a folder, a link to the token, a
+dangling link, a loop, a link to the FIFO, a missing name, a path
+through a file, a name of 300 bytes, `/dev/null`, and `read` of a git
 directory; its texts (ELOOP, ENAMETOOLONG) are those macOS and glibc
 share.
 
