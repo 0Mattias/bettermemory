@@ -417,7 +417,9 @@ FRAGMENTS = [
     "~~",
     "||",
     "a-z",
-    "z-a",
+    # A reversed range that does not start with ``z``: after a backslash,
+    # ``\z`` is a bad escape in 3.13 and the end of the string from 3.14.
+    "y-a",
     "}",
     "{",
     "(",
