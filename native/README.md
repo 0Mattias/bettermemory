@@ -30,6 +30,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report | `log_chain.jsonl`, `log_keyring.jsonl` |
+| `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone` | `machine_identity.jsonl`, `machine_identity_python.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
@@ -387,6 +388,140 @@ and no error type carries key bytes. The bytes sit in a `Zeroizing` buffer,
 wiped on drop. The store unit, when it reads key files, must keep their
 bytes in such a zeroize-on-drop wrapper from the read on (`Key::new` takes
 the `Vec` without copying it), not in a plain `Vec<u8>` or `String`.
+
+## This machine's id (`machine.py`)
+
+`machine.py` (417 lines) keeps a random id for one OS user on one host in
+the state directory, beside three facts (the platform's hardware id, the
+hostname, the id file's own object), and mints a new id naming its
+predecessor when the facts show the directory was carried to another
+machine. `check_import_fork` decides when a store takes a new store id.
+
+### Map, by function
+
+| function | reference lines | what it needs from the machine | status |
+| --- | --- | --- | --- |
+| the constants (`MACHINE_ID_FILE`, `MACHINE_FACTS_FILE`, `_ID_HEADER`, `_CROCKFORD`) | 55-58 | nothing | unit 1, built |
+| `_ID_RE`, `_LINUX_MACHINE_ID` | 59-60 | nothing | unit 2 (with `_read_id`) |
+| `MachineFacts`, `to_dict`, `from_dict` | 63-97 | nothing | unit 1, built |
+| `MachineIdentity` | 99-114 | nothing | unit 1, built |
+| `_identity_from` | 117-133 | nothing | unit 1, built |
+| `identity_to_json` | 136-146 | nothing | unit 1, built |
+| `new_machine_id` | 149-152 | `secrets.token_bytes(17)` | unit 1, built (the bytes are an argument) |
+| `is_clone` | 155-162 | nothing | unit 1, built |
+| `_HARDWARE`, `_clear_hardware`, `read_hardware_id` | 167-174, 235-253 | a process-wide memo, `sys.platform` | unit 2 (the memo a value the caller holds) |
+| `_darwin_hardware` | 177-203 | `gethostuuid(3)`, else `ioreg` once | unit 2 (both answers arguments; `ioreg`'s output parsed here) |
+| `_linux_hardware` | 206-214 | two files | unit 2 (the file-system trait) |
+| `_windows_hardware` | 217-232 | the registry's MachineGuid | unit 2 (the value an argument) |
+| `current_hostname` | 256-261 | `socket.gethostname` | unit 2 (an argument) |
+| `_file_object` | 264-274 | `os.stat` (device, inode, birth time) | unit 2 (the file-system trait) |
+| `_read_id`, `_read_record` | 279-295 | two files | unit 2 |
+| `_write_record` | 298-311 | `atomic_write_bytes`, the clock | unit 3 |
+| `open_machine` | 314-383 | the state directory, both facts, randomness | unit 3 |
+| `check_import_fork` | 389-403 | a store open for writing | with the store's membership unit |
+
+### The cut
+
+The whole module is more than 600 lines of Rust once the three
+platforms' hardware reads, the files and the atomic write are in, so it
+is three units, leaves first.
+
+- Unit 1 (built, `machine`): the record and the rule, nothing read from
+  the machine.
+- Unit 2: the facts and the two files read: the hardware id per platform
+  with its memo, the hostname, the id file's object, `_read_id` (with
+  `_ID_RE`, a fixed-width character class, by hand) and `_read_record`.
+- Unit 3: `_write_record` and `open_machine`, the clock and the random
+  bytes as arguments. `check_import_fork` waits for the store's
+  membership id.
+
+### Unit 1, as built (`machine`)
+
+- `MachineFacts` holds the three facts as code-point texts (a lone
+  surrogate is kept), the id file as (device, inode, birth or None).
+  `to_dict` and `identity_to_json` build the reference's dicts with its
+  key order.
+- `MachineFacts::from_dict` is `from_dict`: a value that is not a dict is
+  None; `hardware` and `hostname` are kept only when they are `str`; the
+  id file is read only from a list of exactly three (a tuple is not one),
+  each part through `str()` and the birth time kept None when it is None.
+  A dict holding a key twice answers with the last, as `json.loads`
+  keeps it.
+- `py_text` is that `str()`: a scalar's own text, a container's `repr`
+  written without native recursion. It raises ValueError for an `int` of
+  more than 4,300 digits (the sign not counted) and RecursionError past
+  `STR_MAX_DEPTH` (9,999) nested objects, whichever the left-to-right
+  walk meets first. The bound is one more than `json::MAX_DEPTH`, the
+  bound the crate's own `repr` holds, because `str()` here is called on
+  the part itself: 9,998 lists around an int are spelled and 9,999 are
+  not, measured on 3.13.13 and pinned in the Python-gated file. The bound
+  is the interpreter's C recursion budget, so it moves with the call path:
+  reached through `functools.partial` (one C frame between) the same
+  value raises at least two lists sooner, and so does a call from under a
+  test runner. The generator reads these cases in a new thread, which
+  starts with the whole budget, so the file is the same however it is
+  run; the port holds that bound. No real input reaches either raise:
+  every value `from_dict` reads comes from `json.loads`, which raises
+  RecursionError at 9,997 nested lists and ValueError past 4,300 digits
+  before `from_dict` runs. Both raises are kept so that a value built in
+  memory answers as the reference does in a fresh thread.
+- Cost on hostile input, release build on a loaded machine, fastest of
+  three, against `MachineFacts.from_dict` on the same value: a 400,000-key
+  dict in a part 0.41 s (reference 0.19 s), a 400,000-element list with a
+  400,000-character text 0.03 s (0.08 s), 4,000,000 lone surrogates
+  under 0.1 s (0.09 s). The robustness test checks that sixteen times the
+  input costs under twenty-four times the time for each shape, the dict
+  in a part among them.
+- `identity_from` is `_identity_from`: None unless a mapping whose `id` is
+  a `str` and whose `facts` read; `recorded` is read only after `facts`
+  read, so a raise from `recorded` is never seen when `facts` is absent,
+  and a raise from `facts` comes first. The three flags are Python
+  truthiness (`truthy`): NaN and `"0"` are true, `-0.0`, `0`, empty texts
+  and empty containers false.
+- `new_machine_id` takes the 17 bytes `secrets.token_bytes` would return
+  (the array's type holds the count) and writes the low 130 bits of the
+  big-endian integer five at a time, least significant first; the top six
+  bits of the first byte are never read. This is the reverse of
+  `checkout_token::random_crockford`, which writes the most significant
+  bits first.
+- `is_clone`: the hardware ids decide only when both are non-empty texts;
+  otherwise a clone needs a different hostname and a different id file
+  object together.
+
+Regular expressions: none in this unit (`_ID_RE` is unit 2's).
+
+### Findings about the reference (reproduced, pinned)
+
+- `from_dict` turns any value in the id file's triple into text with
+  `str()`, so a facts file holding `[1, 2, null]` and one holding
+  `["1", "2", null]` read as the same object, and a part that is a list
+  reads as its `repr`. Reproduction: `MachineFacts.from_dict({"id_file":
+  [1, 2, None]}) == MachineFacts.from_dict({"id_file": ["1", "2",
+  None]})`. Pinned in `machine_identity.jsonl`.
+- `from_dict` raises instead of answering None for an id file part `str()`
+  cannot spell: an `int` past 4,300 digits is ValueError, so
+  `_identity_from` raises on a posted body it would otherwise refuse
+  quietly. Reproduction: `_identity_from({"id": "A", "facts": {},
+  "recorded": {"id_file": [10**4300, 1, None]}})` raises ValueError.
+  Pinned in both files' rows and in `machine_identity_kills.rs`.
+- `is_clone` reads an empty hardware id as none, so two machines whose
+  hardware reads are `""` and `"B"` are told apart only by hostname and id
+  file. Pinned in the `cl` rows and the sweep.
+
+### Tests
+
+| test (file: function) | golden file | class |
+| --- | --- | --- |
+| `golden_machine_identity`: `machine_identity_every_case` | `machine_identity.jsonl` (77 cases: 28 `from_dict`, 27 `_identity_from`, 10 `is_clone` and a sweep of all 4,096 pairs of 64 facts by digest, 10 `new_machine_id` and a sweep of 4,096 ids by digest) | i |
+| `golden_machine_identity`: `machine_identity_python_every_case` | `machine_identity_python.jsonl` (24 cases: the recursion bound of `str()` for lists, tuples and dicts, at the device and the birth time) | Python release |
+| `machine_identity_kills` (7) | none | i |
+| `machine_identity_robustness` (3): 400,000-element lists and dicts, 4 million surrogates, a million nested tuples, a 5-million-digit int, `i128` bounds | none | i |
+
+The sweeps' inputs are rules the Rust test repeats: id `i`'s bytes are the
+first 17 of SHA-256(`b"machine-id " + i` as four big-endian bytes); the
+facts are the product of four hardware ids, four hostnames and four id
+file objects. Texts spelled by `repr` in the ungated file are ASCII or
+lone surrogates, which no Unicode version spells differently.
 
 ## The ranker
 
@@ -9879,6 +10014,9 @@ What the reference has and this build does not, by area:
   (pyre-3), the lowering, the matcher and the methods (pyre-4 to
   pyre-6), the inventory proof, the cross-check of the hand-written
   matchers and the memo (pyre-7 to pyre-9).
+- This machine's id past its record and clone rule: `machine.py`'s
+  hardware and hostname facts and the machine files (unit 2),
+  `_write_record` and `open_machine` (unit 3), and `check_import_fork`.
 - The daemon, the MCP tools, the hooks and the command line.
 - Reading and writing the key ring's files on disk (the ring here holds
   their bytes); `datetime.astimezone` of a naive value (the reference

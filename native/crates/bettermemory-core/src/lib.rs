@@ -24,6 +24,8 @@
 //! - [`verify_candidates`]: the path candidates verification reads, its
 //!   first unit (one candidate validated);
 //! - [`log`]: the row MAC, the key ring and `verify_chain`;
+//! - [`machine`]: this machine's id, its first unit (the identity
+//!   record, the id minted from given bytes, the clone rule);
 //! - [`search`]: `search.search` over records in memory, bit for bit;
 //! - [`search_dedup`]: write-time dedup, the Jaccard scorer and its
 //!   token cache;
@@ -88,6 +90,7 @@ pub mod identity;
 pub mod json;
 pub mod lexicon;
 pub mod log;
+pub mod machine;
 pub mod membership_lines;
 pub mod membership_records;
 pub mod models_text;

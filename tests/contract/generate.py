@@ -75,6 +75,7 @@ from . import (
     gen_lexicon,
     gen_verify_candidates,
     gen_log,
+    gen_machine,
     gen_log_ring,
     gen_mcp,
     gen_membership_lines,
@@ -120,6 +121,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "verify_candidates_unicode": gen_verify_candidates.generate_unicode,
     "canonical_json": gen_json.generate,
     "log_chain": gen_log.generate,
+    "machine_identity": gen_machine.generate,
+    "machine_identity_python": gen_machine.generate_python,
     "log_keyring": gen_log_ring.generate,
     "store": gen_store.generate,
     "membership_records_paths": gen_membership_records.generate,
@@ -380,6 +383,7 @@ PYTHON_GATED = frozenset(
         "gitfile_follow_python",
         "gitfile_pin_text_python",
         "gitobjects_python",
+        "machine_identity_python",
     }
 )
 
