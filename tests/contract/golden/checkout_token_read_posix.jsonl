@@ -1,0 +1,18 @@
+{"count":17,"fixture":"checkout_token_read_posix"}
+{"n":"token","pauses":[],"r":{"detail":"","state":"present","token":"0123456789ABCDEFGHJKMNPQRS"}}
+{"n":"empty","pauses":[0.01],"r":{"detail":"empty","state":"malformed","token":null}}
+{"n":"big","pauses":[],"r":{"detail":"larger than a token file","state":"malformed","token":null}}
+{"n":"exact","pauses":[],"r":{"detail":"not a bettermemory checkout token v1 file","state":"malformed","token":null}}
+{"n":"nonascii","pauses":[],"r":{"detail":"not ASCII text","state":"malformed","token":null}}
+{"n":"nonascii80","pauses":[],"r":{"detail":"not ASCII text","state":"malformed","token":null}}
+{"n":"fifo","pauses":[],"r":{"detail":"not a regular file","state":"malformed","token":null}}
+{"n":"dir","pauses":[],"r":{"detail":"not a regular file","state":"malformed","token":null}}
+{"n":"link","pauses":[],"r":{"detail":"","state":"present","token":"0123456789ABCDEFGHJKMNPQRS"}}
+{"n":"dangling","pauses":[],"r":{"detail":"","state":"absent","token":null}}
+{"n":"loop","pauses":[],"r":{"detail":"open: Too many levels of symbolic links (ELOOP)","state":"unreadable","token":null}}
+{"n":"fifolink","pauses":[],"r":{"detail":"not a regular file","state":"malformed","token":null}}
+{"n":"missing","pauses":[],"r":{"detail":"","state":"absent","token":null}}
+{"n":"token/below","pauses":[],"r":{"detail":"","state":"absent","token":null}}
+{"n":"x*300","pauses":[],"r":{"detail":"open: File name too long (ENAMETOOLONG)","state":"unreadable","token":null}}
+{"n":"/dev/null","pauses":[],"r":{"detail":"not a regular file","state":"malformed","token":null}}
+{"n":"git:repo/.git","pauses":[],"r":{"detail":"","state":"present","token":"0123456789ABCDEFGHJKMNPQRS"}}

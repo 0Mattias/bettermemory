@@ -59,6 +59,74 @@ pub fn fsync(file: &File) -> io::Result<()> {
 #[cfg(unix)]
 pub const O_NOFOLLOW: i32 = libc::O_NOFOLLOW;
 
+/// `fcntl.fcntl(fd, F_GETFL)`: the status flags of an open file, tried
+/// again when a signal interrupts it, as Python does.
+#[cfg(unix)]
+pub fn status_flags(file: &File) -> io::Result<i32> {
+    use std::os::fd::AsRawFd;
+    loop {
+        // SAFETY: `file` is borrowed, so its descriptor is open for the
+        // length of the call; `F_GETFL` takes no argument and reads and
+        // writes no memory of this process.
+        let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL) };
+        if flags != -1 {
+            return Ok(flags);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+/// `fcntl.fcntl(fd, F_SETFL, flags)`: set the status flags of an open
+/// file, tried again when a signal interrupts it, as Python does. The
+/// reads of the checkout token clear `O_NONBLOCK` with it.
+#[cfg(unix)]
+pub fn set_status_flags(file: &File, flags: i32) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    loop {
+        // SAFETY: `file` is borrowed, so its descriptor is open for the
+        // length of the call; `F_SETFL` takes its argument by value (the
+        // kernel ignores the bits it does not know) and reads and writes
+        // no memory of this process.
+        let status = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, flags) };
+        if status != -1 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+/// `os.close(fd)`: close a file and answer what `close(2)` answers, which
+/// dropping a `File` hides. Not tried again on EINTR, as Python's is not
+/// (the descriptor is gone either way).
+#[cfg(unix)]
+pub fn close(file: File) -> io::Result<()> {
+    use std::os::fd::IntoRawFd;
+    let fd = file.into_raw_fd();
+    // SAFETY: `into_raw_fd` gave up the one owner of an open descriptor,
+    // so nothing else closes or uses it; it is closed exactly once here,
+    // and `close` reads and writes no memory of this process.
+    let status = unsafe { libc::close(fd) };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Elsewhere the standard library closes the handle: its answer is not
+/// read.
+#[cfg(not(unix))]
+pub fn close(file: File) -> io::Result<()> {
+    drop(file);
+    Ok(())
+}
+
 /// The modes `os.access` asks: read (`R_OK`), write (`W_OK`) and execute
 /// or search (`X_OK`), any together.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -113,11 +181,16 @@ pub fn access(_path: &std::ffi::CStr, _mode: AccessMode) -> Option<bool> {
 /// macOS and 40 on Linux. Safe code: it compares constants only.
 ///
 /// None is the answer for any code it does not know, never a guessed
-/// name. Among those are EOVERFLOW, EMFILE, ENFILE, ENOTSUP, EOPNOTSUPP
-/// off macOS, EAGAIN/EWOULDBLOCK, EDEADLK and ENODEV; a number that two
-/// names share on a platform (EAGAIN and EWOULDBLOCK, ENOTSUP and
-/// EOPNOTSUPP on Linux) is never answered, and the fixture generator
-/// refuses to record one. The shared list is `ERRNO_NAMES` in
+/// name. On macOS and Linux it also names every errno both share that
+/// CPython raises as plain `OSError` (EMFILE, ENFILE, ENOMEM, EBUSY,
+/// EOVERFLOW, EHOSTDOWN and the rest), so a read that fails with one is
+/// worded as the reference words it. Left out are the errnos CPython
+/// raises as a subclass `PyErr` has no class for (ESRCH, ECHILD,
+/// EPIPE, the connection errors, EINPROGRESS, EALREADY), a number that
+/// two names share on either platform (EAGAIN and EWOULDBLOCK, EDEADLK
+/// and EDEADLOCK on Linux, ENOTSUP and EOPNOTSUPP on Linux), and the
+/// names one platform alone has; the fixture generator refuses to record
+/// a shared number. The shared list is `ERRNO_NAMES` in
 /// `tests/contract/gen_fs_stat.py`, held equal by a native test.
 ///
 /// macOS alone adds EOPNOTSUPP (102 there, ENOTSUP 45: no shared number),
@@ -147,6 +220,122 @@ pub fn errno_name(code: i32) -> Option<&'static str> {
         libc::EILSEQ => "EILSEQ",
         #[cfg(target_os = "macos")]
         libc::EOPNOTSUPP => "EOPNOTSUPP",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::E2BIG => "E2BIG",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOEXEC => "ENOEXEC",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOMEM => "ENOMEM",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EFAULT => "EFAULT",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOTBLK => "ENOTBLK",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EBUSY => "EBUSY",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EXDEV => "EXDEV",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENODEV => "ENODEV",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENFILE => "ENFILE",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EMFILE => "EMFILE",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOTTY => "ENOTTY",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ETXTBSY => "ETXTBSY",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EFBIG => "EFBIG",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOSPC => "ENOSPC",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ESPIPE => "ESPIPE",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EROFS => "EROFS",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EMLINK => "EMLINK",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EDOM => "EDOM",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ERANGE => "ERANGE",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOTSOCK => "ENOTSOCK",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EDESTADDRREQ => "EDESTADDRREQ",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EMSGSIZE => "EMSGSIZE",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EPROTOTYPE => "EPROTOTYPE",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOPROTOOPT => "ENOPROTOOPT",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EPROTONOSUPPORT => "EPROTONOSUPPORT",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ESOCKTNOSUPPORT => "ESOCKTNOSUPPORT",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EPFNOSUPPORT => "EPFNOSUPPORT",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EAFNOSUPPORT => "EAFNOSUPPORT",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EADDRINUSE => "EADDRINUSE",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EADDRNOTAVAIL => "EADDRNOTAVAIL",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENETDOWN => "ENETDOWN",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENETUNREACH => "ENETUNREACH",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENETRESET => "ENETRESET",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOBUFS => "ENOBUFS",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EISCONN => "EISCONN",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ETOOMANYREFS => "ETOOMANYREFS",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EHOSTDOWN => "EHOSTDOWN",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EHOSTUNREACH => "EHOSTUNREACH",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOTEMPTY => "ENOTEMPTY",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EUSERS => "EUSERS",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EDQUOT => "EDQUOT",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EREMOTE => "EREMOTE",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOLCK => "ENOLCK",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOSYS => "ENOSYS",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EOVERFLOW => "EOVERFLOW",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ECANCELED => "ECANCELED",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EIDRM => "EIDRM",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOMSG => "ENOMSG",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EBADMSG => "EBADMSG",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EMULTIHOP => "EMULTIHOP",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENODATA => "ENODATA",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOLINK => "ENOLINK",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOSR => "ENOSR",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOSTR => "ENOSTR",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EPROTO => "EPROTO",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ETIME => "ETIME",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::ENOTRECOVERABLE => "ENOTRECOVERABLE",
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        libc::EOWNERDEAD => "EOWNERDEAD",
         _ => return None,
     })
 }
@@ -329,6 +518,32 @@ mod tests {
         assert_eq!(access(&c(&file), AccessMode::default()), Some(true));
         assert_eq!(access(&c(&dir.join("missing")), r), Some(false));
         assert_eq!(access(&c(&dir), x), Some(true));
+        std::fs::remove_dir_all(&dir).expect("remove");
+    }
+
+    /// A file opened non-blocking for appending carries both flags;
+    /// `O_NONBLOCK` cleared, the append flag stays; `close` answers 0
+    /// for an open file.
+    #[cfg(unix)]
+    #[test]
+    fn status_flags_are_read_and_set_and_a_file_closes() {
+        use super::{close, set_status_flags, status_flags, O_NONBLOCK};
+        use std::os::unix::fs::OpenOptionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("bettermemory-sys-flags-{}", std::process::id()));
+        std::fs::create_dir(&dir).expect("dir");
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .custom_flags(O_NONBLOCK)
+            .open(dir.join("f"))
+            .expect("open");
+        let flags = status_flags(&file).expect("F_GETFL");
+        assert_eq!(flags & O_NONBLOCK, O_NONBLOCK);
+        assert_eq!(flags & libc::O_APPEND, libc::O_APPEND);
+        set_status_flags(&file, flags & !O_NONBLOCK).expect("F_SETFL");
+        assert_eq!(status_flags(&file).expect("F_GETFL"), flags & !O_NONBLOCK);
+        close(file).expect("close");
         std::fs::remove_dir_all(&dir).expect("remove");
     }
     use std::io::Write;

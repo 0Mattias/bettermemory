@@ -44,7 +44,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`) | `gitobjects.jsonl`, `gitobjects_python.jsonl` |
 | `gitfile_rule` | units 1, 2a, 2b, 3 and 4 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl` |
-| `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail` | `checkout_token.jsonl` |
+| `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only) |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
@@ -6649,7 +6649,7 @@ the file system, so it is cut into units, leaves first.
 | `successor`, `succeeds`, `_link` | 287-325 | randomness (`successor`) | built |
 | `token_path`, `render`, `parse` | 328-350 | nothing (the path flavour is data) | built |
 | `_cut_short`, `_malformed_detail` | 851-871 | nothing | built |
-| `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock` | 353-363, 753-848 | open, read, fstat, fcntl, a clock and a pause | unit 2 |
+| `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock` | 353-363, 753-848 | open, stat, fstat, read, close, fcntl and a pause | built (unit 2) |
 | `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_sweep`, `_place`, `_after_race`, `_failed`, `_os_text`, `_unlink_quietly` | 366-400, 466-486, 874-1015 | mkdir, exclusive create, fsync, hard link, unlink, owner, the file system's clock | unit 3 |
 | `remint`, `_replace_named`, `_claim`, `_wait_for`, `_take`, `_blocked`, `_holder`, `_claim_read`, `_break`, `_break_marks`, `_fs_now`, `_release`, `_remove_holding` | 401-465, 487-750 | rename, exclusive create, unlink, a clock and a pause | unit 4 |
 
@@ -6743,9 +6743,121 @@ with a 16-byte person against two hashlib digests); `checkout_token_robustness` 
 byte counts, nesting 100,000 deep, inputs to 1.6 million characters
 linear in time, surrogates and code points past Unicode).
 
-Left for later units: the reads (unit 2), `write` (unit 3), `remint` and
+Left for later units: `write` (unit 3), `remint` and
 the claim (unit 4), each over the `fsdata` file-system trait with the
 clock and the pause as arguments.
+
+### Unit 2, built (`checkout_token::read`)
+
+Line ranges confirmed against the source as it is now: `read` 353-363,
+`_read_at` 753-763, `_read_text` 766-801, `_open_plain` 804-815,
+`_read_all` 818-833, `_clear_nonblock` 836-848, and `_os_text` 1002-1006
+(listed with unit 3; the reads word their details with it, so it is
+built here).
+
+Every OS call goes through the `fsdata` file-system trait, extended at
+its end with methods whose default declines, so existing implementations
+need no change: `open_blocking` (the plain open of `_open_plain`),
+`fstat_result` and `read_once` (one `os.read`, with the errno),
+`close` (which can fail), `nonblock_flag`, `status_flags` and
+`set_status_flags` (`fcntl`'s `F_GETFL` and `F_SETFL`, None or declined
+where the platform has no `fcntl`), and `strerror`. `StdFs` implements
+them: the non-blocking open is the existing `open_result` (`O_RDONLY |
+O_NONBLOCK | O_CLOEXEC`), the plain open the standard library's read-only
+open, `fcntl` and `close` are `bettermemory_sys` calls (the core crate
+forbids unsafe), and `strerror` is the C library's text for the errno's
+number on POSIX. `MemFs` gives `strerror` for the texts macOS and glibc
+share. The pause before the reread is an argument (`pause(0.01)`); a
+relative path is joined to the working directory of the `Ctx`.
+
+- `read(ctx, git_dir, pause)`: `_read_at` of `token_path(git_dir)`.
+- `read_at`: `_read_text`; a text that is no token and is cut short
+  (`_cut_short`) is read once more after the pause; the second read's
+  answer stands, whatever it is (absent, unreadable, or another text).
+- `read_text`: the non-blocking open. A path the OS says is not there
+  (`path_missing`: ENOENT or ENOTDIR) is absent; an errno other than
+  EINVAL or EIO is unreadable, `open: <strerror> (<NAME>)`; EINVAL or EIO
+  goes to `_open_plain`. Then `os.fstat`: not a regular file is
+  malformed; else `_read_all`. An OSError of the fstat or of a read is
+  unreadable, worded `read:`. The close runs in `finally`: its failure
+  raises out of the read, replacing whatever the body answered
+  (`Fault::Raised`). Then more than 4,096 bytes is "larger than a token
+  file" (checked before the text), bytes past ASCII "not ASCII text".
+- `open_plain`: `os.stat` (links followed); not a regular file is
+  malformed; else the blocking open. An error of either is absent or
+  unreadable, worded `open:`.
+- `read_all`: `os.read` of `4097 - len(data)` until an empty answer or
+  more than 4,096 bytes. A read refused with EINVAL or EIO is made once
+  more after `_clear_nonblock` succeeds; else, or if that read fails,
+  the error is raised to `_read_text`. The clearing is tried at every
+  refused read, not once.
+- `clear_nonblock`: False where there is no `fcntl` (`sys.platform ==
+  "win32"`) or either call fails; else `F_SETFL` with the flags
+  `F_GETFL` gave less `O_NONBLOCK`.
+- `os_text`: `strerror` and the errno's name in brackets.
+
+Decisions. An error with no errno name, or whose text the file system
+does not give, makes the read decline (`Fault::NotPorted`) rather than
+guess the reference's `str(exc)` or a C library's wording: Windows'
+C runtime texts are not ported, and `MemFs` leaves out the names macOS
+and glibc word apart. `bettermemory_sys::errno_name` names, on macOS and
+Linux, every errno CPython raises as plain `OSError` that both share
+with one name each (EMFILE, ENFILE, ENOMEM, EBUSY, EOVERFLOW, EHOSTDOWN
+among them), so descriptor exhaustion and the like read as unreadable,
+worded as the reference words them. Still declined: a number two names
+share (EAGAIN and EWOULDBLOCK; EDEADLK, and on Linux EOPNOTSUPP and
+ENOTSUP), an errno CPython raises as a subclass the port has no class
+for (ESRCH, ECHILD, EPIPE, the connection errors), and an empty text.
+A NUL in the path is ValueError, which no `except OSError` catches: it
+raises (`Fault::Raised`), as in the reference. A relative path under
+the Windows flavour declines, as `Ctx::at` does.
+`StdFs::read_once` allocates at most 1 MiB per call whatever the count.
+No regular expression is involved.
+
+Findings about the reference (reproduced, pinned):
+
+- `read` says nothing in it raises for an OS error, but a failing
+  `os.close` in `_read_text`'s `finally` raises out of it (OSError,
+  InterruptedError for EINTR), replacing even a token already read.
+  Repro: rows `close fails`, `close interrupted` and `close fails on the
+  reread` of `checkout_token_read.jsonl` (`os.close` raising EIO).
+- A git directory holding a NUL makes `read` raise ValueError, against
+  the same sentence. Repro: `checkout_token.read("/r/\0")`.
+- `_open_plain` stats and then opens: a regular file replaced by a FIFO
+  between the two makes the blocking open wait for a writer. Not pinned
+  (a race); the port makes the same two calls in the same order.
+
+Fixtures (`tests/contract/gen_checkout_token_read.py`):
+`checkout_token_read.jsonl` (77 rows, not gated) runs the reference over
+a scripted OS (`os.open`, `os.stat`, `os.fstat`, `os.read`, `os.close`,
+`fcntl.fcntl`, `sys.platform`, `time.sleep` replaced), errors raised as
+`OSError(errno.<NAME>, "text of <NAME>")`, and pins each answer with
+every call made, in order: each open, stat, fstat, read and close
+error, both retry errnos, the plain open's every branch, the read
+retry's `fcntl` failures and the `win32` platform, sizes 4,095 to
+5,000, chunked and byte-at-a-time reads, the reread's every outcome,
+close failures, NULs and a relative path. `checkout_token_read_posix.jsonl`
+(16 rows, POSIX only) reads a real scratch tree: a token, a link to it,
+a dangling link, a loop, a FIFO and a link to it, a folder, a name of
+300 bytes, a path through a file, `/dev/null`, and `read` of a git
+directory; its texts (ELOOP, ENAMETOOLONG) are those macOS and glibc
+share.
+
+Tests: `golden_checkout_token_read` (every row, with the call log, over
+the scripted file system in `tests/ct_read_script`),
+`golden_checkout_token_read_posix` (every row through `StdFs`; recorded
+as having no case on Windows by `checkout_token_read_not_posix`),
+`checkout_token_read_kills` (a single read, no `fcntl` retry, a close
+that never fails, no stat before the plain open, every errno retried,
+no plain open, `>=` for the size bound, text judged before size), and
+`checkout_token_read_robustness` (a 64 MiB chunk, a byte at a time, a
+refusal every time, chunk sizes at the bound, paths of a million bytes
+linear in time, NULs, a FIFO with no writer that never waits, an empty
+error text, `MemFs`'s texts against the C library's, one `read_once`
+answering its whole count up to the 1 MiB cap, and an open with every
+descriptor taken, read in a child capped at 64).
+
+Left for later units: `write` (unit 3), `remint` and the claim (unit 4).
 
 ## The plain record writers
 
@@ -8910,9 +9022,10 @@ component count; so does this one's.
   by CPython's table (`PyErr::of_errno`): ETIMEDOUT is TimeoutError and
   EEXIST FileExistsError, both new in `PyErr`. Windows takes them from
   `ErrorKind` (`TimedOut`, `AlreadyExists`). `errno_name` answers None for
-  any code it does not know, never a guessed name: EOVERFLOW, EMFILE,
-  ENFILE, ENOTSUP/EOPNOTSUPP, EAGAIN/EWOULDBLOCK, EDEADLK and ENODEV among
-  them. EAGAIN left the list, since its number is shared with EWOULDBLOCK;
+  any code it does not know, never a guessed name: ENOTSUP/EOPNOTSUPP
+  off macOS, EAGAIN/EWOULDBLOCK and EDEADLK among them (EOVERFLOW,
+  EMFILE, ENFILE and ENODEV joined the list with the checkout token's
+  read). EAGAIN left the list, since its number is shared with EWOULDBLOCK;
   the generator refuses to record any errno whose number has two names.
 - **Root.** No POSIX-only generator had a convention for running as root.
   `gen_fs_realpath.refuse_root` now stops both file-system generators
@@ -9378,9 +9491,9 @@ What the reference has and this build does not, by area:
 - Reading a checkout: the judge and discovery of the `.git` rule,
   `gitobjects.py` past its byte parsers (inflating, the files, the
   reader), `origin_gitfiles.py` past its decoders and machine leaves
-  (units 3 to 7), `checkout_token.py` past its text (the reads, the
-  write, the remint), the origin's settling (`origin.py`), `location.py`
-  and the rest of `location_git.py`.
+  (units 3 to 7), `checkout_token.py` past its text and its reads (the
+  write, the remint and the claim: units 3 and 4), the origin's settling
+  (`origin.py`), `location.py` and the rest of `location_git.py`.
 - Membership's writes, and of the caller's resolution its file roots
   and workspace declaration (`identity` resolves the rest; its
   admission is `store::caller`).

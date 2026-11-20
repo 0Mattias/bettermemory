@@ -34,6 +34,7 @@ from . import (
     gen_caller_admission,
     gen_capture_vocabulary,
     gen_checkout_token,
+    gen_checkout_token_read,
     gen_cli,
     gen_config,
     gen_credentials_prefixed,
@@ -185,6 +186,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "capture_vocabulary": gen_capture_vocabulary.generate,
     "capture_vocabulary_python": gen_capture_vocabulary.generate_python,
     "checkout_token": gen_checkout_token.generate,
+    "checkout_token_read": gen_checkout_token_read.generate,
+    "checkout_token_read_posix": gen_checkout_token_read.generate_posix,
     "gitconfig_file": gen_gitconfig_file.generate,
     "gitconfig_tree": gen_gitconfig_tree.generate,
     "gitconfig_tree_rules": gen_gitconfig_tree.generate_rules,
@@ -453,9 +456,11 @@ PLATFORM_GATED = frozenset(
 #: FIFOs (`gen_gitsystem_record`); ``gitsystem_probe`` builds, sweeps and
 #: clears the probe over links, modes and FIFOs (`gen_gitsystem_probe`);
 #: ``gitfile_leaves_posix`` reads links and mode-000 files
-#: (`gen_gitfile_leaves`).
+#: (`gen_gitfile_leaves`); ``checkout_token_read_posix`` reads links, a
+#: FIFO and a loop (`gen_checkout_token_read`).
 POSIX_ONLY = frozenset(
     {
+        "checkout_token_read_posix",
         "store_restore_lock",
         "settings_paths",
         "settings_paths_python",

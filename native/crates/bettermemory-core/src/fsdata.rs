@@ -106,6 +106,16 @@ impl OsError {
             winerror: None,
         }
     }
+
+    /// An error known by its class alone: no errno's name, no Windows
+    /// code. A caller that must name the errno declines on it.
+    pub fn of_class(class: PyErr) -> OsError {
+        OsError {
+            class,
+            errno: None,
+            winerror: None,
+        }
+    }
 }
 
 impl From<OsError> for PyErr {
@@ -365,6 +375,49 @@ pub trait Fs {
     fn kernel_path(&self, _file: &mut Self::File) -> Result<Vec<u8>, Refused> {
         Err(Refused::NotOffered)
     }
+    /// `os.open(path, O_RDONLY | O_CLOEXEC | O_BINARY)`: a blocking open,
+    /// links followed, which waits on a FIFO until a writer opens it
+    /// (`checkout_token._open_plain` makes it only after a stat). Declined
+    /// by default: an OSError with no errno.
+    fn open_blocking(&self, _path: &[u8]) -> Result<Self::File, OsError> {
+        Err(OsError::of_class(PyErr::Os))
+    }
+    /// [`Fs::fstat`] with the error's errno. By default the class alone.
+    fn fstat_result(&self, file: &mut Self::File) -> Result<Stat, OsError> {
+        self.fstat(file).map_err(OsError::of_class)
+    }
+    /// One `os.read(fd, max)`: what a single read answers, at most `max`
+    /// bytes and empty at the end, with the error's errno. By default
+    /// [`Fs::read`], which may read more than once, with the class alone.
+    fn read_once(&self, file: &mut Self::File, max: usize) -> Result<Vec<u8>, OsError> {
+        self.read(file, max).map_err(OsError::of_class)
+    }
+    /// `os.close(fd)`, which can fail (EINTR, EIO). By default the file is
+    /// dropped and nothing is answered.
+    fn close(&self, file: Self::File) -> Result<(), OsError> {
+        drop(file);
+        Ok(())
+    }
+    /// `os.O_NONBLOCK` where the platform has `fcntl`; None, the default,
+    /// where it has none (`sys.platform == "win32"`).
+    fn nonblock_flag(&self) -> Option<i32> {
+        None
+    }
+    /// `fcntl.fcntl(fd, F_GETFL)`: an open file's status flags. Declined
+    /// by default.
+    fn status_flags(&self, _file: &mut Self::File) -> Result<i32, OsError> {
+        Err(OsError::of_class(PyErr::Os))
+    }
+    /// `fcntl.fcntl(fd, F_SETFL, flags)`. Declined by default.
+    fn set_status_flags(&self, _file: &mut Self::File, _flags: i32) -> Result<(), OsError> {
+        Err(OsError::of_class(PyErr::Os))
+    }
+    /// `exc.strerror` of an error this file system raised: the text the
+    /// platform's C library has for its errno. None, the default, where
+    /// it is not known: a caller that words the error declines.
+    fn strerror(&self, _error: &OsError) -> Option<String> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -566,18 +619,7 @@ impl Fs for StdFs {
     }
 
     fn fstat(&self, file: &mut StdFile) -> Result<Stat, PyErr> {
-        let meta = file.file.metadata().map_err(|e| py_err(&e))?;
-        let mut identity = identity_of(&meta, &file.file);
-        if identity.is_none() && cfg!(windows) {
-            identity = std::fs::canonicalize(&file.path)
-                .ok()
-                .map(|p| FileId(p.to_string_lossy().as_bytes().to_vec()));
-        }
-        Ok(Stat {
-            kind: kind_of(meta.file_type()),
-            identity,
-            size: meta.len(),
-        })
+        fstat_of(file).map_err(|e| py_err(&e))
     }
 
     fn read(&self, file: &mut StdFile, max: usize) -> Result<Vec<u8>, PyErr> {
@@ -654,6 +696,70 @@ impl Fs for StdFs {
     fn kernel_path(&self, file: &mut StdFile) -> Result<Vec<u8>, Refused> {
         kernel_path_of(&file.file)
     }
+
+    /// The standard library's read-only open: `O_RDONLY | O_CLOEXEC` on
+    /// POSIX, tried again on EINTR as `os.open` is.
+    fn open_blocking(&self, path: &[u8]) -> Result<StdFile, OsError> {
+        let path = native_path(path).map_err(|_| OsError::value())?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        let file = options.open(&path).map_err(|e| os_error(&e))?;
+        Ok(StdFile { file, path })
+    }
+
+    fn fstat_result(&self, file: &mut StdFile) -> Result<Stat, OsError> {
+        fstat_of(file).map_err(|e| os_error(&e))
+    }
+
+    /// One `read(2)`, tried again on EINTR as `os.read` is. The buffer is
+    /// at most [`READ_ONCE_CAP`] bytes, so a hostile count allocates no
+    /// more.
+    fn read_once(&self, file: &mut StdFile, max: usize) -> Result<Vec<u8>, OsError> {
+        let mut out = vec![0; max.min(READ_ONCE_CAP)];
+        loop {
+            match file.file.read(&mut out) {
+                Ok(n) => {
+                    out.truncate(n);
+                    return Ok(out);
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(os_error(&e)),
+            }
+        }
+    }
+
+    fn close(&self, file: StdFile) -> Result<(), OsError> {
+        bettermemory_sys::close(file.file).map_err(|e| os_error(&e))
+    }
+
+    #[cfg(unix)]
+    fn nonblock_flag(&self) -> Option<i32> {
+        Some(bettermemory_sys::O_NONBLOCK)
+    }
+
+    #[cfg(unix)]
+    fn status_flags(&self, file: &mut StdFile) -> Result<i32, OsError> {
+        bettermemory_sys::status_flags(&file.file).map_err(|e| os_error(&e))
+    }
+
+    #[cfg(unix)]
+    fn set_status_flags(&self, file: &mut StdFile, flags: i32) -> Result<(), OsError> {
+        bettermemory_sys::set_status_flags(&file.file, flags).map_err(|e| os_error(&e))
+    }
+
+    /// The C library's text (`strerror_r`, as the standard library words
+    /// an OS error) for the number this platform gives the errno's name:
+    /// the reverse of `bettermemory_sys::errno_name`, whose numbers are
+    /// below 4,096 on every platform. Windows keeps the default: the C
+    /// runtime's texts are not ported.
+    #[cfg(unix)]
+    fn strerror(&self, error: &OsError) -> Option<String> {
+        let name = error.errno?;
+        let code = (1..4096).find(|&code| bettermemory_sys::errno_name(code) == Some(name))?;
+        let text = std::io::Error::from_raw_os_error(code).to_string();
+        let end = text.rfind(" (os error ")?;
+        Some(text[..end].to_owned())
+    }
 }
 
 /// macOS: `F_GETPATH` through `bettermemory-sys`.
@@ -666,6 +772,25 @@ fn kernel_path_of(file: &std::fs::File) -> Result<Vec<u8>, Refused> {
 #[cfg(not(target_os = "macos"))]
 fn kernel_path_of(_: &std::fs::File) -> Result<Vec<u8>, Refused> {
     Err(Refused::NotOffered)
+}
+
+/// The most [`Fs::read_once`] of [`StdFs`] reads in one call.
+pub const READ_ONCE_CAP: usize = 1 << 20;
+
+/// `os.fstat` of an open file of [`StdFs`].
+fn fstat_of(file: &StdFile) -> std::io::Result<Stat> {
+    let meta = file.file.metadata()?;
+    let mut identity = identity_of(&meta, &file.file);
+    if identity.is_none() && cfg!(windows) {
+        identity = std::fs::canonicalize(&file.path)
+            .ok()
+            .map(|p| FileId(p.to_string_lossy().as_bytes().to_vec()));
+    }
+    Ok(Stat {
+        kind: kind_of(meta.file_type()),
+        identity,
+        size: meta.len(),
+    })
 }
 
 /// An `io::Error` as the reference's exception: the class CPython picks
@@ -1393,6 +1518,32 @@ impl Fs for MemFs {
             return Err(Refused::Raised(PyErr::Os));
         }
         Ok(path)
+    }
+
+    /// The texts macOS's C library and glibc share, for the errnos this
+    /// model raises and their neighbours; None for a name they word
+    /// apart (ENXIO, ESTALE, ETIMEDOUT, ENOTCONN, EILSEQ) and under
+    /// [`Flavour::Windows`], whose C runtime's texts are not ported.
+    fn strerror(&self, error: &OsError) -> Option<String> {
+        if self.flavour == Flavour::Windows {
+            return None;
+        }
+        let text = match error.errno? {
+            "ENOENT" => "No such file or directory",
+            "ENOTDIR" => "Not a directory",
+            "EISDIR" => "Is a directory",
+            "EACCES" => "Permission denied",
+            "EPERM" => "Operation not permitted",
+            "EEXIST" => "File exists",
+            "ELOOP" => "Too many levels of symbolic links",
+            "ENAMETOOLONG" => "File name too long",
+            "EIO" => "Input/output error",
+            "EINVAL" => "Invalid argument",
+            "EINTR" => "Interrupted system call",
+            "EBADF" => "Bad file descriptor",
+            _ => return None,
+        };
+        Some(text.to_owned())
     }
 }
 
