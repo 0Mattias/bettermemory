@@ -26,6 +26,7 @@ import sys
 import time
 import traceback
 import unicodedata
+import zlib
 from collections.abc import Callable
 from pathlib import Path
 
@@ -72,6 +73,7 @@ from . import (
     gen_githead,
     gen_location_probe,
     gen_gitobjects,
+    gen_gitobjects_streams,
     gen_gitfile_leaves,
     gen_json,
     gen_in_force,
@@ -214,6 +216,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "location_probe_errno": gen_location_probe.generate_errno,
     "gitobjects": gen_gitobjects.generate,
     "gitobjects_python": gen_gitobjects.generate_python,
+    "gitobjects_streams": gen_gitobjects_streams.generate,
     "githead_posix": gen_githead.generate_posix,
     "capture_vocabulary": gen_capture_vocabulary.generate,
     "capture_vocabulary_python": gen_capture_vocabulary.generate_python,
@@ -421,6 +424,20 @@ PYTHON_GATED = frozenset(
     }
 )
 
+#: The zlib CPython links (`zlib.ZLIB_RUNTIME_VERSION`). ``gitobjects_streams``
+#: pins what `zlib.decompressobj` takes of a stream and returns, and when
+#: it raises: where that zlib's `inflate` stops and how much input it has
+#: consumed there. The streams are written bit by bit, so no byte of them
+#: is a compressor's, but the stopping points are the inflate's. macOS's
+#: libz 1.2.12 and the native build's `zlib-rs` agree on them; no other
+#: build has been compared, so under another the file is not compared.
+ZLIB_VERSION = "1.2.12"
+ZLIB_GATED = frozenset({"gitobjects_streams"})
+
+
+def zlib_version() -> str:
+    return zlib.ZLIB_RUNTIME_VERSION
+
 
 #: The pydantic-core the record fixtures were generated under (uv.lock pins
 #: pydantic 2.14.1 on it): the models' coercions and errors are its.
@@ -617,6 +634,8 @@ def drift(name: str) -> list[str]:
         out.append(f"SQLite {sqlite3.sqlite_version} (files: {SQLITE_VERSION})")
     if name in PYTHON_GATED and python_version() != PYTHON_VERSION:
         out.append(f"Python {python_version()} (files: {PYTHON_VERSION})")
+    if name in ZLIB_GATED and zlib_version() != ZLIB_VERSION:
+        out.append(f"zlib {zlib_version()} (files: {ZLIB_VERSION})")
     if name in PLATFORM_GATED and platform_key() != PLATFORM:
         out.append(f"platform {platform_key()} (files: {PLATFORM})")
     if name in PYDANTIC_GATED and pydantic_core_version() != PYDANTIC_CORE_VERSION:
@@ -700,12 +719,14 @@ def as_found(out: Path) -> int:
         "python_build": sys.version,
         "sqlite": sqlite3.sqlite_version,
         "unicode": unicodedata.unidata_version,
+        "zlib": zlib_version(),
         "pydantic_core": pydantic_core_version(),
         "committed": {
             "platform": PLATFORM,
             "python": PYTHON_VERSION,
             "sqlite": SQLITE_VERSION,
             "unicode": UNIDATA_VERSION,
+            "zlib": ZLIB_VERSION,
             "pydantic_core": PYDANTIC_CORE_VERSION,
         },
         "generators": generators,
@@ -765,6 +786,12 @@ def main(argv: list[str] | None = None) -> int:
     if python_version() != PYTHON_VERSION:
         print(
             f"refusing: Python {python_version()}, golden files are {PYTHON_VERSION}",
+            file=sys.stderr,
+        )
+        return 1
+    if zlib_version() != ZLIB_VERSION:
+        print(
+            f"refusing: zlib {zlib_version()}, golden files are {ZLIB_VERSION}",
             file=sys.stderr,
         )
         return 1

@@ -6,14 +6,17 @@
 //! application, the commit and tree parsers, the committer time and the
 //! parent lines git reads, the fingerprint of design 2.1, git's C-style
 //! unquoting and the alternates file, and a version 2 pack index held in
-//! memory. No file is opened and nothing is inflated; the object reader,
-//! the zlib streams and the delta chain are later units.
+//! memory. No file is opened and nothing is inflated here. Unit 2, the
+//! zlib streams and the delta chain over a file handle the caller gives,
+//! is [`stream`]; the file reads and the object reader are later units.
 //!
 //! The reference's integers are unbounded. A size or distance a header
 //! states can run past 64 bits, so those answers are [`Wide`], an exact
 //! unsigned integer of any width. Where the reference raises (`int()`'s
 //! digit limit, an index out of range, a short `struct` read, a malformed
 //! hex prefix), the port answers [`Raised`].
+
+pub mod stream;
 
 use sha2::{Digest, Sha256};
 

@@ -3,10 +3,10 @@ reference byte for byte.
 
 Each generator in `tests.contract.generate` runs in memory and its output
 is compared with the committed files. A generator whose output reads the
-Unicode database or the linked SQLite is pinned to the versions the files
-were made under: under those it must match; under others a match passes
-and a difference skips, naming the drift, since the files then describe
-the pinned versions and not this interpreter's.
+Unicode database, the linked SQLite or the linked zlib is pinned to the
+versions the files were made under: under those it must match; under
+others a match passes and a difference skips, naming the drift, since the
+files then describe the pinned versions and not this interpreter's.
 """
 
 from __future__ import annotations
@@ -41,9 +41,12 @@ from tests.contract.generate import (
     SQLITE_VERSION,
     UNICODE_GATED,
     UNIDATA_VERSION,
+    ZLIB_GATED,
+    ZLIB_VERSION,
     platform_key,
     pydantic_core_version,
     python_version,
+    zlib_version,
 )
 
 #: The tool-response fixture records the review the package ships
@@ -67,6 +70,8 @@ def _drift(name: str) -> list[str]:
         out.append(f"SQLite {sqlite3.sqlite_version} (files: {SQLITE_VERSION})")
     if name in PYTHON_GATED and python_version() != PYTHON_VERSION:
         out.append(f"Python {python_version()} (files: {PYTHON_VERSION})")
+    if name in ZLIB_GATED and zlib_version() != ZLIB_VERSION:
+        out.append(f"zlib {zlib_version()} (files: {ZLIB_VERSION})")
     if name in PYDANTIC_GATED and pydantic_core_version() != PYDANTIC_CORE_VERSION:
         out.append(
             f"pydantic-core {pydantic_core_version()} (files: {PYDANTIC_CORE_VERSION})"

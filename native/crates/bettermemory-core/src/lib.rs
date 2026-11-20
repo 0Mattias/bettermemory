@@ -58,7 +58,8 @@
 //! - [`location_probe`]: the hook client's namespace probe (the cwd's
 //!   state, its view spelling, the host's name);
 //! - [`gitobjects`]: git objects read from a repository's files, its
-//!   first unit (the byte parsers);
+//!   first two units (the byte parsers; the zlib streams and the delta
+//!   chain over a file handle);
 //! - [`fsdata`]: the file system as the config readers ask it, as data;
 //! - [`verify_status`] and [`attribution`]: a memory's verification
 //!   staleness, and phrase-match attribution of memories to a reply;

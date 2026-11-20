@@ -9,3 +9,10 @@ license = "MIT"
 
 [profile.release]
 debug = false
+
+# The inflate of `gitobjects::stream` is optimized in debug builds and test
+# runs too: unoptimized, it takes about ten times the reference's time to
+# inflate 64 MiB (native/README.md, "Git objects read from a repository's
+# files"). The answers are the same at every level.
+[profile.dev.package.zlib-rs]
+opt-level = 3

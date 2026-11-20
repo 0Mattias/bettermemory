@@ -45,6 +45,9 @@ use serde_json::{json, Value};
 /// CPython 3.13.13's datetime parser and `list.sort`, its nesting budget.
 pub const PORT_PYTHON: &str = "3.13.13";
 pub const PORT_UNICODE: &str = "15.1.0";
+/// The zlib whose `inflate` `gitobjects::stream` reproduces through
+/// `zlib-rs`: where it stops and what input it has consumed there.
+pub const PORT_ZLIB: &str = "1.2.12";
 /// The pydantic-core whose coercions and errors the record models reproduce.
 pub const PORT_PYDANTIC_CORE: &str = "2.50.1";
 /// The SQLite the record store fixtures were written with: a store another
@@ -56,6 +59,7 @@ pub const COMMITTED_PLATFORM: &str = "darwin-arm64";
 pub const COMMITTED_PYTHON: &str = "3.13.13";
 pub const COMMITTED_SQLITE: &str = "3.50.4";
 pub const COMMITTED_UNICODE: &str = "15.1.0";
+pub const COMMITTED_ZLIB: &str = "1.2.12";
 pub const COMMITTED_PYDANTIC_CORE: &str = "2.50.1";
 
 #[derive(Clone, Debug)]
@@ -64,6 +68,7 @@ pub struct Provenance {
     pub python: String,
     pub sqlite: String,
     pub unicode: String,
+    pub zlib: String,
     pub pydantic_core: String,
     /// "committed" or the manifest's path.
     pub source: String,
@@ -95,6 +100,7 @@ pub fn provenance() -> &'static Provenance {
                 python: COMMITTED_PYTHON.into(),
                 sqlite: COMMITTED_SQLITE.into(),
                 unicode: COMMITTED_UNICODE.into(),
+                zlib: COMMITTED_ZLIB.into(),
                 pydantic_core: COMMITTED_PYDANTIC_CORE.into(),
                 source: "committed".into(),
             };
@@ -119,6 +125,8 @@ pub fn provenance() -> &'static Provenance {
             python: field("python"),
             sqlite: field("sqlite"),
             unicode: field("unicode"),
+            // A manifest from before the zlib gate has no entry.
+            zlib: doc["zlib"].as_str().unwrap_or("unknown").to_owned(),
             // A manifest from before the record models has no entry.
             pydantic_core: doc["pydantic_core"]
                 .as_str()
@@ -157,6 +165,8 @@ pub enum Gate {
     Python,
     /// Class (ii): the Unicode data the port carries.
     Unicode,
+    /// Class (ii): the zlib whose `inflate` the stream port reproduces.
+    Zlib,
     /// Class (iii): floating-point bits of one platform.
     Platform,
     /// Class (ii): the pydantic-core the record models reproduce.
@@ -304,6 +314,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "store_provenance.jsonl" => &[Unicode, Pydantic],
         // A loose header's size past `int`'s 4,300 digits (`gen_gitobjects`).
         "gitobjects_python.jsonl" => &[Python],
+        // Where the linked zlib's `inflate` stops and what it has consumed
+        // there (`gen_gitobjects_streams`).
+        "gitobjects_streams.jsonl" => &[Zlib],
         // `int()` and `float()` of a recorded stamp or time read non-ASCII
         // digits and spaces from `unicodedata` (`gen_gitsystem_record`).
         "gitsystem_record.jsonl" => &[Unicode],
@@ -367,6 +380,10 @@ pub fn open_gates(gates: &[Gate]) -> Vec<String> {
             Gate::Unicode if p.unicode != PORT_UNICODE => out.push(format!(
                 "files from Unicode {}, the port carries {PORT_UNICODE}",
                 p.unicode
+            )),
+            Gate::Zlib if p.zlib != PORT_ZLIB => out.push(format!(
+                "files from zlib {}, the port reproduces {PORT_ZLIB}",
+                p.zlib
             )),
             Gate::Platform if p.platform != runner_platform() => out.push(format!(
                 "files from platform {}, this is {}",

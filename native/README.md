@@ -49,7 +49,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_gitfiles` | units 1 and 2 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`) and the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
-| `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`) | `gitobjects.jsonl`, `gitobjects_python.jsonl` |
+| `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl` |
 | `gitfile_rule` | units 1, 2a, 2b, 3 and 4 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only) |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
@@ -76,10 +76,13 @@ it is only hashed into the fingerprint. `golden_lexicon` pins that copy to
 the golden file byte for byte and each hand-written list to its entry there.
 
 Dependencies: `sha2`, `subtle` (constant-time MAC comparison), `zeroize`
-(key bytes are wiped when a `Key` drops) and `rusqlite` 0.43.0 with
+(key bytes are wiped when a `Key` drops), `rusqlite` 0.43.0 with
 `bundled`, `limits` and `hooks` (its bundled SQLite is 3.54.1; nothing
-async); the tests also use `serde_json` to read the
-golden files.
+async) and `zlib-rs` 0.6.8 with `rust-allocator` alone (the inflate of
+`gitobjects::stream`: pure Rust, no C allocator, no CPU detection at run
+time, optimized in debug builds too; see "Git objects read from a
+repository's files" for why this crate); the tests also use `serde_json`
+to read the golden files.
 
 ## Path candidates (`verify_candidates.py`)
 
@@ -2235,13 +2238,14 @@ Unicode holds the same text.
 --as-found` runs every generator under whatever Python, SQLite, Unicode and
 platform is present and writes the whole set into DIR with `platform.json`:
 the platform key (`sys.platform`-`machine`, as `PLATFORM` spells it), the
-machine, the libc where Python knows it, the Python, SQLite and Unicode
-versions, the committed set's pins, each generator's files or the error it
-raised (a generator that raises is recorded and the run goes on, exit 1),
-the gates under which it differs from the committed files, and for each
-file its size, SHA-256, whether it is byte-identical to the committed one
-and, if not, how many lines differ and where (the `_differing` detail of
-`tests/test_contract_golden.py`, now `tests/contract/_diff.py`).
+machine, the libc where Python knows it, the Python, SQLite, Unicode and
+zlib versions, the committed set's pins, each generator's files or the
+error it raised (a generator that raises is recorded and the run goes on,
+exit 1), the gates under which it differs from the committed files, and
+for each file its size, SHA-256, whether it is byte-identical to the
+committed one and, if not, how many lines differ and where (the
+`_differing` detail of `tests/test_contract_golden.py`, now
+`tests/contract/_diff.py`).
 `store_real.sqlite` is a store file SQLite 3.50.4 wrote once; it cannot be
 written again byte for byte, so every generator run, the as-found one
 included, copies the committed file and records in `store_real.json` its
@@ -2257,9 +2261,10 @@ with, by the generator that writes it, mirroring the Python side's
 `*_GATED` sets (`tests/common/parity.rs`, `gates_of`):
 
 - (i) platform- and version-independent: compared strictly, always.
-- (ii) tied by design to the Python patch release (3.13.13) or the Unicode
-  (15.1.0) the port reproduces: strict where the files were made under
-  those; under another, a differing case is set aside.
+- (ii) tied by design to the Python patch release (3.13.13), the Unicode
+  (15.1.0) or the zlib (1.2.12) the port reproduces: strict where the
+  files were made under those; under another, a differing case is set
+  aside.
 - (iii) floating-point score bits: strict where the files were made on this
   platform; elsewhere, a differing case is set aside. (These files are also
   Unicode-gated.)
@@ -2272,6 +2277,11 @@ with, by the generator that writes it, mirroring the Python side's
 
 SQLite is no gate: the native build links its own (3.54.1), so the
 reference's SQLite version is recorded, and its effects compared strictly.
+zlib is a gate for `gitobjects_streams.jsonl` alone, which pins where
+the linked zlib's `inflate` stops and how much input it has consumed
+there: the native build reproduces macOS's libz 1.2.12 through
+`zlib-rs`, and no other zlib has been compared (`ZLIB_GATED`,
+`Gate::Zlib`; "Git objects read from a repository's files").
 
 **Nothing is hidden.** Where a test's gates are all shut (the files were
 made here, under the port's versions) a difference fails as it always did.
@@ -2344,6 +2354,8 @@ that Unicode too.
 | `golden_gitobjects`: `gitobjects_every_case` | `gitobjects.jsonl` | i |
 | `golden_gitobjects`: `gitobjects_python_every_case` | `gitobjects_python.jsonl` | ii (Python) |
 | `gitobjects_kills` (13), `gitobjects_robustness` (5) | none | i |
+| `golden_gitobjects_streams`: `gitobjects_streams_every_case` | `gitobjects_streams.jsonl` | ii (zlib) |
+| `gitobjects_streams_kills` (15), `gitobjects_streams_robustness` (8) | none | i |
 | `golden_gitfile_leaves`: `gitfile_leaves_every_case` | `gitfile_leaves.jsonl` | i |
 | `golden_gitfile_leaves_posix`: in memory and on disk (unix) | `gitfile_leaves_posix.jsonl` | i; os elsewhere (`gitfile_leaves_not_posix`) |
 | `gitfile_leaves_robustness` (9; 8 off unix) | none | i |
@@ -7294,8 +7306,8 @@ mode-000 folder can still be listed (a root user);
 `src/bettermemory/gitobjects.py` (1,234 lines, read at 465bc600) reads
 commits, trees and object names from a repository's loose objects, pack
 indexes, packs and alternates, with no git process. Its Rust port is well
-over 600 lines, so it is cut into units, leaves first. Unit 1 is built
-(`gitobjects`); the rest is designed below.
+over 600 lines, so it is cut into units, leaves first. Units 1 and 2 are
+built (`gitobjects`, `gitobjects::stream`); the rest is designed below.
 
 ### Map, by function
 
@@ -7307,20 +7319,20 @@ over 600 lines, so it is cut into units, leaves first. Unit 1 is built
 | `_alternate_entries`, `_unquote_c` | 1006-1055 | nothing | 1, built |
 | `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta` | 1058-1178 | nothing | 1, built |
 | `_hex_name`, `_parse_commit`, `_parse_tree` | 1181-1234 | nothing | 1, built |
-| `_Stream.read`, `read_to_end`, `_inflate_at` | 947-986 | zlib inflate over a file handle (seek, read) | 2 |
-| `_chain`, `_listed_in`, `_take` | 864-944 | a pack file handle (seek, read), zlib | 2 |
+| `_Stream.read`, `read_to_end`, `_inflate_at` | 947-986 | zlib inflate over a file handle (seek, read) | 2, built |
+| `_chain`, `_listed_in`, `_take` | 864-944 | a pack file handle (seek, read), zlib | 2, built |
 | `_is_evicted`, `_open`, `_read_whole` | 579-614, 989-992 | `stat` (`st_flags`, `st_file_attributes`), an open that does not wait on a FIFO, `fstat`, `readall` | 3 |
 | `_dir_key`, `_object_dirs`, `_link_alternates` | 500-535, 995-999 | `realpath`, `normcase`, `normpath`, `isabs`, `isdir` | 3 |
 | `_object_format`, `_list_new`, `_rescan`, `_load` | 477-498, 537-575 | `listdir`, `isfile`, `gitfile_rule.object_format` (ported) | 3 |
 | `ObjectReader`: `has`, `has_many`, `_take_loose`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `name_length`, `complete`, `evicted`, `object_dirs`, `_raw`, `_places`, `_object`, `_loose`, `_packed` | 272-746 | all of the above, and `listdir` of a fanout directory | 4 |
 
-Units 2 to 4: unit 2 is the zlib streams and the delta chain over a file
-handle the caller gives (a trait with `seek` and `read`), with the choice
-of inflate backend shown equal to CPython's `zlib.decompressobj` on
-corrupt, truncated and trailing-garbage streams; unit 3 is the file
-reads through `fsdata`'s `Fs` (extended with `st_flags` and
-`st_file_attributes` for eviction), the object format and the
-alternates walk; unit 4 is `ObjectReader` itself.
+Units 3 and 4: unit 3 is the file reads through `fsdata`'s `Fs`
+(extended with `st_flags` and `st_file_attributes` for eviction, and
+with a seek, so that an open file of `Fs` stands behind unit 2's
+`Handle`), the object format and the alternates walk; unit 4 is
+`ObjectReader` itself, which catches what unit 2 raises as the reference
+does (`OSError` and `zlib.error` are an absent object, anything else
+goes through).
 
 ### Unit 1, built (`gitobjects`)
 
@@ -7423,6 +7435,234 @@ Fixtures and tests:
   1 MiB size past `int`'s limit, a 16 MiB delta result, 20,000 parents,
   200,000 tree entries, an index of 200,000 objects; each under a time
   bound, in debug and release).
+
+### Unit 2, built (`gitobjects::stream`)
+
+Lines 864-986 were confirmed against the source at 3a26051a (the file as
+3326930f left it). `gitobjects::stream` holds `_Stream` (`read`,
+`read_to_end`), `_Link`, `_chain`, `_inflate_at`, `_listed_in` and
+`_take`. The machine reaches it through one trait, `Handle`: `seek` is
+`fh.seek(offset)` and `read` is `fh.read(n) or b""`, one read of at most
+`n` bytes, empty at the end of the file and where a non-blocking read
+has nothing (`FileIO` answers None). `MemHandle` is a file's bytes in
+memory behind it. Where the reference raises, the answer is a `Failure`:
+`Zlib(code)` for `zlib.error`, `Os(class)` for the handle's `OSError`,
+`Overflow` for `OverflowError`, `Raised` for what the pack index raises.
+
+What each function reproduces:
+
+- `Stream::read(n)`: the loop of `_Stream.read`. Each turn feeds
+  `decompress` what the last call left unconsumed, or else one read of
+  `chunk` bytes, with a limit of what is still wanted (16 MiB at most,
+  `_PIECE`). It stops when `n` bytes are out, when the stream has ended,
+  or when a call gave no byte and took none (the file's end, or a read
+  that came back empty). A `zlib.error` leaves `_pending` as it was,
+  because the reference assigns it after the call: a stream that held a
+  tail feeds that tail to every later call, and one that held none reads
+  another chunk each time. An `OSError` from the handle goes through, and
+  the bytes that call had gathered go with it.
+- `Stream::read_to_end(n)`: `read(n)`, then None unless it gave `n`
+  bytes, `read(1)` gives none and the stream has ended. Bytes after the
+  stream's end are not looked at (git 2.54's `cat-file` reads a loose
+  object with bytes after its stream too).
+- `chain(fh, pack, offset, cap)`: `_chain`. Per entry: None at an offset
+  met before or once 4,096 entries are met; a seek and one read of 64
+  bytes (taken as it comes, short or empty); `entry_header`; for a delta,
+  where a cap is given or the entry is the first, a seek to its stream
+  and the first 20 inflated bytes through a `Stream` fed 1,024 bytes a
+  read, whose two varints give the target size; under a cap, None where
+  the size or the target is above it or the running total of both is
+  above 16 caps; then the base, by distance (None unless it is above 0
+  and below the offset) or by name in the same index (None where the
+  index lacks it or lists it past its 64-bit table). The answer is the
+  base's type code and the links, top first, sizes as stated (`Wide`).
+- `inflate_at(fh, link)`: a seek to the link's start and `read_to_end` of
+  its size through a `Stream` fed the size and 64 bytes a read, 65,536 at
+  most.
+- `listed_in(packs, raw)`, `take(packs, want, found)`: as the reference,
+  `find` raising `IndexError` for an empty name. `take` raises before the
+  pack it met has moved anything.
+
+The inflate. `_Stream` sees zlib through
+`zlib.decompressobj().decompress(data, max_length)`, and what it asks of
+its file, and when it raises, follows from where zlib's `inflate` stops:
+
+- With the output limit met, `inflate` goes on to the next symbol that
+  needs output. It passes an end of block, the next block's header and
+  code tables and the stream's Adler-32 on the way. So the stream's end
+  is seen with its last byte where the chunk holds the check (`eof`, and
+  no further read), and a block of type 3 or a wrong check after the
+  bytes asked for raises although those bytes were there. A match that
+  reaches before the start of the output is not looked at until one of
+  its bytes is asked for.
+- It consumes input by whole bytes up to what it has decoded, which
+  decides `unconsumed_tail` and so whether the next turn reads the file.
+- At the stream's end CPython moves the unconsumed input to `unused_data`
+  and rewrites `unconsumed_tail` only where it was not empty before.
+
+The local cargo cache held three candidates. Each was driven as CPython
+drives zlib (one `inflate` with `Z_SYNC_FLUSH` per block of output, the
+blocks 32 KiB, 64 KiB, 256 KiB, 1 MiB, 4 MiB, 8 MiB and 16 MiB, each cut
+to what is left of the limit) and compared with the reference's
+`_Stream` in a scratch harness over hostile streams: deflate blocks of
+all three kinds written bit by bit with random code tables, streams from
+zlib's compressor at several levels, strategies, window sizes and
+flushes, preset dictionaries, outputs at CPython's block bounds and
+past 16 MiB; each as made, cut, bit-flipped, overwritten,
+extended or doubled; chunks from 1 to 65,536 bytes; reads that come back
+short or empty; one to forty calls a stream, calls after a raise among
+them. A transcript records, after each call, the answer (its bytes, None
+or the error), `eof`, the length of `unconsumed_tail`, the count of
+reads and the file position.
+
+- `miniz_oxide` 0.9.1, alone and behind `flate2` 1.1.10: 9,297 of 45,976
+  transcripts differ even with the error's text and the unconsumed input
+  set aside. It answers bytes where zlib raises (a match before the
+  start of the output), raises where zlib answers, and takes input ahead
+  of what it has decoded.
+- `zlib-rs` 0.6.8: none of 66,032 transcripts differs in anything
+  recorded but the text after the error's code.
+
+So `zlib-rs` is the inflate, and none is written by hand. It is added as
+`zlib-rs = "=0.6.8"` with `default-features = false` and
+`rust-allocator` alone: pure Rust, no C allocator, and with `std` left
+off no CPU feature detection at run time, so the code that runs depends
+on the target alone. It holds `unsafe` inside; the core crate uses its
+safe `Inflate` (`Inflate::new(true, 15)`, as `zlib.decompressobj()`'s
+`wbits` of 15; `InflateFlush::SyncFlush`) and stays
+`#![forbid(unsafe_code)]`. The port as built, over 35,966 of the same
+transcripts: none differs. The reference on the machine that made the
+fixtures runs on macOS's libz 1.2.12, and `zlib-rs` is a separate
+implementation in Rust that its own tests hold to zlib-ng. That the two
+agree is evidence that what is pinned is zlib's `inflate` and not one
+build of it, but no proof: no upstream zlib 1.3 and no zlib-ng could be
+compared here, and CPython builds elsewhere link other zlibs. So
+`gitobjects_streams.jsonl` is gated on the zlib CPython links
+(`zlib.ZLIB_RUNTIME_VERSION`, 1.2.12; `ZLIB_GATED` in
+`tests/contract/generate.py`, `Gate::Zlib` in `tests/common/parity.rs`):
+under another zlib the Python test skips a differing file and names the
+drift, and the native test against a set made under it sets a differing
+case aside and names it. The sweeps of the file then put the same
+question to the zlib of every platform the as-found set is made on, and
+the answer, equal or set aside, is printed.
+
+The text of a `zlib.error` is not carried. It is the zlib build's
+(macOS's libz says "invalid literal/length/distance code" where
+`zlib-rs` names one of the two, and `zlib-rs` says "repeated call with
+bad state" where its fast loop met the error and on every call after a
+raise), the reference's callers catch the class, and no golden row holds
+it. The code is carried: -3 for a stream that is not valid, 2 for one
+whose header asks for a preset dictionary.
+
+Decisions:
+
+- A seek of 2**63 or more is `Failure::Overflow` before the handle is
+  asked, as `FileIO.seek` raises `OverflowError` converting its argument
+  (to a C `long`, on Windows a `long long`) before any `lseek`. `Handle`
+  takes offsets below that.
+- `cap` is `Option<u64>`. The reference takes any int; the package's
+  callers pass None or `max_size`, 4 MiB unless a caller of the reader
+  names another, and none does. A negative cap and one of 2**64 or more
+  are outside the port's domain. A size or target past the cap is
+  refused before it is summed, so the running total holds at most 8,192
+  values of 64 bits and fits `u128`.
+- `offset` and a link's `start` are `u64`: an index's offsets are 64
+  bits, and a start is an offset a seek accepted plus a header of at
+  most 64 bytes. A link's `size` and `target` are `Wide`, as unit 1
+  reads them. `Stream::read` counts in `u64`; `inflate_at` reads a size
+  past 64 bits as 2**64 - 1, since no stream holds that many bytes and
+  the answer is None either way.
+- `listed_in` answers a list where the reference has a generator: the
+  generator raises at its first pack or never, so nothing is yielded
+  before a raise. `take`'s `want` is the reference's dict as its pairs in
+  order, each raw name once.
+- One block of output is kept per stream and reused by every call, so a
+  call costs what it reads and writes; CPython allocates a block per
+  call and does not clear it. `gitobjects_streams_robustness` holds
+  this against the cost of clearing a block of 32 KiB in the same run:
+  a call of a byte a read costs less than one, a read that asks 16 MiB
+  of a ten-byte stream less than 128.
+- `zlib-rs` is compiled with `opt-level = 3` in debug builds and test
+  runs too (`[profile.dev.package.zlib-rs]` in `native/Cargo.toml`).
+  Unoptimized, a debug build took 328 ms to inflate 64 MiB of one byte,
+  which the reference does in 26 to 42 ms; optimized, 35 ms. The
+  answers are the same at every level.
+- `Handle` is its own trait, not a method of `fsdata::Fs`: this unit
+  opens nothing. Unit 3 puts an open file of `Fs` behind it.
+
+Reference findings (reproduced, pinned):
+
+- An offset of 2**63 or more raises `OverflowError` out of the reader.
+  `_packed` catches `OSError` and `zlib.error` only, so
+  `ObjectReader.header`, `read`, `commit`, `tree` and `fingerprint` raise
+  for an object whose pack index lists it at such an offset, where the
+  module says a damaged file reads as an absent object, never as an
+  exception. Reproduction: a pack index of two objects whose 64-bit
+  table holds `1 << 63` for the second, beside any pack;
+  `ObjectReader(git_dir).header(name)` raises "OverflowError: Python int
+  too large to convert to C long", while `has(name)` is True and
+  `complete` is True. The golden `ch` cases "an offset of 2**63" and "a
+  base listed at 2**63", and the kills test
+  `an_offset_of_2_to_the_63_is_an_overflow_before_the_handle_is_asked`.
+- `_chain`'s read of a delta's first 20 bytes meets the stream's check
+  where the delta is 20 bytes or fewer. A delta of 20 bytes whose
+  Adler-32 is wrong raises `zlib.error` in the walk, so
+  `ObjectReader.header` is None for it; the same damage on a delta of 21
+  bytes is not seen, and `header` answers its type and size. `read` is
+  None for both. Reproduction: a pack of a blob and a delta on it of 20
+  bytes, the last byte of the delta's stream changed:
+  `ObjectReader.header` is None; with a delta of 21 bytes it is
+  `("blob", 10)`. The golden `ch` cases "a delta of 20 bytes, its check
+  wrong" and "a delta of 21 bytes, its check wrong".
+
+Fixtures and tests:
+
+- `gitobjects_streams.jsonl` (class ii, zlib; 213 cases, 63 KB), written
+  by `tests/contract/gen_gitobjects_streams.py`. No stream in it comes
+  from zlib's compressor, whose output is the zlib build's: every stream
+  is written bit by bit, so every input is the same wherever the file is
+  made; what it pins of each call follows from the linked zlib's
+  `inflate`, hence the gate. 94 stream cases (the header, each block
+  kind, each cause of a `zlib.error`, the code tables' edge shapes, the
+  window, the stream's end and what follows it, the handle's short,
+  empty and failing reads, outputs of 78,433 bytes and of 16 MiB and a
+  byte; 16 MiB and 9 bytes cut after a match that the 16 MiB a call asks
+  for ends inside, its input used up, so that the next turn reads the
+  file once more and finishes the match from zlib's state; 8 MiB and a
+  match out of one call), 73 walks (each branch and bound of `_chain`,
+  the cap at and one past each size, 4,096 and 4,097 entries, offsets at
+  2**63 - 1 and 2**63, a failing seek or read at each step), 20 of
+  `_inflate_at`, 9 of `_listed_in` and 9 of `_take`. A stream case pins
+  the handle's reads and position after each call, a walk and an
+  `_inflate_at` case the log of its seeks and reads. Eight rows are
+  sweeps: 16,000 stream cases (a valid stream of the header's 64, mutated none to two
+  times, a chunk, a script of reads, one to twelve calls) and 6,000
+  walks (a pack of the header's, mutated, an offset, a cap, then
+  `_inflate_at` of up to six links), made from a seed by a rule the
+  native test restates and pinned as the SHA-256 of their answers. The
+  same test run once against a scratch file of 80 other seeds (160,000
+  streams, 60,000 walks) passes too.
+- `golden_gitobjects_streams` (1 test: every case, the count checked
+  against the header and not zero, every kind present, the sweeps made
+  again and compared by digest), `gitobjects_streams_kills` (15 tests:
+  answers a plausible wrong port misses, each expectation run on the
+  reference), `gitobjects_streams_robustness` (8 tests: a stream of
+  1 GiB read only as far as asked, 16 MiB against 64 MiB and 50 KiB
+  against 200 KiB a byte a read for linear growth, a call a byte a read
+  and a read of 16 MiB from a short stream against a block cleared, a
+  chain of 100,000 and rings of names, every argument at its integer
+  bounds, 20,000 seeded garbage inputs, 100,000 names; no panic in debug
+  or release). The golden test and each robustness test run under a
+  limit of 120 seconds, and the scripted handle fails a test past
+  1,048,576 reads (no case makes 8,192), so a stream's loop that does
+  not end fails the run instead of hanging it until the job's own
+  limit.
+- Mutants of `stream.rs` that no test kills, each equivalent: the tail
+  kept after the stream's end (the reference holds it as
+  `unused_data`, and no call feeds it again), `take` going on through
+  the packs once `want` is empty (no name is looked up), and a first
+  block of 16 KiB (the bytes, the input consumed and the reads do not
+  depend on how a call's output is cut into blocks).
 
 ## A location capture's vocabulary
 
@@ -10530,8 +10770,8 @@ What the reference has and this build does not, by area:
   body diffs, the record and link rows, `record_history` and the
   renderers (units 2 to 5).
 - Reading a checkout: the judge and discovery of the `.git` rule,
-  `gitobjects.py` past its byte parsers (inflating, the files, the
-  reader), `origin_gitfiles.py` past its decoders and machine leaves
+  `gitobjects.py` past its byte parsers and zlib streams (the files,
+  the reader: units 3 and 4), `origin_gitfiles.py` past its decoders and machine leaves
   (units 3 to 7), `checkout_token.py` past its text and its reads (the
   write, the remint and the claim: units 3 and 4), the origin's settling
   (`origin.py`), `location.py` and the rest of `location_git.py`.
