@@ -52,6 +52,7 @@ from . import (
     gen_trust,
     gen_fs_stat,
     gen_gitconfig,
+    gen_location_stamps,
     gen_gitconfig_file,
     gen_gitconfig_legacy,
     gen_gitconfig_tree,
@@ -186,6 +187,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "history_rows_python": gen_history_rows.generate_python,
     "store_rows_written": gen_store_rows_written.generate,
     "gitconfig": gen_gitconfig.generate,
+    "location_stamps": gen_location_stamps.generate,
+    "location_stamps_platform": gen_location_stamps.generate_platform,
     "attribution": gen_attribution.generate,
     "attribution_unicode": gen_attribution.generate_unicode,
     "caller_admission": gen_caller_admission.generate,
@@ -359,9 +362,15 @@ PYTHON_VERSION = "3.13.13"
 #: the digests of the ``re`` sources the engine was read from (`gen_pyre`),
 #: and patterns with an empty negative lookaround, which `re._parser`
 #: parses to FAILURE from 3.13 (`gen_pyre_tree`).
+#: ``location_stamps_platform`` holds `os.major` and `os.minor` of NODEV
+#: (-1) and of numbers past ``dev_t``. 3.11 truncates a number macOS's
+#: 32-bit ``dev_t`` cannot hold, where 3.12.13 and 3.13 raise; 3.11 and
+#: 3.12.3 raise for NODEV, which 3.12.13 and 3.13 accept, and these answer
+#: a part of 0xffffffff on glibc as -1 (`gen_location_stamps`).
 PYTHON_GATED = frozenset(
     {
         "models_text_platform",
+        "location_stamps_platform",
         "gitsystem_record_python",
         "gitsystem_answers_python",
         "gitsystem_probe_python",
@@ -433,10 +442,14 @@ def pydantic_core_version() -> str:
 #: under the same Python minor and Unicode. So bit-equality of scores is a
 #: property of one platform: a build is held to the reference on the
 #: platform it runs on, and elsewhere a difference is skipped and named.
+#: ``location_stamps_platform`` makes the running platform's device names
+#: and carries the others' as recorded (`gen_location_stamps`); on Windows
+#: it adds a section of its own.
 PLATFORM = "darwin-arm64"
 PLATFORM_GATED = frozenset(
     {
         "models_text_platform",
+        "location_stamps_platform",
         "search_ranker",
         "store",
         "store_path",
@@ -490,7 +503,9 @@ PLATFORM_GATED = frozenset(
 #: clears the probe over links, modes and FIFOs (`gen_gitsystem_probe`);
 #: ``gitfile_leaves_posix`` reads links and mode-000 files
 #: (`gen_gitfile_leaves`); ``checkout_token_read_posix`` reads links, a
-#: FIFO and a loop (`gen_checkout_token_read`).
+#: FIFO and a loop (`gen_checkout_token_read`); ``location_stamps`` names
+#: devices by ``os.major``, which Windows' ``os`` lacks
+#: (`gen_location_stamps`).
 POSIX_ONLY = frozenset(
     {
         "checkout_token_read_posix",
@@ -508,6 +523,7 @@ POSIX_ONLY = frozenset(
         "store_rows_written",
         "githead_posix",
         "gitconfig_file",
+        "location_stamps",
         "gitconfig_tree",
         "gitconfig_legacy",
         "gitconfig_legacy_python",

@@ -1078,6 +1078,8 @@ SYNTHETIC_PATHS = (
     '"C:\\\\Users\\\\example\\\\file.txt"',
     '"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\bettermemory'
     '\\\\store\\\\memory.sqlite"',
+    '"\\\\\\\\s\\\\sh"',
+    '"\\\\\\\\s\\\\sh\\\\commondir"',
 )
 
 # What a host's path looks like: POSIX temp and home roots, macOS volumes,

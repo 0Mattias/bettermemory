@@ -52,6 +52,8 @@
 //!   (the marker's canonical form, quoted spans, the snippet and sentence
 //!   helpers);
 //! - [`gitconfig`]: the text of a git config file as the reference reads it;
+//! - [`location_stamps`]: a git directory's init stamps and whether its
+//!   file system keeps FILETIME's ticks (the whole module);
 //! - [`githead`]: HEAD and refs read from a git directory's files;
 //! - [`gitobjects`]: git objects read from a repository's files, its
 //!   first unit (the byte parsers);
@@ -99,6 +101,7 @@ pub mod identity;
 pub mod in_force;
 pub mod json;
 pub mod lexicon;
+pub mod location_stamps;
 pub mod log;
 pub mod machine;
 pub mod membership_lines;

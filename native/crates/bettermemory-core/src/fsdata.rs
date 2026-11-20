@@ -134,6 +134,18 @@ pub enum Refused {
     NotOffered,
 }
 
+/// What [`Fs::basic_info`] answers of a path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BasicInfo {
+    /// The call is not made here (the default).
+    Declined,
+    /// A call failed: no handle, or the query refused.
+    Failed,
+    /// FILE_BASIC_INFO's creation, last access, last write and change
+    /// times, as FILETIMEs (`c_int64`).
+    Times([i64; 4]),
+}
+
 /// The kind of a file, from its mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -417,6 +429,12 @@ pub trait Fs {
     /// it is not known: a caller that words the error declines.
     fn strerror(&self, _error: &OsError) -> Option<String> {
         None
+    }
+    /// FILE_BASIC_INFO of `path` (`location_stamps.basic_info_ns`): its
+    /// handle opened for attributes alone, then queried. Windows only;
+    /// declined by default, as `StdFs` does (the calls need `unsafe`).
+    fn basic_info(&self, _path: &[u8]) -> BasicInfo {
+        BasicInfo::Declined
     }
 }
 

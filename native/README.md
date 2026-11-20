@@ -42,6 +42,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
+| `location_stamps` | `location_stamps.py` whole: `in_ticks`, `kept_in_ticks`, `stat_each`, `capture_ticks`, `_device_name` (macOS's `os.major`/`os.minor`, and Linux's under a CPython built against glibc or musl), `_drvfs` (the mount table read through `Fs`), `_init_stamps`, `filetime_ns`, `basic_info_ns` (FILE_BASIC_INFO through `Fs::basic_info`, declined by `StdFs`) | `location_stamps.jsonl`, `location_stamps_platform.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
@@ -4160,6 +4161,137 @@ escapes, backslashes, NULs, 0xFF bytes and a 4 MiB subsection over 1 Mi
 keys. It also checks that six shapes read in time linear in their size:
 1M pieces take at most 60 times as long as 100k, plus 50 ms, on the
 least times seen. Linear growth is 10 times and quadratic 100 times.
+
+## A git directory's init stamps and FILETIME's ticks (`location_stamps.py`)
+
+`location_stamps.py` (275 lines, read at 3a26051a) is built whole in
+`location_stamps`. Every effect is an argument: a `Machine` carries the
+file system (`Fs`), the platform the reference reads from `sys.platform`
+(`Platform`: `_WINDOWS`, `_LINUX` and the device encoding of `os.major`,
+on Linux that of the C library CPython was built against) and
+`_MOUNTINFO`'s path.
+
+### The module by function
+
+| function | lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| constants, `_DRVFS_ANAME` | 26-53 | none | built |
+| `in_ticks` | 56-62 | none | built |
+| `kept_in_ticks` | 65-78 | the platform, the mount table | built |
+| `stat_each` | 81-90 | `os.stat` (`Fs::stat`) | built |
+| `capture_ticks` | 93-120 | the platform, the mount table | built |
+| `_device_name` | 123-128 | the platform's `os.major`/`os.minor` | built |
+| `_drvfs` | 131-160 | the mount table (`Fs::open`, `Fs::read`) | built |
+| `_init_stamps` | 163-190 | `os.stat`, FILE_BASIC_INFO on Windows | built |
+| `filetime_ns` | 193-196 | none | built |
+| `basic_info_ns` | 199-227 | `CreateFileW`, `GetFileInformationByHandleEx` | built over `Fs::basic_info` |
+| `_basic_info_calls`, `_load_basic_info` | 230-275 | kernel32 through ctypes | declined: `Fs::basic_info`'s default |
+
+### What each part reproduces, and the decisions
+
+- `in_ticks` and `kept_in_ticks` take the times as `i128`: every time a
+  caller passes is an `os.stat` nanosecond count or a stamp of one, which
+  `i128` holds. `set(times)` is not built: it changes no answer of
+  `in_ticks`. `%` is tested against zero only, where Python's floor
+  modulo and Rust's truncating one agree.
+- `_device_name` reproduces CPython 3.13's `_Py_Dev_Converter` (-1 is
+  `NODEV` where the C library defines it, another negative raises "can't
+  convert negative int to unsigned", past 64 bits "int too big to
+  convert"), then the platform's macros, then `major_minor_conv` (a part
+  equal to `(unsigned int)NODEV` is answered -1). On macOS `NODEV` is
+  defined and `dev_t` is `int32_t`, so a value is held only where casting
+  it there and back gives it again (below 2**31, or within 2**31 of
+  2**64), and otherwise raises "Python int too large to convert to C
+  dev_t"; no part reaches 0xffffffff. On Linux the parts are glibc's
+  `gnu_dev_major` and `gnu_dev_minor`, which musl's macros match; under a
+  CPython built against glibc (`Platform::Linux`) `NODEV` is defined, so
+  -1 names `-1:-1` and a part of 0xffffffff is `-1`, and under one built
+  against musl (`Platform::LinuxMusl`) it is not, so -1 raises and every
+  part is unsigned. Windows answers "". Another platform's encoding is
+  declined (`NotPorted`).
+- `_drvfs` reads the table in 8,192-byte chunks, as `TextIOWrapper` does,
+  and answers True at the first matching line, so a read error after a
+  match answers as the reference's. Lines end at `\n`, `\r\n` and a lone
+  `\r` (universal newlines; a `\r` at a chunk's end waits for the next
+  byte). Each line is decoded as UTF-8 with replacement and split at
+  `str.isspace` (the crate's Unicode 15.1 table): an invalid byte becomes
+  U+FFFD, which no compared word holds and which is not whitespace, so
+  the count of replacement characters changes no answer. A FIFO at the
+  table's path is read without waiting (`Fs::open` does not block) where
+  the reference's `open` waits; that path is `/proc/self/mountinfo`.
+- `_DRVFS_ANAME`, `(?:^|[,;])aname=drvfs(?:[,;]|$)`, is matched by hand
+  (`aname_drvfs`): every occurrence of `aname=drvfs` is tried, preceded by
+  the start or `,`/`;` and followed by the end or `,`/`;`. The options
+  field holds no whitespace after `split()`, so `$` cannot meet a final
+  newline and is the end of the text.
+- `_init_stamps` joins with the flavour's `os.path.join`
+  (`gitfile_rule::hostpath::join`). An OSError skips a file; a ValueError
+  (a NUL) is raised with `os.stat`'s message for a str path, "stat:
+  embedded null character in path", which the generator takes from the
+  real `os.stat`. On Windows the change time is `basic_info_ns`'s
+  fourth time, and a file whose FILE_BASIC_INFO fails is skipped. An inode
+  number or change time `StatResult` does not port (Windows' `StdFs`) is
+  declined, never guessed.
+- `capture_ticks` takes the key as whether each field is None, the only
+  read of it; `git_key[2]` of a shorter key raises IndexError before the
+  platform is asked, as in the reference. A stamp is its mtime and ctime,
+  the fields read; `int()` of other types is not built (every stamp is an
+  `_init_stamps` tuple of ints), and neither is a stamp of fewer than four
+  fields, whose `s[2]` or `s[3]` raises IndexError in the reference.
+- `filetime_ns` is exact for every `i128` whose answer fits; it is None
+  past that (the reference answers a larger int). `basic_info_ns` maps
+  `Fs::basic_info`: `Declined` is `NotPorted`, `Failed` (no handle, the
+  invalid handle, the query refused, the calls not loaded) is None.
+- `Fs::basic_info` is new, at the end of the trait, with a default that
+  declines: the Windows calls need `unsafe`, which the core crate
+  forbids, so `StdFs` declines and no existing implementation changes.
+
+### Fixtures and tests
+
+`tests/contract/gen_location_stamps.py` writes `location_stamps.jsonl`
+(34 KB, POSIX only: the generator's drvfs rows name devices by
+`os.major`, which Windows' `os` lacks; devices below 256 are named `0:N`
+by macOS and Linux alike, so the file holds on both) and
+`location_stamps_platform.jsonl`: `_device_name` over the bounds of
+`dev_t`, NODEV and parts of 0xffffffff, in one section per encoding,
+each line `["section", name, provenance]` and then its rows. The
+running interpreter's section is made where the generator runs and the
+others are carried from the committed file: `darwin` by the pinned run,
+`linux-gnu` and `linux-musl` recorded by `gen_location_stamps.observe`
+under `docker run --network none` in
+`ghcr.io/astral-sh/uv:0.5-python3.13-bookworm-slim` (CPython 3.13.2,
+glibc 2.36, aarch64) and `python:3.13-alpine` (CPython 3.13.16, musl
+1.2.6, aarch64), each section's provenance naming the image digest and
+the command. So the parity job's step 2 on ubuntu remakes `linux-gnu`
+and the native test compares the port with it there, and every run
+compares the port with all three. The same command under glibc's
+CPython 3.13.13, 3.13.5 and 3.12.13 gave the `linux-gnu` rows byte for
+byte, and glibc's 3.10.12 on x86-64 answered as its 3.11.2 on aarch64.
+The file is gated on the platform (Windows adds its own section) and on
+the Python release: macOS's 3.11.15 truncates a number past `int32_t`
+where 3.12.13, 3.13.13 and 3.15.2 raise; 3.11 and 3.12.3 (macOS's
+3.11.15, glibc's 3.11.2 and 3.12.3) raise for NODEV, which 3.12.13 and
+3.13 accept, and on glibc they answer a part of 0xffffffff unsigned, as
+musl's 3.13 does. The native test reads each section's encoding from its
+name. The generator patches `_WINDOWS`, `_LINUX`,
+`_MOUNTINFO`, the module's `sys` and `os`, and on Windows `basic_info_ns`
+or `_basic_info_calls`, so each row is a function of its data. Two sweeps
+are pinned as digests: `filetime_ns` over 20,000 SplitMix64 values and
+`in_ticks` over 20,000 SplitMix64 lists, regenerated by the Rust test.
+`golden_location_stamps` checks every row; `location_stamps_kills` holds
+cases a plausible wrong port fails (ASCII-only splitting, no break at a
+lone `\r`, the dash searched from the start, the first `aname` match
+only, an unsigned `dev_t` on macOS, NODEV and a part of 0xffffffff
+read alike under glibc and musl, 64-bit FILETIME arithmetic, the
+key read after the platform, a Windows read stat without a change time,
+a read error after the first 8,192-byte chunk with the match inside it
+and past it); `location_stamps_robustness` holds tables of megabytes in
+one line and in many (linear growth: the fastest of three runs at 8n
+stays under 12 times n's, where a quadratic read takes 64), floods of `\r`, whitespace and invalid bytes, and integer
+bounds.
+
+Nothing of the module is left for a later unit; `StdFs::basic_info` on
+Windows waits for a safe wrapper in `bettermemory-sys`.
 
 ## git's wildmatch
 
