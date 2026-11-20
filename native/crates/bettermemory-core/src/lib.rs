@@ -30,6 +30,9 @@
 //! - [`store`]: a store file read without writing to it: the version
 //!   contract, the tables, the key ring from a keys directory, the chain
 //!   verified on disk, the FTS5 prefilter;
+//! - [`membership_records`]: the vocabulary and records of the membership
+//!   model, its first unit (the legacy ask rule and the helpers that
+//!   compare, join and rebase recorded paths in either spelling);
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
 //! - [`control_tokens`]: the chat-template delimiters a stored text may
 //!   not carry, found, counted, refused and written by their bare names;
@@ -79,6 +82,7 @@ pub mod json;
 pub mod lexicon;
 pub mod log;
 pub mod membership_lines;
+pub mod membership_records;
 pub mod origin_gitfiles;
 pub mod origin_history;
 pub mod origin_remote;

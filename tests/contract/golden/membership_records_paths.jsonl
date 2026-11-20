@@ -1,0 +1,311 @@
+{"a": ["ambiguous", false, false], "f": "legacy_asks", "o": true}
+{"a": ["ambiguous", false, true], "f": "legacy_asks", "o": true}
+{"a": ["ambiguous", true, false], "f": "legacy_asks", "o": true}
+{"a": ["ambiguous", true, true], "f": "legacy_asks", "o": true}
+{"a": ["none", false, false], "f": "legacy_asks", "o": false}
+{"a": ["none", false, true], "f": "legacy_asks", "o": false}
+{"a": ["none", true, false], "f": "legacy_asks", "o": false}
+{"a": ["none", true, true], "f": "legacy_asks", "o": true}
+{"a": ["unique", false, false], "f": "legacy_asks", "o": false}
+{"a": ["unique", false, true], "f": "legacy_asks", "o": false}
+{"a": ["unique", true, false], "f": "legacy_asks", "o": false}
+{"a": ["unique", true, true], "f": "legacy_asks", "o": false}
+{"a": ["", false, false], "f": "legacy_asks", "o": false}
+{"a": ["", false, true], "f": "legacy_asks", "o": false}
+{"a": ["", true, false], "f": "legacy_asks", "o": false}
+{"a": ["", true, true], "f": "legacy_asks", "o": false}
+{"a": ["Ambiguous", false, false], "f": "legacy_asks", "o": false}
+{"a": ["Ambiguous", false, true], "f": "legacy_asks", "o": false}
+{"a": ["Ambiguous", true, false], "f": "legacy_asks", "o": false}
+{"a": ["Ambiguous", true, true], "f": "legacy_asks", "o": false}
+{"a": ["none ", false, false], "f": "legacy_asks", "o": false}
+{"a": ["none ", false, true], "f": "legacy_asks", "o": false}
+{"a": ["none ", true, false], "f": "legacy_asks", "o": false}
+{"a": ["none ", true, true], "f": "legacy_asks", "o": false}
+{"a": ["\u212aone", false, false], "f": "legacy_asks", "o": false}
+{"a": ["\u212aone", false, true], "f": "legacy_asks", "o": false}
+{"a": ["\u212aone", true, false], "f": "legacy_asks", "o": false}
+{"a": ["\u212aone", true, true], "f": "legacy_asks", "o": false}
+{"a": [null, null], "f": "same_number", "o": false}
+{"a": [null, ["1", "2", null]], "f": "same_number", "o": false}
+{"a": [null, ["1", "2", "9"]], "f": "same_number", "o": false}
+{"a": [null, ["1", "3", null]], "f": "same_number", "o": false}
+{"a": [null, ["2", "2", null]], "f": "same_number", "o": false}
+{"a": [["1", "2", null], null], "f": "same_number", "o": false}
+{"a": [["1", "2", null], ["1", "2", null]], "f": "same_number", "o": true}
+{"a": [["1", "2", null], ["1", "2", "9"]], "f": "same_number", "o": true}
+{"a": [["1", "2", null], ["1", "3", null]], "f": "same_number", "o": false}
+{"a": [["1", "2", null], ["2", "2", null]], "f": "same_number", "o": false}
+{"a": [["1", "2", "9"], null], "f": "same_number", "o": false}
+{"a": [["1", "2", "9"], ["1", "2", null]], "f": "same_number", "o": true}
+{"a": [["1", "2", "9"], ["1", "2", "9"]], "f": "same_number", "o": true}
+{"a": [["1", "2", "9"], ["1", "3", null]], "f": "same_number", "o": false}
+{"a": [["1", "2", "9"], ["2", "2", null]], "f": "same_number", "o": false}
+{"a": [["1", "3", null], null], "f": "same_number", "o": false}
+{"a": [["1", "3", null], ["1", "2", null]], "f": "same_number", "o": false}
+{"a": [["1", "3", null], ["1", "2", "9"]], "f": "same_number", "o": false}
+{"a": [["1", "3", null], ["1", "3", null]], "f": "same_number", "o": true}
+{"a": [["1", "3", null], ["2", "2", null]], "f": "same_number", "o": false}
+{"a": [["2", "2", null], null], "f": "same_number", "o": false}
+{"a": [["2", "2", null], ["1", "2", null]], "f": "same_number", "o": false}
+{"a": [["2", "2", null], ["1", "2", "9"]], "f": "same_number", "o": false}
+{"a": [["2", "2", null], ["1", "3", null]], "f": "same_number", "o": false}
+{"a": [["2", "2", null], ["2", "2", null]], "f": "same_number", "o": true}
+{"a": [""], "f": "flavour", "o": "posix"}
+{"a": [""], "f": "basename", "o": ""}
+{"a": ["posix", ""], "f": "dir_key", "o": "."}
+{"a": ["nt", ""], "f": "dir_key", "o": "."}
+{"a": ["/"], "f": "flavour", "o": "posix"}
+{"a": ["/"], "f": "basename", "o": "/"}
+{"a": ["posix", "/"], "f": "dir_key", "o": "/"}
+{"a": ["//"], "f": "flavour", "o": "posix"}
+{"a": ["//"], "f": "basename", "o": "//"}
+{"a": ["posix", "//"], "f": "dir_key", "o": "//"}
+{"a": ["nt", "//"], "f": "dir_key", "o": {"b": ["", "", ""]}}
+{"a": ["///"], "f": "flavour", "o": "posix"}
+{"a": ["///"], "f": "basename", "o": "///"}
+{"a": ["posix", "///"], "f": "dir_key", "o": "/"}
+{"a": ["nt", "///"], "f": "dir_key", "o": {"b": ["", "", "", ""]}}
+{"a": ["/a"], "f": "flavour", "o": "posix"}
+{"a": ["/a"], "f": "basename", "o": "a"}
+{"a": ["posix", "/a"], "f": "dir_key", "o": "/a"}
+{"a": ["/a/"], "f": "flavour", "o": "posix"}
+{"a": ["/a/"], "f": "basename", "o": "a"}
+{"a": ["posix", "/a/"], "f": "dir_key", "o": "/a"}
+{"a": ["/a//b/"], "f": "flavour", "o": "posix"}
+{"a": ["/a//b/"], "f": "basename", "o": "b"}
+{"a": ["posix", "/a//b/"], "f": "dir_key", "o": "/a/b"}
+{"a": ["a"], "f": "flavour", "o": "posix"}
+{"a": ["a"], "f": "basename", "o": "a"}
+{"a": ["posix", "a"], "f": "dir_key", "o": "a"}
+{"a": ["nt", "a"], "f": "dir_key", "o": "a"}
+{"a": ["a/b"], "f": "flavour", "o": "posix"}
+{"a": ["a/b"], "f": "basename", "o": "b"}
+{"a": ["posix", "a/b"], "f": "dir_key", "o": "a/b"}
+{"a": ["nt", "a/b"], "f": "dir_key", "o": {"b": ["a", "b"]}}
+{"a": ["./a"], "f": "flavour", "o": "posix"}
+{"a": ["./a"], "f": "basename", "o": "a"}
+{"a": ["posix", "./a"], "f": "dir_key", "o": "a"}
+{"a": ["nt", "./a"], "f": "dir_key", "o": "a"}
+{"a": ["../a"], "f": "flavour", "o": "posix"}
+{"a": ["../a"], "f": "basename", "o": "a"}
+{"a": ["posix", "../a"], "f": "dir_key", "o": "../a"}
+{"a": ["nt", "../a"], "f": "dir_key", "o": {"b": ["..", "a"]}}
+{"a": ["C:"], "f": "flavour", "o": "nt"}
+{"a": ["C:"], "f": "basename", "o": "C:"}
+{"a": ["posix", "C:"], "f": "dir_key", "o": "C:"}
+{"a": ["nt", "C:"], "f": "dir_key", "o": "c:"}
+{"a": [{"b": ["C:", ""]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["C:", ""]}], "f": "basename", "o": "C:"}
+{"a": ["posix", {"b": ["C:", ""]}], "f": "dir_key", "o": {"b": ["C:", ""]}}
+{"a": ["nt", {"b": ["C:", ""]}], "f": "dir_key", "o": {"b": ["c:", ""]}}
+{"a": ["C:/"], "f": "flavour", "o": "nt"}
+{"a": ["C:/"], "f": "basename", "o": "C:"}
+{"a": ["posix", "C:/"], "f": "dir_key", "o": "C:"}
+{"a": ["nt", "C:/"], "f": "dir_key", "o": {"b": ["c:", ""]}}
+{"a": [{"b": ["c:", "A", "B", ""]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["c:", "A", "B", ""]}], "f": "basename", "o": "B"}
+{"a": ["posix", {"b": ["c:", "A", "B", ""]}], "f": "dir_key", "o": {"b": ["c:", "A", "B", ""]}}
+{"a": ["nt", {"b": ["c:", "A", "B", ""]}], "f": "dir_key", "o": {"b": ["c:", "a", "b"]}}
+{"a": [{"b": ["C:", "a", "..", "..", "b"]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["C:", "a", "..", "..", "b"]}], "f": "basename", "o": "b"}
+{"a": ["posix", {"b": ["C:", "a", "..", "..", "b"]}], "f": "dir_key", "o": {"b": ["C:", "a", "..", "..", "b"]}}
+{"a": ["nt", {"b": ["C:", "a", "..", "..", "b"]}], "f": "dir_key", "o": {"b": ["c:", "b"]}}
+{"a": ["C:a"], "f": "flavour", "o": "nt"}
+{"a": ["C:a"], "f": "basename", "o": "C:a"}
+{"a": ["posix", "C:a"], "f": "dir_key", "o": "C:a"}
+{"a": ["nt", "C:a"], "f": "dir_key", "o": "c:a"}
+{"a": [{"b": ["1:", "a"]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["1:", "a"]}], "f": "basename", "o": "a"}
+{"a": ["posix", {"b": ["1:", "a"]}], "f": "dir_key", "o": {"b": ["1:", "a"]}}
+{"a": ["nt", {"b": ["1:", "a"]}], "f": "dir_key", "o": {"b": ["1:", "a"]}}
+{"a": [{"b": ["", "", "srv", "share", "x"]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["", "", "srv", "share", "x"]}], "f": "basename", "o": "x"}
+{"a": ["posix", {"b": ["", "", "srv", "share", "x"]}], "f": "dir_key", "o": {"b": ["", "", "srv", "share", "x"]}}
+{"a": ["nt", {"b": ["", "", "srv", "share", "x"]}], "f": "dir_key", "o": {"b": ["", "", "srv", "share", "x"]}}
+{"a": [{"b": ["", "", "srv", "share"]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["", "", "srv", "share"]}], "f": "basename", "o": "share"}
+{"a": ["posix", {"b": ["", "", "srv", "share"]}], "f": "dir_key", "o": {"b": ["", "", "srv", "share"]}}
+{"a": ["nt", {"b": ["", "", "srv", "share"]}], "f": "dir_key", "o": {"b": ["", "", "srv", "share"]}}
+{"a": [{"b": ["", "a"]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["", "a"]}], "f": "basename", "o": "a"}
+{"a": ["posix", {"b": ["", "a"]}], "f": "dir_key", "o": {"b": ["", "a"]}}
+{"a": [{"b": ["/a", "b"]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["/a", "b"]}], "f": "basename", "o": {"b": ["a", "b"]}}
+{"a": ["posix", {"b": ["/a", "b"]}], "f": "dir_key", "o": {"b": ["/a", "b"]}}
+{"a": [{"b": ["a", "b"]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["a", "b"]}], "f": "basename", "o": "b"}
+{"a": ["posix", {"b": ["a", "b"]}], "f": "dir_key", "o": {"b": ["a", "b"]}}
+{"a": ["nt", {"b": ["a", "b"]}], "f": "dir_key", "o": {"b": ["a", "b"]}}
+{"a": [{"b": ["", "", "?", "C:", "x"]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["", "", "?", "C:", "x"]}], "f": "basename", "o": "x"}
+{"a": ["posix", {"b": ["", "", "?", "C:", "x"]}], "f": "dir_key", "o": {"b": ["", "", "?", "C:", "x"]}}
+{"a": [{"b": ["", "", ".", "dev"]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["", "", ".", "dev"]}], "f": "basename", "o": "dev"}
+{"a": ["posix", {"b": ["", "", ".", "dev"]}], "f": "dir_key", "o": {"b": ["", "", ".", "dev"]}}
+{"a": [{"b": ["", "", "?", "C:", "x", "..", "y"]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["", "", "?", "C:", "x", "..", "y"]}], "f": "basename", "o": "y"}
+{"a": ["posix", {"b": ["", "", "?", "C:", "x", "..", "y"]}], "f": "dir_key", "o": {"b": ["", "", "?", "C:", "x", "..", "y"]}}
+{"a": [{"b": ["", ":", "x"]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["", ":", "x"]}], "f": "basename", "o": "x"}
+{"a": ["posix", {"b": ["", ":", "x"]}], "f": "dir_key", "o": {"b": ["", ":", "x"]}}
+{"a": ["/:x"], "f": "flavour", "o": "posix"}
+{"a": ["/:x"], "f": "basename", "o": ":x"}
+{"a": ["posix", "/:x"], "f": "dir_key", "o": "/:x"}
+{"a": [{"b": ["D:", "\u03a3", "\u0130"]}], "f": "flavour", "o": "nt"}
+{"a": [{"b": ["D:", "\u03a3", "\u0130"]}], "f": "basename", "o": "\u0130"}
+{"a": ["posix", {"b": ["D:", "\u03a3", "\u0130"]}], "f": "dir_key", "o": {"b": ["D:", "\u03a3", "\u0130"]}}
+{"a": ["nt", {"b": ["D:", "\u03a3", "\u0130"]}], "f": "dir_key", "o": {"b": ["d:", "\u03c3", "i\u0307"]}}
+{"a": ["/w/\u03a3"], "f": "flavour", "o": "posix"}
+{"a": ["/w/\u03a3"], "f": "basename", "o": "\u03a3"}
+{"a": ["posix", "/w/\u03a3"], "f": "dir_key", "o": "/w/\u03a3"}
+{"a": [{"c": [47, 97, 47, 55296]}], "f": "flavour", "o": "posix"}
+{"a": [{"c": [47, 97, 47, 55296]}], "f": "basename", "o": {"c": [55296]}}
+{"a": ["posix", {"c": [47, 97, 47, 55296]}], "f": "dir_key", "o": {"c": [47, 97, 47, 55296]}}
+{"a": ["/a", "/a/"], "f": "same_path", "o": true}
+{"a": ["/a", "/a//"], "f": "same_path", "o": true}
+{"a": ["/", "//"], "f": "same_path", "o": false}
+{"a": [{"b": ["C:", ""]}, "C:"], "f": "same_path", "o": false}
+{"a": [{"b": ["C:", "a"]}, {"b": ["C:", "a", ""]}], "f": "same_path", "o": true}
+{"a": [{"b": ["C:", "a"]}, {"b": ["c:", "a"]}], "f": "same_path", "o": false}
+{"a": [{"b": ["a", ""]}, "a/"], "f": "same_path", "o": true}
+{"a": ["", "/"], "f": "same_path", "o": false}
+{"a": ["", ""], "f": "same_path", "o": true}
+{"a": [{"b": ["/a", ""]}, "/a"], "f": "same_path", "o": false}
+{"a": ["/a", ["b"]], "f": "path_under", "o": "/a/b"}
+{"a": ["/a/", ["b", "c"]], "f": "path_under", "o": "/a/b/c"}
+{"a": ["/a", ["/b", "c"]], "f": "path_under", "o": "/b/c"}
+{"a": ["/a", []], "f": "path_under", "o": "/a"}
+{"a": ["", ["b"]], "f": "path_under", "o": "b"}
+{"a": ["/a", ["", "b"]], "f": "path_under", "o": "/a/b"}
+{"a": ["/a", [{"b": ["C:", "x"]}]], "f": "path_under", "o": {"b": ["/a/C:", "x"]}}
+{"a": [{"b": ["C:", "a"]}, ["b"]], "f": "path_under", "o": {"b": ["C:", "a", "b"]}}
+{"a": [{"b": ["C:", "a"]}, ["b", {"b": ["D:", "c"]}]], "f": "path_under", "o": {"b": ["D:", "c"]}}
+{"a": [{"b": ["C:", "a"]}, ["c:x"]], "f": "path_under", "o": {"b": ["c:", "a", "x"]}}
+{"a": ["C:", ["b"]], "f": "path_under", "o": "C:b"}
+{"a": [{"b": ["", "", "srv", "share"]}, ["x"]], "f": "path_under", "o": {"b": ["", "", "srv", "share", "x"]}}
+{"a": [{"b": ["a", "b"]}, ["c/d"]], "f": "path_under", "o": {"b": ["a", "b", "c/d"]}}
+{"a": [{"b": ["C:", "a"]}, ["\u03a3:x"]], "f": "path_under", "o": "\u03a3:x"}
+{"a": [{"b": ["\u03a3:", "a"]}, ["\u03c3:x"]], "f": "path_under", "o": {"b": ["\u03c3:", "a", "x"]}}
+{"a": ["", "/v", "/t", "/w/cwd"], "f": "rebase", "o": {"raised": ["ValueError", "no path specified"]}}
+{"a": ["v/a", "v", "t", "/w/cwd"], "f": "rebase", "o": "t/a"}
+{"a": ["v/a", "/w/cwd/v", "/t", "/w/cwd"], "f": "rebase", "o": "/t/a"}
+{"a": ["v/a", "v", "/t", null], "f": "rebase", "o": {"raised": ["FileNotFoundError", ""]}}
+{"a": ["", "v", "/t", null], "f": "rebase", "o": {"raised": ["ValueError", "no path specified"]}}
+{"a": ["posix", null, null], "f": "common_by_pointer", "o": null}
+{"a": ["posix", null, ""], "f": "common_by_pointer", "o": null}
+{"a": ["posix", null, "/r/.git/worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", null, "/r/.git/worktrees/w/"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", null, "/r/.git/Worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", null, "/r/.git"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", null, "/r/.git//"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", null, {"b": ["C:", "r", ".git", "worktrees", "w"]}], "f": "common_by_pointer", "o": null}
+{"a": ["posix", null, "worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", null, "w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", null, "/"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "linked", null], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "linked", ""], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "linked", "/r/.git/worktrees/w"], "f": "common_by_pointer", "o": "/r/.git"}
+{"a": ["posix", "linked", "/r/.git/worktrees/w/"], "f": "common_by_pointer", "o": "/r/.git"}
+{"a": ["posix", "linked", "/r/.git/Worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "linked", "/r/.git"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "linked", "/r/.git//"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "linked", {"b": ["C:", "r", ".git", "worktrees", "w"]}], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "linked", "worktrees/w"], "f": "common_by_pointer", "o": ""}
+{"a": ["posix", "linked", "w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "linked", "/"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "primary", null], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "primary", ""], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "primary", "/r/.git/worktrees/w"], "f": "common_by_pointer", "o": "/r/.git/worktrees/w"}
+{"a": ["posix", "primary", "/r/.git/worktrees/w/"], "f": "common_by_pointer", "o": "/r/.git/worktrees/w"}
+{"a": ["posix", "primary", "/r/.git/Worktrees/w"], "f": "common_by_pointer", "o": "/r/.git/Worktrees/w"}
+{"a": ["posix", "primary", "/r/.git"], "f": "common_by_pointer", "o": "/r/.git"}
+{"a": ["posix", "primary", "/r/.git//"], "f": "common_by_pointer", "o": "/r/.git"}
+{"a": ["posix", "primary", {"b": ["C:", "r", ".git", "worktrees", "w"]}], "f": "common_by_pointer", "o": {"b": ["C:", "r", ".git", "worktrees", "w"]}}
+{"a": ["posix", "primary", "worktrees/w"], "f": "common_by_pointer", "o": "worktrees/w"}
+{"a": ["posix", "primary", "w"], "f": "common_by_pointer", "o": "w"}
+{"a": ["posix", "primary", "/"], "f": "common_by_pointer", "o": "/"}
+{"a": ["posix", "bare", null], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "bare", ""], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "bare", "/r/.git/worktrees/w"], "f": "common_by_pointer", "o": "/r/.git/worktrees/w"}
+{"a": ["posix", "bare", "/r/.git/worktrees/w/"], "f": "common_by_pointer", "o": "/r/.git/worktrees/w"}
+{"a": ["posix", "bare", "/r/.git/Worktrees/w"], "f": "common_by_pointer", "o": "/r/.git/Worktrees/w"}
+{"a": ["posix", "bare", "/r/.git"], "f": "common_by_pointer", "o": "/r/.git"}
+{"a": ["posix", "bare", "/r/.git//"], "f": "common_by_pointer", "o": "/r/.git"}
+{"a": ["posix", "bare", {"b": ["C:", "r", ".git", "worktrees", "w"]}], "f": "common_by_pointer", "o": {"b": ["C:", "r", ".git", "worktrees", "w"]}}
+{"a": ["posix", "bare", "worktrees/w"], "f": "common_by_pointer", "o": "worktrees/w"}
+{"a": ["posix", "bare", "w"], "f": "common_by_pointer", "o": "w"}
+{"a": ["posix", "bare", "/"], "f": "common_by_pointer", "o": "/"}
+{"a": ["posix", "Linked", null], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "Linked", ""], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "Linked", "/r/.git/worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "Linked", "/r/.git/worktrees/w/"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "Linked", "/r/.git/Worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "Linked", "/r/.git"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "Linked", "/r/.git//"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "Linked", {"b": ["C:", "r", ".git", "worktrees", "w"]}], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "Linked", "worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "Linked", "w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "Linked", "/"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "other", null], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "other", ""], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "other", "/r/.git/worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "other", "/r/.git/worktrees/w/"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "other", "/r/.git/Worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "other", "/r/.git"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "other", "/r/.git//"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "other", {"b": ["C:", "r", ".git", "worktrees", "w"]}], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "other", "worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "other", "w"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "other", "/"], "f": "common_by_pointer", "o": null}
+{"a": ["posix", "/a/b", "/a"], "f": "dir_below", "o": true}
+{"a": ["posix", "/a/b", "/a/"], "f": "dir_below", "o": true}
+{"a": ["posix", "/a/b", "/a//"], "f": "dir_below", "o": true}
+{"a": ["posix", "/a", "/a"], "f": "dir_below", "o": false}
+{"a": ["posix", "/ab", "/a"], "f": "dir_below", "o": false}
+{"a": ["posix", "/a/b", "/"], "f": "dir_below", "o": true}
+{"a": ["posix", "/a/b", ""], "f": "dir_below", "o": true}
+{"a": ["posix", "/", ""], "f": "dir_below", "o": true}
+{"a": ["posix", "", ""], "f": "dir_below", "o": false}
+{"a": ["posix", {"b": ["c:", "a", "b"]}, {"b": ["c:", "a"]}], "f": "dir_below", "o": false}
+{"a": ["posix", {"b": ["c:", "a", "b"]}, {"b": ["c:", ""]}], "f": "dir_below", "o": false}
+{"a": ["posix", {"b": ["c:", "a", "b"]}, {"b": ["c:", "a", "", ""]}], "f": "dir_below", "o": false}
+{"a": ["posix", {"b": ["c:", "a"]}, {"b": ["c:", "a"]}], "f": "dir_below", "o": false}
+{"a": ["posix", {"b": ["", "a"]}, ""], "f": "dir_below", "o": false}
+{"a": ["nt", null, null], "f": "common_by_pointer", "o": null}
+{"a": ["nt", null, ""], "f": "common_by_pointer", "o": null}
+{"a": ["nt", null, {"b": ["C:", "r", ".git", "worktrees", "w"]}], "f": "common_by_pointer", "o": null}
+{"a": ["nt", null, "worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["nt", null, "w"], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "linked", null], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "linked", ""], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "linked", {"b": ["C:", "r", ".git", "worktrees", "w"]}], "f": "common_by_pointer", "o": {"b": ["C:", "r", ".git"]}}
+{"a": ["nt", "linked", "worktrees/w"], "f": "common_by_pointer", "o": ""}
+{"a": ["nt", "linked", "w"], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "primary", null], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "primary", ""], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "primary", {"b": ["C:", "r", ".git", "worktrees", "w"]}], "f": "common_by_pointer", "o": {"b": ["C:", "r", ".git", "worktrees", "w"]}}
+{"a": ["nt", "primary", "worktrees/w"], "f": "common_by_pointer", "o": "worktrees/w"}
+{"a": ["nt", "primary", "w"], "f": "common_by_pointer", "o": "w"}
+{"a": ["nt", "bare", null], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "bare", ""], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "bare", {"b": ["C:", "r", ".git", "worktrees", "w"]}], "f": "common_by_pointer", "o": {"b": ["C:", "r", ".git", "worktrees", "w"]}}
+{"a": ["nt", "bare", "worktrees/w"], "f": "common_by_pointer", "o": "worktrees/w"}
+{"a": ["nt", "bare", "w"], "f": "common_by_pointer", "o": "w"}
+{"a": ["nt", "Linked", null], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "Linked", ""], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "Linked", {"b": ["C:", "r", ".git", "worktrees", "w"]}], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "Linked", "worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "Linked", "w"], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "other", null], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "other", ""], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "other", {"b": ["C:", "r", ".git", "worktrees", "w"]}], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "other", "worktrees/w"], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "other", "w"], "f": "common_by_pointer", "o": null}
+{"a": ["nt", "", ""], "f": "dir_below", "o": false}
+{"a": ["nt", {"b": ["c:", "a", "b"]}, {"b": ["c:", "a"]}], "f": "dir_below", "o": true}
+{"a": ["nt", {"b": ["c:", "a", "b"]}, {"b": ["c:", ""]}], "f": "dir_below", "o": true}
+{"a": ["nt", {"b": ["c:", "a", "b"]}, {"b": ["c:", "a", "", ""]}], "f": "dir_below", "o": true}
+{"a": ["nt", {"b": ["c:", "a"]}, {"b": ["c:", "a"]}], "f": "dir_below", "o": false}
+{"f": "sweep", "flavour": false, "n": 4000, "o": "e01c5f83e0093ba1ef6f2fef5fcaa81832456fcb2738715da1f2cf92bacba277", "seed": 20261119}
+{"f": "sweep", "flavour": true, "n": 4000, "o": "2e4c8303748997708eadd7f9020822c5ff57338234f0e93f4a57d1ecc2c3861e", "seed": 20261121, "stable": true}

@@ -48,6 +48,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
+| `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`) | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
@@ -910,6 +911,119 @@ native release (sha2 0.11.1, which uses the aarch64 SHA instructions) 142.8,
 The prediction of at least ten times is missed: both are bound by
 HMAC-SHA256 on the CPU's SHA instructions (the reference's `hmac` is
 OpenSSL's), and walking the rows costs about 29 ms of the native time.
+
+## The membership records (`membership_records.py`)
+
+`membership_records.py` (1,195 lines at 3a26051a) is the bottom module
+of the membership family: its vocabulary, its frozen records, `relation`
+and `admitted`, and the helpers that compare and rebase recorded paths.
+Several of its parts are already ported where other units read them.
+
+### Map, by function
+
+| function | lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| the vocabulary constants | 40-176, 201-284 | nothing | partly ported (`membership_lines::WORDS`, `capture`'s kinds); the rest with the records that read them |
+| `legacy_asks` | 177-200 | nothing | built (unit 1) |
+| `ObjectKey`, `compare`, `on_any_device` | 288-318 | nothing | ported in `capture::location` |
+| `InitStamp`, `ProjectFileRef` | 321-348 | nothing | `ProjectFileRef` ported in `capture::location`; `InitStamp` unit 3 |
+| `Manifest`, `to_json`, `from_json`, `manifest_match` | 350-380 | nothing | unit 2 |
+| `HistoryReader`, `IndependentReader`, `NeedIndependent`, `Specific` | 383-445 | git, through the caller's reader | unit 3 (protocols as traits) |
+| `Location` and its properties | 447-539 | nothing | ported in `capture::location` |
+| `Machine`, `View`, `Checkout` and its methods, `_live_key`, `Project`, `ProjectFile` | 540-680 | nothing (`checkout_token.Lineage`, ported) | unit 3 |
+| `Home`, `Proposal`, `Declaration`, `Resolution`, `Declared`, `Why`, `UnresolvedProject`, `Health`, `EpisodeRef`, `Handoff`, `RecallAdmission` | 682-888 | nothing | `Home` and `Resolution` in `store::caller`; the rest unit 4 |
+| `_strings`, `_flag`, `PortableIdentity` (`to_json`, `from_json`, `digest`), `ImportedProject` | 890-996 | nothing | unit 2 |
+| `Liveness`, `relation`, `admitted` | 998-1080 | nothing | ported in `store::caller` |
+| `_norm`, `_inside` | 1083-1089 | nothing | ported as `capture::paths` |
+| `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_same_number`, `_common_by_pointer`, `_dir_key`, `_dir_below` | 1091-1195 | the working directory (`_rebase`); the host's `os.path` (`_common_by_pointer`, `_dir_key`, `_dir_below`) | built (unit 1) |
+| `_found_token` | 1152-1156 | nothing | unit 3 (reads `Checkout` and `Location`) |
+
+The whole module is past 600 lines of Rust, so it is cut, leaves first:
+unit 1 the path helpers and the legacy rule; unit 2 the manifest and the
+portable identity (JSON in and out, the digest); unit 3 the stamps, the
+reader protocols, the machine, view, checkout and project records with
+`_found_token`; unit 4 the remaining frozen records.
+
+### Unit 1, built (`membership_records`, `membership_records::paths`)
+
+- `legacy_asks(rule, same_name, compatible)`: `rule` compared as text,
+  only `ambiguous` and `none` read.
+- `_same_number`: device and inode compared as text, the birth time
+  aside, a missing key never the same.
+- `_same_path` and `_basename`: `capture::paths`' `norm` and `basename`.
+- `_flavour`: `_DRIVE_PATH` (`^[A-Za-z]:`) is matched by hand: one ASCII
+  letter at index 0 and a colon at index 1. `re.match` with `^` and no
+  flags reads exactly that; a non-ASCII letter and a digit do not match.
+  No regex crate is used.
+- `_path_under`, `_rebase`: `os.path.join` of any number of parts,
+  `relpath` and `normpath` in the spelling's flavour.
+- `_common_by_pointer(os_path, kind, git_dir)`, `_dir_key(dir_paths,
+  path)`, `_dir_below(dir_paths, here, root)`: the host's `os.path` (and
+  `_DIR_PATHS`, which a caller may swap) is an argument, a `Flavour`.
+
+`gitfile_rule::hostpath` gained `text`, the same two flavours over a
+Python `str` (code points): `sep`, `isabs`, `join` of any number of
+parts, `normpath`, `normcase`, `split`, `dirname`, `basename`, `abspath`
+and `relpath` as CPython 3.13.13 has them. The byte half and the text
+half share `splitroot`, `nt_isabs`, `nt_join` and one generic
+`posix_normpath`. `ntpath.join` compares two drives by `str.lower`, now
+the crate's `unicode::lower` (final sigma included) where the byte half
+used `char::to_lowercase`; the two differ on no drive the byte half's
+golden files hold.
+
+Decisions:
+
+- `abspath` asks the process for `os.getcwd()` and, where `ntpath` runs
+  on Windows, `nt._getfullpathname`, through the trait
+  `hostpath::text::Process`; the defaults answer as off Windows. The
+  working directory is asked only where a path is relative, once per
+  path, as the reference asks it; its OSError is returned
+  (`Raised::Os`). `relpath`'s ValueErrors (`no path specified`, two
+  drives) are `Raised::Value` with the reference's text, `repr` of each
+  drive by `pyvalue::repr_str`.
+- `ntpath.normcase` is the one CPython has off Windows (`/` to `\`, then
+  `str.lower`). On Windows it calls `LCMapStringEx`, which is not ported:
+  `_dir_key` with the host's `ntpath` on Windows is left for the unit
+  that wires the host in.
+- `commonpath`, named in the plan, is read by no function of this unit
+  and is not added.
+
+Reference findings (reproduced, pinned):
+
+- `_rebase` reads a path a separator alone begins, written with a
+  backslash, by the running Python's `ntpath`: 3.11 and 3.12 take `\v`
+  as absolute and 3.13 does not, so `_rebase("/C:b", "a\\x", ".t.")`
+  answers `.t./C:b` under 3.11 and 3.12 and `../../../C:b` under 3.13
+  (both against working directory `/w/cwd`). The answer of a recorded
+  path depends on the release.
+- `_dir_below(here, "")` is true for every `here` that starts with the
+  separator: an empty root key stands for the root.
+- `_same_path("/a\\", "/a")` is false: a POSIX spelling trims `/` only.
+
+Fixtures: `gen_membership_records.py` writes
+`membership_records_paths.jsonl` (not gated: 309 cases, each the same
+under 3.11.15, 3.12.13 and 3.13.13 as checked by running the generator
+under each, and a digest of 4,000 seeded path triples drawn without a
+backslash or a drive, every function asked of each, and a digest of
+4,000 triples drawn from every piece, `_rebase` left out and a triple
+redrawn while `_release_bound` picks any other case asked of it) and
+`membership_records_paths_python.jsonl` (gated on the Python release: the
+84 cases `_release_bound` picks by input, an `ntpath` path a single
+separator or a separator and a colon begins, or holding `\\?\` or `\\.\`,
+and the digest of 4,000 triples drawn from every piece). The sweep's
+generator is a 64-bit LCG with Knuth's MMIX constants, run alike in the
+test.
+
+Tests: `golden_membership_records` (both files, every case counted),
+`membership_records_kills` (12: among them `ntpath.abspath` and
+`relpath` on a Windows host, through a stub `_getfullpathname` whose
+answers were checked against 3.13.13's `ntpath` loaded with a stub `nt`
+module), `membership_records_robustness` (5: four
+inputs at n = 20,000 and 40,000 pieces through every function, the
+fastest of three runs at 2n within six times the run at n plus 50 ms,
+and the bounds of the code space).
+
+Left for later units: units 2 to 4 above, and `_found_token`.
 
 ## The fold check
 
@@ -1979,6 +2093,12 @@ that Unicode too.
 | `sqlite_spike`: `fts5_prefilter_matches_the_reference_sqlite` | `search.jsonl` (bm25 bits) | iii |
 | `golden_search_store`: `every_query_every_caller_pool_and_hits`, `every_store_line`, `offline_runs_equal_the_in_memory_ranking` (and three class (i) checks: the clamp, the digest's fingerprint, awkward queries) | `search_store.jsonl`, `search.jsonl` | iii |
 | `golden_store_files`: `every_case_every_answer` | `store_files.jsonl` | iii |
+| `golden_membership_records`: `every_case_of_the_ungated_file` | `membership_records_paths.jsonl` | i |
+| `golden_membership_records`: `every_case_of_the_python_gated_file` | `membership_records_paths_python.jsonl` | ii (Python) |
+| `membership_records_kills` (12: among them `ntpath.abspath` and
+`relpath` on a Windows host, through a stub `_getfullpathname` whose
+answers were checked against 3.13.13's `ntpath` loaded with a stub `nt`
+module), `membership_records_robustness` (5) | none | i |
 | `golden_store_files`: `the_reference_written_file_reads_the_same` | `store_real.json`, `store_real.sqlite` | iii |
 | `golden_store_files`: `the_crates_schema_texts_are_the_references` | `store_admission.json` (compiled-in copy pinned to the committed file) | iii (by its generator; its text is platform-independent) |
 | `bench_search`, `bench_tokenize`, `search_differential_files`, `cases_from_env`, `answers_of_env_store`, `time_reads_of_env_store` | files an environment variable names | tools, `#[ignore]`d, not part of parity |
@@ -9608,7 +9728,10 @@ What the reference has and this build does not, by area:
   (units 3 to 7), `checkout_token.py` past its text and its reads (the
   write, the remint and the claim: units 3 and 4), the origin's settling
   (`origin.py`), `location.py` and the rest of `location_git.py`.
-- Membership's writes, and of the caller's resolution its file roots
+- `membership_records.py` past its path helpers and legacy ask rule
+  (the manifest, the portable identity, the checkout, view and project
+  records, `_found_token` and the remaining frozen records: units 2 to
+  4). Membership's writes, and of the caller's resolution its file roots
   and workspace declaration (`identity` resolves the rest; its
   admission is `store::caller`).
 - Each hit's signals and drift report: `claims.py` past its leaves (the

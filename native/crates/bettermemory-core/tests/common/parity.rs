@@ -211,6 +211,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_admission.json"
         | "store_real.json"
         | "store_real.sqlite" => &[Unicode, Platform],
+        // `ntpath` before 3.13 reads a path one separator begins, or a
+        // separator then a colon, otherwise (`gen_membership_records`).
+        "membership_records_paths_python.jsonl" => &[Python],
         // The tokenizer and `str.strip` past ASCII (`gen_search_dedup`).
         "search_dedup_unicode.jsonl" => &[Unicode],
         "models.jsonl" => &[Pydantic],

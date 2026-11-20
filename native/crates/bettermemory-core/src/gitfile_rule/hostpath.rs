@@ -15,14 +15,21 @@
 //! with one separator, absolute before 3.13; `normpath` of a `\\?\` or
 //! `\\.\` path, kept whole before 3.12), this is 3.13's reading, the one
 //! the parity runner regenerates under; native/README.md lists them.
+//!
+//! [`text`] holds the same module over a Python `str` (code points), with
+//! the functions the parse does not call: `join` of any number of parts,
+//! `basename`, `normcase`, `abspath` and `relpath`.
+
+pub mod text;
 
 use crate::fsdata::Flavour;
+use crate::unicode;
 
 /// `os.path.isabs`.
 pub fn isabs(flavour: Flavour, path: &[u8]) -> bool {
     match flavour {
         Flavour::Posix => path.first() == Some(&b'/'),
-        Flavour::Windows => isabs_str(flavour, &units(path)),
+        Flavour::Windows => nt_isabs(&units(path)),
     }
 }
 
@@ -35,10 +42,7 @@ pub fn isabs(flavour: Flavour, path: &[u8]) -> bool {
 pub fn isabs_str(flavour: Flavour, path: &[u32]) -> bool {
     match flavour {
         Flavour::Posix => path.first() == Some(&ALTSEP),
-        Flavour::Windows => {
-            let head: Vec<u32> = path.iter().take(3).map(|&u| alt(u)).collect();
-            head.get(1..3) == Some(&[COLON, SEP][..]) || head.get(..2) == Some(&[SEP, SEP][..])
-        }
+        Flavour::Windows => nt_isabs(path),
     }
 }
 
@@ -56,7 +60,7 @@ pub fn join(flavour: Flavour, a: &[u8], b: &[u8]) -> Vec<u8> {
             out.extend_from_slice(b);
             out
         }
-        Flavour::Windows => bytes_of(&nt_join(&units(a), &units(b))),
+        Flavour::Windows => bytes_of(&nt_join(&units(a), &[&units(b)])),
     }
 }
 
@@ -98,29 +102,33 @@ pub fn normpath(flavour: Flavour, path: &[u8]) -> Vec<u8> {
     }
 }
 
-fn posix_normpath(path: &[u8]) -> Vec<u8> {
+/// `posixpath.normpath`, over bytes or code points.
+fn posix_normpath<T: Copy + PartialEq + From<u8>>(path: &[T]) -> Vec<T> {
+    let (slash, dot) = (T::from(b'/'), T::from(b'.'));
     if path.is_empty() {
-        return b".".to_vec();
+        return vec![dot];
     }
-    let mut initial = usize::from(path.starts_with(b"/"));
-    if path.starts_with(b"//") && !path.starts_with(b"///") {
-        initial = 2;
-    }
-    let mut new: Vec<&[u8]> = Vec::new();
-    for comp in path.split(|&b| b == b'/') {
-        if comp.is_empty() || comp == b"." {
+    // One leading slash, or two where there are exactly two.
+    let leading = path.iter().take_while(|&&c| c == slash).count();
+    let initial = if leading == 2 { 2 } else { leading.min(1) };
+    let mut new: Vec<&[T]> = Vec::new();
+    for comp in path.split(|&c| c == slash) {
+        if comp.is_empty() || comp == [dot] {
             continue;
         }
-        if comp != b".." || (initial == 0 && new.is_empty()) || new.last() == Some(&&b".."[..]) {
+        if comp != [dot, dot]
+            || (initial == 0 && new.is_empty())
+            || new.last().is_some_and(|last| *last == [dot, dot])
+        {
             new.push(comp);
         } else if !new.is_empty() {
             new.pop();
         }
     }
-    let mut out = vec![b'/'; initial];
-    out.extend_from_slice(&new.join(&b'/'));
+    let mut out = vec![slash; initial];
+    out.extend_from_slice(&new.join(&slash));
     if out.is_empty() {
-        return b".".to_vec();
+        return vec![dot];
     }
     out
 }
@@ -218,47 +226,40 @@ fn splitroot(p: &[u32]) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
     (empty(), empty(), p.to_vec())
 }
 
-/// `str.lower()` of a drive, a code point at a time (a byte kept as
-/// itself is left alone).
-fn lower(p: &[u32]) -> Vec<u32> {
-    let mut out = Vec::with_capacity(p.len());
-    for &u in p {
-        match char::from_u32(u) {
-            Some(c) => out.extend(c.to_lowercase().map(|l| l as u32)),
-            None => out.push(u),
-        }
-    }
-    out
+/// `ntpath.isabs`: a drive and a root, or two leading separators.
+fn nt_isabs(p: &[u32]) -> bool {
+    let head: Vec<u32> = p.iter().take(3).map(|&u| alt(u)).collect();
+    head.get(1..3) == Some(&[COLON, SEP][..]) || head.get(..2) == Some(&[SEP, SEP][..])
 }
 
-/// `ntpath.join(a, b)`.
-fn nt_join(a: &[u32], b: &[u32]) -> Vec<u32> {
-    let (mut rd, mut rr, mut rp) = splitroot(a);
-    let (pd, pr, pp) = splitroot(b);
-    if !pr.is_empty() {
-        if !pd.is_empty() || rd.is_empty() {
-            rd = pd;
+/// `ntpath.join(path, *paths)`. Two drives are one where their
+/// `str.lower()` is equal: Python's, of the Unicode data the crate
+/// carries, with its final sigma (a byte kept as itself has no case).
+fn nt_join(path: &[u32], paths: &[&[u32]]) -> Vec<u32> {
+    let (mut rd, mut rr, mut rp) = splitroot(path);
+    for p in paths {
+        let (pd, pr, pp) = splitroot(p);
+        if !pr.is_empty() {
+            if !pd.is_empty() || rd.is_empty() {
+                rd = pd;
+            }
+            rr = pr;
+            rp = pp;
+            continue;
         }
-        rr = pr;
-        rp = pp;
-    } else {
-        let mut relative = true;
         if !pd.is_empty() && pd != rd {
-            if lower(&pd) != lower(&rd) {
+            if unicode::lower(&pd) != unicode::lower(&rd) {
                 rd = pd;
                 rr = pr;
-                rp = pp.clone();
-                relative = false;
-            } else {
-                rd = pd;
+                rp = pp;
+                continue;
             }
+            rd = pd;
         }
-        if relative {
-            if rp.last().is_some_and(|&u| !is_sep(u)) {
-                rp.push(SEP);
-            }
-            rp.extend_from_slice(&pp);
+        if rp.last().is_some_and(|&u| !is_sep(u)) {
+            rp.push(SEP);
         }
+        rp.extend_from_slice(&pp);
     }
     if !rp.is_empty() && rr.is_empty() && rd.last().is_some_and(|&u| u != COLON && !is_sep(u)) {
         return [rd, vec![SEP], rp].concat();
