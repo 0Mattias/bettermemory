@@ -239,6 +239,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_records_e.jsonl"
         | "store_rows_written.jsonl"
         | "store_bulk.jsonl" => &[Unicode, Pydantic],
+        // Payloads nested near `json.loads`'s recursion budget
+        // (`gen_history_rows`).
+        "history_rows_python.jsonl" => &[Python],
         "models_rows.jsonl" => &[Python, Pydantic],
         // 3.11's realpath walks a link loop otherwise (`gen_fs_realpath`).
         "fs_realpath_python.jsonl" => &[Python],

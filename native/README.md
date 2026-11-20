@@ -34,6 +34,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
+| `history` | `history.py`'s first unit: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection | `history_rows.jsonl`, `history_rows_python.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
@@ -2005,6 +2006,8 @@ that Unicode too.
 | `golden_canonical_json`: `canonical_json_every_case` | `canonical_json.jsonl` | i |
 | `golden_datetime`: `datetime_every_case` | `datetime.jsonl` | i |
 | `golden_origin_history`: `origin_history_every_case`; `origin_history_kills` (12), `origin_history_robustness` (5) | `origin_history.jsonl` (the last two none) | i |
+| `golden_history_rows`: `every_history_rows_answer_is_the_reference_s`; `history_rows_kills` (13), `history_rows_robustness` (5) | `history_rows.jsonl` (the last two none) | i |
+| `golden_history_rows`: `every_nested_history_rows_answer_is_the_reference_s` | `history_rows_python.jsonl` | ii |
 | `golden_log_chain`: `log_chain_every_row_and_variant` | `log_chain.jsonl` | i |
 | `golden_log_keyring`: `log_keyring_every_case` | `log_keyring.jsonl` | i |
 | `golden_search`: `search_ranker_tables` | `search_ranker.jsonl` header (word lists) | i |
@@ -9722,6 +9725,10 @@ What the reference has and this build does not, by area:
   (`store::home`, `store::tables`): the rest of the public record API
   (the episode prune), the membership kinds, schema steps, rekey,
   reclaim, a restore's rows, re-spelling the index.
+- A record's history past the rows that name it: `history.py`'s row
+  MAC by chain segment and replaced detail, the versions' changes and
+  body diffs, the record and link rows, `record_history` and the
+  renderers (units 2 to 5).
 - Reading a checkout: the judge and discovery of the `.git` rule,
   `gitobjects.py` past its byte parsers (inflating, the files, the
   reader), `origin_gitfiles.py` past its decoders and machine leaves
@@ -9785,3 +9792,103 @@ Two reference findings the port copies (filed, not changed here): a
 as MemoryLink `model_type` (it iterates the keys or characters), and
 `_path_targets` lets a numeric `attestation_payload` raise TypeError out
 of the read (it catches only ValueError and RecursionError).
+
+## One record's history, read off the log (`history.py`)
+
+`history.py` (1,050 lines) answers `memory history ID`. It needs more
+than 600 lines of Rust, so it is cut into units, leaves first. The
+first is built (`src/history.rs`, 393 lines); the rest are cut below.
+
+| function | lines | what it needs from the machine | status |
+| --- | --- | --- | --- |
+| `read_snapshot` | 148-162 | the store's connection | unit 1, built |
+| `_rows_naming` | 321-346 | the connection (`instr` over `log.payload`) | unit 1, built |
+| `_with_linking_versions` | 349-376 | the connection | unit 1, built |
+| `_with_restores`, `_replaced_rows` | 379-412 | the connection (`log_by_kind`) | unit 1, built |
+| `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` | 462-518 | nothing | unit 1, built |
+| `_RowVerifier` | 269-318 | the connection, the key ring (`key_for_fingerprint`) | unit 2 |
+| `history_replaced`, `replaced_detail`, `_set` | 415-459, 545-550 | the connection | unit 2 |
+| `_changed`, `_body_diff`, `_event_detail` | 521-568 | nothing (`difflib.unified_diff`) | unit 3 |
+| `_record_row`, `_link_change_rows` | 592-778 | nothing | unit 3 |
+| `HistoryRow`, `RecordHistory` | 165-266 | nothing | unit 4 |
+| `record_history`, `_RecordWalk`, `_read_history`, `_table_kind`, `_state` | 571-960 | the store (its tables, `can_verify`, provenance) | unit 4 |
+| `render_text`, `render_json`, `_actor_text`, `_value_text` | 963-1050 | nothing (`printable`, `quoted`) | unit 5 |
+
+### Unit 1: the rows that name a record
+
+The functions take the store as its `rusqlite::Connection` (the read-only
+one of `store::StoreFile`, or a writing open's): nothing else of a store
+is read. Every statement is the reference's text and SQLite answers it,
+so `instr`'s semantics (an empty id is in every payload, a blob payload
+is searched as text against a text id, the test is case-sensitive, a
+NUL is a character) are the engine's in both builds.
+
+- `read_snapshot(conn, body)`: `BEGIN`, the body, `ROLLBACK`, unless the
+  connection already holds a transaction (`!is_autocommit()`, which is
+  `conn.in_transaction`), when the body runs in it and nothing is ended.
+  A body that ends the transaction itself makes the closing `ROLLBACK`
+  fail ("cannot rollback - no transaction is active"), and that error
+  takes the place of the body's value, as the `finally` block's
+  exception does. A panic in the body rolls back on the way out. The
+  body is a closure, the context manager's `with` block.
+- `rows_naming`: `_rows_naming`. Text bound in the order `sqlite3` binds
+  a parameter tuple: an id or kind holding a lone surrogate is
+  UnicodeEncodeError, at the first one. A row is decoded when it is
+  fetched, column by column: a text column that is not UTF-8 is
+  OperationalError naming the first such column in column order. To
+  hold that, `store::log_row` now reads `ts` before `session` (it read
+  `session` first, which named the wrong column when both are bad).
+  Each cell is `str()` of the value: a blob is its `b'...'` spelling.
+- `with_linking_versions`: `_with_linking_versions`. The rows are kept
+  by seq as a dict keeps them: a seq given twice keeps its last row in
+  the place of its first, every row's payload is parsed (so its
+  RecursionError is raised), and the scan for linking records walks
+  that order. A linking record is the subject of a `memory_put` or
+  `tombstone_put` row that is not the record and carries a link to it;
+  each is scanned for in sorted order (code point order, a
+  `BTreeSet<PyStr>`) over the four kinds of `LINK_SCAN_KINDS`, and a
+  seq already held is not read again. The sources come back as a set.
+- `with_restores` and `replaced_rows`: the bound is the seq of the first
+  item given, not the lowest; a seq held keeps its item, but the
+  replaced row's payload is parsed all the same, as `setdefault`'s
+  argument is evaluated. An empty `found` comes back unasked.
+  `replaced_rows` hands each row to a visitor as it is read, the
+  reference's generator.
+- `payload`: `json.loads` through `json::loads`; a dict or None.
+  JSONDecodeError and the ValueError of an integer past 4,300 digits
+  are None; RecursionError past `json::MAX_DEPTH` is raised, as the
+  reference does not catch it.
+- `mapping`, `subject`, `names_as_event`: the reference's branches,
+  kind by kind; a name that is not a `str` is None, and a standing list
+  is matched by member equality.
+- `link_types`: `str()` of each matching link's `type` (`None` when it
+  is missing), in sorted order: a scalar through `pyvalue::py_str`, a
+  container spelled at its top level with each item through
+  `pyvalue::repr`, since `str()` of a container writes one level more
+  than `repr()` does (9,998 lists around a scalar, where `repr` writes
+  9,997; measured through `_link_types` under 3.13.13). `str()` of a
+  value nested deeper is RecursionError and of an `int` past 4,300
+  digits ValueError, found in the order `repr` writes. No payload
+  `json.loads` reads can hold either, so only the robustness tests
+  reach them.
+
+No regular expression is used. No crate is added.
+
+Pinned by `history_rows.jsonl` (class i: the log table's statements cut
+out of `store_schema.SCHEMA`, in memory; every branch of the pure
+functions; the joins, the bounds, blobs, text that is not UTF-8,
+surrogates, NUL, the seq bounds, the snapshot's three modes) and
+`history_rows_python.jsonl` (class ii, gated on the Python release:
+payloads nested half the budget deep or ten levels past
+`json.loads`'s budget, where RecursionError is the interpreter's; the
+exact bound moves with the caller's own C stack, 9,988 levels raising
+under pytest, so no case sits near it).
+`history_rows_kills` and `history_rows_robustness` hold the rest; the
+second shows a history read growing linearly with the log (40,000 rows
+against 20,000, fastest of three).
+
+A row of the linking scan is merged on its text alone: a row of another
+record whose id merely contains the linking record's id comes too (the
+`links` case of `history_rows.jsonl`, record D and the row of record
+`xDy`). Whether a report shows it is `_link_change_rows`'s to decide, in
+unit 3; the port reproduces the merge.

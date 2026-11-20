@@ -27,6 +27,9 @@
 //! - [`records`]: the reference's record models (memory, tombstone,
 //!   episode, origin, actor, link) validated from a payload or a row and
 //!   written back, with pydantic's errors;
+//! - [`history`]: one record's history read off the log, its first unit
+//!   (the rows that name a record, with the linking records' versions and
+//!   the rows that say the store's history was replaced);
 //! - [`store`]: a store file read without writing to it: the version
 //!   contract, the tables, the key ring from a keys directory, the chain
 //!   verified on disk, the FTS5 prefilter;
@@ -77,6 +80,7 @@ pub mod gitfile_rule;
 pub mod githead;
 pub mod gitobjects;
 pub mod gitsystem;
+pub mod history;
 pub mod identity;
 pub mod json;
 pub mod lexicon;

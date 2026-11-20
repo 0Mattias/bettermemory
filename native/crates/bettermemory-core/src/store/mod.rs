@@ -1153,13 +1153,16 @@ pub(crate) fn log_row(row: &rusqlite::Row<'_>) -> Result<LogRow, StoreError> {
             })
         }
     };
+    // In column order, as `sqlite3` decodes a fetched row: the first text
+    // that is not UTF-8 is the one the error names.
+    let ts = text(1, "ts")?;
     let session = match value_of(row.get_ref(2)?, "log", "session")? {
         SqlValue::Null => None,
         other => Some(other.py_str()),
     };
     Ok(LogRow {
         seq,
-        ts: text(1, "ts")?,
+        ts,
         session,
         kind: text(3, "kind")?,
         payload: text(4, "payload")?,

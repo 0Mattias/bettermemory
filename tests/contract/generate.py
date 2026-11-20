@@ -95,6 +95,7 @@ from . import (
     gen_store_records_c,
     gen_store_records_d,
     gen_store_records_e,
+    gen_history_rows,
     gen_store_rows_written,
     gen_store_tx,
     gen_store_write,
@@ -169,6 +170,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_records_c": gen_store_records_c.generate,
     "store_records_d": gen_store_records_d.generate,
     "store_records_e": gen_store_records_e.generate,
+    "history_rows": gen_history_rows.generate,
+    "history_rows_python": gen_history_rows.generate_python,
     "store_rows_written": gen_store_rows_written.generate,
     "gitconfig": gen_gitconfig.generate,
     "attribution": gen_attribution.generate,
@@ -329,6 +332,8 @@ PYTHON_VERSION = "3.13.13"
 #: raises and 3.14's answers False. ``gitsystem_which_windows_python``
 #: names ``NoDefaultCurrentDirectoryInExePath`` or a PATHEXT entry ending in
 #: a dot, which `shutil.which` before 3.12 does not read as 3.13 does.
+#: ``history_rows_python`` holds log payloads nested near `json.loads`'s
+#: recursion budget (`gen_history_rows`).
 #: ``origin_remote_python`` holds URLs with a bracket, whose host checks in
 #: `urlsplit` and `ipaddress` are the release's (`gen_origin_remote`).
 #: ``gitfile_pin_text_python`` holds pin records read through ``ntpath``
@@ -346,6 +351,7 @@ PYTHON_GATED = frozenset(
         "gitsystem_ask_python",
         "gitsystem_which_windows_python",
         "gitsystem_sources_python",
+        "history_rows_python",
         "origin_gitfiles_leaves_python",
         "pyre_python",
         "python_edges",
