@@ -42,6 +42,8 @@
 //!   model, its first unit (the legacy ask rule and the helpers that
 //!   compare, join and rebase recorded paths in either spelling);
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
+//! - [`events`]: the telemetry recorder's rows, its first unit (the
+//!   event kinds, their row classes and the fields a state row keeps);
 //! - [`control_tokens`]: the chat-template delimiters a stored text may
 //!   not carry, found, counted, refused and written by their bare names;
 //! - [`gitconfig`]: the text of a git config file as the reference reads it;
@@ -78,6 +80,7 @@ pub mod config;
 pub mod control_tokens;
 pub mod credentials;
 pub mod datetime;
+pub mod events;
 pub mod float_repr;
 pub mod fsdata;
 pub mod gitconfig;

@@ -38,6 +38,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `history` | `history.py`'s first unit: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection | `history_rows.jsonl`, `history_rows_python.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
+| `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
@@ -1784,6 +1785,76 @@ unreadable file, prefixes that differ in case): its `resolve` pops `..`
 after canonicalising, `expanduser` takes only `~` and `~/`, `under` is
 case-sensitive and `is_dir` follows symlinks. No entry point uses it by
 default; every compared case goes through the test's world.
+
+## The event kinds and their row classes (`events.py`)
+
+`events` reproduces the telemetry recorder's module, unit by unit. The map
+of `src/bettermemory/events.py` by function:
+
+| Function | Lines | Needs from the machine | Status |
+|---|---|---|---|
+| the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS`, `STATE_KINDS`, `STATE_WRITE_ATTEMPTS`, `MEASUREMENT_KINDS`, `ROW_KINDS`), `_kept`, `RowClass` | 63-480 | nothing | built (unit 1) |
+| `is_audit_row` | 187-212 | nothing | built (unit 1) |
+| `row_class`, `prunable` | 483-494 | nothing | built (unit 1) |
+| `state_fields`, `_keys_of` | 497-535 | nothing (`redact_query` passed in) | built (unit 1) |
+| `_SECRET_PATTERNS`, `_strip_known_secrets`, `redact_query` | 98-104, 659-722 | nothing; `credentials.secret_spans` | unit 2 |
+| `NAMED_EVENT_FIELDS`, `named_event_fields`, `_named_inside`, `_named_entries`, `_redact_event_fields` | 758-821 | nothing | unit 2 |
+| `suppressed`, `deadline`, `StoreBusy`, `_store_busy`, `within_hook_budget`, `hook_body`, `_NOT_DONE` | 538-656 | the clock, the calling context, the store's busy timeout | unit 3 |
+| `Recorder` (`session_for_request`, `worktree_for_request`, `records`, `record`) | 824-951 | the store's writer, the clock | unit 4 |
+| `_event_id_items`, `_event_id_list` | 954-988 | nothing | unit 3 |
+
+The cut: unit 1 is the leaves above (this build), unit 2 the redaction,
+which waits for `credentials` past its vendor-prefixed detectors (the
+second pass reads `secret_spans`), unit 3 the context and the deadline
+with the id-list readers, unit 4 the recorder on the store's writer.
+
+What unit 1 reproduces. A row's fields are the `dict` the handler passes,
+as `PyValue` pairs in insertion order, and a kind is code points (a kind
+holding a lone surrogate is a measurement kind like any other unknown
+one). The tables are constants in the reference's order; the golden
+header holds each one (frozensets sorted, `OVERRIDABLE_REFUSALS` and
+`STATE_FIELDS` in order, each field kept by keys with its keys sorted) and
+the test compares every entry.
+
+- `is_audit_row`: `standing_guard` always; on `write` and `update`, a
+  `str` status in `AUDIT_STATUSES` or `OVERRIDABLE_REFUSALS`, then
+  `forced` that `is True` (the int 1 is not), then any field whose key
+  ends in `_acknowledged` and whose value is true by Python's `bool`
+  (`events::truthy`: NaN, any path and any datetime are true, `-0.0` is
+  false). The keys are read in order and the scan stops at the first true
+  one, so a key that is not a `str` raises `AttributeError` only when it
+  comes before any such field (`EventsError::AttributeError`).
+- `row_class` and `prunable`: state for a key of `STATE_FIELDS`,
+  measurement for every other kind.
+- `state_fields`: each field in input order kept whole, kept by its keys
+  (`_keys_of`: a dict filtered, each dict of a list filtered and every
+  other item dropped, None for anything else, a tuple included), or kept
+  as a stamp or, on `write` and `update`, as override evidence by its
+  suffix. A `probe_query` still in text goes through `redact_query` first;
+  that function belongs to unit 2 and is the `redact` argument here. The
+  golden file's texts are ones the secret strip leaves unchanged, so the
+  test's redactor (SHA-256 of the UTF-8 with surrogates replaced by `?`,
+  sixteen hex digits, the length in code points) is the reference's on
+  them. A key that is not a `str` is dropped, except on `write` and
+  `update`, where the suffix check raises `AttributeError`.
+
+No pattern is matched in this unit, so no regular expression is involved.
+`events_kinds.jsonl` (not gated, 115 KB) holds the tables, the class of
+every kind and of near misses, the audit answer of every case shape on
+the two evidence kinds, the audit kind, one other state kind and a near
+miss (a few shapes on every other kind), the kept fields of every kind,
+`top_hits` and `probe_query` of every shape, and `_keys_of` directly.
+`tests/events_kinds_kills.rs` holds the cases a plausible wrong port
+fails; `tests/events_kinds_robustness.rs` holds 200,000-field rows and
+lists (time at 2n against n), a kind of a million code points and values
+nested 200,000 deep.
+
+Reference finding, reproduced: `is_audit_row` is documented as safe on a
+row read back from a hand-edited log, yet `is_audit_row("write", {1:
+True})` and `state_fields("write", {1: "x"})` raise `AttributeError`
+(`int` has no `endswith`). A row read from JSON always has `str` keys, so
+no log row reaches it; a handler passing a non-`str` keyword cannot
+either.
 
 ## Chat-template control tokens (`control_tokens.py`)
 
@@ -10017,6 +10088,10 @@ What the reference has and this build does not, by area:
 - This machine's id past its record and clone rule: `machine.py`'s
   hardware and hostname facts and the machine files (unit 2),
   `_write_record` and `open_machine` (unit 3), and `check_import_fork`.
+- The telemetry rows past their kinds and classes: `events.py`'s query
+  redaction and named event fields (unit 2, which reads
+  `credentials.secret_spans`), the suppression, the hook deadline and the
+  id-list readers (unit 3), and the `Recorder` (unit 4).
 - The daemon, the MCP tools, the hooks and the command line.
 - Reading and writing the key ring's files on disk (the ring here holds
   their bytes); `datetime.astimezone` of a naive value (the reference
