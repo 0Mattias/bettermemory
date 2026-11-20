@@ -1,11 +1,12 @@
 //! `location_stamps.jsonl` as data: a file system that answers `stat`,
 //! the mount table's reads and FILE_BASIC_INFO from tables, the table
-//! spellings, and the sweeps' SplitMix64.
+//! spellings, the sweeps' SplitMix64, and an answer as the file spells it.
 
 use std::collections::BTreeMap;
 
 use bettermemory_core::fsdata::{Access, BasicInfo, Fs, Kind, OsError, PyErr, Stat, StatResult};
-use serde_json::Value;
+use bettermemory_core::location_stamps::StampError;
+use serde_json::{json, Value};
 
 /// A file's bytes, `Err` for a folder.
 pub type Contents = Result<Vec<u8>, ()>;
@@ -178,4 +179,19 @@ pub fn sweep_times(gen: &mut SplitMix) -> Vec<i128> {
             mag * [1, 100, 1_000_000_000][(x % 3) as usize]
         })
         .collect()
+}
+
+/// An error as the file spells it: `["err", class, text]`.
+pub fn err_value(e: &StampError) -> Value {
+    match e {
+        StampError::Overflow(m) => json!(["err", "OverflowError", m]),
+        StampError::Value(m) => json!(["err", "ValueError", m]),
+        StampError::Index => json!(["err", "IndexError", "list index out of range"]),
+        StampError::NotPorted(what) => panic!("declined: {what}"),
+    }
+}
+
+/// An answer as the file spells it: the value, or the error's spelling.
+pub fn answer<T: Into<Value>>(got: Result<T, StampError>) -> Value {
+    got.map_or_else(|e| err_value(&e), Into::into)
 }
