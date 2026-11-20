@@ -1,0 +1,25 @@
+{"cases":24,"k":"header"}
+{"c":60,"k":"slug","r":"n-c-d-fa-ade-na","t":"\u00dcn\u00efc\u00f6d\u00e9 fa\u00e7ade na\u00efve","w":6}
+{"c":60,"k":"slug","r":"i-stanbul-kelvin-k","t":"\u0130stanbul KELVIN \u212a","w":6}
+{"c":60,"k":"slug","r":"arabic-digits","t":"\u0660\u0661\u0662\u0663-01-02 arabic digits","w":6}
+{"c":60,"k":"slug","r":"ideographic-space","t":"2024-01-02\u3000ideographic space","w":6}
+{"c":60,"k":"slug","r":"memory","t":"2024-01-02\u2028line sep","w":6}
+{"c":60,"k":"slug","r":"x","t":"x\u2029y","w":6}
+{"c":60,"k":"slug","r":"padded","t":"\u00a0padded\u00a0","w":6}
+{"c":60,"k":"slug","r":"lone","t":{"cps":[55296,32,108,111,110,101]},"w":6}
+{"d":[2026,5,7],"k":"file","r":"2026-05-07-na\u00efve.md","t":"na\u00efve"}
+{"e":5,"k":"word","r":"na\u00efve","t":"na\u00efve."}
+{"e":2,"k":"word","r":"x\u00b2","t":"x\u00b2."}
+{"e":2,"k":"word","r":"x\u2167","t":"x\u2167."}
+{"k":"trunc","r":false,"t":"\u00bb"}
+{"k":"trunc","r":true,"t":"a\u201d"}
+{"k":"trunc","r":true,"t":"a\u3002"}
+{"k":"summ","m":80,"r":"e.g.\u00a0nbsp","t":"e.g.\u00a0nbsp. Next"}
+{"k":"summ","m":80,"r":"ok","t":"ok.\u3000next"}
+{"k":"summ","m":80,"r":"\u00dcn\u00efc\u00f6d\u00e9","t":"\u00dcn\u00efc\u00f6d\u00e9. Next"}
+{"k":"summ","m":80,"r":"na\u00efve","t":"na\u00efve. Next"}
+{"k":"summ","m":80,"r":"\u2167","t":"\u2167. Next"}
+{"k":"snip","m":200,"r":{"n":203,"sha":"c3fc493411535af148db41dd4926ac6aa8c71dd57da6431a60aa18b5732853b1"},"t":{"rep":[["w",160],["\u00a0",1],["z",60]]}}
+{"k":"snip","m":200,"r":{"n":203,"sha":"06741513e06a644410d7d8913d35961bb89bb4261b7443e495bd3542dde88b63"},"t":{"rep":[["\u00e9",250]]}}
+{"k":"win","m":6,"r":"...\u3000c...","s":2,"t":"ab\u3000cd ef"}
+{"count":1114112,"k":"sweep","rule":"every","sha":"4c5de31857a0d286ced1006adb24ec6de5182f96f89761cc1a0add1e2cfade12"}

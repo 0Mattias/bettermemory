@@ -203,6 +203,11 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // negative lookaround, which `re._parser` parses to FAILURE from
         // 3.13 (`gen_pyre_tree`).
         "pyre_python.jsonl" => &[Python],
+        // `str.strip`, `str.lower`, `str.isalnum` and `re`'s `\s` and `\d`
+        // past ASCII (`gen_models_text`).
+        "models_text_unicode.jsonl" => &[Unicode],
+        // `strftime`'s `%Y` of a year before 1000 is the C library's.
+        "models_text_platform.jsonl" => &[Python, Platform],
         "search.jsonl"
         | "search_ranker.jsonl"
         | "search_store.jsonl"

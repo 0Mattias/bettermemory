@@ -106,6 +106,7 @@ from . import (
     gen_ulid,
     gen_unicode,
     gen_pyre,
+    gen_models_text,
     gen_verify_status,
     gen_store_provenance,
     gen_store_bulk,
@@ -130,6 +131,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "datetime": gen_time.generate,
     "origin_history": gen_origin_history.generate,
     "unicode": gen_unicode.generate,
+    "models_text": gen_models_text.generate,
+    "models_text_unicode": gen_models_text.generate_unicode,
+    "models_text_platform": gen_models_text.generate_platform,
     "unicode_sequences": gen_unicode.sequences,
     "pyre": gen_pyre.generate,
     "pyre_unicode": gen_pyre.generate_unicode,
@@ -261,6 +265,7 @@ UNICODE_GATED = frozenset(
         "lexicon",
         "verify_candidates_unicode",
         "unicode",
+        "models_text_unicode",
         "unicode_sequences",
         "pyre_unicode",
         "store",
@@ -345,6 +350,7 @@ PYTHON_VERSION = "3.13.13"
 #: parses to FAILURE from 3.13 (`gen_pyre_tree`).
 PYTHON_GATED = frozenset(
     {
+        "models_text_platform",
         "gitsystem_record_python",
         "gitsystem_answers_python",
         "gitsystem_probe_python",
@@ -418,6 +424,7 @@ def pydantic_core_version() -> str:
 PLATFORM = "darwin-arm64"
 PLATFORM_GATED = frozenset(
     {
+        "models_text_platform",
         "search_ranker",
         "store",
         "store_path",

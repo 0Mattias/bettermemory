@@ -13,10 +13,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::datetime::DateTime;
 use crate::lexicon::{expand_kebab, is_stopword, kebab_parts, strip_stopwords, tokenize};
+use crate::models_text;
 use crate::pyvalue::PyStr;
 use crate::records::{Confidence, Memory, Tombstone};
 use crate::search::num::{int_true_div, round4};
-use crate::unicode;
 
 /// `HIGH_SIMILARITY`.
 pub const HIGH_SIMILARITY: f64 = 0.75;
@@ -220,34 +220,10 @@ pub fn similarity_bound(shared: i64, n: i64, m: i64) -> f64 {
     bound
 }
 
-/// `models.snippet_for(body)` with its default 200 characters.
+/// `models.snippet_for(body)` with its default 200 characters
+/// (`models_text::snippet_for`).
 pub fn snippet_for(body: &[u32]) -> PyStr {
-    let space = |c: &u32| unicode::is_space(*c);
-    let start = body.iter().position(|c| !space(c)).unwrap_or(body.len());
-    let end = body
-        .iter()
-        .rposition(|c| !space(c))
-        .map_or(start, |i| i + 1);
-    let text = &body[start..end.max(start)];
-    if text.len() <= 200 {
-        return text.to_vec();
-    }
-    // `_truncate_at_word`.
-    let mut cut = &text[..200];
-    let boundary = cut
-        .iter()
-        .rposition(|&c| c == 0x20 || c == 0x0A || c == 0x09)
-        .map_or(-1, |i| i as i64);
-    if boundary >= 160 {
-        cut = &cut[..boundary as usize];
-    }
-    let keep = cut
-        .iter()
-        .rposition(|&c| !b" ,;:.-".iter().any(|&s| u32::from(s) == c))
-        .map_or(0, |i| i + 1);
-    let mut out = cut[..keep].to_vec();
-    out.extend_from_slice(&[0x2E, 0x2E, 0x2E]);
-    out
+    models_text::snippet_for(body, models_text::SNIPPET_MAX_CHARS)
 }
 
 /// A record a hit is built from: `Memory`, `TombstonedMemory`, a store's

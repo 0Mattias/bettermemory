@@ -17,6 +17,9 @@
 //!   them, its first units: the case folding and the test of one literal;
 //!   the parser's tree and its dump, the parser's state and its tokenizer,
 //!   the escapes, sets and flat sequences it reads, and `re.escape`;
+//! - [`models_text`]: the text helpers of `models.py`: a memory's slug
+//!   and file name, its summary line, the truncation heuristic and the
+//!   search snippets;
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
 //! - [`verify_candidates`]: the path candidates verification reads, its
 //!   first unit (one candidate validated);
@@ -87,6 +90,7 @@ pub mod lexicon;
 pub mod log;
 pub mod membership_lines;
 pub mod membership_records;
+pub mod models_text;
 pub mod origin_gitfiles;
 pub mod origin_history;
 pub mod origin_remote;

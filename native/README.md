@@ -26,6 +26,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d` | `unicode.jsonl`, `unicode_sequences.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape` | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
+| `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report | `log_chain.jsonl`, `log_keyring.jsonl` |
@@ -489,7 +490,7 @@ its store half reads a store only through methods the caller supplies.
 | `_score_similar_jaccard`, `_build_active_hit`, `_build_tombstone_hit`, `_active_sort_key`, `_tombstone_sort_key` | 314-412 | the cache | built (private; `Pass` picks the builder, labels and key) |
 | `find_similar_tombstones`, `_find_similar_tombstones_jaccard` | 454-499 | the cache | built |
 | `_similar_in`, `find_similar_in`, `find_similar_tombstones_in` | 513-559 | a store's digest | built (`DigestStore`) |
-| `models.snippet_for`, `_truncate_at_word` (default 200) | models 1057-1068, 1111-1127 | nothing | built (`snippet_for`) |
+| `models.snippet_for`, `_truncate_at_word` (default 200) | models 1057-1068, 1111-1127 | nothing | built (`snippet_for`, which calls `models_text::snippet_for`) |
 
 ### What each part reproduces, and the decisions
 
@@ -545,9 +546,10 @@ its store half reads a store only through methods the caller supplies.
   memo answer of `None` falls back to the full scan. Wiring the trait to
   `store::digest` is left for the unit that ports `store_digest`'s
   `digest_candidates`, `light_records` and `digest_memo`.
-- **`snippet_for`.** `str.strip` reads `str.isspace` (the crate's Unicode
-  15.1 table); the back-off reads only a space, a newline and a tab at or
-  past offset 160; `rstrip(" ,;:.-")` then `"..."`.
+- **`snippet_for`.** `search_dedup::snippet_for(body)` is
+  `models_text::snippet_for(body, 200)`; the helper and
+  `_truncate_at_word` live in `models_text` (see "The text helpers of
+  `models.py`").
 
 No regular expression is used by this module; the tokenizer's are the
 `lexicon` module's.
@@ -2088,6 +2090,9 @@ that Unicode too.
 | `golden_pyre_atom`: `pyre_atom_every_row` | `pyre.jsonl` (the `atom.` parts) | i |
 | `golden_pyre_atom`: `pyre_atom_python_every_row` | `pyre_python.jsonl` (the `atom.` parts) | ii (Python) |
 | `pyre_atom_kills` (16), `pyre_atom_robustness` (6) | none | i |
+| `golden_models_text`: `models_text_every_case`; `models_text_kills` (15), `models_text_robustness` (4) | `models_text.jsonl` (the last two none) | i |
+| `golden_models_text`: `models_text_unicode_every_case` | `models_text_unicode.jsonl` | ii (Unicode) |
+| `golden_models_text`: `models_text_platform_every_case` | `models_text_platform.jsonl` | iii |
 | `golden_search`: `search_every_query_every_mode` | `search.jsonl` | iii |
 | `golden_search_dedup`: `search_dedup_every_case` | `search_dedup.jsonl` | i |
 | `golden_search_dedup`: `search_dedup_unicode_every_case` | `search_dedup_unicode.jsonl` | ii (Unicode) |
@@ -2876,6 +2881,124 @@ overflow its stack.
   depth").
 - pyre-7: the patterns the reference builds from parts at import, which
   the `ast` scan of `atom.inventory` does not find.
+
+## The text helpers of `models.py`
+
+`models_text` is unit 2 of `models.py` (unit 1 is the record models, in
+`records`). It holds the text helpers of lines 884-1127: they need
+nothing from the machine but the Unicode tables, and come to 284 lines of
+Rust source.
+
+### Map, by function
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_SLUG_RE`, `_LEADING_DATE_RE` | 884-892 | nothing | built (by hand) |
+| `make_slug` | 895-909 | `str.strip`, `str.lower`, `re`'s `\d` and `\s` (the crate's `unicode`) | built |
+| `build_filename` | 912-914 | `strftime`'s `%Y` | built |
+| `_SENTENCE_END_RE`, `_ABBREVIATIONS` | 920-956 | nothing | built (by hand; `ABBREVIATIONS`) |
+| `_word_ending_at` | 960-972 | `str.isalnum` | built (`word_ending_at`) |
+| `_BODY_TERMINALS`, `looks_truncated` | 981-1027 | `str.strip` | built |
+| `first_summary_line` | 1030-1054 | `str.strip`, `str.isalnum`, `str.lower`, `re`'s `\s` | built |
+| `snippet_for` | 1057-1068 | `str.strip` | built (moved from `search_dedup`) |
+| `snippet_window` | 1071-1108 | `str.strip` | built |
+| `_truncate_at_word` | 1111-1127 | nothing | built (`truncate_at_word`, moved from `search_dedup`) |
+
+The rest of `models.py` past the record models (`validate_path_targets`
+and its helpers, 1154 on) is left for a later unit.
+
+### What each function reproduces, and the decisions
+
+- **Text and integers.** A text is code points, indexed as Python
+  indexes a `str`. The integer parameters (`max_words`, `max_chars`,
+  `start`, `end`) are `i64`; the arithmetic on them (`max_chars - 3`,
+  `max_chars - 40`) is done in `i128`, so `i64::MIN` and `i64::MAX` do
+  not overflow, and every slice follows Python's rule for a negative
+  bound (`words[:-1]` drops the last word).
+- **`make_slug`.** `str.strip`, then `str.lower` (full case mapping,
+  so `İ` becomes two code points), then the text before the first
+  `str.splitlines` boundary (`\n`, `\r`, `\v`, `\f`, U+001C to U+001E,
+  U+0085, U+2028, U+2029). `_LEADING_DATE_RE.sub` without a flag can only
+  match at offset 0, once. The words are the runs of `[a-z0-9]`, so a
+  letter `str.lower` leaves outside ASCII splits a word (`façade` gives
+  `fa-ade`). The join is cut at `max_chars` code points, then dashes are
+  stripped from both ends; an empty slug is `memory`.
+- **`_LEADING_DATE_RE`, by hand.** Every part after the date is optional
+  and the trailing class is a star, so nothing after a part can fail and
+  the greedy choice at each step is the match: no backtracking changes
+  the answer. `\d` is `unicode::is_re_digit` (Unicode decimals, so
+  Arabic-Indic digits form a date); `\s` in the trailing class is
+  `unicode::is_space`. The zone `[+\-]\d{2}:?\d{2}` tries the colon first
+  and then none, as `:?` does; a zone that matches neither way is left
+  in the text (`+02:0` stays).
+- **`build_filename`.** `<YYYY-MM-DD>-<slug>.md` with the year padded to
+  four digits, as macOS's C library writes `%Y` for a year before 1000.
+  Those years go in the platform-gated file.
+- **`_SENTENCE_END_RE`, by hand.** One of `.!?` followed by a code point
+  `str.isspace` holds or by the end. `$` would also match before a final
+  newline, but `first_summary_line` replaced every newline with a space
+  first, so only the end remains. The matches are single code points, so
+  the scan is a walk over the text.
+- **`first_summary_line`.** A `.` whose alnum/dot run, lowered, is in
+  `_ABBREVIATIONS` is skipped; the first other boundary decides: the
+  stripped text before it if non-empty and within `max_chars`, else the
+  scan stops. Then the whole text if it fits, else `_truncate_at_word`.
+- **`_word_ending_at`.** `end` past the text raises `IndexError` in the
+  reference (`text[end - 1]`); the port answers `None`. A negative `end`
+  never enters the loop and answers the empty slice.
+- **`looks_truncated`.** The last code point of the stripped body
+  against the sixteen terminals, `»` among them.
+- **`snippet_window`.** `start <= 0` is `snippet_for`; else the tail from
+  `start` (empty past the end) with the leading `...` charged to the
+  budget `max_chars - 3`.
+- **`_truncate_at_word`.** The cut, then the last space, newline or tab
+  (only those three) if it lies at or past `max_chars - 40`, then
+  `rstrip(" ,;:.-")` and `...`. The reference's "none found" is `-1`, and
+  `-1 >= max_chars - 40` holds when `max_chars <= 39`: the cut is then
+  sliced at `-1`, one more code point gone (a reference finding, below,
+  which the port reproduces).
+
+No regular-expression crate is used: the three patterns are matched by
+hand as described, and no crate was added.
+
+### Reference findings
+
+- `_truncate_at_word(text, max_chars)` with `max_chars <= 39` and no
+  whitespace in the cut drops one more code point than the cut:
+  `_truncate_at_word("abcdef", 3)` is `"ab..."`, not `"abc..."`. It is
+  reachable from `snippet_window` with `max_chars <= 42` and from
+  `first_summary_line` with `max_chars <= 39`.
+- `make_slug` lowers before splitting on `[^a-z0-9]+`, so a letter
+  outside ASCII is a separator: `make_slug("Ünïcödé façade")` is
+  `"n-c-d-fa-ade"`.
+- `build_filename` of a year before 1000 depends on the C library's
+  `strftime`: macOS pads it to four digits, and so does the port on every
+  platform; `models_text_kills` pins the port's padding.
+
+### Fixtures and tests
+
+`tests/contract/gen_models_text.py` writes `models_text.jsonl` (ASCII
+texts, class i: each branch and bound of every function, and a digest row
+over 6,000 inputs drawn by splitmix64 from a fixed seed, each answered by
+six functions), `models_text_unicode.jsonl` (texts past ASCII and a lone
+surrogate, and a digest row of seven answers for every code point, gated
+on Unicode) and `models_text_platform.jsonl` (years before 1000, gated on
+the platform and the Python release). A digest row records the rule, the
+count and the SHA-256 of the answers as 4-byte code points; the Rust test
+regenerates the inputs by the same rule. Together the files hold 17 KB.
+`golden_models_text` checks every case; `models_text_kills` (15) pins
+inputs a plausible wrong port answers otherwise (the date only at the
+start, Unicode `\s` and `\d` in the date pattern, the short zone, the
+`str.splitlines` boundary, a negative word bound, the `-1` slice, the
+ellipsis charged to the budget, the abbreviations' case and the space
+after a boundary, the scan stopping at the first long sentence, a
+superscript as alnum, the terminals, `IndexError`, only `.` read as an
+abbreviation's end, the year padded below 1000);
+`models_text_robustness` (4) shows the summary scan, the slug and the
+snippets linear (the fastest of five runs at 2,000,000 code points
+within four times the fastest at 1,000,000 plus 200 ms) and feeds the `i64` extremes and
+every lone surrogate. The reference takes 0.63 s, 0.42 s and 0.14 s on
+the three linear texts at 2,000,000 (Apple M-series).
 
 ## The store's writes: the reference's order (N3a design)
 
