@@ -194,6 +194,13 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "identity_caller_unicode.jsonl"
         | "membership_lines_unicode.jsonl"
         | "claims_unicode.jsonl" => &[Unicode],
+        // `_sre`'s lower case, upper case and cased test, `re`'s categories
+        // and the extra cases of `re._casefix` over every code point
+        // (`gen_pyre`).
+        "pyre_unicode.jsonl" => &[Unicode],
+        // The interpreter's version, `_sre.MAGIC` and the digests of the
+        // `re` sources the engine was read from (`gen_pyre`).
+        "pyre_python.jsonl" => &[Python],
         "search.jsonl"
         | "search_ranker.jsonl"
         | "search_store.jsonl"

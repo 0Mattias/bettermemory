@@ -25,6 +25,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns, pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d` | `unicode.jsonl`, `unicode_sequences.jsonl` |
+| `pyre` | unit 1 of the regular expression engine, whose reference is CPython 3.13.13's `re`: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report | `log_chain.jsonl`, `log_keyring.jsonl` |
@@ -1954,6 +1955,11 @@ that Unicode too.
 | `store_create_robustness` (12) | `store_create.json` as input only | i |
 | `golden_lexicon`: `spelling_tables_match_the_golden_file_and_the_rust_tables` | `lexicon_spelling_tables.json` (compiled-in copy pinned to the committed file) | ii (Unicode) |
 | `golden_unicode`: `unicode_every_part`, `unicode_sequences_every_record` | `unicode.jsonl`, `unicode_sequences.jsonl` | ii (Unicode) |
+| `golden_pyre_fold`: `pyre_every_case` | `pyre.jsonl` | i |
+| `golden_pyre_fold`: `pyre_unicode_every_case` | `pyre_unicode.jsonl` | ii (Unicode) |
+| `golden_pyre_fold`: `pyre_python_every_case` | `pyre_python.jsonl` | ii (Python) |
+| `pyre_fold_kills` (13), `pyre_fold_robustness` (6), `pyre_fold_first_read` (1) | none | i |
+| `golden_pyre_fold`: `pyre_fold_differential_file` | a file `BM_PYRE_FOLD_DIFF` names | a tool, `#[ignore]`d, not part of parity |
 | `unicode_tables_regen`: `regenerating_the_unicode_tables_gives_the_same_bytes` | `src/unicode/tables.rs` | ii (Unicode) |
 | `golden_search`: `search_every_query_every_mode` | `search.jsonl` | iii |
 | `golden_search_dedup`: `search_dedup_every_case` | `search_dedup.jsonl` | i |
@@ -1984,7 +1990,9 @@ uv run python native/tools/parity.py --lint     # what CI runs
 It lints (`cargo build --locked`, `clippy --all-targets -D warnings`, `fmt
 --check`, all under the toolchain `rust-toolchain.toml` pins, 1.94.1);
 step 1 runs `cargo test --locked --no-fail-fast` (every test binary runs,
-whatever fails) against the committed files;
+whatever fails) against the committed files, then (step 1b) `cargo test
+--locked --release` of the binaries `RELEASE_TESTS` names, whose debug build
+asks a part of what their release build asks (`golden_pyre_fold`);
 step 2 regenerates the set as found with the running Python and runs
 `cargo test --locked --no-fail-fast` with `BM_GOLDEN_DIR` at it and `BM_REFERENCE_PYTHON`
 at that Python: the parity claim on that platform. It prints the manifest
@@ -2007,7 +2015,274 @@ reference Python's own Unicode data (3.13, Unicode 15.1.0) and committed:
 ```
 
 The generator refuses any other Unicode version. Its output depends only on
-that data, so the same interpreter writes the same bytes.
+that data and, for the last table, `SRE_EXTRA_CASES`, on
+`re._casefix._EXTRA_CASES` (`Lib/re/_casefix.py` of the same interpreter,
+`pyre::fold`), so the same interpreter writes the same bytes.
+
+## Python's regular expressions (`pyre`)
+
+The reference holds 216 call sites of `re` (267 pattern instances). 94
+are reproduced by hand-written matchers in the units already built. The
+rest go through one engine, `bettermemory_core::pyre`, built in units.
+It does not port a module of `src/bettermemory`: its reference is
+CPython 3.13.13's `re` itself (`Lib/re/_parser.py`, `_compiler.py`,
+`_casefix.py`, `_constants.py`, `__init__.py`, and `_sre`, with
+`_sre.MAGIC` 20230612), as the reference Python runs it. The Rust regex
+crates are not used and none is added: their classes, anchors, case
+folding and lookarounds are not `re`'s.
+
+The engine is designed as a small backtracking matcher behind a parser
+that follows `re/_parser.py` function by function (units pyre-2 to
+pyre-6, not built; of the engine only pyre-1 is built). The parser is to
+accept the syntax the reference's patterns use and to refuse everything
+else by name when a pattern is built, so that a refusal is a failed
+build and never a different answer. sre's compiler and matcher are not
+ported.
+
+### The cut
+
+Leaves first. A unit's lines are Rust source outside tests.
+
+| unit | file | holds | reference | needs | status |
+| --- | --- | --- | --- | --- | --- |
+| pyre-1 | `pyre/fold.rs` | `sre_lower`, `sre_upper`, `sre_iscased`, `extra_cases`, `Lit` (one literal under the flags `_compile` reads; LOCALE and the ASCII fold refused); the module, the generator, the fixtures' headers | `_sre.unicode_tolower`, `sre_upper_unicode`, `_sre.unicode_iscased`; `_casefix.py` 5-106; `_compiler.py` 48-55, 57-84 | the Unicode tables (`unicode`) | built, 227 lines |
+| pyre-2 | `pyre/tree.rs` and the atoms of `pyre/parse.rs` | the tree, `State`, the dump that equals `str(tree)`, the refusal and error names, `Tokenizer`, `_escape`, `_class_escape`, classes, flat sequences, `re.escape` | `_parser.py` 74-227, 229-309, 311-446; `__init__.py` 305-328 | nothing | not built |
+| pyre-3 | `pyre/parse.rs` | repeats, `_parse_sub` with its rewrites, groups, scoped and leading flags, lookarounds, `getwidth`, `parse`, the refusal predicate over the finished tree | `_parser.py` 177-227, 448-995 | pyre-2 | not built |
+| pyre-4 | `pyre/lower.rs` | classes compiled as `_optimize_charset` does, nodes threaded by `next`, `_simple`, group repeats unrolled, the arena cap | `_compiler.py` 241-387, 401-408 | pyre-1, pyre-3 | not built |
+| pyre-5 | `pyre/exec.rs` | one loop, one stack, one trail; anchors, lookarounds, the three acceptance rules, the scan over starts, the step count | `_sre` (by differential) | pyre-4 | not built |
+| pyre-6 | `pyre/regex.rs` | `Regex`, `Match`, `finditer`, `findall`, `sub`, `subn`, `split`, `pos` and `endpos`, literal and function replacement | `_sre` (by differential) | pyre-5, pyre-2 | not built |
+| pyre-7 | tests only | every remaining pattern of the reference built from its own text; mutants; the inventory tripwire | the reference's patterns | pyre-6 | not built |
+| pyre-8 | tests only | the 94 hand-written matchers against the engine | the built units | pyre-6 | not built |
+| pyre-9 | `pyre/memo.rs` | failure bits, the run and failed ends per repeat; megabyte pins by steps | none (changes no answer) | pyre-6, pyre-7 | not built |
+| pyre-10 | not scheduled | replacement templates | `_parser.py` 997-1081 | pyre-6 | not built |
+
+The line ranges were confirmed against the 3.13.13 sources (their
+digests are in `pyre::RE_SOURCES`). `_sre`'s C source is not on the build
+machine: what the port takes from it is compared by value with the
+interpreter.
+
+### Unit 1, built (`pyre::fold`)
+
+Under IGNORECASE on a `str` pattern `re` folds one code point at a time,
+through two `_sre` functions and one table. 33 of the reference's
+remaining call sites fold case, so every later unit that meets a literal
+or a class under IGNORECASE reads this unit.
+
+| function | reproduces | reference | needs | status |
+| --- | --- | --- | --- | --- |
+| `sre_lower(c)` | `_sre.unicode_tolower`: the first code point of the full lower-case mapping, or `c` | `sre_lower_unicode`, `_PyUnicode_ToLowercase` (C, compared by value) | `unicode`'s lower-case table | built |
+| `sre_upper(c)` | the first code point of the full upper-case mapping, or `c` | `sre_upper_unicode`, `_PyUnicode_ToUppercase` (C, compared by value) | `unicode`'s upper-case table | built |
+| `sre_iscased(c)` | `_sre.unicode_iscased`: `c != sre_lower(c) or c != sre_upper(c)` | `_sre.unicode_iscased` (C, compared by value) | the two above | built |
+| `extra_cases(lower)` | `re._casefix._EXTRA_CASES.get(lower, ())`, partners in the interpreter's order | `_casefix.py` 5-106 | the generated table `SRE_EXTRA_CASES` | built |
+| `Lit::new(c, flags)`, `Lit::matches(c)` | the literal arm of `_compile` under the flags it reads (`re.compile(...).flags`): LITERAL (`Exact`), or LITERAL_UNI_IGNORE and IN_UNI_IGNORE over the lower case and its extra cases (`Fold`); under IGNORECASE, LOCALE and the ASCII fold are refused (`Unreproduced`) | `_compiler.py` 48-55, 57-84 | the four above | built |
+
+What each reproduces, with the interpreter's values:
+
+- **`sre_lower`** is not `str.lower` (`unicode::lower`). One code point
+  comes out: U+0130 gives U+0069, where `str.lower` gives U+0069 U+0307.
+  No context is read: U+03A3 gives U+03C3 wherever it stands. It is not
+  `str.casefold` either: U+13A0 gives U+AB70 (casefold goes the other
+  way), U+00DF, U+017F and U+03C2 stay. 1,433 code points change, the
+  last U+1E921. It equals `ord(chr(c).lower()[0])` for every code point.
+- **`sre_upper`** is the first code point of `str.upper`: U+00DF gives
+  U+0053, U+0149 gives U+02BC, U+1F80 gives U+1F08 (the full mapping's
+  first code point, not the one-to-one mapping U+1F88). 1,525 change. The
+  engine reads it for `sre_iscased` only.
+- **`sre_iscased`** holds for 2,927 code points, 520 of them past the
+  BMP, no surrogate. It is not the Unicode property Cased: U+00AA,
+  U+0138 and U+1D00 are lower-case letters with no case pair and are
+  uncased here; 1,599 code points differ from the property (taken as
+  `islower`, `isupper` or category `Lt`), and 1,334 from the crate's
+  `unicode::is_cased`, which is what `str.lower` asks for a final sigma.
+  The first of both is U+00AA.
+- **`extra_cases`** has 50 keys and 56 partners, all in the BMP, the
+  largest U+FB06. Every key and partner is cased and is its own lower
+  case, and the table is symmetric.
+- **`Lit`**. A pattern literal `p` under IGNORECASE: when `p` is not
+  cased the text character must equal it; otherwise, with
+  `lo = sre_lower(p)`, a character `c` matches when `sre_lower(c)` is `lo`
+  or one of `extra_cases(lo)`. So `k` matches `K`, `k` and U+212A; `s`
+  matches U+017F; `i` matches `I`, `i`, U+0130 and U+0131; U+00DF matches
+  U+1E9E and never `ss` or `SS`; sigma matches all three of its forms
+  whichever is written; U+10400 matches U+10428; U+0149 and U+01F0 match
+  only themselves, though their upper cases begin with another letter.
+  NOT_LITERAL is the negation, which the caller takes. Folding is an
+  equivalence over the cased code points: every member of a literal's
+  set folds to the same set (1,468 sets, the largest of four members).
+  `Lit::new` takes the flags `_compile` reads: a `str` pattern carries
+  UNICODE (32) unless `re.ASCII` is given, so `re.compile('k',
+  re.I).flags` is 34. Without IGNORECASE a literal is exact.
+
+Decisions:
+
+- **The literal is tested by hand, on the crate's own tables.** No regex
+  crate has this fold. `sre_lower` and `sre_upper` read the lower and
+  upper tables `unicode` already carries (`LOWER_INDEX`, `UPPER_INDEX`),
+  through two new crate-internal readers, `unicode::lower_first` and
+  `unicode::upper_first`; no second copy of the case data exists.
+- **The extra cases are generated, never typed.**
+  `tools/gen_unicode_tables.py` reads `re._casefix._EXTRA_CASES` and
+  writes `SRE_EXTRA_CASES` into `unicode/tables.rs`; its `--check`
+  (`unicode_tables_regen`) covers the table, and `pyre_unicode.jsonl`
+  holds it in full.
+- **Three fixtures, by what an answer depends on.** An answer over ASCII
+  text depends on no table (`pyre.jsonl`, compared everywhere). An
+  answer past ASCII depends on the Unicode data (`pyre_unicode.jsonl`).
+  The interpreter's own version, `_sre.MAGIC`, `_sre.CODESIZE` and the
+  digests of the five `re` sources are facts of one release
+  (`pyre_python.jsonl`, one row per fact, so that under another release,
+  the newest 3.13 on CI, each is compared or set aside alone);
+  `pyre::PYTHON`, `UNICODE`, `SRE_MAGIC`, `SRE_CODESIZE` and `RE_SOURCES`
+  state them in the crate, `RE_SOURCES` in the order of the rows. A
+  source is digested as the text Python reads (`inspect.getsource`, line
+  ends as `\n`, in UTF-8), so the digest is the release's whether its
+  standard library is files or a zip archive; an installation without the
+  sources makes the generator raise. The generator refuses no
+  interpreter: a generator that raises fails the as-found run (CI makes
+  it under the newest 3.13), and the gates already set a differing row
+  aside.
+  The header of `pyre.jsonl` states the reproduced interpreter as fixed
+  text, so that file is the same bytes under any Python from 3.11.
+- **One fixture set for the whole engine, split by unit.** Every row
+  carries `unit` (`pyre-1` here) and `part`; each file's header counts
+  the rows of each unit. A unit's test checks every row of its own unit
+  against that count, and the header's counts must add up to the file's
+  rows, so a row no unit claims fails `golden_pyre_fold`. In
+  `gen_pyre.py` a unit's functions carry its prefix (`fold_rows`,
+  `fold_unicode_rows`, `fold_python_rows`) and are listed per file in
+  `_PARTS`. `pyre.jsonl` is capped at 150,000 bytes for the whole engine
+  (asserted by the generator and by the test).
+- **A sweep is pinned by digest, a kill is written out.** A `sweep` row
+  holds one value per code point (four bytes little-endian for a map,
+  one byte for a test), as the SHA-256 of all of them and the first 16
+  hex digits of the SHA-256 of each block of 0x4000 code points; equal
+  consecutive blocks are written once with a count. A `kill` row is one
+  pattern under one flag set, in a form a later unit can run through the
+  whole engine: the pattern text, the flags as given and as `_compile`
+  reads them, the node `re._parser` reads it as, and texts with their
+  `fullmatch` answers. In `pyre_unicode.jsonl` a kill row also holds the
+  exact set `findall` returns over the string of every code point (for a
+  negated literal, `unmatched`: the code points it does not return); the
+  kill rows of `pyre.jsonl`, over ASCII text, hold no set.
+- **A value that is no code point is inert.** A `u32` past U+10FFFF
+  lowers and uppers to itself, is uncased, has no extra cases, is in no
+  class and matches only itself. Python text cannot hold one; the port
+  must not panic on one.
+- **LOCALE and the ASCII fold are refused, not answered.** Under
+  IGNORECASE `_compile` folds by other tables with LOCALE (lines 61-63,
+  by the C library's locale) and without UNICODE (lines 53-55 and 69-71:
+  a bytes pattern, or `re.ASCII`, where only A to Z fold).
+  `Lit::new(c, flags)` returns `Unreproduced::Locale` or
+  `Unreproduced::AsciiFold` for these, whatever the literal, in the
+  reference's order (LOCALE first), so no caller gets the Unicode fold for
+  them. No reference pattern uses them: the reference has no `re.ASCII`
+  and no LOCALE, and none of its bytes patterns is under IGNORECASE. The
+  unit that builds a pattern turns the refusal into a failed build and
+  tests that.
+
+What `re` does here that a reader may not expect (reproduced, pinned):
+
+- **IGNORECASE reaches past ASCII from an ASCII pattern.** A pattern's
+  `i`, `k` or `s` under IGNORECASE also matches U+0130, U+0131, U+212A
+  and U+017F:
+  `[bool(re.fullmatch('i', c, re.I)) for c in 'Ii\u0130\u0131']` is four
+  times `True`. Every pattern of the reference that folds case and holds
+  one of these letters, alone or in a class, accepts these spellings.
+- **It is neither `str.lower` nor `str.casefold`.**
+  `re.fullmatch('i', '\u0130', re.I)` matches while
+  `'\u0130'.lower() == 'i'` is `False`, and
+  `re.fullmatch('ss', '\u00df', re.I)` is `None` while
+  `'\u00df'.casefold() == 'ss'` is `True`. Reference code that compares
+  lowered text in one place and matches under IGNORECASE in another does
+  not hold the same letters equal in both.
+- **A mark equals a letter.** `re.fullmatch('\u0345', '\u0399', re.I)`
+  matches: the combining ypogegrammeni and capital iota share a lower
+  case through the extra cases.
+
+Left for later units: classes under IGNORECASE (pyre-4, which takes
+`sre_lower`, `sre_iscased` and `extra_cases` from here, and two facts
+the sweep pins: no cased code point lowers to an uncased one, and no
+uncased code point is the lower case of another); the categories
+(`unicode::is_word`, `is_re_digit`, `is_space`, unchanged, pinned again
+here against `re` over every code point); everything that reads a
+pattern.
+
+#### Fixtures and tests
+
+| file | gate | holds, of unit pyre-1 | bytes |
+| --- | --- | --- | --- |
+| `pyre.jsonl` | none | the header; for each ASCII literal the ASCII characters it matches, without and with IGNORECASE (2 rows); 18 kills over ASCII text | 5,242 |
+| `pyre_unicode.jsonl` | Unicode | 6 sweeps (lower, upper, cased, `\w`, `\d`, `\s`, each over 1,114,112 code points in 68 blocks); the extra cases in full; 14 counts; the exact set of each of the 2,927 cased literals (5,917 members, by digest per 64 patterns); the exact set of 2,439 uncased literals (every one below U+0530 and 2,000 drawn by a recorded rule and seed); 47 kills | 17,292 |
+| `pyre_python.jsonl` | Python | one row each: the interpreter, its Unicode, `_sre.MAGIC`, `_sre.CODESIZE`, and the digest of each of five sources (9 rows) | 687 |
+
+Every set comes from `re` itself:
+`re.compile(re.escape(chr(p)), re.I).findall(every)` with `every` the
+string of all 1,114,112 code points, so each of the 2,927 cased literals
+is asked of every code point (3.26 billion pairs, about 30 s of the
+generator's run).
+
+- `golden_pyre_fold` checks every row of the three files and fails when
+  the number checked is zero or differs from the header's count. The
+  sweeps and the kills read every code point in every build. The two
+  literal sweeps call `Lit::matches` for every pattern and every code
+  point in a release build (6 billion calls on every core, 6 s). A debug
+  build asks the candidates only (31,234 code points: every cased one,
+  every one below U+3000, every 61st, the pattern itself), in 12 s; it
+  takes 170 s to ask all, which `BM_PYRE_FULL=1` does. The candidates
+  leave out what `Lit::matches` answers for the other code points (a
+  literal that wrongly took one of them passes a debug build), so the
+  parity job runs this test once more in a release build (`tools/parity.py`,
+  step 1b, `RELEASE_TESTS`), and every gated run asks every code point.
+- `pyre_fold_kills` (13 tests): values and whole sets written by hand
+  from the interpreter, each against one wrong reading: `str.lower`
+  (two code points, final sigma), casefold, a fold by upper case, the
+  property Cased, an ASCII-only or BMP-only table, a fold by flipping
+  bit 5, the extra cases left out or taken one way only, the edges of
+  each table; and LOCALE and the ASCII fold refused, where the Unicode
+  fold would answer otherwise than `re` (`re.fullmatch('k', '\u212a',
+  re.I | re.A)` is `None`). Mutants that drop the extra cases, test the
+  text character unlowered, read the property Cased, ignore the upper
+  case, or lose the last table entry each fail these tests and the golden
+  test.
+- `pyre_fold_robustness` (6 tests): the integer boundaries, every power
+  of two with a cased code point in the low bits, the surrogates, every
+  code point and a stride over the rest of the `u32` range through every
+  function under every flag set; a text of two million code points
+  scanned by five literals in under thirty times the time of two hundred
+  thousand; one literal over every code point in a bounded time (the
+  reference takes 4 to 6 ms; a release build, about as long, is held to
+  50 ms; a debug build, 30 to 100 times slower, to 2 s; the fastest of up
+  to ten rounds); and the three fast paths of `sre_lower` (A to Z, the
+  BMP's flags, past the table's last key) each under a quarter of the
+  time of a table search in a debug build, which removing any of them
+  breaks, and under three quarters in a release build, where a search
+  costs 6 to 10 ns against 2 and only removing the A to Z path breaks it.
+  Nothing in this unit nests or backtracks.
+- `pyre_fold_first_read` (1 test, a binary of its own so that nothing in
+  the process has read the dense table before): eight threads released
+  together by a barrier read the tables first and answer alike, and as a
+  ninth pass does.
+- Two mutants are equal to the original on every `u32`, so no answer
+  kills them: `sre_iscased` as
+  `sre_lower(c) != sre_upper(c)` (equal while no code point has a lower
+  case equal to its upper case other than itself, the count
+  `lower_is_upper_not_itself`, 0), and `Lit::new` testing
+  `sre_iscased(sre_lower(c))` (equal while no cased code point lowers to
+  an uncased one, `cased_lowering_to_uncased`, 0). Both counts are in the
+  facts row, so new data that breaks either shows there.
+- The whole differential, value by value (not committed):
+  `tools/pyre_differential.py fold FILE` under the reference Python
+  writes every code point's six values and every cased literal's set
+  (13 MB), and `BM_PYRE_FOLD_DIFF=FILE cargo test --offline --release
+  --test golden_pyre_fold -- --ignored pyre_fold_differential_file`
+  compares them one by one and prints the first code point that differs.
+  Run on darwin-arm64 under 3.13.13: 6 values of 1,114,112 code points
+  and 2,927 literals over 3,261,005,824 pairs, 0 mismatches. Checked
+  once more outside the fixtures: `_PyUnicode_ToUppercase`, called
+  through `ctypes`, equals the first code point of `str.upper` for every
+  code point; every one of the 1,111,185 uncased code points as a
+  pattern under IGNORECASE matches exactly itself; and for every cased
+  code point `[^p]` matches exactly what `p` does not.
 
 ## The store's writes: the reference's order (N3a design)
 
@@ -8545,6 +8820,10 @@ What the reference has and this build does not, by area:
   after its vendor-prefixed detectors (the value gate, the generic and
   URI patterns, spans and markers), and the review. The dedup's store
   side reads through a trait not yet wired to `store::digest`.
+- The regular expression engine (`pyre`) past its case folding: the
+  parser's tree and its parse, the lowering, the matcher and the methods
+  (pyre-2 to pyre-6), the inventory proof, the cross-check of the
+  hand-written matchers and the memo (pyre-7 to pyre-9).
 - The daemon, the MCP tools, the hooks and the command line.
 - Reading and writing the key ring's files on disk (the ring here holds
   their bytes); `datetime.astimezone` of a naive value (the reference

@@ -11,7 +11,10 @@ Steps:
 1. ``cargo test --locked`` against the committed golden files. They were made
    on darwin-arm64 under Python 3.13.13, SQLite 3.50.4, Unicode 15.1.0; on
    another platform the score-bearing cases that differ are set aside, named
-   and counted (class iii), and everything else is compared strictly.
+   and counted (class iii), and everything else is compared strictly. Then
+   ``cargo test --locked --release`` of the test binaries in
+   ``RELEASE_TESTS``, whose debug build reads a part of what their release
+   build reads (step 1b, counted with step 1).
 2. ``python -m tests.contract.generate --out DIR --as-found`` with this
    Python, then ``cargo test --locked`` with ``BM_GOLDEN_DIR=DIR`` and
    ``BM_REFERENCE_PYTHON`` at this Python: the parity claim on this
@@ -47,6 +50,12 @@ Record = dict[str, Any]
 
 ROOT = Path(__file__).resolve().parents[2]
 NATIVE = ROOT / "native"
+
+#: Test binaries step 1b runs again in a release build: a debug build of
+#: each asks a part of what its release build asks. ``golden_pyre_fold``
+#: asks `Lit::matches` of the candidate code points in a debug build and of
+#: every code point in a release build (native/README.md, "Unit 1, built").
+RELEASE_TESTS = ("golden_pyre_fold",)
 
 
 def run(
@@ -167,6 +176,24 @@ def main(argv: list[str] | None = None) -> int:
         step1 = tally(lines)
         if status:
             failures.append(f"step 1 (committed files) failed (exit {status})")
+        status, lines = run(
+            "step 1b: the same files, a release build of the tests that read "
+            "every case only there",
+            [
+                "cargo",
+                "test",
+                "--locked",
+                "--release",
+                "--no-fail-fast",
+                *(arg for name in RELEASE_TESTS for arg in ("--test", name)),
+            ],
+            NATIVE,
+            env,
+        )
+        passed, failed, ignored = tally(lines)
+        step1 = (step1[0] + passed, step1[1] + failed, step1[2] + ignored)
+        if status:
+            failures.append(f"step 1b (a release build) failed (exit {status})")
 
     golden = args.golden
     if golden is None:

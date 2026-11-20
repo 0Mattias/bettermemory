@@ -100,6 +100,7 @@ from . import (
     gen_control_tokens,
     gen_ulid,
     gen_unicode,
+    gen_pyre,
     gen_verify_status,
     gen_store_provenance,
     gen_store_bulk,
@@ -123,6 +124,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "origin_history": gen_origin_history.generate,
     "unicode": gen_unicode.generate,
     "unicode_sequences": gen_unicode.sequences,
+    "pyre": gen_pyre.generate,
+    "pyre_unicode": gen_pyre.generate_unicode,
+    "pyre_python": gen_pyre.generate_python,
     "python_edges": gen_edges.generate,
     "mcp_surface": gen_mcp.surface,
     "mcp_plain": gen_mcp.plain,
@@ -243,6 +247,7 @@ UNICODE_GATED = frozenset(
         "verify_candidates_unicode",
         "unicode",
         "unicode_sequences",
+        "pyre_unicode",
         "store",
         "store_path",
         "store_files",
@@ -316,6 +321,8 @@ PYTHON_VERSION = "3.13.13"
 #: ``gitfile_pin_text_python`` holds pin records read through ``ntpath``
 #: whose path is rooted without a drive (``/g``): `ntpath.isabs` reads it
 #: as absolute in 3.11 and 3.12 and as relative from 3.13 (`gen_follow`).
+#: ``pyre_python`` holds the interpreter's own version, ``_sre.MAGIC`` and
+#: the digests of the ``re`` sources the engine was read from (`gen_pyre`).
 PYTHON_GATED = frozenset(
     {
         "gitsystem_record_python",
@@ -325,6 +332,7 @@ PYTHON_GATED = frozenset(
         "gitsystem_which_windows_python",
         "gitsystem_sources_python",
         "origin_gitfiles_leaves_python",
+        "pyre_python",
         "python_edges",
         "models_rows",
         "models_stores",

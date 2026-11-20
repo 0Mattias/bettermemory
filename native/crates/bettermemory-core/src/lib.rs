@@ -13,6 +13,8 @@
 //!   first unit (the leaves and the memo of author dates);
 //! - [`unicode`]: normalization, case mapping and the character classes,
 //!   over tables generated from the reference Python's Unicode 15.1.0;
+//! - [`pyre`]: Python's regular expressions as CPython 3.13.13's `re` runs
+//!   them, its first unit (the case folding and the test of one literal);
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
 //! - [`verify_candidates`]: the path candidates verification reads, its
 //!   first unit (one candidate validated);
@@ -76,6 +78,7 @@ pub mod origin_gitfiles;
 pub mod origin_history;
 pub mod origin_remote;
 pub mod printable;
+pub mod pyre;
 pub mod pyvalue;
 pub mod records;
 pub mod search;

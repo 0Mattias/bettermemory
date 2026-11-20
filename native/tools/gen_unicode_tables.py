@@ -21,7 +21,10 @@ The tables:
 - the predicates ``str.isalpha``, ``isalnum``, ``isdigit``, ``isdecimal``,
   ``isnumeric``, ``isspace``, ``re``'s ``\\w`` and ``\\d``, and the two
   properties ``str.lower`` reads for the final sigma (case-ignorable and
-  cased), probed through ``str.lower`` itself, as ranges.
+  cased), probed through ``str.lower`` itself, as ranges;
+- ``re._casefix._EXTRA_CASES``, the code points ``re`` adds to a lowered
+  character under IGNORECASE, by ascending key, each key's partners in the
+  interpreter's order.
 """
 
 from __future__ import annotations
@@ -119,6 +122,14 @@ def composition_pairs() -> list[tuple[int, int, int]]:
     return pairs
 
 
+def extra_cases() -> list[tuple[int, tuple[int, ...]]]:
+    """``re._casefix._EXTRA_CASES``: for a lowered code point, the other
+    lowered code points ``re`` takes for the same letter under IGNORECASE."""
+    from re import _casefix
+
+    return sorted((key, tuple(others)) for key, others in _casefix._EXTRA_CASES.items())
+
+
 def emit_list(name: str, ty: str, items: list[str], per_line: int) -> list[str]:
     """``items`` packed into lines of at most 99 characters (``per_line``
     caps the count per line)."""
@@ -209,6 +220,15 @@ def generate() -> str:
     lines += emit_ranges("RE_DIGIT", ranges(lambda c: _DIGIT.match(c) is not None))
     lines += emit_ranges("CASE_IGNORABLE", ignorable)
     lines += emit_ranges("CASED", cased)
+    lines += emit_list(
+        "SRE_EXTRA_CASES",
+        "(u32, &[u32])",
+        [
+            f"(0x{key:X}, &[{', '.join(f'0x{c:X}' for c in others)}])"
+            for key, others in extra_cases()
+        ],
+        16,
+    )
     return "\n".join(lines) + "\n"
 
 

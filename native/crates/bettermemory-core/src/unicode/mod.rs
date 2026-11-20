@@ -495,6 +495,37 @@ pub fn casefold(text: &[u32]) -> Vec<u32> {
     map_case(text, tables::CASEFOLD_INDEX, tables::CASEFOLD_DATA)
 }
 
+fn first_mapped(index: &[(u32, u32)], data: &'static [u32], cp: u32) -> u32 {
+    if index.last().is_none_or(|&(last, _)| cp > last) {
+        return cp;
+    }
+    mapped(index, data, cp)
+        .and_then(|seq| seq.first().copied())
+        .unwrap_or(cp)
+}
+
+/// The first code point of `str.lower` of `cp` alone, `cp` itself where it
+/// has no mapping: `_PyUnicode_ToLowercase`, by which `re` lowers one
+/// character (`pyre::fold`). No final-sigma context, one code point out.
+pub(crate) fn lower_first(cp: u32) -> u32 {
+    if bmp_flag(cp, F_LOWER) == Some(false) {
+        return cp;
+    }
+    first_mapped(tables::LOWER_INDEX, tables::LOWER_DATA, cp)
+}
+
+/// The first code point of `str.upper` of `cp` alone, `cp` itself where it
+/// has no mapping: `_PyUnicode_ToUppercase`.
+pub(crate) fn upper_first(cp: u32) -> u32 {
+    first_mapped(tables::UPPER_INDEX, tables::UPPER_DATA, cp)
+}
+
+/// `re._casefix._EXTRA_CASES`, ascending by key: for a lowered code point,
+/// the other lowered code points `re` takes for the same letter.
+pub(crate) fn sre_extra_cases() -> &'static [(u32, &'static [u32])] {
+    tables::SRE_EXTRA_CASES
+}
+
 /// The code points of `text`.
 pub fn cps(text: &str) -> Vec<u32> {
     text.chars().map(|c| c as u32).collect()
