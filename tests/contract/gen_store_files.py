@@ -1105,8 +1105,7 @@ SYNTHETIC_HEX = (
     # gitfile_pin_text.jsonl's pin records and the verbatim path it reads
     # back from one, written as hex (`gen_follow`).
     b'{"format": 1, "git_dir": "\\\\\\\\srv\\\\sh\\\\g", "tree": "//srv/sh/t"}',
-    b'{"format": 1, "git_dir": "\\\\\\\\?\\\\C:\\\\g",'
-    b' "tree": "\\\\\\\\.\\\\C:\\\\t"}',
+    b'{"format": 1, "git_dir": "\\\\\\\\?\\\\C:\\\\g", "tree": "\\\\\\\\.\\\\C:\\\\t"}',
     b"\\\\?\\C:\\g",
 )
 
