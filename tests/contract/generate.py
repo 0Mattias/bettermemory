@@ -188,6 +188,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_rows_written": gen_store_rows_written.generate,
     "gitconfig": gen_gitconfig.generate,
     "location_stamps": gen_location_stamps.generate,
+    "location_stamps_python": gen_location_stamps.generate_python,
     "location_stamps_platform": gen_location_stamps.generate_platform,
     "attribution": gen_attribution.generate,
     "attribution_unicode": gen_attribution.generate_unicode,
@@ -200,6 +201,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "origin_gitfiles_leaves": gen_origin_gitfiles.generate,
     "origin_gitfiles_leaves_python": gen_origin_gitfiles.generate_python,
     "origin_gitfiles_machine": gen_origin_gitfiles_machine.generate,
+    "origin_gitfiles_machine_python": gen_origin_gitfiles_machine.generate_python,
     "origin_gitfiles_darwin": gen_origin_gitfiles_machine.generate_darwin,
     "ulid": gen_ulid.generate,
     "durability": gen_durability.generate,
@@ -367,10 +369,17 @@ PYTHON_VERSION = "3.13.13"
 #: 32-bit ``dev_t`` cannot hold, where 3.12.13 and 3.13 raise; 3.11 and
 #: 3.12.3 raise for NODEV, which 3.12.13 and 3.13 accept, and these answer
 #: a part of 0xffffffff on glibc as -1 (`gen_location_stamps`).
+#: ``location_stamps_python`` and ``origin_gitfiles_machine_python`` hold
+#: the ValueError `os.stat` raises for a NUL in a path, "embedded null
+#: byte" in 3.11.15 and "stat: embedded null character in path" in
+#: 3.12.13, 3.13 and 3.14 (`gen_location_stamps`,
+#: `gen_origin_gitfiles_machine`).
 PYTHON_GATED = frozenset(
     {
         "models_text_platform",
         "location_stamps_platform",
+        "location_stamps_python",
+        "origin_gitfiles_machine_python",
         "gitsystem_record_python",
         "gitsystem_answers_python",
         "gitsystem_probe_python",
@@ -503,9 +512,9 @@ PLATFORM_GATED = frozenset(
 #: clears the probe over links, modes and FIFOs (`gen_gitsystem_probe`);
 #: ``gitfile_leaves_posix`` reads links and mode-000 files
 #: (`gen_gitfile_leaves`); ``checkout_token_read_posix`` reads links, a
-#: FIFO and a loop (`gen_checkout_token_read`); ``location_stamps`` names
-#: devices by ``os.major``, which Windows' ``os`` lacks
-#: (`gen_location_stamps`).
+#: FIFO and a loop (`gen_checkout_token_read`); ``location_stamps`` and
+#: ``location_stamps_python`` name devices by ``os.major``, which Windows'
+#: ``os`` lacks (`gen_location_stamps`).
 POSIX_ONLY = frozenset(
     {
         "checkout_token_read_posix",
@@ -524,6 +533,7 @@ POSIX_ONLY = frozenset(
         "githead_posix",
         "gitconfig_file",
         "location_stamps",
+        "location_stamps_python",
         "gitconfig_tree",
         "gitconfig_legacy",
         "gitconfig_legacy_python",
@@ -531,6 +541,7 @@ POSIX_ONLY = frozenset(
         "location_spellings",
         "location_stamped",
         "origin_gitfiles_machine",
+        "origin_gitfiles_machine_python",
         "origin_gitfiles_darwin",
         "gitsystem_record",
         "gitsystem_record_python",

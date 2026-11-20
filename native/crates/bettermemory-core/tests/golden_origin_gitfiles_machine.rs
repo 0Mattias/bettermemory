@@ -1,6 +1,8 @@
 //! `origin_gitfiles_machine.jsonl` (class i, POSIX only): `_read_prefix`
 //! and `relative_to_root` over each case's tree in memory (`MemFs`) and
-//! written to a scratch directory (`StdFs`). And
+//! written to a scratch directory (`StdFs`); the same of
+//! `origin_gitfiles_machine_python.jsonl` (class ii, Python, POSIX only),
+//! the queries whose message is `os.stat`'s for a NUL in a path. And
 //! `origin_gitfiles_darwin.jsonl` (class iii, gated on the platform):
 //! `_spelled_as_git` and `relative_to_root` over a tree on disk, asked by
 //! names that differ from the stored ones by case and Unicode form.
@@ -18,6 +20,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 const MACHINE: &str = "origin_gitfiles_machine.jsonl";
+const MACHINE_PYTHON: &str = "origin_gitfiles_machine_python.jsonl";
 const DARWIN: &str = "origin_gitfiles_darwin.jsonl";
 const MEM_ROOT: &str = "/<scratch>";
 
@@ -263,10 +266,10 @@ fn mismatches<F: Fs>(fs: &F, case: &Value, root: &str, darwin: bool) -> Vec<Stri
         .collect()
 }
 
-#[test]
-fn machine_every_query_in_memory() {
-    let cases = cases_of(MACHINE);
-    let ledger = Ledger::new("golden_origin_gitfiles_machine", MACHINE);
+/// Every query of `file`'s trees in memory (`MemFs`).
+fn every_query_in_memory(file: &str) {
+    let cases = cases_of(file);
+    let ledger = Ledger::new("golden_origin_gitfiles_machine", file);
     let mut failures = Vec::new();
     let mut total = 0;
     for case in &cases {
@@ -277,14 +280,16 @@ fn machine_every_query_in_memory() {
     ledger.settle(total, &failures);
 }
 
-#[test]
-fn machine_every_query_on_disk() {
-    let cases = cases_of(MACHINE);
-    let scratch = Scratch::new("bm-ogf-machine");
+/// Every query of `file`'s trees written to a scratch directory
+/// (`StdFs`), under the file's gates.
+fn every_query_on_disk(file: &str, scratch_name: &str) {
+    let cases = cases_of(file);
+    let scratch = Scratch::new(scratch_name);
     if running_as_root(&scratch.0) {
         eprintln!("SKIPPED: a mode-000 folder is searchable here (root)");
         return;
     }
+    let ledger = Ledger::new("golden_origin_gitfiles_machine_disk", file);
     let mut failures = Vec::new();
     let mut total = 0;
     for (i, case) in cases.iter().enumerate() {
@@ -295,7 +300,27 @@ fn machine_every_query_on_disk() {
         failures.extend(mismatches(&StdFs, case, root.to_str().unwrap(), false));
     }
     assert!(total > 0, "no query checked");
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    ledger.settle(total, &failures);
+}
+
+#[test]
+fn machine_every_query_in_memory() {
+    every_query_in_memory(MACHINE);
+}
+
+#[test]
+fn machine_every_query_on_disk() {
+    every_query_on_disk(MACHINE, "bm-ogf-machine");
+}
+
+#[test]
+fn machine_python_every_query_in_memory() {
+    every_query_in_memory(MACHINE_PYTHON);
+}
+
+#[test]
+fn machine_python_every_query_on_disk() {
+    every_query_on_disk(MACHINE_PYTHON, "bm-ogf-machine-python");
 }
 
 #[test]

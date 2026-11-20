@@ -42,11 +42,11 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
-| `location_stamps` | `location_stamps.py` whole: `in_ticks`, `kept_in_ticks`, `stat_each`, `capture_ticks`, `_device_name` (macOS's `os.major`/`os.minor`, and Linux's under a CPython built against glibc or musl), `_drvfs` (the mount table read through `Fs`), `_init_stamps`, `filetime_ns`, `basic_info_ns` (FILE_BASIC_INFO through `Fs::basic_info`, declined by `StdFs`) | `location_stamps.jsonl`, `location_stamps_platform.jsonl` |
+| `location_stamps` | `location_stamps.py` whole: `in_ticks`, `kept_in_ticks`, `stat_each`, `capture_ticks`, `_device_name` (macOS's `os.major`/`os.minor`, and Linux's under a CPython built against glibc or musl), `_drvfs` (the mount table read through `Fs`), `_init_stamps`, `filetime_ns`, `basic_info_ns` (FILE_BASIC_INFO through `Fs::basic_info`, declined by `StdFs`) | `location_stamps.jsonl`, `location_stamps_python.jsonl`, `location_stamps_platform.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
-| `origin_gitfiles` | units 1 and 2 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`) and the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_darwin.jsonl` |
+| `origin_gitfiles` | units 1 and 2 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`) and the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`) | `gitobjects.jsonl`, `gitobjects_python.jsonl` |
 | `gitfile_rule` | units 1, 2a, 2b, 3 and 4 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl` |
@@ -1216,11 +1216,17 @@ under 3.11.15, 3.12.13 and 3.13.13 as checked by running the generator
 under each, and a digest of 4,000 seeded path triples drawn without a
 backslash or a drive, every function asked of each, and a digest of
 4,000 triples drawn from every piece, `_rebase` left out and a triple
-redrawn while `_release_bound` picks any other case asked of it) and
+redrawn while `_release_bound` picks any other case asked of it or
+`_path_under` would join through `ntpath` a path two separators begin
+that names no server and share, `_short_unc`: 3.11's `ntpath.splitdrive`
+reads no drive there, or a drive ending in a separator after which its
+`join` writes another, where 3.12's `splitroot` reads a UNC drive and
+`join` writes none) and
 `membership_records_paths_python.jsonl` (gated on the Python release: the
 84 cases `_release_bound` picks by input, an `ntpath` path a single
 separator or a separator and a colon begins, or holding `\\?\` or `\\.\`,
-and the digest of 4,000 triples drawn from every piece). The sweep's
+and the digest of 4,000 triples drawn from every piece, those joins
+with them). The sweep's
 generator is a 64-bit LCG with Knuth's MMIX constants, run alike in the
 test.
 
@@ -2310,6 +2316,7 @@ that Unicode too.
 | `golden_origin_gitfiles`: `origin_gitfiles_leaves_python_every_case` | `origin_gitfiles_leaves_python.jsonl` | ii (Python) |
 | `origin_gitfiles_kills` (12), `origin_gitfiles_robustness` (7) | none | i |
 | `golden_origin_gitfiles_machine`: `machine_every_query_in_memory`, `machine_every_query_on_disk` | `origin_gitfiles_machine.jsonl` | i |
+| `golden_origin_gitfiles_machine`: `machine_python_every_query_in_memory`, `machine_python_every_query_on_disk` | `origin_gitfiles_machine_python.jsonl` | ii (Python) |
 | `golden_origin_gitfiles_machine`: `darwin_every_query_on_disk` | `origin_gitfiles_darwin.jsonl` | iii |
 | `origin_gitfiles_machine_kills` (17), `origin_gitfiles_machine_robustness` (7) | none | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_every_case` | `capture_vocabulary.jsonl` | i |
@@ -4251,7 +4258,11 @@ on Linux that of the C library CPython was built against) and
 `tests/contract/gen_location_stamps.py` writes `location_stamps.jsonl`
 (34 KB, POSIX only: the generator's drvfs rows name devices by
 `os.major`, which Windows' `os` lacks; devices below 256 are named `0:N`
-by macOS and Linux alike, so the file holds on both) and
+by macOS and Linux alike, so the file holds on both),
+`location_stamps_python.jsonl` (POSIX only, gated on the Python release:
+the 4 `init` rows whose answer is the ValueError `os.stat` raises for a
+NUL in a path, "embedded null byte" in 3.11.15 and "stat: embedded null
+character in path" in 3.12.13, 3.13.13 and 3.14.10) and
 `location_stamps_platform.jsonl`: `_device_name` over the bounds of
 `dev_t`, NODEV and parts of 0xffffffff, in one section per encoding,
 each line `["section", name, provenance]` and then its rows. The
@@ -4278,7 +4289,7 @@ name. The generator patches `_WINDOWS`, `_LINUX`,
 or `_basic_info_calls`, so each row is a function of its data. Two sweeps
 are pinned as digests: `filetime_ns` over 20,000 SplitMix64 values and
 `in_ticks` over 20,000 SplitMix64 lists, regenerated by the Rust test.
-`golden_location_stamps` checks every row; `location_stamps_kills` holds
+`golden_location_stamps` checks every row of the three files; `location_stamps_kills` holds
 cases a plausible wrong port fails (ASCII-only splitting, no break at a
 lone `\r`, the dash searched from the start, the first `aname` match
 only, an unsigned `dev_t` on macOS, NODEV and a part of 0xffffffff
@@ -4726,15 +4737,20 @@ Decisions:
 
 Fixtures: `gen_origin_gitfiles_machine.py` writes
 `origin_gitfiles_machine.jsonl` (POSIX only, class i: one tree with
-files, folders, links, a FIFO and a mode-000 folder; 41 `relative_to_root`
+files, folders, links, a FIFO and a mode-000 folder; 39 `relative_to_root`
 queries by spelling, by the disk, with an unreadable root, with NULs and
 with no anchor; 19 `_read_prefix` queries at each bound of the length and
 of a read before it, a folder and a FIFO; an answer past 64 bytes is its
-length and SHA-256) and `origin_gitfiles_darwin.jsonl` (gated on the
+length and SHA-256), `origin_gitfiles_machine_python.jsonl` (POSIX only,
+gated on the Python release, class ii: the same tree with the 2
+`relative_to_root` queries whose answer is the ValueError `os.stat`
+raises for a NUL in a path, "embedded null byte" in 3.11.15 and "stat:
+embedded null character in path" in 3.12.13, 3.13.13 and 3.14.10) and
+`origin_gitfiles_darwin.jsonl` (gated on the
 platform, class iii: `_spelled_as_git` and `relative_to_root` over names
 that differ from the stored ones by case and by Unicode form, which
 macOS's default file system folds; the generator refuses a case-sensitive
-scratch on macOS, and the golden test skips one). The golden test asks the first file of `MemFs` and of
+scratch on macOS, and the golden test skips one). The golden test asks the first two files of `MemFs` and of
 `StdFs` over the same tree written to a scratch directory, the second of
 `StdFs` alone, since `MemFs` folds neither case nor form.
 

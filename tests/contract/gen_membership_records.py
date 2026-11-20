@@ -35,8 +35,11 @@ triple and a selector, answered by every function above, the answers
 written by `_answer_line` and joined, and ``o`` the SHA-256 of their
 UTF-8 (surrogates passed). The ungated file holds a posix sweep and an
 ``ntpath`` sweep marked ``"stable": true``, which leaves out `_rebase`
-and draws only triples whose other cases `_release_bound` passes; the
-gated file holds the full ``ntpath`` sweep. Recorded paths are
+and draws only triples whose other cases `_release_bound` passes and
+whose `_path_under` joins no path `_short_unc` reads (two leading
+separators naming no server and share, which 3.11's `ntpath.join`
+follows with a separator of its own); the gated file holds the full
+``ntpath`` sweep, those calls with it. Recorded paths are
 synthetic.
 """
 
@@ -170,6 +173,20 @@ def _nt_paths(f: str, args: list[Any]) -> list[str]:
     return []
 
 
+def _short_unc(p: str) -> bool:
+    """Whether `p` (backslashes only) begins with two separators but names
+    no server and share: an empty server (a third separator follows) or
+    share, or no separator after the server. 3.11's `ntpath.splitdrive`
+    reads no drive there, or a drive ending in a separator, after which
+    its `ntpath.join` writes another; from 3.12 `ntpath.splitroot` reads
+    the whole head as a UNC drive and `join` adds none."""
+    if p[:2] != "\\\\":
+        return False
+    server, _, rest = p[2:].partition("\\")
+    share = rest.partition("\\")[0]
+    return not (server and share)
+
+
 def _release_bound(f: str, args: list[Any]) -> bool:
     """Whether a release reads the case's ``ntpath`` input otherwise."""
     for p in _nt_paths(f, args):
@@ -184,6 +201,16 @@ def _release_bound(f: str, args: list[Any]) -> bool:
         ):
             return mr._flavour(args[1]) is ntpath or mr._flavour(args[2]) is ntpath
     return False
+
+
+def _short_unc_join(f: str, args: list[Any]) -> bool:
+    """Whether `_path_under` joins through ``ntpath`` with a path that
+    `_short_unc` reads: the stable sweep redraws such a triple. The
+    fixed cases are routed by `_release_bound` alone: none joins such a
+    path, and the other functions read one alike from 3.11 to 3.14."""
+    return f == "path_under" and any(
+        _short_unc(p.replace("/", "\\")) for p in _nt_paths(f, args)
+    )
 
 
 _KEYS = [None, ["1", "2", None], ["1", "2", "9"], ["1", "3", None], ["2", "2", None]]
@@ -368,7 +395,7 @@ def _sweep(nt: bool, stable: bool = False) -> tuple[int, str]:
         while True:
             a, b, c = _path(rng), _path(rng), _path(rng)
             if stable and any(
-                _release_bound(f, args)
+                _release_bound(f, args) or _short_unc_join(f, args)
                 for f, args in _sweep_cases(a, b, c)
                 if f != "rebase"
             ):

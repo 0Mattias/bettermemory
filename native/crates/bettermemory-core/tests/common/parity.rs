@@ -221,7 +221,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_real.json"
         | "store_real.sqlite" => &[Unicode, Platform],
         // `ntpath` before 3.13 reads a path one separator begins, or a
-        // separator then a colon, otherwise (`gen_membership_records`).
+        // separator then a colon, otherwise, and 3.11's `ntpath.join`
+        // writes a separator after two that name no server and share
+        // (`gen_membership_records`).
         "membership_records_paths_python.jsonl" => &[Python],
         // The tokenizer and `str.strip` past ASCII (`gen_search_dedup`).
         "search_dedup_unicode.jsonl" => &[Unicode],
@@ -276,6 +278,11 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `os.major` and `os.minor` are the platform's, and NODEV and a
         // number past `dev_t` the release's (`gen_location_stamps`).
         "location_stamps_platform.jsonl" => &[Python, Platform],
+        // The ValueError `os.stat` raises for a NUL in a path: "embedded
+        // null byte" in 3.11.15, "stat: embedded null character in path"
+        // in 3.12.13, 3.13 and 3.14 (`gen_location_stamps`,
+        // `gen_origin_gitfiles_machine`).
+        "location_stamps_python.jsonl" | "origin_gitfiles_machine_python.jsonl" => &[Python],
         "models_stores.jsonl" => &[Python, Sqlite, Pydantic],
         // `re`'s `\d` and `int` of a hunk count past ASCII or past 4,300
         // digits (`gen_origin_gitfiles`).

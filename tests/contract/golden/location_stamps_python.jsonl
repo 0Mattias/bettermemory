@@ -1,0 +1,5 @@
+{"fixture":"location_stamps_python","kinds":{"init":4}}
+["init",false,false,"/g",false,{"/g/description":"value","/g/info/exclude":["12","1","-5","0","0"]},{},["err","ValueError","stat: embedded null character in path"]]
+["init",false,false,"/g",false,{"/g/info/exclude":"value"},{},["err","ValueError","stat: embedded null character in path"]]
+["init",false,false,"/g",true,{"/g/commondir":"value"},{},["err","ValueError","stat: embedded null character in path"]]
+["init",true,true,"C:\\g",false,{"C:\\g\\description":"value"},{},["err","ValueError","stat: embedded null character in path"]]

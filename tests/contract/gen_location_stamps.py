@@ -1,5 +1,5 @@
 """Fixtures: `location_stamps.py` whole (``location_stamps.jsonl``,
-``location_stamps_platform.jsonl``).
+``location_stamps_python.jsonl``, ``location_stamps_platform.jsonl``).
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/location_stamps.rs``. This pins
@@ -40,6 +40,13 @@ header holding the counts:
   Windows, ``"nocalls"``, ``"nohandle"``, ``"invalid"``, ``"queryfail"``,
   or four FILETIMEs read.
 - ``["digest", what, seed, count, sha256]``: a sweep (`_sweep`).
+
+``location_stamps_python.jsonl`` holds, in the same form, the rows whose
+answer is the ValueError `os.stat` raises for a NUL in a path
+(`_release_bound`, the ``init`` rows whose stat raises): its message is
+the release's ("embedded null byte" in 3.11.15, "stat: embedded null
+character in path" in 3.12.13, 3.13 and 3.14), so the file is gated on
+the Python release and is POSIX only as the first is.
 
 A device of the drvfs rows is below 256, whose name is ``0:N`` under
 both Linux's and macOS's ``os.major``, so the file holds on either; the
@@ -579,7 +586,24 @@ def _basic_rows() -> list[list[Any]]:
     return rows
 
 
-def generate() -> dict[str, bytes]:
+def _release_bound(row: list[Any]) -> bool:
+    """Whether a row's answer is the message `os.stat` raises for a NUL in
+    a path (`_nul_message`), which is the release's: "embedded null byte"
+    in 3.11.15, "stat: embedded null character in path" in 3.12.13, 3.13
+    and 3.14 (`os`'s path converter names the call)."""
+    return row[-1] == ["err", "ValueError", _nul_message()]
+
+
+def _file(name: str, rows: list[list[Any]]) -> dict[str, bytes]:
+    kinds: dict[str, int] = {}
+    for row in rows:
+        kinds[row[0]] = kinds.get(row[0], 0) + 1
+    header = {"fixture": name, "kinds": kinds}
+    return {f"{name}.jsonl": jsonl([header, *rows])}
+
+
+def _rows(python: bool) -> list[list[Any]]:
+    """Every row, then those `_release_bound` picks (`python`) or not."""
     rows: list[list[Any]] = [["in", _ints(t), ls.in_ticks(t)] for t in _TIMES]
     with tempfile.TemporaryDirectory() as tmp:
         scratch = Path(tmp)
@@ -591,11 +615,17 @@ def generate() -> dict[str, bytes]:
     rows += _ft_rows()
     rows += _basic_rows()
     rows += _sweep()
-    kinds: dict[str, int] = {}
-    for row in rows:
-        kinds[row[0]] = kinds.get(row[0], 0) + 1
-    header = {"fixture": "location_stamps", "kinds": kinds}
-    return {"location_stamps.jsonl": jsonl([header, *rows])}
+    return [row for row in rows if _release_bound(row) == python]
+
+
+def generate() -> dict[str, bytes]:
+    return _file("location_stamps", _rows(False))
+
+
+def generate_python() -> dict[str, bytes]:
+    """``location_stamps_python.jsonl``: the rows whose answer is the NUL
+    message (`_release_bound`), gated on the Python release."""
+    return _file("location_stamps_python", _rows(True))
 
 
 _DEVICES = [

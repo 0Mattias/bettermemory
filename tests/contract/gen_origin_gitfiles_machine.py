@@ -1,5 +1,6 @@
 """Fixtures: the leaves of `origin_gitfiles` that read the machine
-(``origin_gitfiles_machine.jsonl``, ``origin_gitfiles_darwin.jsonl``).
+(``origin_gitfiles_machine.jsonl``, ``origin_gitfiles_machine_python.jsonl``,
+``origin_gitfiles_darwin.jsonl``).
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/origin_gitfiles/machine.rs``. This
@@ -25,7 +26,7 @@ answer a query:
 - ``{"sp": path, ...}`` (darwin file only): `_spelled_as_git(Path(p))`,
   ``"a"`` the answer's `str`, ``"n"`` true for None, or ``"e"`` the class.
 
-Gates. Both files are POSIX only (`generate.POSIX_ONLY`: links, FIFOs,
+Gates. All three are POSIX only (`generate.POSIX_ONLY`: links, FIFOs,
 modes). ``origin_gitfiles_machine.jsonl`` holds nothing that differs
 between macOS and Linux: no name differs from another by case or Unicode
 form, no ``..`` follows a non-folder (`check_parent_of_file`), no path
@@ -33,9 +34,14 @@ reaches 1,024 bytes. ``origin_gitfiles_darwin.jsonl`` is gated on the
 platform (`generate.PLATFORM_GATED`): `_spelled_as_git` reads ``F_GETPATH``
 on macOS alone and answers the root itself elsewhere, and its trees are
 asked by names that differ from the stored ones by case and by Unicode
-form, which macOS's default file system folds and Linux's does not. No
-answer depends on the Python release (`pathlib`'s parsing and
-`relative_to`, `os.lseek` and `os.read` answer alike from 3.11 to 3.14).
+form, which macOS's default file system folds and Linux's does not.
+``origin_gitfiles_machine_python.jsonl`` holds the machine tree again
+with the answers of ``origin_gitfiles_machine.jsonl``'s tree whose
+message is the ValueError `os.stat` raises for a NUL in a path
+(`_release_bound`): its text is the release's, so the file is gated on
+the Python release (`generate.PYTHON_GATED`) and POSIX only. No other
+answer depends on the release (`pathlib`'s parsing and `relative_to`,
+`os.lseek` and `os.read` answer alike from 3.11 to 3.14).
 No FIFO is opened by `_spelled_as_git`, whose blocking open would wait.
 """
 
@@ -293,10 +299,39 @@ def _run(trees: list[Tree], stem: str, check_folding: bool) -> list[dict[str, An
     return lines
 
 
-def generate() -> dict[str, bytes]:
+def _release_bound(answer: dict[str, Any]) -> bool:
+    """Whether an answer's message is the one `os.stat` raises for a NUL
+    in a path, which is the release's: "embedded null byte" in 3.11.15,
+    "stat: embedded null character in path" in 3.12.13, 3.13 and 3.14."""
+    try:
+        os.stat("x\x00y")
+    except ValueError as exc:
+        return answer.get("m") == _b(str(exc).encode("ascii"))
+    raise AssertionError("os.stat accepted a NUL")
+
+
+def _machine(python: bool) -> list[dict[str, Any]]:
+    """The machine trees, each holding the answers `_release_bound` picks
+    (`python`) or the others."""
     lines = _run(_machine_trees(), "ogf-machine", False)
+    return [
+        {**line, "q": [q for q in line["q"] if _release_bound(q) == python]}
+        for line in lines
+    ]
+
+
+def generate() -> dict[str, bytes]:
+    lines = _machine(False)
     header = {"fixture": "origin_gitfiles_machine", "cases": len(lines)}
     return {"origin_gitfiles_machine.jsonl": jsonl([header, *lines])}
+
+
+def generate_python() -> dict[str, bytes]:
+    """``origin_gitfiles_machine_python.jsonl``: the machine tree with the
+    answers whose message is the NUL one (`_release_bound`)."""
+    lines = _machine(True)
+    header = {"fixture": "origin_gitfiles_machine_python", "cases": len(lines)}
+    return {"origin_gitfiles_machine_python.jsonl": jsonl([header, *lines])}
 
 
 def generate_darwin() -> dict[str, bytes]:

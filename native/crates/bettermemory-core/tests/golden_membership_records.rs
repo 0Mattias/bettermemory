@@ -272,9 +272,25 @@ fn release_bound(p: &[u32]) -> bool {
     one_sep || holds("\\:") || holds("\\\\?\\") || holds("\\\\.\\")
 }
 
+/// Whether a path begins with two separators but names no server and
+/// share (the generator's `_short_unc`): 3.11's `ntpath.join` writes a
+/// separator after such a drive that 3.12's does not.
+fn short_unc(p: &[u32]) -> bool {
+    let bs = u32::from(b'\\');
+    let sep = |u: &u32| *u == bs || *u == u32::from(b'/');
+    if p.len() < 2 || !sep(&p[0]) || !sep(&p[1]) {
+        return false;
+    }
+    let mut parts = p[2..].split(sep);
+    let server = parts.next().unwrap_or_default();
+    let share = parts.next().unwrap_or_default();
+    server.is_empty() || share.is_empty()
+}
+
 /// The sweep: `n` path triples drawn from `seed`, every function asked.
 /// A `stable` sweep leaves out `rebase` and redraws a triple whose first
-/// path reads as `ntpath` and any of whose paths a release reads otherwise.
+/// path reads as `ntpath` and any of whose paths a release reads otherwise
+/// (`release_bound`) or `path_under` joins otherwise (`short_unc`).
 pub(crate) fn sweep(seed: u64, n: usize, nt: bool, stable: bool) -> String {
     let mut rng = Rng(seed);
     let mut answers: Vec<PyStr> = Vec::new();
@@ -284,7 +300,9 @@ pub(crate) fn sweep(seed: u64, n: usize, nt: bool, stable: bool) -> String {
             let (a, b, c) = (draw(&mut rng), draw(&mut rng), draw(&mut rng));
             if stable
                 && paths::flavour(&a) == Flavour::Windows
-                && [&a, &b, &c].iter().any(|p| release_bound(p))
+                && [&a, &b, &c]
+                    .iter()
+                    .any(|p| release_bound(p) || short_unc(p))
             {
                 continue;
             }

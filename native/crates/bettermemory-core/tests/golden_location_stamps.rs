@@ -1,5 +1,5 @@
-//! Every case of `location_stamps.jsonl` and `location_stamps_platform.jsonl`
-//! against `location_stamps`: `in_ticks`, `kept_in_ticks`, `_drvfs`,
+//! Every case of `location_stamps.jsonl`, `location_stamps_python.jsonl`
+//! and `location_stamps_platform.jsonl` against `location_stamps`: `in_ticks`, `kept_in_ticks`, `_drvfs`,
 //! `stat_each`, `_init_stamps`, `capture_ticks`, `filetime_ns`,
 //! `basic_info_ns`, the two sweeps by digest, and `_device_name` in each
 //! section of the second file, as the platform the section names answers.
@@ -9,6 +9,7 @@ mod common;
 use bettermemory_core::fsdata::{BasicInfo, Flavour, PyErr};
 use bettermemory_core::location_stamps::{self as ls, Machine, Platform, StampError};
 use common::location_stamps::{bytes_of, int, stat, sweep_times, table_of, SplitMix, TableFs};
+use common::parity::Ledger;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -257,6 +258,23 @@ fn every_case_answers_as_the_reference() {
         checked += 1;
     }
     common::assert_count(name, checked, rows.len() - 1);
+}
+
+/// `location_stamps_python.jsonl` (class ii, Python): the rows whose
+/// answer is the message `os.stat` raises for a NUL in a path, which is
+/// the release's.
+#[test]
+fn every_release_bound_case_answers_as_the_reference() {
+    let name = "location_stamps_python.jsonl";
+    let rows = common::jsonl(name);
+    let kinds = rows[0]["kinds"].as_object().unwrap();
+    let in_file: u64 = kinds.values().map(|v| v.as_u64().unwrap()).sum();
+    assert_eq!(in_file as usize, rows.len() - 1);
+    let mut ledger = Ledger::new("golden_location_stamps", name);
+    for (i, row) in rows[1..].iter().enumerate() {
+        ledger.case(format!("{name}:{i}"), || check(row));
+    }
+    ledger.finish(rows.len() - 1);
 }
 
 /// The encoding of `os.major` a section of the platform file names.

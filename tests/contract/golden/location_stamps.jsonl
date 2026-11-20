@@ -1,4 +1,4 @@
-{"fixture":"location_stamps","kinds":{"basic":7,"cap":27,"digest":2,"drvfs":128,"ft":11,"in":20,"init":38,"kept":84,"stat":6}}
+{"fixture":"location_stamps","kinds":{"basic":7,"cap":27,"digest":2,"drvfs":128,"ft":11,"in":20,"init":34,"kept":84,"stat":6}}
 ["in",[],false]
 ["in",["0"],false]
 ["in",["100"],true]
@@ -270,11 +270,8 @@
 ["init",false,false,"/g",false,{"/g/info/exclude":["12","1","-5","0","0"]},{},[["info/exclude","12","-5","0","0"]]]
 ["init",false,false,"/g",false,{"/g/description":["11","1","1700000000123456700","1700000001000000000","73"]},{},[["description","11","1700000000123456700","1700000001000000000","73"]]]
 ["init",false,false,"/g",false,{},{},[]]
-["init",false,false,"/g",false,{"/g/description":"value","/g/info/exclude":["12","1","-5","0","0"]},{},["err","ValueError","stat: embedded null character in path"]]
-["init",false,false,"/g",false,{"/g/info/exclude":"value"},{},["err","ValueError","stat: embedded null character in path"]]
 ["init",false,false,"/g",true,{"/g/commondir":["11","1","1700000000123456700","1700000001000000000","73"],"/g/description":["12","1","-5","0","0"]},{},[["commondir","11","1700000000123456700","1700000001000000000","73"]]]
 ["init",false,false,"/g",true,{"/g/description":["12","1","-5","0","0"]},{},[]]
-["init",false,false,"/g",true,{"/g/commondir":"value"},{},["err","ValueError","stat: embedded null character in path"]]
 ["init",true,false,"C:\\g",false,{"C:\\g\\description":["11","1","1700000000123456700","1700000001000000000","73"]},{},[["description","11","1700000000123456700","1700000001000000000","73"]]]
 ["init",true,false,"C:",false,{"C:description":["11","1","1700000000123456700","1700000001000000000","73"],"C:info\\exclude":["18446744073709551615","1","-9223372036854775808","9223372036854775807","0"]},{},[["description","11","1700000000123456700","1700000001000000000","73"],["info/exclude","18446744073709551615","-9223372036854775808","9223372036854775807","0"]]]
 ["init",true,false,"C:/g/",true,{"C:/g/commondir":["11","1","1700000000123456700","1700000001000000000","73"]},{},[["commondir","11","1700000000123456700","1700000001000000000","73"]]]
@@ -301,7 +298,6 @@
 ["init",true,true,"C:/g/",true,{"C:/g/commondir":["11","1","1700000000123456700","1700000001000000000","73"]},{"C:/g/commondir":"fail"},[]]
 ["init",true,true,"\\\\s\\sh",true,{"\\\\s\\sh\\commondir":["11","1","1700000000123456700","1700000001000000000","73"]},{"\\\\s\\sh\\commondir":["133500000001234567","0","-9223372036854775808","9223372036854775807"]},[["commondir","11","1700000000123456700","910692730085477580700","73"]]]
 ["init",true,true,"\\\\s\\sh",true,{"\\\\s\\sh\\commondir":["11","1","1700000000123456700","1700000001000000000","73"]},{"\\\\s\\sh\\commondir":"fail"},[]]
-["init",true,true,"C:\\g",false,{"C:\\g\\description":"value"},{},["err","ValueError","stat: embedded null character in path"]]
 ["ft","0","-11644473600000000000"]
 ["ft","1","-11644473599999999900"]
 ["ft","-1","-11644473600000000100"]
