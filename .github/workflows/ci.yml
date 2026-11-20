@@ -131,8 +131,14 @@ jobs:
       - name: Type check
         run: uv run mypy
 
+      # Two workers (pytest-xdist): each test has its own store, keys and
+      # home, so workers run side by side with the same counts as one
+      # process (CONTRIBUTING.md). Two and not one per core: the runners
+      # have three or four cores, and the tests that hold a time bound need
+      # the headroom. pytest-cov combines the workers' coverage before the
+      # floor is read.
       - name: Test
-        run: uv run pytest --cov=bettermemory --cov-report=term-missing --cov-fail-under=80 -q
+        run: uv run pytest --cov=bettermemory --cov-report=term-missing --cov-fail-under=80 -q -n 2
 
       # The UNC (\\localhost\C$\...), verbatim (\\?\C:\...) and device
       # (\\.\C:\...) path opens in tests/test_sqlite_uri.py run only on
