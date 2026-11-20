@@ -169,11 +169,13 @@ fn a_large_prefix_reads_in_linear_time() {
     );
 }
 
-/// A FIFO named as the root waits for a writer, as the reference's
-/// `os.open(root, O_RDONLY | O_CLOEXEC)` does, and answers once one opens.
+/// A FIFO named as the root. On macOS the reference opens the root
+/// (`os.open(root, O_RDONLY | O_CLOEXEC)`), so the answer waits for a
+/// writer and comes once one opens. Elsewhere the reference answers the
+/// root itself and opens nothing, so the answer comes at once.
 #[cfg(unix)]
 #[test]
-fn a_fifo_root_waits_for_a_writer() {
+fn a_fifo_root_waits_for_a_writer_on_macos_alone() {
     use bettermemory_core::fsdata::StdFs;
     use std::os::unix::ffi::OsStrExt;
     let dir = std::env::temp_dir().join(format!("bm-ogf-fifo-{}", std::process::id()));
@@ -203,15 +205,24 @@ fn a_fifo_root_waits_for_a_writer() {
             .custom_flags(bettermemory_sys::O_NONBLOCK)
             .open(&fifo)
     };
-    let answer = got.recv_timeout(Duration::from_secs(60));
+    // An early answer is the reader's one message, so nothing more is
+    // waited for after it.
+    let late = if early.is_ok() {
+        None
+    } else {
+        Some(got.recv_timeout(Duration::from_secs(60)))
+    };
     drop(writer);
     reader.join().unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
-    assert!(early.is_err(), "answered before a writer opened: {early:?}");
-    let answer = answer.expect("an answer once a writer opened");
     if cfg!(target_os = "macos") {
+        assert!(early.is_err(), "answered before a writer opened: {early:?}");
+        let answer = late
+            .expect("no early answer on macOS")
+            .expect("an answer once a writer opened");
         assert!(matches!(answer, Ok(Some(_))), "{answer:?}");
     } else {
+        let answer = early.expect("an answer at once: nothing is opened off macOS");
         assert_eq!(answer, Ok(Some(fifo.as_os_str().as_bytes().to_vec())));
     }
 }

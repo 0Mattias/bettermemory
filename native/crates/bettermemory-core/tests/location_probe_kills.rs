@@ -294,14 +294,20 @@ fn an_empty_reason_leaves_the_state_alone() {
     assert_eq!(got, "cwd unreachable");
 }
 
-/// Errnos numbered above 63 on macOS or Linux, whose text both share.
+/// Errnos numbered above 63 on macOS or Linux. EHOSTDOWN's text both
+/// share. ESTALE's does not: macOS says "Stale NFS file handle" and glibc
+/// says "Stale file handle".
 #[cfg(unix)]
 #[test]
 fn the_machine_spells_errnos_of_large_numbers() {
-    assert_eq!(
-        StdHost.strerror("ESTALE").as_deref(),
-        Some("Stale NFS file handle")
-    );
+    let stale = StdHost.strerror("ESTALE");
+    if cfg!(target_os = "macos") {
+        assert_eq!(stale.as_deref(), Some("Stale NFS file handle"));
+    } else if cfg!(target_os = "linux") {
+        assert_eq!(stale.as_deref(), Some("Stale file handle"));
+    } else {
+        assert!(stale.is_some());
+    }
     assert_eq!(
         StdHost.strerror("EHOSTDOWN").as_deref(),
         Some("Host is down")
