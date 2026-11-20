@@ -421,6 +421,63 @@ pub fn kernel_path(file: &File) -> io::Result<Vec<u8>> {
     }
 }
 
+/// `os.strerror(code)` on POSIX: the C library's text for an error
+/// number, read with the thread-safe `strerror_r` (CPython calls
+/// `strerror`, which gives the same text). Every number has a text:
+/// macOS, glibc and musl each write their own for a number they define
+/// no error for (`Unknown error: 1000`, `Unknown error 1000`, `No error
+/// information`), answering EINVAL beside it. None where the text does
+/// not fit the buffer or is no UTF-8, never a cut or guessed one. The
+/// texts are the C locale's in both processes: CPython takes `LC_CTYPE`
+/// alone from the environment, and a Rust process sets no locale.
+#[cfg(unix)]
+pub fn strerror(code: i32) -> Option<String> {
+    let mut buf = [0u8; 1024];
+    // SAFETY: `buf` is a live, writable buffer of the length passed; the
+    // XSI `strerror_r` (glibc's `__xpg_strerror_r`, which `libc` links
+    // there) writes at most that many bytes into it, its NUL included, and
+    // touches no other memory of this process. Any `code` is valid.
+    let status = unsafe { libc::strerror_r(code, buf.as_mut_ptr().cast(), buf.len()) };
+    if status == libc::ERANGE {
+        return None;
+    }
+    let end = buf.iter().position(|&b| b == 0)?;
+    if end == 0 {
+        return None;
+    }
+    String::from_utf8(buf[..end].to_vec()).ok()
+}
+
+/// Elsewhere `os.strerror` is the C runtime's table, which is not
+/// ported: None.
+#[cfg(not(unix))]
+pub fn strerror(_code: i32) -> Option<String> {
+    None
+}
+
+/// `socket.gethostname()` on POSIX: `gethostname(2)` into a buffer of
+/// 1,024 bytes, as CPython's `socket_gethostname` sizes it, the answer
+/// cut at its first NUL. `Err` where the call fails (the reference's
+/// OSError).
+#[cfg(unix)]
+pub fn hostname() -> io::Result<Vec<u8>> {
+    let mut buf = [0u8; 1024];
+    // SAFETY: `buf` is a live, writable buffer of the length passed less
+    // one, so the call writes inside it and the last byte stays NUL.
+    let status = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len() - 1) };
+    if status < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    Ok(buf[..end].to_vec())
+}
+
+/// Not POSIX: the Windows call is not ported; the error is Unsupported.
+#[cfg(not(unix))]
+pub fn hostname() -> io::Result<Vec<u8>> {
+    Err(io::Error::from(io::ErrorKind::Unsupported))
+}
+
 #[cfg(test)]
 mod tests {
     use super::fsync;
@@ -547,6 +604,51 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("remove");
     }
     use std::io::Write;
+
+    /// `strerror` against CPython 3.13's `os.strerror` of the same
+    /// numbers: a named errno, errno 0, a hole in the list where the
+    /// platform has one, and numbers past the list, negative ones too
+    /// (macOS with CPython 3.13.13; glibc 2.36 and 2.39; musl).
+    #[cfg(unix)]
+    #[test]
+    fn strerror_spells_every_number_as_the_c_library() {
+        use super::strerror;
+        assert_eq!(
+            strerror(libc::ENOENT).as_deref(),
+            Some("No such file or directory")
+        );
+        assert_eq!(strerror(libc::EHOSTDOWN).as_deref(), Some("Host is down"));
+        let texts: &[(i32, &str)] = if cfg!(target_os = "macos") {
+            &[
+                (0, "Undefined error: 0"),
+                (1000, "Unknown error: 1000"),
+                (-1, "Unknown error: -1"),
+                (i32::MAX, "Unknown error: 2147483647"),
+            ]
+        } else if cfg!(all(target_os = "linux", target_env = "gnu")) {
+            &[
+                (0, "Success"),
+                (41, "Unknown error 41"),
+                (1000, "Unknown error 1000"),
+                (-1, "Unknown error -1"),
+                (i32::MAX, "Unknown error 2147483647"),
+            ]
+        } else if cfg!(all(target_os = "linux", target_env = "musl")) {
+            &[(0, "No error information"), (1000, "No error information")]
+        } else {
+            &[]
+        };
+        for &(code, text) in texts {
+            assert_eq!(strerror(code).as_deref(), Some(text), "{code}");
+        }
+    }
+
+    /// Off POSIX nothing is ported: no text for any number.
+    #[cfg(not(unix))]
+    #[test]
+    fn strerror_is_not_ported_elsewhere() {
+        assert_eq!(super::strerror(2), None);
+    }
 
     #[test]
     fn a_written_file_and_its_directory_sync() {

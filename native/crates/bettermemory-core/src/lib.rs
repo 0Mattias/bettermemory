@@ -55,6 +55,8 @@
 //! - [`location_stamps`]: a git directory's init stamps and whether its
 //!   file system keeps FILETIME's ticks (the whole module);
 //! - [`githead`]: HEAD and refs read from a git directory's files;
+//! - [`location_probe`]: the hook client's namespace probe (the cwd's
+//!   state, its view spelling, the host's name);
 //! - [`gitobjects`]: git objects read from a repository's files, its
 //!   first unit (the byte parsers);
 //! - [`fsdata`]: the file system as the config readers ask it, as data;
@@ -101,6 +103,7 @@ pub mod identity;
 pub mod in_force;
 pub mod json;
 pub mod lexicon;
+pub mod location_probe;
 pub mod location_stamps;
 pub mod log;
 pub mod machine;

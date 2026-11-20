@@ -48,6 +48,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `origin_gitfiles` | units 1 and 2 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`) and the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
+| `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`) | `gitobjects.jsonl`, `gitobjects_python.jsonl` |
 | `gitfile_rule` | units 1, 2a, 2b, 3 and 4 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only) |
@@ -2336,6 +2337,10 @@ that Unicode too.
 | `golden_githead`: `githead_every_case` (both flavours) | `githead.jsonl` | i |
 | `golden_githead`: `githead_posix_every_case` (unix) | `githead_posix.jsonl` | i; os elsewhere (`githead_not_posix`) |
 | `githead_robustness` (7), `githead_stdfs` (2 on unix, 1 elsewhere) | none | i |
+| `golden_location_probe`: `location_probe_every_query` (unix) | `location_probe.jsonl` | i |
+| `golden_location_probe`: `location_probe_loops` (unix) | `location_probe_python.jsonl` | ii (Python) |
+| `golden_location_probe`: `location_probe_errnos` (unix) | `location_probe_errno.jsonl` | iii |
+| `location_probe_kills` (18 on unix, 14 elsewhere), `location_probe_robustness` (2) | none | i |
 | `golden_gitobjects`: `gitobjects_every_case` | `gitobjects.jsonl` | i |
 | `golden_gitobjects`: `gitobjects_python_every_case` | `gitobjects_python.jsonl` | ii (Python) |
 | `gitobjects_kills` (13), `gitobjects_robustness` (5) | none | i |
@@ -7142,6 +7147,140 @@ other 11, which native reproduces:
 - A `config` naming `extensions.refStorage = reftable` beside files-backend
   refs: git reads no files there; the reference reads no config
   (`head_ref`, 1080). A real reftable repository's `HEAD` declines.
+
+## The hook client's namespace probe (`_location_probe.py`)
+
+`_location_probe.py` is the probe every hook posts before anything else:
+the cwd's state, its spelling as a view records it, its device and inode,
+and the host's name.
+
+### The module by function
+
+| Function | Lines | What it needs from the machine | Status |
+| --- | --- | --- | --- |
+| `GONE_ERRNOS`, `GONE_WINERRORS`, `path_gone`, `path_missing` | 40-106 | nothing (an exception as data) | built, `gitfile_rule::probe` |
+| `_path_state` | 109-123 | `os.stat`, `os.strerror` | built, `location_probe::path_state` |
+| `_VIEW_PATHS`, `view_path` | 128-153 | `realpath` (`lstat`, `readlink`), `os.getcwd` | built (POSIX), `location_probe::view_path` |
+| `_hostname` | 156-160 | `socket.gethostname` | built, `location_probe::hostname` |
+| `probe` | 163-187 | all of the above | built (POSIX), `location_probe::probe` |
+
+The whole module is about 200 lines of Rust, so it is built whole.
+
+### Where the code lives
+
+`location_probe` is a module of its own, not part of
+`gitfile_rule/probe.rs`. `path_gone` is a leaf every reader of a path
+shares (membership, location, origin, the gitfile rule), and it reads an
+exception, never the machine. `_path_state`, `view_path` and `probe` read
+the file system, the working directory and the host, and they are the
+hook client's own entry point, which `location` imports from it. Keeping
+them apart leaves the gitfile rule free of a host trait it never asks.
+
+### What each function reproduces
+
+- `path_state` is `os.stat` through `Fs::stat_numbered`, whose error
+  carries the errno's number beside its name (`fsdata::Numbered`; `StdFs`
+  fills it on POSIX, an error made in memory has the name alone). A
+  ValueError (a NUL in the path) is gone, with CPython 3.13's text `stat:
+  embedded null character in path`. An OSError is gone or unreachable by
+  `path_gone`, its detail `os.strerror` of its errno, asked of the host by
+  the number (`Host::strerror_code`), any number, or by the name where
+  the error has no number (`Host::strerror`). Errno 0 is `str(exc)` of
+  the OSError CPython's `os.stat` raises then, `OSError(0, "Error",
+  path)`: `[Errno 0] Error: ` and the path's `repr`
+  (`gitconfig::paths::repr_text`).
+- `view_path` is `realpath` (the crate's `fsdata::realpath`, 3.13's
+  walk), else `abspath` where `realpath` raised, else the path as given;
+  then the trailing separators are stripped unless nothing would be left.
+  `os.getcwd()` is the argument `cwd`: `None` stands for a `getcwd` that
+  raises, which reaches only a relative path (`posixpath.realpath` and
+  `abspath` ask it for nothing else). A relative path with `cwd` `None`
+  is answered as given (both calls raise OSError).
+- `hostname` is `None` where the host's call fails or answers empty.
+- `probe` answers `Probe { cwd, answer }`; `answer` is `Indeterminate`
+  with the detail (`cwd <state>: <why>`), the cwd spelled by `view_path`,
+  or `Present` with the device, the inode and the host's name, the cwd
+  resolved by `realpath` (as given where `getcwd` raises). The dict's keys
+  (`v`, `probe`, `cwd`, then `state` and `detail` or `cwd_object` and
+  `hostname`) are fixed by the variant; writing it as JSON is left to the
+  caller.
+
+### Decisions
+
+- A path is bytes, as `os.fsencode` spells the reference's `str`. A
+  `str` that does not encode (a lone surrogate below U+DC80) raises
+  UnicodeEncodeError in the reference, read as gone with the codec's
+  text; no byte path spells it, so it is out of this port's domain.
+- The host is a small trait (`Host`): `hostname`, `strerror` (by name)
+  and `strerror_code` (by number; by default the text of the number's
+  name, for a host that knows names only). `StdHost` asks `gethostname(2)`
+  through `bettermemory_sys::hostname` (CPython's 1,024-byte buffer, cut
+  at the first NUL) and the C library's text through
+  `bettermemory_sys::strerror`, a safe wrapper over the XSI
+  `strerror_r` (unix; None elsewhere). Every number has a text there, a
+  number the C library defines no errno for included (`Unknown error:
+  1000` on macOS, `Unknown error 1000` with glibc, `No error information`
+  with musl), as `os.strerror` answers; a name is turned into its number
+  with `bettermemory_sys::errno_name`.
+- The number travels beside `OsError` (`Fs::stat_numbered`, defaulting
+  to `Fs::stat` with no number) rather than in it: `OsError` is built by
+  struct literal across units, and a field would break each of them.
+- Declines, never guesses: an OSError with no errno at all, neither a
+  number nor a name (`os.stat` never raises one: CPython raises every
+  failure with the errno it read, 0 included; its `str(exc)` would be
+  its arguments', which no error here holds), a number or name the host
+  has no text for (`os.strerror` off POSIX is not ported), a present stat
+  with no device or inode (Windows), and the Windows flavour
+  (`ntpath.realpath` and the drive rule of `view_path`) all answer
+  `Declined`.
+- No regular expression is used.
+
+### Reference findings (reproduced)
+
+- Where `getcwd` raises and a relative cwd is present, `probe` keeps the
+  cwd as given, trailing separator included, while `view_path` of the
+  same path strips it: `probe("d/")` answers `cwd` `d/` and `view_path`
+  answers `d` (`location_probe.jsonl`, the `g` rows).
+- A path naming a file with a trailing separator is gone (ENOTDIR), and
+  its view is the file's path: `<root>/f/` probes as `cwd gone: Not a
+  directory` with `cwd` `<root>/f`.
+
+### Fixtures and tests
+
+`tests/contract/gen_location_probe.py` writes real trees (folders,
+files, links, a mode-000 folder, a name past `NAME_MAX`) and asks
+`view_path` and `probe` of each query, with `os.stat` raising an injected
+errno, `os.getcwd` raising, or `socket.gethostname` patched as the row
+states. The device and inode are written `stat` (checked against
+`os.stat` of the resolved cwd). The patched `os.stat` raises what
+CPython's own raises, `OSError(errno, strerror, path)` with `Error` for
+errno 0, by the errno's name (`e`) or number (`n`). The files are POSIX
+only. In `location_probe.jsonl` errnos whose `strerror` text differs
+between macOS and Linux are left out, and its `n` rows are errno 0 under
+paths `repr` spells in each of its ways (quotes, a tab, a lone
+surrogate, a format character; a backslash only in
+`location_probe_kills`, since the host-fact guard reads its escaped pair
+in a fixture as a UNC prefix).
+`location_probe_errno.jsonl` raises
+every number from 0 to 133 (Linux's last errno; macOS's is 106 or 107),
+-1, 1000 and 2**31 - 1, so a number the C library defines no errno for,
+holes in its list included, is pinned too; its numbers and texts are the
+platform's, so it is class iii, strict on darwin-arm64 against the
+committed file and on every platform against the file its own reference
+writes (the parity job's second step). The link loops and the paths
+holding a NUL go in `location_probe_python.jsonl` (3.11's `realpath`
+walks a loop otherwise, and words a NUL's ValueError "embedded null
+byte");
+`location_probe_kills` walks the same loops in memory, so the native
+answer for a loop is checked on every runner. `location_probe_kills` also
+pins errno 0's text, a number spelled by number and a name alone by
+name, and the machine's text for numbers outside `errno_name`'s list and
+past the platform's list (macOS and glibc); `bettermemory-sys` pins
+`strerror` against `os.strerror` (macOS, glibc, musl).
+`golden_location_probe` writes each tree to a scratch folder and answers
+through `StdFs` and the machine's `strerror`, skipping a case whose
+mode-000 folder can still be listed (a root user);
+`location_probe_kills` and `location_probe_robustness` run in memory.
 
 ## Git objects read from a repository's files (`gitobjects.py`)
 

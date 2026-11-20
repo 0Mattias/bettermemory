@@ -70,6 +70,7 @@ from . import (
     gen_gitsystem_probe,
     gen_gitsystem_record,
     gen_githead,
+    gen_location_probe,
     gen_gitobjects,
     gen_gitfile_leaves,
     gen_json,
@@ -208,6 +209,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "durability_unicode": gen_durability.generate_unicode,
     "verify_status": gen_verify_status.generate,
     "githead": gen_githead.generate,
+    "location_probe": gen_location_probe.generate,
+    "location_probe_python": gen_location_probe.generate_python,
+    "location_probe_errno": gen_location_probe.generate_errno,
     "gitobjects": gen_gitobjects.generate,
     "gitobjects_python": gen_gitobjects.generate_python,
     "githead_posix": gen_githead.generate_posix,
@@ -374,6 +378,9 @@ PYTHON_VERSION = "3.13.13"
 #: byte" in 3.11.15 and "stat: embedded null character in path" in
 #: 3.12.13, 3.13 and 3.14 (`gen_location_stamps`,
 #: `gen_origin_gitfiles_machine`).
+#: ``location_probe_python`` probes link loops, which 3.11's `realpath`
+#: walks otherwise, and paths holding a NUL, whose ValueError text 3.11
+#: words otherwise (`gen_location_probe`).
 PYTHON_GATED = frozenset(
     {
         "models_text_platform",
@@ -410,6 +417,7 @@ PYTHON_GATED = frozenset(
         "gitfile_pin_text_python",
         "gitobjects_python",
         "machine_identity_python",
+        "location_probe_python",
     }
 )
 
@@ -454,6 +462,8 @@ def pydantic_core_version() -> str:
 #: ``location_stamps_platform`` makes the running platform's device names
 #: and carries the others' as recorded (`gen_location_stamps`); on Windows
 #: it adds a section of its own.
+#: ``location_probe_errno`` raises every errno number, whose meaning and
+#: whose text (the C library's `strerror`) are the platform's.
 PLATFORM = "darwin-arm64"
 PLATFORM_GATED = frozenset(
     {
@@ -467,6 +477,7 @@ PLATFORM_GATED = frozenset(
         "mcp",
         "origin_gitfiles_darwin",
         "hooks",
+        "location_probe_errno",
     }
 )
 
@@ -514,7 +525,9 @@ PLATFORM_GATED = frozenset(
 #: (`gen_gitfile_leaves`); ``checkout_token_read_posix`` reads links, a
 #: FIFO and a loop (`gen_checkout_token_read`); ``location_stamps`` and
 #: ``location_stamps_python`` name devices by ``os.major``, which Windows'
-#: ``os`` lacks (`gen_location_stamps`).
+#: ``os`` lacks (`gen_location_stamps`); ``location_probe``, ``location_probe_python``
+#: and ``location_probe_errno`` probe trees with links and a mode-000
+#: folder, the last raising POSIX errno numbers (`gen_location_probe`).
 POSIX_ONLY = frozenset(
     {
         "checkout_token_read_posix",
@@ -531,6 +544,9 @@ POSIX_ONLY = frozenset(
         "store_records_e",
         "store_rows_written",
         "githead_posix",
+        "location_probe",
+        "location_probe_python",
+        "location_probe_errno",
         "gitconfig_file",
         "location_stamps",
         "location_stamps_python",

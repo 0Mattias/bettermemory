@@ -146,6 +146,36 @@ pub enum BasicInfo {
     Times([i64; 4]),
 }
 
+/// An [`OsError`] with its errno as the number the OS gave
+/// (`OSError.errno`): every number, where [`OsError::errno`] names only
+/// those the readers tell apart. No fixture records a number, which
+/// differs between platforms; `os.strerror(exc.errno)` and `str(exc)`
+/// read it. `code` is None where the number is not known: an error made
+/// in memory (named alone), a ValueError, and Windows, whose code is the
+/// error's `winerror`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Numbered {
+    pub error: OsError,
+    pub code: Option<i32>,
+}
+
+impl From<OsError> for Numbered {
+    fn from(error: OsError) -> Numbered {
+        Numbered { error, code: None }
+    }
+}
+
+impl Numbered {
+    /// The error [`StdFs`] raises for an `io::Error`: its class and name
+    /// as for every reader, and on POSIX its raw code, the errno.
+    pub fn of_io(error: &std::io::Error) -> Numbered {
+        Numbered {
+            error: os_error(error),
+            code: error.raw_os_error().filter(|_| cfg!(unix)),
+        }
+    }
+}
+
 /// The kind of a file, from its mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -366,6 +396,12 @@ pub trait Fs {
     }
     /// `os.stat(path)`: links followed.
     fn stat(&self, path: &[u8]) -> Result<StatResult, OsError>;
+    /// [`Fs::stat`] with the errno's number ([`Numbered`]), for a reader
+    /// that spells any errno's text. By default none: the error as
+    /// [`Fs::stat`] names it; `StdFs` carries the number on POSIX.
+    fn stat_numbered(&self, path: &[u8]) -> Result<StatResult, Numbered> {
+        self.stat(path).map_err(Numbered::from)
+    }
     /// `os.lstat(path)` in full: a final link is described itself. The
     /// kind alone is [`Fs::lstat`].
     fn lstat_result(&self, path: &[u8]) -> Result<StatResult, OsError>;
@@ -683,8 +719,12 @@ impl Fs for StdFs {
     }
 
     fn stat(&self, path: &[u8]) -> Result<StatResult, OsError> {
-        let path = native_path(path).map_err(|_| OsError::value())?;
-        let meta = std::fs::metadata(path).map_err(|e| os_error(&e))?;
+        self.stat_numbered(path).map_err(|raised| raised.error)
+    }
+
+    fn stat_numbered(&self, path: &[u8]) -> Result<StatResult, Numbered> {
+        let path = native_path(path).map_err(|_| Numbered::from(OsError::value()))?;
+        let meta = std::fs::metadata(path).map_err(|e| Numbered::of_io(&e))?;
         Ok(stat_of(&meta))
     }
 

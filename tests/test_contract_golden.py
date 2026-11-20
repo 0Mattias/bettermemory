@@ -168,6 +168,33 @@ def test_the_host_fact_guard(data: bytes, caught: bool) -> None:
     assert (host_fact(data) is not None) is caught
 
 
+def test_the_errno_generator_names_the_errno_its_numbers_must_run_past(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Where the platform's `errno` module names the last number of
+    ``ERRNO_NUMBERS``'s run from 0 (133, as CPython 3.14 on Linux names
+    EHWPOISON), the generator stops and says what to change.
+
+    The platform's table is replaced, not added to, by its numbers below
+    that one and that one: on Windows `errno` names the Winsock errnos
+    too, from 10004 up, so there the last errno is one of those."""
+    import errno
+    import re
+
+    from tests.contract.gen_location_probe import ERRNO_NUMBERS, generate_errno
+
+    end = next(n for n in range(2**16) if n + 1 not in ERRNO_NUMBERS)
+    below = {n: name for n, name in errno.errorcode.items() if n < end}
+    monkeypatch.setattr(errno, "errorcode", {**below, end: "ELAST"})
+    want = (
+        f"ERRNO_NUMBERS must run past this platform's last errno, {end}"
+        f" (ELAST), and lacks {end + 1}: extend its range to range({end + 2})"
+        " and regenerate location_probe_errno.jsonl"
+    )
+    with pytest.raises(RuntimeError, match=f"^{re.escape(want)}$"):
+        generate_errno()
+
+
 def test_golden_files_stay_small() -> None:
     total = sum(p.stat().st_size for p in GOLDEN.iterdir() if p.is_file())
     # 5.6 MB at N2b: the stores search_store.jsonl rebuilds joined the set.
