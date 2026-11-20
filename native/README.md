@@ -55,7 +55,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
-| `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`) | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl` |
+| `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`) | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
@@ -1199,6 +1199,20 @@ Decisions:
   `str.lower`). On Windows it calls `LCMapStringEx`, which is not ported:
   `_dir_key` with the host's `ntpath` on Windows is left for the unit
   that wires the host in.
+- That is a known difference of the Windows build, not fixed here. This
+  build's `ntpath.normcase` answers as CPython does on a POSIX host. On
+  a Windows host CPython asks the OS, and this build does not, so on
+  Windows a folder key (`_dir_key` under `ntpath`) of a name holding
+  U+0130 (LATIN CAPITAL LETTER I WITH DOT ABOVE) differs from the
+  reference's there: the reference keeps U+0130 where this build writes
+  `i` and U+0307 (seen on the Windows runner). A capital sigma at the
+  end of a word (after a cased letter and before none) is reachable in
+  the `ntpath` digests: `str.lower` writes final sigma U+03C2 there,
+  and `LCMapStringEx`, which lowers each letter alone, is expected to
+  write U+03C3; no Windows run has shown that row alone. Equally,
+  `_rebase` from a root read with `ntpath` makes paths absolute on a
+  Windows host through `_getfullpathname`, which reads the process's own
+  drive and folder, where this build asks `os.getcwd()` as off Windows.
 - `commonpath`, named in the plan, is read by no function of this unit
   and is not added.
 
@@ -1215,26 +1229,33 @@ Reference findings (reproduced, pinned):
 - `_same_path("/a\\", "/a")` is false: a POSIX spelling trims `/` only.
 
 Fixtures: `gen_membership_records.py` writes
-`membership_records_paths.jsonl` (not gated: 309 cases, each the same
+`membership_records_paths.jsonl` (not gated: 308 cases, each the same
 under 3.11.15, 3.12.13 and 3.13.13 as checked by running the generator
-under each, and a digest of 4,000 seeded path triples drawn without a
-backslash or a drive, every function asked of each, and a digest of
-4,000 triples drawn from every piece, `_rebase` left out and a triple
+under each and on every host, and a digest of 4,000 seeded path triples
+drawn without a backslash or a drive, every function asked of each),
+`membership_records_paths_python.jsonl` (gated on the Python release: the
+69 cases `_release_bound` picks by input, an `ntpath` path a single
+separator or a separator and a colon begins, or holding `\\?\` or `\\.\`)
+and `membership_records_paths_platform.jsonl` (gated on the platform and
+the Python release: the 16 cases `_host_bound` picks by input, `_dir_key`
+under `ntpath` of a path past ASCII and `_rebase` from a root read with
+`ntpath`, whose reference answer follows the host as above, and the two
+`ntpath` digests: one of 4,000 triples drawn from every piece, `_rebase` left out and a triple
 redrawn while `_release_bound` picks any other case asked of it or
 `_path_under` would join through `ntpath` a path two separators begin
 that names no server and share, `_short_unc`: 3.11's `ntpath.splitdrive`
 reads no drive there, or a drive ending in a separator after which its
 `join` writes another, where 3.12's `splitroot` reads a UNC drive and
-`join` writes none) and
-`membership_records_paths_python.jsonl` (gated on the Python release: the
-84 cases `_release_bound` picks by input, an `ntpath` path a single
-separator or a separator and a colon begins, or holding `\\?\` or `\\.\`,
-and the digest of 4,000 triples drawn from every piece, those joins
-with them). The sweep's
+`join` writes none, and one of 4,000 triples drawn from every piece
+with `_rebase` and those joins, which is release-bound too). The rows
+moved there unchanged from the other two files. The sweep's
 generator is a 64-bit LCG with Knuth's MMIX constants, run alike in the
 test.
 
-Tests: `golden_membership_records` (both files, every case counted),
+Tests: `golden_membership_records` (the three files, every case
+counted; on a set made on a Windows host a differing `_dir_key`,
+`_rebase` or digest row of the platform file is named and counted as
+set aside, class os, and any other difference fails),
 `membership_records_kills` (12: among them `ntpath.abspath` and
 `relpath` on a Windows host, through a stub `_getfullpathname` whose
 answers were checked against 3.13.13's `ntpath` loaded with a stub `nt`
@@ -2272,8 +2293,14 @@ with, by the generator that writes it, mirroring the Python side's
   files: on Windows the private copy keeps its name while it is open (an
   open file cannot be removed there) and has no mode bits. The test checks
   what does hold there, and the case is named and counted as set aside in
-  both steps. No golden file has this class; only the two private-copy
-  tests in `store_read_only.rs` record it.
+  both steps. The two private-copy tests in `store_read_only.rs` record
+  it, the `*_not_posix` tests record it for each POSIX-only file, and
+  `golden_membership_records` records it for the rows of
+  `membership_records_paths_platform.jsonl` whose reference answer on a
+  Windows host follows the OS (`ntpath.normcase` through
+  `LCMapStringEx`, `abspath` through `_getfullpathname`), which this
+  build does not ask: a debt of the Windows build, named under "Unit 1,
+  built" of the membership records.
 
 SQLite is no gate: the native build links its own (3.54.1), so the
 reference's SQLite version is recorded, and its effects compared strictly.
@@ -2412,6 +2439,7 @@ that Unicode too.
 | `golden_location_stamps`: `device_names_answer_as_each_platform_that_made_them` | `location_stamps_platform.jsonl` | ii (Python, platform) |
 | `golden_membership_records`: `every_case_of_the_ungated_file` | `membership_records_paths.jsonl` | i |
 | `golden_membership_records`: `every_case_of_the_python_gated_file` | `membership_records_paths_python.jsonl` | ii (Python) |
+| `golden_membership_records`: `every_case_of_the_platform_file` | `membership_records_paths_platform.jsonl` | iii (Python, platform); os on a set made on Windows |
 | `membership_records_kills` (12: among them `ntpath.abspath` and
 `relpath` on a Windows host, through a stub `_getfullpathname` whose
 answers were checked against 3.13.13's `ntpath` loaded with a stub `nt`

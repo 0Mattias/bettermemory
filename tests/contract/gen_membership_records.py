@@ -3,23 +3,38 @@
 `_path_under`, `_rebase`, `_basename`, `_same_number`,
 `_common_by_pointer`, `_dir_key`, `_dir_below`).
 
-Two files, one JSON object per line, keys sorted, ASCII:
+Three files, one JSON object per line, keys sorted, ASCII:
 
 - ``membership_records_paths.jsonl``, not gated: every case whose answer
   is the same under CPython 3.11.15, 3.12.13 and 3.13.13 (checked by
-  running this generator under each), and two digest rows.
+  running this generator under each) and on every host, and the posix
+  digest row.
 - ``membership_records_paths_python.jsonl``, gated on the Python release:
   the cases `_release_bound` picks by their input, those where a path
   read with ``ntpath`` starts with one separator, or with a separator
   then a colon, or holds ``\\\\?\\`` or ``\\\\.\\``: 3.11 and 3.12 read
   such a root, an absolute path and a drive otherwise than 3.13 does.
+- ``membership_records_paths_platform.jsonl``, gated on the platform and
+  the Python release: the cases `_host_bound` picks by their input, and
+  both ``ntpath`` digest rows. On a Windows host CPython's ``ntpath``
+  asks the OS where on a POSIX host it computes: `normcase` lowers
+  through ``LCMapStringEx``, which leaves U+0130 as it is where
+  `str.lower` writes ``i`` and U+0307, and lowers each letter alone, so
+  not to the final sigma U+03C2 `str.lower` writes at the end of a
+  word; `abspath`, which `relpath` calls, goes through
+  ``_getfullpathname``, which reads the process's own drive and folder
+  and not the patched ``os.getcwd``.
+  `normpath` and `splitroot` (and through it `join`, `split`, `dirname`
+  and `basename`) are native there too; the Windows parity run of
+  2026-11-20 found them answering as the Python forms on every row it
+  compared. `isabs` is Python on every host.
 
 A case is ``{"f": function, "a": [args], "o": output}``. The host's path
 module, where the function reads one (`_common_by_pointer`, `_dir_key`,
 `_dir_below`), is the first argument, ``"posix"`` or ``"nt"``. `_rebase`
 runs with ``os.getcwd`` answering ``cwd`` (the last argument) or, where
-that is null, raising FileNotFoundError; ``nt._getfullpathname`` is never
-asked (the generator runs off Windows). An ObjectKey is ``[device,
+that is null, raising FileNotFoundError; ``nt._getfullpathname`` is
+asked only on Windows, in rows of the platform file. An ObjectKey is ``[device,
 inode, birth]`` or null.
 
 A text is a JSON string where it holds no backslash and no surrogate,
@@ -33,13 +48,14 @@ A digest row ``{"f": "sweep", "seed", "n", "flavour", "o"}`` pins ``n``
 cases drawn by `_Rng` from ``seed`` (`_sweep`): each case is a path
 triple and a selector, answered by every function above, the answers
 written by `_answer_line` and joined, and ``o`` the SHA-256 of their
-UTF-8 (surrogates passed). The ungated file holds a posix sweep and an
-``ntpath`` sweep marked ``"stable": true``, which leaves out `_rebase`
-and draws only triples whose other cases `_release_bound` passes and
+UTF-8 (surrogates passed). The ungated file holds a posix sweep. The
+platform file holds an ``ntpath`` sweep marked ``"stable": true``, which
+leaves out `_rebase` and draws only triples whose other cases `_release_bound` passes and
 whose `_path_under` joins no path `_short_unc` reads (two leading
 separators naming no server and share, which 3.11's `ntpath.join`
-follows with a separator of its own); the gated file holds the full
-``ntpath`` sweep, those calls with it. Recorded paths are
+follows with a separator of its own), and the full ``ntpath`` sweep,
+those calls with it. Both draw U+03A3 and U+0130 into paths `_dir_key`
+folds with ``ntpath``, so both follow the host. Recorded paths are
 synthetic.
 """
 
@@ -200,6 +216,21 @@ def _release_bound(f: str, args: list[Any]) -> bool:
             ntpath.isabs(p) and len(head) == 3 and head[1] == ":"
         ):
             return mr._flavour(args[1]) is ntpath or mr._flavour(args[2]) is ntpath
+    return False
+
+
+def _host_bound(f: str, args: list[Any]) -> bool:
+    """Whether CPython's own answer to the case follows the host: on
+    Windows `ntpath.normcase` lowers through ``LCMapStringEx``, which
+    lowers past ASCII otherwise than `str.lower` (`_dir_key` under
+    ``ntpath`` of a path holding a letter past ASCII), and `relpath`
+    makes both paths absolute through ``_getfullpathname`` and compares
+    their parts through that `normcase` (`_rebase` from a root read with
+    ``ntpath``)."""
+    if f == "dir_key":
+        return args[0] == "nt" and not str(args[1]).isascii()
+    if f == "rebase":
+        return mr._flavour(args[1]) is ntpath
     return False
 
 
@@ -424,14 +455,21 @@ def _sweep_cases(a: str, b: str, c: str) -> list[tuple[str, list[Any]]]:
     ]
 
 
-def _lines(python: bool) -> bytes:
+def _lines(python: bool | None) -> bytes:
+    """The rows of one file: the ungated (``python`` False), the
+    release-bound (True) or the host-bound (None)."""
     rows: list[str] = []
     for f, args in _cases():
-        if _release_bound(f, args) != python:
+        if python is None:
+            if not _host_bound(f, args):
+                continue
+        elif _host_bound(f, args) or _release_bound(f, args) != python:
             continue
         row = {"f": f, "a": _spelled(args), "o": _spelled(_call(f, args))}
         rows.append(json.dumps(row, sort_keys=True))
-    sweeps = [(True, False)] if python else [(False, False), (True, True)]
+    sweeps = [(True, False), (True, True)] if python is None else []
+    if python is False:
+        sweeps = [(False, False)]
     for nt, stable in sweeps:
         n, digest = _sweep(nt, stable)
         digest_row: dict[str, Any] = {
@@ -453,3 +491,7 @@ def generate() -> dict[str, bytes]:
 
 def generate_python() -> dict[str, bytes]:
     return {"membership_records_paths_python.jsonl": _lines(True)}
+
+
+def generate_platform() -> dict[str, bytes]:
+    return {"membership_records_paths_platform.jsonl": _lines(None)}

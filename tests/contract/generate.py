@@ -136,6 +136,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store": gen_store.generate,
     "membership_records_paths": gen_membership_records.generate,
     "membership_records_paths_python": gen_membership_records.generate_python,
+    "membership_records_paths_platform": gen_membership_records.generate_platform,
     "search_ranker": gen_search_ranker.generate,
     "search_dedup": gen_search_dedup.generate,
     "search_dedup_unicode": gen_search_dedup.generate_unicode,
@@ -384,6 +385,8 @@ PYTHON_VERSION = "3.13.13"
 #: byte" in 3.11.15 and "stat: embedded null character in path" in
 #: 3.12.13, 3.13 and 3.14 (`gen_location_stamps`,
 #: `gen_origin_gitfiles_machine`).
+#: ``membership_records_paths_platform`` holds rows of the Python-gated
+#: file as well as release-stable ones (`gen_membership_records`).
 #: ``location_probe_python`` probes link loops, which 3.11's `realpath`
 #: walks otherwise, and paths holding a NUL, whose ValueError text 3.11
 #: words otherwise (`gen_location_probe`).
@@ -410,6 +413,7 @@ PYTHON_GATED = frozenset(
         "settings_paths_python",
         "membership_lines_python",
         "membership_records_paths_python",
+        "membership_records_paths_platform",
         "origin_remote_python",
         "claims_python",
         "capture_vocabulary_python",
@@ -485,6 +489,11 @@ def pydantic_core_version() -> str:
 #: it adds a section of its own.
 #: ``location_probe_errno`` raises every errno number, whose meaning and
 #: whose text (the C library's `strerror`) are the platform's.
+#: ``membership_records_paths_platform`` holds the cases whose reference
+#: answer follows the host: on Windows `ntpath.normcase` lowers through
+#: ``LCMapStringEx`` (U+0130 kept, no final sigma) and `ntpath.abspath`
+#: reads the process's folder through ``_getfullpathname``, where on a
+#: POSIX host both are Python (`gen_membership_records`).
 PLATFORM = "darwin-arm64"
 PLATFORM_GATED = frozenset(
     {
@@ -499,6 +508,7 @@ PLATFORM_GATED = frozenset(
         "origin_gitfiles_darwin",
         "hooks",
         "location_probe_errno",
+        "membership_records_paths_platform",
     }
 )
 

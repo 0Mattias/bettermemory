@@ -155,7 +155,6 @@
 {"a": [{"b": ["D:", "\u03a3", "\u0130"]}], "f": "flavour", "o": "nt"}
 {"a": [{"b": ["D:", "\u03a3", "\u0130"]}], "f": "basename", "o": "\u0130"}
 {"a": ["posix", {"b": ["D:", "\u03a3", "\u0130"]}], "f": "dir_key", "o": {"b": ["D:", "\u03a3", "\u0130"]}}
-{"a": ["nt", {"b": ["D:", "\u03a3", "\u0130"]}], "f": "dir_key", "o": {"b": ["d:", "\u03c3", "i\u0307"]}}
 {"a": ["/w/\u03a3"], "f": "flavour", "o": "posix"}
 {"a": ["/w/\u03a3"], "f": "basename", "o": "\u03a3"}
 {"a": ["posix", "/w/\u03a3"], "f": "dir_key", "o": "/w/\u03a3"}
@@ -308,4 +307,3 @@
 {"a": ["nt", {"b": ["c:", "a", "b"]}, {"b": ["c:", "a", "", ""]}], "f": "dir_below", "o": true}
 {"a": ["nt", {"b": ["c:", "a"]}, {"b": ["c:", "a"]}], "f": "dir_below", "o": false}
 {"f": "sweep", "flavour": false, "n": 4000, "o": "e01c5f83e0093ba1ef6f2fef5fcaa81832456fcb2738715da1f2cf92bacba277", "seed": 20261119}
-{"f": "sweep", "flavour": true, "n": 4000, "o": "f2764f77d75c170223248bd648b8e526ee383e6c0382e8b2ef02098c37c82183", "seed": 20261121, "stable": true}

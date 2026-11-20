@@ -235,6 +235,11 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // writes a separator after two that name no server and share
         // (`gen_membership_records`).
         "membership_records_paths_python.jsonl" => &[Python],
+        // `ntpath.normcase` and `abspath` ask the OS on a Windows host, so
+        // `_dir_key` of a name past ASCII, `_rebase` from a Windows root and
+        // the `ntpath` sweeps follow the host; the file holds rows of the
+        // Python-gated file too (`gen_membership_records`).
+        "membership_records_paths_platform.jsonl" => &[Python, Platform],
         // The tokenizer and `str.strip` past ASCII (`gen_search_dedup`).
         "search_dedup_unicode.jsonl" => &[Unicode],
         "models.jsonl" => &[Pydantic],

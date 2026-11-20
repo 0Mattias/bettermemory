@@ -1,6 +1,8 @@
-//! Every case of `membership_records_paths.jsonl` (not gated) and
+//! Every case of `membership_records_paths.jsonl` (not gated),
 //! `membership_records_paths_python.jsonl` (gated on the Python release)
-//! against the native `membership_records` unit 1. The spelling of texts
+//! and `membership_records_paths_platform.jsonl` (gated on the platform
+//! and the Python release) against the native `membership_records`
+//! unit 1. The spelling of texts
 //! and outputs, and the sweep's rule, are the generator's
 //! (`tests/contract/gen_membership_records.py`).
 
@@ -344,29 +346,84 @@ pub(crate) fn sweep(seed: u64, n: usize, nt: bool, stable: bool) -> String {
         .collect()
 }
 
+/// One row compared: its label, its function, and the difference, if any.
+fn compare(name: &str, i: usize, row: &PyValue) -> (String, String, Option<String>) {
+    let f = cls(row.get("f").expect("f"));
+    if f == "sweep" {
+        let seed = int(row.get("seed").expect("seed")) as u64;
+        let n = int(row.get("n").expect("n")) as usize;
+        let nt = boolean(row.get("flavour").expect("flavour"));
+        let stable = row.get("stable").is_some_and(boolean);
+        let want = cls(row.get("o").expect("o"));
+        let got = sweep(seed, n, nt, stable);
+        let differs = (got != want)
+            .then(|| format!("{name}:{i} sweep {seed}\n  left: {got}\n right: {want}"));
+        return (format!("{name}:{i} sweep"), f, differs);
+    }
+    let args = list(row.get("a").expect("a"));
+    let want = expected(row.get("o").expect("o"));
+    let got = answer(&f, args);
+    let differs = (got != want)
+        .then(|| format!("{name}:{i} {f} {args:?}\n  left: {got:?}\n right: {want:?}"));
+    (format!("{name}:{i} {f}"), f, differs)
+}
+
 fn run(test: &str, name: &str) {
     let rows = lines(name);
     let mut ledger = Ledger::new(test, name);
     for (i, row) in rows.iter().enumerate() {
-        let f = cls(row.get("f").expect("f"));
-        if f == "sweep" {
-            let seed = int(row.get("seed").expect("seed")) as u64;
-            let n = int(row.get("n").expect("n")) as usize;
-            let nt = boolean(row.get("flavour").expect("flavour"));
-            let stable = row.get("stable").is_some_and(boolean);
-            let want = cls(row.get("o").expect("o"));
-            ledger.case(format!("{name}:{i} sweep"), || {
-                assert_eq!(sweep(seed, n, nt, stable), want, "{name}:{i} sweep {seed}");
-            });
-            continue;
-        }
-        let args = list(row.get("a").expect("a"));
-        let want = expected(row.get("o").expect("o"));
-        ledger.case(format!("{name}:{i} {f}"), || {
-            assert_eq!(answer(&f, args), want, "{name}:{i} {f} {args:?}");
+        let (label, _, differs) = compare(name, i, row);
+        ledger.case(label, || {
+            if let Some(difference) = differs {
+                panic!("{difference}");
+            }
         });
     }
     ledger.finish(rows.len());
+}
+
+/// Why a row of the platform file made on a Windows host may differ.
+const WINDOWS_HOST: &str = "on a Windows host CPython's ntpath.normcase lowers through \
+    LCMapStringEx and abspath reads the process's folder through _getfullpathname; this \
+    build answers as CPython on a POSIX host";
+
+/// The platform file: on a set made on a POSIX host, as every other file
+/// (class iii, with the Python release). On a set made on a Windows
+/// host a row of `_dir_key`, `_rebase` or a sweep may differ, since the
+/// reference's own answer there follows the host and this build does
+/// not ask the OS: such a row is named and counted as set aside, class
+/// os; a difference in any other row fails.
+fn run_host_bound(test: &str, name: &str) {
+    if !common::parity::provenance().platform.starts_with("win32") {
+        run(test, name);
+        return;
+    }
+    let rows = lines(name);
+    let mut compared = 0;
+    let mut aside = Vec::new();
+    for (i, row) in rows.iter().enumerate() {
+        let (label, f, differs) = compare(name, i, row);
+        match differs {
+            None => compared += 1,
+            Some(difference) => {
+                assert!(
+                    matches!(f.as_str(), "dir_key" | "rebase" | "sweep"),
+                    "{difference}"
+                );
+                eprintln!("NOT COMPARABLE HERE {test} {name}: {difference} ({WINDOWS_HOST})");
+                aside.push(label);
+            }
+        }
+    }
+    assert!(!rows.is_empty(), "{name}: no case checked");
+    common::parity::record(
+        test,
+        name,
+        "os",
+        compared,
+        &aside,
+        &[WINDOWS_HOST.to_owned()],
+    );
 }
 
 #[test]
@@ -382,5 +439,13 @@ fn every_case_of_the_python_gated_file() {
     run(
         "golden_membership_records",
         "membership_records_paths_python.jsonl",
+    );
+}
+
+#[test]
+fn every_case_of_the_platform_file() {
+    run_host_bound(
+        "golden_membership_records",
+        "membership_records_paths_platform.jsonl",
     );
 }
