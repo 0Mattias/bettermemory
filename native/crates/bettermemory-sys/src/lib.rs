@@ -197,6 +197,41 @@ pub fn thread_cpu_time() -> Option<std::time::Duration> {
     None
 }
 
+/// The size of the buffer the reference hands `F_GETPATH`
+/// (`origin_gitfiles._spelled_as_git`: `bytes(1024)`), which is macOS's
+/// `MAXPATHLEN`: the kernel writes a path of at most 1,023 bytes and its
+/// NUL, and fails with ENOSPC for a longer one.
+pub const KERNEL_PATH_BUFFER: usize = 1024;
+
+/// `fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))` up to its first NUL:
+/// the path the kernel holds for an open file, each component in the case
+/// and Unicode form the directory stores it in. Tried again when a signal
+/// interrupts it, as Python's `fcntl` does.
+///
+/// macOS only: no other platform has `F_GETPATH`, and the reference calls
+/// it nowhere else.
+#[cfg(target_os = "macos")]
+pub fn kernel_path(file: &File) -> io::Result<Vec<u8>> {
+    use std::os::fd::AsRawFd;
+    let mut buffer = [0u8; KERNEL_PATH_BUFFER];
+    loop {
+        // SAFETY: `file` is borrowed, so its descriptor is open for the
+        // length of the call. `F_GETPATH` writes at most `MAXPATHLEN`
+        // (1,024) bytes through the pointer, and `buffer` is 1,024 bytes
+        // this frame owns for the length of the call; the call reads no
+        // other memory of this process.
+        let status = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, buffer.as_mut_ptr()) };
+        if status != -1 {
+            let end = buffer.iter().position(|&b| b == 0).unwrap_or(buffer.len());
+            return Ok(buffer[..end].to_vec());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::fsync;
@@ -244,6 +279,24 @@ mod tests {
     #[test]
     fn there_is_no_thread_clock_elsewhere() {
         assert_eq!(super::thread_cpu_time(), None);
+    }
+
+    /// The kernel's path of an open directory is where it was made, and
+    /// a closed-over missing path is an error at the open, not here.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_kernel_names_an_open_directory() {
+        use super::kernel_path;
+        let made =
+            std::env::temp_dir().join(format!("bettermemory-sys-path-{}", std::process::id()));
+        std::fs::create_dir(&made).expect("dir");
+        let real = std::fs::canonicalize(&made).expect("resolved");
+        let dir = std::fs::File::open(&made).expect("open");
+        let path = kernel_path(&dir).expect("F_GETPATH");
+        assert_eq!(path, real.as_os_str().as_encoded_bytes());
+        let root = std::fs::File::open("/").expect("open the root");
+        assert_eq!(kernel_path(&root).expect("F_GETPATH"), b"/");
+        std::fs::remove_dir(&made).expect("remove");
     }
 
     /// `access` on this test's own file: the bits as set, a missing path

@@ -13,7 +13,7 @@
 pub mod realpath;
 
 use std::collections::BTreeMap;
-use std::io::{ErrorKind, Read};
+use std::io::{ErrorKind, Read, Seek, SeekFrom};
 
 pub use crate::githead::Flavour;
 
@@ -112,6 +112,16 @@ impl From<OsError> for PyErr {
     fn from(error: OsError) -> PyErr {
         error.class
     }
+}
+
+/// Why a call on an open file that not every file system offers
+/// ([`Fs::rewind`], [`Fs::kernel_path`]) gave no value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refused {
+    /// The reference's call raises: the exception's class.
+    Raised(PyErr),
+    /// This file system does not offer the call; a caller declines.
+    NotOffered,
 }
 
 /// The kind of a file, from its mode.
@@ -279,6 +289,12 @@ pub trait Fs {
     /// `os.open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_BINARY)`:
     /// follows links, never waits on a FIFO.
     fn open(&self, path: &[u8]) -> Result<Self::File, PyErr>;
+    /// `os.open(path, O_RDONLY | O_CLOEXEC)`: [`Fs::open`] without
+    /// `O_NONBLOCK`, so a FIFO waits for a writer. By default
+    /// [`Fs::open`]; `StdFs` drops the flag.
+    fn open_waiting(&self, path: &[u8]) -> Result<Self::File, PyErr> {
+        self.open(path)
+    }
     /// [`Fs::open`] with the error's errno. By default the class alone;
     /// `StdFs` and `MemFs` carry the errno.
     fn open_result(&self, path: &[u8]) -> Result<Self::File, OsError> {
@@ -334,6 +350,21 @@ pub trait Fs {
     /// `os.listdir(path)`: the names in the folder (links followed), `.`
     /// and `..` left out, in the OS's order (a caller sorts).
     fn listdir(&self, path: &[u8]) -> Result<Vec<Vec<u8>>, OsError>;
+    /// `os.lseek(fd, 0, os.SEEK_SET)`: the next [`Fs::read`] starts at the
+    /// file's first byte. A FIFO or a socket raises OSError (ESPIPE); a
+    /// folder and a device seek (macOS and Linux alike). By default not
+    /// offered; `StdFs` and `MemFs` answer.
+    fn rewind(&self, _file: &mut Self::File) -> Result<(), Refused> {
+        Err(Refused::NotOffered)
+    }
+    /// `fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))` up to its first
+    /// NUL: the path the kernel holds for the open file, each component
+    /// in the case and Unicode form its folder stores. A path of 1,024
+    /// bytes or more raises OSError (ENOSPC). macOS alone has the call:
+    /// by default, and in `StdFs` on every other platform, not offered.
+    fn kernel_path(&self, _file: &mut Self::File) -> Result<Vec<u8>, Refused> {
+        Err(Refused::NotOffered)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -410,6 +441,13 @@ fn open_options() -> std::fs::OpenOptions {
     options
         .read(true)
         .custom_flags(bettermemory_sys::O_NONBLOCK);
+    options
+}
+
+/// The open of [`Fs::open_waiting`]: no `O_NONBLOCK`.
+fn waiting_options() -> std::fs::OpenOptions {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
     options
 }
 
@@ -515,6 +553,12 @@ impl Fs for StdFs {
         Ok(StdFile { file, path })
     }
 
+    fn open_waiting(&self, path: &[u8]) -> Result<StdFile, PyErr> {
+        let path = native_path(path)?;
+        let file = waiting_options().open(&path).map_err(|e| py_err(&e))?;
+        Ok(StdFile { file, path })
+    }
+
     fn open_result(&self, path: &[u8]) -> Result<StdFile, OsError> {
         let path = native_path(path).map_err(|_| OsError::value())?;
         let file = open_options().open(&path).map_err(|e| os_error(&e))?;
@@ -599,6 +643,29 @@ impl Fs for StdFs {
         }
         Ok(names)
     }
+
+    fn rewind(&self, file: &mut StdFile) -> Result<(), Refused> {
+        (&file.file)
+            .seek(SeekFrom::Start(0))
+            .map(|_| ())
+            .map_err(|e| Refused::Raised(py_err(&e)))
+    }
+
+    fn kernel_path(&self, file: &mut StdFile) -> Result<Vec<u8>, Refused> {
+        kernel_path_of(&file.file)
+    }
+}
+
+/// macOS: `F_GETPATH` through `bettermemory-sys`.
+#[cfg(target_os = "macos")]
+fn kernel_path_of(file: &std::fs::File) -> Result<Vec<u8>, Refused> {
+    bettermemory_sys::kernel_path(file).map_err(|e| Refused::Raised(py_err(&e)))
+}
+
+/// Every other platform: no `F_GETPATH`, and the reference asks none.
+#[cfg(not(target_os = "macos"))]
+fn kernel_path_of(_: &std::fs::File) -> Result<Vec<u8>, Refused> {
+    Err(Refused::NotOffered)
 }
 
 /// An `io::Error` as the reference's exception: the class CPython picks
@@ -1300,6 +1367,32 @@ impl Fs for MemFs {
             names.insert(name.to_vec());
         }
         Ok(names.into_iter().collect())
+    }
+
+    fn rewind(&self, file: &mut MemFile) -> Result<(), Refused> {
+        match file.node {
+            // ESPIPE.
+            Node::Fifo | Node::Socket => Err(Refused::Raised(PyErr::Os)),
+            _ => {
+                file.at = 0;
+                Ok(())
+            }
+        }
+    }
+
+    fn kernel_path(&self, file: &mut MemFile) -> Result<Vec<u8>, Refused> {
+        if self.flavour == Flavour::Windows {
+            return Err(Refused::NotOffered);
+        }
+        // The path as resolved, from the root. With its NUL it must fit
+        // the reference's buffer of 1,024 bytes (ENOSPC past it), whatever
+        // the host's `PATH_MAX`.
+        let mut path = vec![b'/'];
+        path.extend_from_slice(&file.identity);
+        if path.len() >= bettermemory_sys::KERNEL_PATH_BUFFER {
+            return Err(Refused::Raised(PyErr::Os));
+        }
+        Ok(path)
     }
 }
 

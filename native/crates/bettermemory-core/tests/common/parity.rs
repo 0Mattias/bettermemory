@@ -262,6 +262,10 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `re`'s `\d` and `int` of a hunk count past ASCII or past 4,300
         // digits (`gen_origin_gitfiles`).
         "origin_gitfiles_leaves_python.jsonl" => &[Python],
+        // `F_GETPATH` is read on macOS alone, and the trees are asked by
+        // names a case- and form-folding file system matches
+        // (`gen_origin_gitfiles_machine`).
+        "origin_gitfiles_darwin.jsonl" => &[Platform],
         // The restore lock is a directory `flock` on POSIX, a record file
         // and a handle on Windows; the generator runs on POSIX only.
         "store_restore_lock.json" => &[Platform],

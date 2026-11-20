@@ -40,7 +40,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
-| `origin_gitfiles` | unit 1 of `origin_gitfiles.py`, the pure decoders: `_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs` | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl` |
+| `origin_gitfiles` | units 1 and 2 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`) and the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_darwin.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`) | `gitobjects.jsonl`, `gitobjects_python.jsonl` |
 | `gitfile_rule` | units 1, 2a, 2b, 3 and 4 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl` |
@@ -1912,6 +1912,9 @@ that Unicode too.
 | `golden_origin_gitfiles`: `origin_gitfiles_leaves_every_case` | `origin_gitfiles_leaves.jsonl` | i |
 | `golden_origin_gitfiles`: `origin_gitfiles_leaves_python_every_case` | `origin_gitfiles_leaves_python.jsonl` | ii (Python) |
 | `origin_gitfiles_kills` (12), `origin_gitfiles_robustness` (7) | none | i |
+| `golden_origin_gitfiles_machine`: `machine_every_query_in_memory`, `machine_every_query_on_disk` | `origin_gitfiles_machine.jsonl` | i |
+| `golden_origin_gitfiles_machine`: `darwin_every_query_on_disk` | `origin_gitfiles_darwin.jsonl` | iii |
+| `origin_gitfiles_machine_kills` (17), `origin_gitfiles_machine_robustness` (7) | none | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_every_case` | `capture_vocabulary.jsonl` | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_python_every_case` | `capture_vocabulary_python.jsonl` | ii (Python) |
 | `capture_vocabulary_robustness` (5) | none | i |
@@ -3896,9 +3899,9 @@ so it is cut into units, leaves first.
 | `_decode_varint` | 1240-1258 | nothing | built (unit 1) |
 | `_gitmodules_entries` | 1197-1202, 1261-1328 | nothing | built (unit 1) |
 | `_shortening_refs` | 297-332 | nothing | built (unit 1) |
-| `_read_prefix` | 1331-1343 | a seek and reads of an open file | unit 2 |
-| `relative_to_root` | 335-361 | `stat` of the root and of each parent; pathlib's `relative_to` and `parents` | unit 2 |
-| `_spelled_as_git` | 262-294 | the platform; `F_GETPATH` on macOS | unit 2 |
+| `_read_prefix` | 1331-1343 | a seek and reads of an open file | built (unit 2) |
+| `relative_to_root` | 335-361 | `stat` of the root and of each parent; pathlib's `relative_to` and `parents` | built (unit 2) |
+| `_spelled_as_git` | 262-294 | the platform; `F_GETPATH` on macOS | built (unit 2) |
 | `_facts_of`, `_ConfigFacts`, `_BARE_FALSE` | 42-111 | nothing (a regular expression over bytes) | unit 3 |
 | `_fd_stamp`, `_read_flags`, `_config_facts` and its memo | 114-210 | open, `fstat`, reads, a bounded memo | unit 3 |
 | `_worktree_config_facts`, `_config_moves_worktree` | 213-259 | `githead.GitDir`, the config facts | unit 3 |
@@ -3999,6 +4002,110 @@ Reference findings, reproduced and pinned:
 
 Prediction for this unit: at most 600 lines of Rust source outside tests
 (492 lines, met).
+
+### Unit 2, built (`origin_gitfiles::machine`)
+
+The line ranges above were confirmed against the source at this unit.
+Paths are the bytes of a POSIX path (`os.fsencode` of the `str`), parsed
+as `PurePosixPath` parses them: the root is empty, `/`, or exactly two
+slashes (three or more are one), and empty and `.` components drop (`..`
+stays). The machine is the caller's `Fs`.
+
+- `read_prefix` (`_read_prefix`): `Fs::rewind` (`os.lseek(fd, 0,
+  SEEK_SET)`), then reads of at most `length - size` bytes until `length`
+  bytes are held or a read gives none, so a short read is followed by
+  another. The seek's and each read's exception propagate by class: a
+  FIFO or socket raises `OSError` (ESPIPE) at the seek, before any read,
+  even for a length of 0; a folder seeks (macOS and Linux) and raises
+  `IsADirectoryError` at the first read, so a length of 0 answers empty.
+- `relative_to_root`: `relative_to` by spelling first (3.13, `walk_up`
+  false: the same root and the root's components a prefix of the
+  candidate's; the rest joined, `.` where none), then `Path.stat` of the
+  root (an OSError is `{root} cannot be read`), then `samestat` of each of
+  `candidate.parents`, nearest first, an OSError passed over. Every
+  ValueError carries its message: `os.stat`'s own `stat: embedded null
+  character in path` propagates uncaught from the root's stat and from a
+  parent's, as in the reference. Each parent is a prefix of the
+  candidate's text, sliced, never rebuilt, so the walk is linear in the
+  candidate's length where each stat is constant time. Where `Fs::stat`
+  gives no device or inode (Windows) the port declines (`NotPorted`): the
+  reference is `WindowsPath` there, whose `relative_to` folds case, and
+  that flavour is left for a unit that needs it.
+- `spelled_as_git` (`_spelled_as_git`): `darwin` is `sys.platform ==
+  "darwin"`, an argument. On Linux and on Windows the reference answers the
+  root itself and reads nothing: the port gives `str(Path(root))` and
+  calls no `Fs` method. On macOS: `Fs::open` of the root (an OSError is
+  None; a NUL raises ValueError, which the reference does not catch), then
+  `Fs::kernel_path` (`fcntl(fd, F_GETPATH, bytes(1024))`; an OSError is
+  None), read to its first NUL and spelled as a `Path`.
+
+The `Fs` trait gains two methods at its end, each with a default body that
+declines (`Refused::NotOffered`), so other implementations and test
+doubles need no change: `rewind` (`StdFs`: `Seek` to 0; `MemFs`: the
+position to 0, ESPIPE for a FIFO or socket) and `kernel_path` (`StdFs` on
+macOS: `bettermemory_sys::kernel_path`, the one `unsafe` call, in the sys
+crate, retried on EINTR as Python's `fcntl` is; `StdFs` elsewhere declines,
+under `#[cfg(not(target_os = "macos"))]`; `MemFs`: `/` and the resolved
+identity, OSError at 1,024 bytes or more, the reference's buffer, whatever
+the model's `path_max`, and declined under `Flavour::Windows`).
+
+Decisions:
+
+- `spelled_as_git` opens the root with `Fs::open_waiting`, the
+  reference's `os.open(root, O_RDONLY | O_CLOEXEC)` without
+  `O_NONBLOCK`: a FIFO named as the root waits for a writer in both.
+  `Fs::open_waiting` is `Fs::open` by default; `StdFs` drops the flag.
+- `MemFs` reads `Node::Endless` by allocating the length asked in one
+  read, so a length near `usize::MAX` aborts in the model where CPython's
+  `os.read` raises `MemoryError` and `StdFs` reads in steps. No caller
+  passes such a length.
+- `claims.hunk_lines` is now `claims::hunk_lines`, called from
+  `origin_gitfiles::hunk_lines` with its `IntTooLong` read as
+  `ValueError`; the parallel copy is gone. The two matchers answered alike
+  over 3,117,724 inputs before the copy was dropped: 2,000,000 seeded
+  random lines over `@ - + , space 0 1 9 U+0663 U+06F0 U+FF10 U+1D7CE x LF`,
+  every combination of six count spellings, five comma tails and five
+  closing tails, runs of 4,299 to 4,301 digits, and every code point as a
+  count digit. Both golden files (`origin_gitfiles_leaves*.jsonl`,
+  `claims*.jsonl`) pass on the one function.
+
+Fixtures: `gen_origin_gitfiles_machine.py` writes
+`origin_gitfiles_machine.jsonl` (POSIX only, class i: one tree with
+files, folders, links, a FIFO and a mode-000 folder; 41 `relative_to_root`
+queries by spelling, by the disk, with an unreadable root, with NULs and
+with no anchor; 19 `_read_prefix` queries at each bound of the length and
+of a read before it, a folder and a FIFO; an answer past 64 bytes is its
+length and SHA-256) and `origin_gitfiles_darwin.jsonl` (gated on the
+platform, class iii: `_spelled_as_git` and `relative_to_root` over names
+that differ from the stored ones by case and by Unicode form, which
+macOS's default file system folds; the generator refuses a case-sensitive
+scratch on macOS, and the golden test skips one). The golden test asks the first file of `MemFs` and of
+`StdFs` over the same tree written to a scratch directory, the second of
+`StdFs` alone, since `MemFs` folds neither case nor form.
+
+Reference findings, reproduced and pinned:
+
+- `relative_to_root(Path("<root>/ld"), Path("<root>/d"))`, where `ld` is a
+  link to `d`, raises `ValueError: <root>/ld is not in <root>/d`, and on
+  macOS `relative_to_root(Path("<root>/docs/repo"),
+  Path("<root>/Docs/Repo"))` raises the same: the candidate is the root's
+  folder under another spelling, but only `candidate.parents` is asked,
+  never the candidate itself, where the docstring says the ancestor that
+  is the root's folder anchors it. Pinned in both golden files.
+- `relative_to_root` lets `os.stat`'s ValueError out
+  (`relative_to_root(Path("/w/d/x"), Path("/w/a\x00b"))`), where the
+  docstring names only "no ancestor is the root" and "the root cannot be
+  read".
+
+Left for later units: `WindowsPath`'s `relative_to` (case folding,
+drives) and `samestat` on Windows, which `Fs::stat` does not port.
+
+Prediction for this unit: at most 600 lines of Rust source outside tests
+(195 lines in `origin_gitfiles/machine.rs`, 75 added to `fsdata.rs` and 52
+to `bettermemory-sys`, less 78 net from `origin_gitfiles.rs`, where the
+copy of `hunk_lines` went: about 245 lines, met).
+The second prediction, that the independent review finds an input on which
+the port and the reference differ, is the review's to settle.
 
 ## Design notes for the rest of the tree half
 
@@ -9270,10 +9377,10 @@ What the reference has and this build does not, by area:
   reclaim, a restore's rows, re-spelling the index.
 - Reading a checkout: the judge and discovery of the `.git` rule,
   `gitobjects.py` past its byte parsers (inflating, the files, the
-  reader), `origin_gitfiles.py` past its decoders, `checkout_token.py`
-  past its text (the reads, the write, the remint), the origin's
-  settling (`origin.py`), `location.py` and the rest of
-  `location_git.py`.
+  reader), `origin_gitfiles.py` past its decoders and machine leaves
+  (units 3 to 7), `checkout_token.py` past its text (the reads, the
+  write, the remint), the origin's settling (`origin.py`), `location.py`
+  and the rest of `location_git.py`.
 - Membership's writes, and of the caller's resolution its file roots
   and workspace declaration (`identity` resolves the rest; its
   admission is `store::caller`).

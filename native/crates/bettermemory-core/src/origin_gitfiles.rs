@@ -7,13 +7,17 @@
 //!   `_dequote_named_header`, `_dequote_patch_headers` (with
 //!   `claims.hunk_lines`), `_decode_varint`, `_gitmodules_entries` and
 //!   `_shortening_refs`. Built.
+//! - [`machine`], unit 2: the leaves that read the machine through the
+//!   `Fs` trait: `_read_prefix`, `relative_to_root` and `_spelled_as_git`.
+//!   Built.
 //!
 //! Texts are Python `str` values as code points ([`PyStr`]), since a
 //! caller's text may hold a lone surrogate, which the reference's UTF-8
 //! encode refuses with `UnicodeEncodeError`.
 
-use crate::pyvalue::{int_from_str, PyStr, PyValue};
-use crate::unicode::is_re_digit;
+pub mod machine;
+
+use crate::pyvalue::PyStr;
 
 /// An exception the reference raises out of a text decoder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,94 +167,12 @@ pub fn dequote_named_header(line: &[u32]) -> Result<Option<PyStr>, Raised> {
     Ok(None)
 }
 
-/// A maximal run of `re`'s `\d` from `at`: its end.
-fn digits(line: &[u32], at: usize) -> usize {
-    let mut end = at;
-    while end < line.len() && is_re_digit(line[end]) {
-        end += 1;
-    }
-    end
-}
-
-/// `int` of a run `\d` matched, as canonical decimal text.
-fn count(run: Option<&[u32]>) -> Result<String, Raised> {
-    let Some(run) = run else {
-        return Ok("1".into());
-    };
-    match int_from_str(run).map_err(|_| Raised::ValueError)? {
-        PyValue::Int(ref text) => Ok(text.clone()),
-        _ => Err(Raised::ValueError),
-    }
-}
-
-/// The sum of two canonical non-negative decimal texts.
-fn add(a: &str, b: &str) -> String {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    let mut out = Vec::with_capacity(a.len().max(b.len()) + 1);
-    let mut carry = 0u8;
-    for i in 0..a.len().max(b.len()) {
-        let x = if i < a.len() {
-            a[a.len() - 1 - i] - b'0'
-        } else {
-            0
-        };
-        let y = if i < b.len() {
-            b[b.len() - 1 - i] - b'0'
-        } else {
-            0
-        };
-        let d = x + y + carry;
-        out.push(b'0' + d % 10);
-        carry = d / 10;
-    }
-    if carry > 0 {
-        out.push(b'0' + carry);
-    }
-    out.reverse();
-    let text = String::from_utf8(out).unwrap_or_default();
-    match text.trim_start_matches('0') {
-        "" => "0".into(),
-        t => t.into(),
-    }
-}
-
 /// `claims.hunk_lines`: the lines of a `-U0` hunk whose header is
 /// `line`, as decimal text (Python's `int` has no bound), or None where
-/// it is no hunk header. `_HUNK_RE` is
-/// `^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@` under `re.match`; a run
-/// of `\d` is followed only by `,` or a space, so the greedy run is the
-/// only one that matches, and this matcher takes it.
+/// it is no hunk header; ValueError past `int`'s 4,300 digits. The
+/// reference imports it from `claims`, and so does the port.
 pub fn hunk_lines(line: &[u32]) -> Result<Option<String>, Raised> {
-    let lit = |at: usize, s: &str| starts(&line[at.min(line.len())..], s);
-    let comma = u32::from(b',');
-    let mut groups: [Option<&[u32]>; 4] = [None; 4];
-    if !lit(0, "@@ -") {
-        return Ok(None);
-    }
-    let mut at = 4;
-    for pair in 0..2 {
-        let end = digits(line, at);
-        if end == at {
-            return Ok(None);
-        }
-        groups[pair * 2] = Some(&line[at..end]);
-        at = end;
-        if line.get(at) == Some(&comma) {
-            let end = digits(line, at + 1);
-            if end > at + 1 {
-                groups[pair * 2 + 1] = Some(&line[at + 1..end]);
-                at = end;
-            }
-        }
-        let next = if pair == 0 { " +" } else { " @@" };
-        if !lit(at, next) {
-            return Ok(None);
-        }
-        at += next.chars().count();
-    }
-    let removed = count(groups[1])?;
-    let added = count(groups[3])?;
-    Ok(Some(add(&removed, &added)))
+    crate::claims::hunk_lines(line).map_err(|_| Raised::ValueError)
 }
 
 /// `_QUOTED_HEADER_MARKS`.

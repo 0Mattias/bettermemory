@@ -55,6 +55,7 @@ from . import (
     gen_gitconfig_tree,
     gen_gitconfig_remote_rules,
     gen_origin_gitfiles,
+    gen_origin_gitfiles_machine,
     gen_gitconfig_wildmatch,
     gen_origin_remote,
     gen_location_remotes,
@@ -173,6 +174,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitconfig_remote_rules": gen_gitconfig_remote_rules.generate,
     "origin_gitfiles_leaves": gen_origin_gitfiles.generate,
     "origin_gitfiles_leaves_python": gen_origin_gitfiles.generate_python,
+    "origin_gitfiles_machine": gen_origin_gitfiles_machine.generate,
+    "origin_gitfiles_darwin": gen_origin_gitfiles_machine.generate_darwin,
     "ulid": gen_ulid.generate,
     "verify_status": gen_verify_status.generate,
     "githead": gen_githead.generate,
@@ -404,6 +407,7 @@ PLATFORM_GATED = frozenset(
         "store_files",
         "store_restore_lock",
         "mcp",
+        "origin_gitfiles_darwin",
         "hooks",
     }
 )
@@ -472,6 +476,8 @@ POSIX_ONLY = frozenset(
         "location_remotes",
         "location_spellings",
         "location_stamped",
+        "origin_gitfiles_machine",
+        "origin_gitfiles_darwin",
         "gitsystem_record",
         "gitsystem_record_python",
         "gitsystem_probe",
