@@ -1,4 +1,4 @@
-{"fixture":"pyre_python","part":"header","rows":{"pyre-1":9}}
+{"fixture":"pyre_python","part":"header","rows":{"pyre-1":9,"pyre-2":11}}
 {"part":"python","unit":"pyre-1","value":"3.13.13"}
 {"part":"unicode","unit":"pyre-1","value":"15.1.0"}
 {"part":"sre_magic","unit":"pyre-1","value":20230612}
@@ -8,3 +8,14 @@
 {"file":"_compiler.py","part":"source","sha256":"83537237a82294d0","unit":"pyre-1"}
 {"file":"_constants.py","part":"source","sha256":"1dbe236d34fa934e","unit":"pyre-1"}
 {"file":"_parser.py","part":"source","sha256":"c7a6c80b3b448f50","unit":"pyre-1"}
+{"dump":"[(FAILURE, ())]","part":"tree.dump","pattern":"(?!)","tree":[["failure"]]}
+{"dump":"[(FAILURE, ())]","part":"tree.dump","pattern":"(?<!)","tree":[["failure"]]}
+{"dump":"[(ASSERT, (1, [(FAILURE, ()), (IN, [(CATEGORY, CATEGORY_WORD)])]))]","part":"tree.dump","pattern":"(?=(?<!)~w)","tree":[["assert",1,[["failure"],["in",[["cat","CATEGORY_WORD"]]]]]]}
+{"dump":"[(LITERAL, 97), (FAILURE, ()), (BRANCH, (None, [[], []]))]","part":"tree.dump","pattern":"a(?!)|a(?!)","tree":[["lit",97],["failure"],["branch",[[],[]]]]}
+{"equal":["1100","1100","0000","0001"],"items":[["failure"],["failure"],["assert_not",1,[["lit",97]]],["lit",97]],"part":"tree.eq","patterns":["(?!)","(?<!)","(?!a)","a"]}
+{"answer":"!BadEscape@0","part":"atom.parse","pattern":"~z"}
+{"answer":"!BadEscape@1","part":"atom.parse","pattern":"a~z"}
+{"answer":"!BadEscape@1","part":"atom.parse","pattern":"[~z]"}
+{"answer":"!BadEscape@0","part":"atom.parse","pattern":"~U80000000"}
+{"answer":"!BadEscape@0","part":"atom.parse","pattern":"~Uffffffff"}
+{"answer":"!BadEscape@1","part":"atom.parse","pattern":"[~U80000000]"}

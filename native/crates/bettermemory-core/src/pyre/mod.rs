@@ -5,8 +5,15 @@
 //!
 //! - [`fold`]: the case folding `_sre` uses under IGNORECASE and the test of
 //!   one literal (unit pyre-1).
+//! - [`tree`], [`token`]: the parser's tree, its state and its tokenizer
+//!   (unit pyre-2a).
+//! - [`atom`]: the atoms the parser reads (escapes, sets, flat sequences)
+//!   with `re.escape` (unit pyre-2b).
 
+pub mod atom;
 pub mod fold;
+pub mod token;
+pub mod tree;
 
 /// The interpreter whose `re` the engine reproduces. `pyre_python.jsonl`
 /// pins these five values as that interpreter reports them.

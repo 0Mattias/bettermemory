@@ -322,7 +322,9 @@ PYTHON_VERSION = "3.13.13"
 #: whose path is rooted without a drive (``/g``): `ntpath.isabs` reads it
 #: as absolute in 3.11 and 3.12 and as relative from 3.13 (`gen_follow`).
 #: ``pyre_python`` holds the interpreter's own version, ``_sre.MAGIC`` and
-#: the digests of the ``re`` sources the engine was read from (`gen_pyre`).
+#: the digests of the ``re`` sources the engine was read from (`gen_pyre`),
+#: and patterns with an empty negative lookaround, which `re._parser`
+#: parses to FAILURE from 3.13 (`gen_pyre_tree`).
 PYTHON_GATED = frozenset(
     {
         "gitsystem_record_python",

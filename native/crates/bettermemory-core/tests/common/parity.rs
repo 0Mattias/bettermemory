@@ -199,7 +199,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // (`gen_pyre`).
         "pyre_unicode.jsonl" => &[Unicode],
         // The interpreter's version, `_sre.MAGIC` and the digests of the
-        // `re` sources the engine was read from (`gen_pyre`).
+        // `re` sources the engine was read from (`gen_pyre`); an empty
+        // negative lookaround, which `re._parser` parses to FAILURE from
+        // 3.13 (`gen_pyre_tree`).
         "pyre_python.jsonl" => &[Python],
         "search.jsonl"
         | "search_ranker.jsonl"

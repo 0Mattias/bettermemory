@@ -2,17 +2,25 @@
 "Python's regular expressions").
 
 The reference is CPython's ``re`` as the running interpreter has it: every
-answer here is asked of ``re``, ``_sre`` or ``re._casefix``, and no module of
-the product is imported. The engine is built in units; each unit writes its
-own rows, marked with its name under ``unit`` (``pyre-1`` for the case
-folding), and a row's ``part`` says what it pins. A file's first line is its
+answer here is asked of ``re``, ``_sre``, ``re._casefix`` or ``re._parser``,
+and no module of the product is imported. The engine is built in units; each
+unit writes its own rows, and a row's ``part`` says what it pins. Unit
+pyre-1 (the case folding) writes its rows in this module and marks each
+with its name under ``unit``. Unit pyre-2 (the parser's tree, state and
+tokenizer, and the atoms it reads) writes its rows in `gen_pyre_tree` and
+`gen_pyre_atom`, under parts prefixed ``tree.``, ``token.`` and ``atom.``,
+and spells their texts by `gen_pyre_tree.spell`. A file's first line is its
 header: the fixture's name and, under ``rows``, how many rows each unit
-wrote. Three files, one JSON object per line, keys sorted, ASCII:
+wrote (the units of `_PARTS`). Three files, one JSON object per line, keys
+sorted, ASCII:
 
-- ``pyre.jsonl``, not gated: patterns and texts of ASCII only, whose answers
-  read no Unicode table and are the same in every Python from 3.11 on. Its
-  header also states, as fixed text, the interpreter the engine reproduces.
-  The whole engine's rows are held to ``CAP_BYTES`` in this file.
+- ``pyre.jsonl``, not gated: unit pyre-1's patterns and texts of ASCII
+  only, whose answers read no Unicode table and are the same in every
+  Python from 3.11 on, and unit pyre-2's parts, which read no Unicode table
+  either (`gen_pyre_tree` and `gen_pyre_atom` name the releases they were
+  run under). Its header also states, as fixed text, the interpreter the
+  engine reproduces. The whole engine's rows are held to ``CAP_BYTES`` in
+  this file.
 - ``pyre_unicode.jsonl``, gated on the Unicode version: every code point
   through ``re``'s lower case, upper case, cased test and the three
   categories, by SHA-256 per block of 0x4000 code points; the extra cases
@@ -21,10 +29,12 @@ wrote. Three files, one JSON object per line, keys sorted, ASCII:
 - ``pyre_python.jsonl``, gated on the Python release: the interpreter, its
   Unicode version, ``_sre.MAGIC``, ``_sre.CODESIZE`` and the SHA-256 of
   each of the five ``re`` sources, one row per fact, as the running
-  interpreter reports them.
+  interpreter reports them; and unit pyre-2's patterns that a release parses
+  otherwise: an empty negative lookaround, ``\\z`` and a ``\\U`` escape of
+  2**31 or more. Nothing that must hold everywhere is pinned only here.
 
-A text is a JSON string, or the list of its code points when it holds a
-lone surrogate.
+A text of unit pyre-1 is a JSON string, or the list of its code points when
+it holds a lone surrogate.
 
 A ``kill`` row is one pattern under one flag set: ``pattern`` as written,
 ``flags`` as passed to ``re.compile``, ``sre_flags`` as ``_compile`` reads
@@ -58,9 +68,11 @@ from array import array
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from . import gen_pyre_atom, gen_pyre_tree
 from ._common import jsonl
 
-#: The cap on ``pyre.jsonl`` for the whole engine (every unit's rows).
+#: The cap on ``pyre.jsonl`` for the whole engine (every unit's rows); the
+#: whole engine's fixture is planned at 134 KB.
 CAP_BYTES = 150_000
 
 #: The interpreter the engine reproduces, as fixed text for the header of
@@ -472,21 +484,36 @@ def fold_python_rows() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# The files. A unit adds its row functions to the file it writes into.
+# The files. A unit adds its row functions to the file it writes into, each
+# under the unit's name, which the header counts its rows by.
 # ---------------------------------------------------------------------------
 
-_PARTS: dict[str, tuple[Callable[[], list[dict[str, Any]]], ...]] = {
-    "pyre.jsonl": (fold_rows,),
-    "pyre_unicode.jsonl": (fold_unicode_rows,),
-    "pyre_python.jsonl": (fold_python_rows,),
+_PYRE_2 = "pyre-2"
+
+_PARTS: dict[str, tuple[tuple[str, Callable[[], list[dict[str, Any]]]], ...]] = {
+    "pyre.jsonl": (
+        (_FOLD, fold_rows),
+        (_PYRE_2, gen_pyre_tree.rows),
+        (_PYRE_2, gen_pyre_atom.rows),
+    ),
+    "pyre_unicode.jsonl": ((_FOLD, fold_unicode_rows),),
+    "pyre_python.jsonl": (
+        (_FOLD, fold_python_rows),
+        (_PYRE_2, gen_pyre_tree.rows_python),
+        (_PYRE_2, gen_pyre_atom.rows_python),
+    ),
 }
 
 
 def _file(name: str, **header: Any) -> dict[str, bytes]:
-    rows = [row for part in _PARTS[name] for row in part()]
+    rows: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
-    for row in rows:
-        counts[row["unit"]] = counts.get(row["unit"], 0) + 1
+    for unit, part in _PARTS[name]:
+        written = part()
+        # A row that names its unit names the one it is listed under.
+        assert all(row.get("unit", unit) == unit for row in written), (name, unit)
+        counts[unit] = counts.get(unit, 0) + len(written)
+        rows += written
     head = {
         "part": "header",
         "fixture": name.removesuffix(".jsonl"),

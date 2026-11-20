@@ -25,7 +25,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns, pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d` | `unicode.jsonl`, `unicode_sequences.jsonl` |
-| `pyre` | unit 1 of the regular expression engine, whose reference is CPython 3.13.13's `re`: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
+| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape` | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report | `log_chain.jsonl`, `log_keyring.jsonl` |
@@ -1961,6 +1961,12 @@ that Unicode too.
 | `pyre_fold_kills` (13), `pyre_fold_robustness` (6), `pyre_fold_first_read` (1) | none | i |
 | `golden_pyre_fold`: `pyre_fold_differential_file` | a file `BM_PYRE_FOLD_DIFF` names | a tool, `#[ignore]`d, not part of parity |
 | `unicode_tables_regen`: `regenerating_the_unicode_tables_gives_the_same_bytes` | `src/unicode/tables.rs` | ii (Unicode) |
+| `golden_pyre_tree`: `pyre_tree_and_token_every_row` | `pyre.jsonl` (the `tree.` and `token.` parts) | i |
+| `golden_pyre_tree`: `pyre_tree_python_every_row` | `pyre_python.jsonl` (the `tree.` parts) | ii (Python) |
+| `pyre_tree_kills` (20), `pyre_tree_robustness` (11) | none | i |
+| `golden_pyre_atom`: `pyre_atom_every_row` | `pyre.jsonl` (the `atom.` parts) | i |
+| `golden_pyre_atom`: `pyre_atom_python_every_row` | `pyre_python.jsonl` (the `atom.` parts) | ii (Python) |
+| `pyre_atom_kills` (16), `pyre_atom_robustness` (6) | none | i |
 | `golden_search`: `search_every_query_every_mode` | `search.jsonl` | iii |
 | `golden_search_dedup`: `search_dedup_every_case` | `search_dedup.jsonl` | i |
 | `golden_search_dedup`: `search_dedup_unicode_every_case` | `search_dedup_unicode.jsonl` | ii (Unicode) |
@@ -2029,15 +2035,16 @@ CPython 3.13.13's `re` itself (`Lib/re/_parser.py`, `_compiler.py`,
 `_casefix.py`, `_constants.py`, `__init__.py`, and `_sre`, with
 `_sre.MAGIC` 20230612), as the reference Python runs it. The Rust regex
 crates are not used and none is added: their classes, anchors, case
-folding and lookarounds are not `re`'s.
+folding and lookarounds are not `re`'s. The generators call `re._parser`
+directly.
 
 The engine is designed as a small backtracking matcher behind a parser
-that follows `re/_parser.py` function by function (units pyre-2 to
-pyre-6, not built; of the engine only pyre-1 is built). The parser is to
-accept the syntax the reference's patterns use and to refuse everything
-else by name when a pattern is built, so that a refusal is a failed
-build and never a different answer. sre's compiler and matcher are not
-ported.
+that follows `re/_parser.py` function by function and is held to the
+tree `re` itself prints (units pyre-2 to pyre-6; of the engine pyre-1
+and pyre-2 are built). The parser is to accept the syntax the
+reference's patterns use and to refuse everything else by name when a
+pattern is built, so that a refusal is a failed build and never a
+different answer. sre's compiler and matcher are not ported.
 
 ### The cut
 
@@ -2046,8 +2053,9 @@ Leaves first. A unit's lines are Rust source outside tests.
 | unit | file | holds | reference | needs | status |
 | --- | --- | --- | --- | --- | --- |
 | pyre-1 | `pyre/fold.rs` | `sre_lower`, `sre_upper`, `sre_iscased`, `extra_cases`, `Lit` (one literal under the flags `_compile` reads; LOCALE and the ASCII fold refused); the module, the generator, the fixtures' headers | `_sre.unicode_tolower`, `sre_upper_unicode`, `_sre.unicode_iscased`; `_casefix.py` 5-106; `_compiler.py` 48-55, 57-84 | the Unicode tables (`unicode`) | built, 227 lines |
-| pyre-2 | `pyre/tree.rs` and the atoms of `pyre/parse.rs` | the tree, `State`, the dump that equals `str(tree)`, the refusal and error names, `Tokenizer`, `_escape`, `_class_escape`, classes, flat sequences, `re.escape` | `_parser.py` 74-227, 229-309, 311-446; `__init__.py` 305-328 | nothing | not built |
-| pyre-3 | `pyre/parse.rs` | repeats, `_parse_sub` with its rewrites, groups, scoped and leading flags, lookarounds, `getwidth`, `parse`, the refusal predicate over the finished tree | `_parser.py` 177-227, 448-995 | pyre-2 | not built |
+| pyre-2a | `pyre/tree.rs`, `pyre/token.rs` | the tree, `State`, the dump that equals `str(tree)`, the refusal and error names, the `Tokenizer` | `_parser.py` 74-118, 161-176, 229-301 | nothing | built, 813 lines |
+| pyre-2b | `pyre/atom.rs` | `_escape`, `_class_escape`, `_uniq`, sets, flat sequences (`parse_flat`), `re.escape` | `_parser.py` 311-449, 522-636, 705-706, 875-879; `__init__.py` 303-313 | pyre-2a | built, 377 lines |
+| pyre-3 | `pyre/parse.rs` | repeats, `_parse_sub` with its rewrites, groups, scoped and leading flags, lookarounds, `getwidth`, `checkgroupname`, `parse`, the refusal predicate over the finished tree | `_parser.py` 177-227, 303-309, 451-509, 638-703, 708-873, 884-995 | pyre-2 | not built, 560 lines planned |
 | pyre-4 | `pyre/lower.rs` | classes compiled as `_optimize_charset` does, nodes threaded by `next`, `_simple`, group repeats unrolled, the arena cap | `_compiler.py` 241-387, 401-408 | pyre-1, pyre-3 | not built |
 | pyre-5 | `pyre/exec.rs` | one loop, one stack, one trail; anchors, lookarounds, the three acceptance rules, the scan over starts, the step count | `_sre` (by differential) | pyre-4 | not built |
 | pyre-6 | `pyre/regex.rs` | `Regex`, `Match`, `finditer`, `findall`, `sub`, `subn`, `split`, `pos` and `endpos`, literal and function replacement | `_sre` (by differential) | pyre-5, pyre-2 | not built |
@@ -2060,6 +2068,35 @@ The line ranges were confirmed against the 3.13.13 sources (their
 digests are in `pyre::RE_SOURCES`). `_sre`'s C source is not on the build
 machine: what the port takes from it is compared by value with the
 interpreter.
+
+pyre-2 was planned as one unit of 580 lines. Written out it came to
+1,190: the tree and state 629 (about 250 of them the dump, `Clone` and
+the drop, which keep their own stacks so that no depth of tree overflows
+a thread's stack), the tokenizer 177, the atoms 377 with `re.escape`.
+It is described in two parts at the line between what holds a pattern
+and what reads one. pyre-2a is every part that needs no grammar; pyre-2b
+is the grammar of atoms, and with it comes the proof that reads
+patterns: the inventory, the generated patterns, `re.escape`.
+
+### The parser by function (`Lib/re/_parser.py`, 3.13.13)
+
+| function | lines | what it needs from the machine | status |
+| --- | --- | --- | --- |
+| `State` (`__init__`, `groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`) | 74-108 | nothing | pyre-2a, built |
+| `SubPattern` (`__init__`, `__repr__`, the list methods) | 110-118, 161-176 | nothing | pyre-2a, built (`SubPattern`, `dump`) |
+| `SubPattern.dump` | 119-160 | standard output | not ported: it is the print of `re.DEBUG`, a flag the engine refuses |
+| `SubPattern.getwidth` | 177-227 | nothing | pyre-3 |
+| `Tokenizer` (`__init__`, `__next`, `match`, `get`, `getwhile`, `getuntil`, `pos`, `tell`, `seek`, `error`) | 229-301 | nothing | pyre-2a, built |
+| `Tokenizer.checkgroupname` | 303-309 | the Unicode data (`str.isidentifier`) | pyre-3 |
+| `_class_escape` | 311-369 | `unicodedata.lookup` for `\N{...}` | pyre-2b, built (`class_escape`) |
+| `_escape` | 371-446 | the same | pyre-2b, built (`item_escape`) |
+| `_uniq` | 448-449 | nothing | pyre-2b, built (in `set`) |
+| `_parse_sub` | 451-509 | nothing | pyre-3 |
+| `_parse`: an escape, a literal, a set, the dot, `^`, `$` | 522-636, 705-706, 875-879 | `warnings.warn` (FutureWarning, three places in a set) | pyre-2b, built (`set`, `parse_flat`) |
+| `_parse`: repeats, groups, the unpacking of plain groups | 638-703, 708-873, 884-892 | `warnings.warn` (DeprecationWarning) | pyre-3 |
+| `_parse_flags`, `fix_flags`, `parse` | 894-995 | standard output under `re.DEBUG` | pyre-3 |
+| `parse_template` | 997-1081 | nothing | pyre-10, not scheduled |
+| `re.escape` (`re/__init__.py`) | 303-313 | nothing | pyre-2b, built (`escape`) |
 
 ### Unit 1, built (`pyre::fold`)
 
@@ -2144,14 +2181,17 @@ Decisions:
   The header of `pyre.jsonl` states the reproduced interpreter as fixed
   text, so that file is the same bytes under any Python from 3.11.
 - **One fixture set for the whole engine, split by unit.** Every row
-  carries `unit` (`pyre-1` here) and `part`; each file's header counts
-  the rows of each unit. A unit's test checks every row of its own unit
-  against that count, and the header's counts must add up to the file's
-  rows, so a row no unit claims fails `golden_pyre_fold`. In
-  `gen_pyre.py` a unit's functions carry its prefix (`fold_rows`,
-  `fold_unicode_rows`, `fold_python_rows`) and are listed per file in
-  `_PARTS`. `pyre.jsonl` is capped at 150,000 bytes for the whole engine
-  (asserted by the generator and by the test).
+  carries `part`. A row of this unit also carries `unit` (`pyre-1`); the
+  rows of pyre-2 are known by their parts (`tree.`, `token.` and `atom.`,
+  written by `gen_pyre_tree.py` and `gen_pyre_atom.py`). `_PARTS` in
+  `gen_pyre.py` lists each file's row functions under their unit, and
+  each file's header counts the rows of each unit. `golden_pyre_fold`
+  checks every row of this unit against that count, and the header's
+  counts must add up to the file's rows, so a row no unit claims fails
+  it. In `gen_pyre.py` this unit's functions carry its prefix
+  (`fold_rows`, `fold_unicode_rows`, `fold_python_rows`). `pyre.jsonl` is
+  capped at 150,000 bytes for the whole engine (asserted by the generator
+  and by the test).
 - **A sweep is pinned by digest, a kill is written out.** A `sweep` row
   holds one value per code point (four bytes little-endian for a map,
   one byte for a test), as the SHA-256 of all of them and the first 16
@@ -2209,11 +2249,11 @@ pattern.
 
 #### Fixtures and tests
 
-| file | gate | holds, of unit pyre-1 | bytes |
+| file | gate | holds, of unit pyre-1 | bytes of its rows and the header |
 | --- | --- | --- | --- |
-| `pyre.jsonl` | none | the header; for each ASCII literal the ASCII characters it matches, without and with IGNORECASE (2 rows); 18 kills over ASCII text | 5,242 |
+| `pyre.jsonl` | none | the header; for each ASCII literal the ASCII characters it matches, without and with IGNORECASE (2 rows); 18 kills over ASCII text | 5,255 |
 | `pyre_unicode.jsonl` | Unicode | 6 sweeps (lower, upper, cased, `\w`, `\d`, `\s`, each over 1,114,112 code points in 68 blocks); the extra cases in full; 14 counts; the exact set of each of the 2,927 cased literals (5,917 members, by digest per 64 patterns); the exact set of 2,439 uncased literals (every one below U+0530 and 2,000 drawn by a recorded rule and seed); 47 kills | 17,292 |
-| `pyre_python.jsonl` | Python | one row each: the interpreter, its Unicode, `_sre.MAGIC`, `_sre.CODESIZE`, and the digest of each of five sources (9 rows) | 687 |
+| `pyre_python.jsonl` | Python | one row each: the interpreter, its Unicode, `_sre.MAGIC`, `_sre.CODESIZE`, and the digest of each of five sources (9 rows) | 699 |
 
 Every set comes from `re` itself:
 `re.compile(re.escape(chr(p)), re.I).findall(every)` with `every` the
@@ -2221,14 +2261,14 @@ string of all 1,114,112 code points, so each of the 2,927 cased literals
 is asked of every code point (3.26 billion pairs, about 30 s of the
 generator's run).
 
-- `golden_pyre_fold` checks every row of the three files and fails when
-  the number checked is zero or differs from the header's count. The
-  sweeps and the kills read every code point in every build. The two
-  literal sweeps call `Lit::matches` for every pattern and every code
-  point in a release build (6 billion calls on every core, 6 s). A debug
-  build asks the candidates only (31,234 code points: every cased one,
-  every one below U+3000, every 61st, the pattern itself), in 12 s; it
-  takes 170 s to ask all, which `BM_PYRE_FULL=1` does. The candidates
+- `golden_pyre_fold` checks every row of this unit in the three files
+  and fails when the number checked is zero or differs from the header's
+  count. The sweeps and the kills read every code point in every build.
+  The two literal sweeps call `Lit::matches` for every pattern and every
+  code point in a release build (6 billion calls on every core, 6 s). A
+  debug build asks the candidates only (31,234 code points: every cased
+  one, every one below U+3000, every 61st, the pattern itself), in 12 s;
+  it takes 170 s to ask all, which `BM_PYRE_FULL=1` does. The candidates
   leave out what `Lit::matches` answers for the other code points (a
   literal that wrongly took one of them passes a debug build), so the
   parity job runs this test once more in a release build (`tools/parity.py`,
@@ -2283,6 +2323,432 @@ generator's run).
   code point; every one of the 1,111,185 uncased code points as a
   pattern under IGNORECASE matches exactly itself; and for every cased
   code point `[^p]` matches exactly what `p` does not.
+
+### Unit pyre-2a, built (`pyre::tree`, `pyre::token`)
+
+**The tree.** A `SubPattern` is the list `SubPattern.data` holds; a
+`Node` is one `(op, av)` tuple of it: `Literal`, `NotLiteral`, `Any`,
+`In` (members `Negate`, `Literal`, `Range`, `Category`), `At`, `Branch`,
+`Subpattern`, `MaxRepeat`, `MinRepeat`, `Assert`, `AssertNot`, `Failure`.
+The codes of `At` and `Category` carry `re._constants`' names
+(`AT_BOUNDARY`, `CATEGORY_NOT_WORD`), so the dump prints them as they
+are. `GROUPREF`, `GROUPREF_EXISTS`, `ATOMIC_GROUP` and
+`POSSESSIVE_REPEAT` have no variant: the engine refuses a backreference,
+a conditional, an atomic group and a possessive repeat, and a tree that
+cannot hold one cannot pass one on to the matcher.
+
+**The dump.** `SubPattern::dump` is `str(tree)`, which is
+`SubPattern.__repr__`, the `repr` of the list: `[(LITERAL, 97), (IN,
+[(RANGE, (97, 122))])]`. A branch prints its leading `None`, a group
+its number or `None` and its two flag sets, a lookaround its direction
+(1 or -1), an empty negative lookaround `(FAILURE, ())`. The maximum of
+an unbounded repeat prints as `MAXREPEAT`, because the parser stores
+the named constant there; a written maximum can never equal it (`re`
+raises OverflowError at 4294967295), so one `u32` holds both and
+`u32::MAX` is the name. `SubPattern.dump`, the indented print of
+`re.DEBUG`, is another text and is not ported.
+
+**Any depth.** The dump, `Debug` (which writes the dump), `Clone` and
+the drop of a tree keep what is left to do on a stack of their own on
+the heap: a list waits there while the sub-patterns of its current item
+are written or copied, and the drop moves the items of every sub-pattern
+into one list before it frees them. No call is made per level, so a tree
+200,000 levels deep is written, copied and freed on a thread of 64 KiB
+(`pyre_tree_robustness`). The reference's `str(tree)` raises
+RecursionError from 998 levels, a bound of the interpreter's stack and
+not of the text; the dump writes the text at every depth. No parse
+reaches such a tree: pyre-3 refuses nesting past 32.
+
+**No derived equality.** `Node` implements neither `PartialEq` nor
+`Eq`. `_parse_sub` pulls a prefix out of a branch when every alternative
+begins with an equal item, and it compares items as Python compares
+tuples: a `SubPattern` has no `__eq__`, so an item that holds one (a
+repeat, a group, a lookaround) equals only the same object.
+`ab|ac` is factored and `a+b|a+c` is not, and factoring the second
+changes answers (`re.match('a*ab|a*', 'aab')` is `aab`; over the
+factored tree it would be `aa`). `Node::py_eq` is that comparison: by
+value for `Literal`, `NotLiteral`, `Any`, `In`, `At` and `Failure`, by
+identity otherwise. A branch holds a list of sub-patterns, so it equals
+another branch only when neither has an alternative, as two empty lists
+are equal: `(BRANCH, (None, [])) == (BRANCH, (None, []))` is True. No
+parse makes such a branch (`_parse_sub` builds one from two
+alternatives or more); a tree built by hand can hold one. A unit that
+needs to compare items has to call `py_eq` by name.
+
+**The state.** `State` keeps `flags`, `groupdict`, `groupwidths` and
+`lookbehindgroups`. Three decisions:
+
+- `groupdict` is a hash map from a name to its group. Python's dict
+  keeps the order names were added in; that order is the order of the
+  group numbers, so nothing is lost and a lookup stays constant time
+  for a pattern with many names.
+- `closegroup(gid, p)` stores `p.getwidth()`. `getwidth` belongs to
+  pyre-3, so `closegroup` takes the width. It answers false where the
+  reference raises IndexError (a group never opened).
+- `grouprefpos` is left out. Only a conditional writes it.
+
+`opengroup` returns the error's name without a position, as the
+reference raises `error(msg)` there and `_parse` adds the position.
+"too many groups" needs 1,073,741,824 groups under the module's
+`MAXGROUPS`, about 51 GB of widths, so the bound is an argument:
+`opengroup` is `opengroup_within(name, MAXGROUPS)`. The reference reads
+`MAXGROUPS` from its module when the call runs, and the generator sets
+it to 0 to 3 for four scripts (`maxgroups` in the row): a group past
+the bound is counted, then refused, before its name is looked at.
+
+**The names.** `BuildError` is `Invalid { at, why }` where `re` rejects
+the pattern too, and `Unsupported { at, what }` where `re` accepts it
+and the engine does not. `at` is `re.error.pos`; it is signed (see the
+tokenizer). `Why` names a message of `re.error`:
+
+| `Why` | the message |
+| --- | --- |
+| `BadEscapeEnd` | bad escape (end of pattern) |
+| `BadEscape` | bad escape %s |
+| `IncompleteEscape` | incomplete escape %s |
+| `OctalRange` | octal escape value %s outside of range 0-0o377 |
+| `MissingBrace` | missing { |
+| `MissingCharacterName`, `MissingGroupName` | missing character name, missing group name |
+| `UnterminatedName` | missing %s, unterminated name |
+| `InvalidGroupReference` | invalid group reference %d |
+| `OpenGroup` | cannot refer to an open group |
+| `LookbehindGroup` | cannot refer to group defined in the same lookbehind subpattern |
+| `UnterminatedSet` | unterminated character set |
+| `BadRange` | bad character range %s-%s |
+| `UnbalancedParenthesis` | unbalanced parenthesis |
+| `TooManyGroups` | too many groups |
+| `Redefinition` | redefinition of group name %r as group %d; was group %d |
+
+Only the name and the position are promised, not the text with its
+fields filled in. The generator checks every message against the string
+constants of the running interpreter's `re/_parser.py`, so a name cannot
+stand for a message `re` does not have. pyre-2a raises `BadEscapeEnd`,
+the two `Missing...Name`, `UnterminatedName`, `OpenGroup`,
+`LookbehindGroup`, `TooManyGroups` and `Redefinition`; pyre-2b raises
+the others, and pyre-3 adds the names of what it raises.
+
+`Feature` names what the engine refuses: `Backreference`,
+`NamedCharacter`, `SetWarning`, `Verbose`, `Ascii`, `Locale`, `Debug`,
+`Conditional`, `AtomicGroup`, `Possessive`, `NotBoundary`, `NotDigit`,
+`NotWord`, `NullableLoop`, `CaptureInRepeat`, `CaptureInLookaround`,
+`ChoiceInLookbehind`, `ClassPastBmpIgnorecase`, `BytesCategory`,
+`BytesBoundary`, `BytesIgnorecase`, `Nesting`, `Nodes`, `Template`, and
+for syntax not built yet `Repeat`, `Group`, `Alternation`. pyre-2b
+returns `Backreference`, `NamedCharacter`, `SetWarning`, `Verbose`,
+`Repeat`, `Group` and `Alternation`; the others are later units'. They
+are fixed here so that every later unit refuses by the same names; the
+fixture lists them in order and the test fails to compile when the enum
+gains a name the list lacks.
+
+**The tokenizer.** A pattern is code points; a bytes pattern is its
+bytes as code points with `istext` false, as the reference decodes one
+by Latin-1. A token (`Tok`) is a character, or a backslash and the
+character after it. What each method reproduces:
+
+- `new` and `__next`: a backslash that ends the pattern raises "bad
+  escape (end of pattern)" at the last index. It is raised by the step
+  that loads it, one token before the parser would consume it, so every
+  method that advances returns a result (`Built`).
+- `matches` (`match`) and `getwhile` compare whole tokens: an escaped
+  character is never the character and is in no charset. The charset of
+  `getwhile` is a predicate over a code point.
+- `getuntil(terminator, name)` returns the characters before the
+  terminator, an escaped one as its two characters. Its `name` only
+  chooses the message, so the port takes the `Why` to raise
+  (`MissingGroupName` or `MissingCharacterName`). The three errors are
+  placed as the reference places them: at the terminator when it comes
+  first, at the end when the pattern ends first, and where the name
+  began when it has no terminator.
+- `tell` (and `pos`) is where the next token begins: the index minus
+  the next token's length.
+- `seek` moves the index and loads the token there.
+- `error(why, offset)` is `re.error` at `tell() - offset`, the exact
+  difference, narrowed to an `isize` only after the subtraction.
+  `refuse(what, offset)`, which pyre-2b calls, places a refusal the same
+  way.
+
+`checkgroupname` is left to pyre-3: it asks `str.isidentifier`, which
+needs tables the crate does not have yet.
+
+**Positions are signed.** The reference leaves the tokenizer as it was
+when a step raises, except that `seek` has already moved the index.
+After `Tokenizer('\\\\').seek(1)` raised, `tell()` is -1, and
+`error(msg, 2)` there is at -3; `Tokenizer('abc').error(msg, 2)` is at
+-2. The port keeps that state and those positions, so `tell` returns an
+`isize` and `BuildError` carries one. No pattern read from its start by
+`parse` reaches a negative position.
+
+Python's integers have no bound and an `isize` has two. `tell()` and
+`tell() - offset` are computed in an `i128`, where every index and
+offset fits, and a result past either end of an `isize` is that end:
+`seek(2**63)` then `tell()` is `isize::MAX` where the reference answers
+2**63, and `error(msg, 2**64 - 1)` at the start is `isize::MIN` where it
+answers 1 - 2**64. No slice is longer than `isize::MAX`, so only a
+`seek` past every pattern or an offset past every position reaches an
+end; every answer that fits an `isize` is the reference's (an offset of
+2**63 at the start is -2**63, and after `seek(2**63 - 1)` an offset of
+2**64 - 1 is -2**63). `seek`, `closegroup` and `checkgroup` take a
+`usize` where the reference takes any integer and reads a negative index
+from the end, as a Python list does. The parser passes none: it seeks
+only to what `tell()` returned before a step failed, and its group
+numbers are digits or a value of `groupdict`. A `tell()` of -1 after a
+failed `seek` is therefore an answer the port gives and cannot be given
+back to `seek`.
+
+### What `re._parser` does that a reader would not expect (reproduced)
+
+None of these shows through `re.compile`; each is pinned because a later
+unit drives these functions directly.
+
+- `State.opengroup` counts a group before it refuses its name. After
+  `s = State(); s.opengroup('a')`, a second `s.opengroup('a')` raises
+  and `s.groups` is 3.
+- Group 0 is never closed: `State().checkgroup(0)` is False, so inside a
+  lookbehind `checklookbehindgroup(0, source)` raises "cannot refer to
+  an open group".
+- `checklookbehindgroup` asks nothing outside a lookbehind, even of a
+  group that does not exist.
+- `tell()` can be negative, as above.
+- `getwhile` and `match` never see an escaped character as the
+  character: `Tokenizer(r'\7').getwhile(1, DIGITS)` is `''`.
+- Two `FAILURE` items are equal, so `_parse_sub` pulls one out of a
+  branch as a common prefix: `str(parse('a(?!)|a(?!)'))` is
+  `[(LITERAL, 97), (FAILURE, ()), (BRANCH, (None, [[], []]))]`.
+
+### Unit pyre-2b, built (`pyre::atom`)
+
+`class_escape` is `_class_escape`, `item_escape` is `_escape`, `set` is
+the branch of `_parse` that reads a set after its `[` (with `_uniq`),
+and `escape` is `re.escape`. They read through the tokenizer above as
+the reference reads through its own: the same tokens taken, the same
+positions. `parse_flat` stands in for `parse` over a pattern of atoms
+until pyre-3 builds `_parse_sub`, `_parse` and `parse` over the same
+functions: it reads escapes, literals, sets, the dot, `^` and `$`, and
+raises "unbalanced parenthesis" at a `)` as `parse` does.
+
+- **Accepted as `re` reads it**: `\a \f \v`, octal escapes (`\0`, `\07`,
+  `\100`, and in a set `\1` to `\377`), `\xhh`, `\uhhhh`, `\Uhhhhhhhh`,
+  a backslash before any character that is not an ASCII letter or digit,
+  a raw `}` or `]` outside a set, `]` first in a set, `-` first or last.
+  Each is one row of a table or one branch of the reference's readers,
+  proven by the same comparison as the rest. A digit past ASCII is never
+  read as a digit (`DIGITS`, `OCTDIGITS` and `HEXDIGITS` are ASCII):
+  after a backslash, in a set or not, U+0663 is that character, and it
+  ends a group reference, an octal escape or a `\x` escape as any other
+  character does.
+- **Refused by name**, each at the position the generator states
+  (below):
+  - `\N{...}` (`NamedCharacter`), read as far as the reference reads it
+    before it looks the name up, so "missing {", "missing character
+    name" and "missing }, unterminated name" stay `re`'s errors. It is
+    refused at its backslash, where the reference places "undefined
+    character name": the table of character names is not carried.
+  - A reference to a group (`Backreference`) once the reference's own
+    checks pass ("invalid group reference", "cannot refer to an open
+    group", the two lookbehind errors), at its backslash. `parse_flat`
+    opens no group, so there the first check always fails; the golden
+    file holds `item_escape` with a `State` for the rest.
+  - A set where `re` warns (`SetWarning`), at the position its warning
+    names: `[[` at the start of a set (the second `[`), a doubled `-`,
+    `&`, `~` or `|` after a member (the first of the two), a range that
+    ends in `-` (the range's `-`). `re` emits a FutureWarning there and
+    the port cannot, so it refuses.
+  - In `parse_flat`, what pyre-3 reads, at the token that begins it: a
+    repeat (`*`, `+`, `?`, `{`, also where `re` reads `{` as a literal),
+    a group (`(`), an alternative (its `|`, after the token past it is
+    loaded, so `a|\` is "bad escape (end of pattern)" at 2). Under
+    VERBOSE, a character of `WHITESPACE` (the space, `\t`, `\n`, `\r`,
+    `\v`, `\f`) or `#` outside a set and not escaped, the first token
+    the flag changes; a pattern without one reads as it does without the
+    flag, and a space `WHITESPACE` does not hold (`\x1c`, `\x85`, U+00A0,
+    U+3000) is a literal as it is there.
+- **Kept in the tree**: `\B`, `\D`, `\W` parse to `AT_NON_BOUNDARY` and
+  the two categories as `re` parses them. Refusing them is the predicate
+  of pyre-3 over the finished tree.
+- **The reference's answers that look odd, reproduced**: `\128` is
+  "invalid group reference 12" at 1 (two digits, then a literal 8 that
+  is never reached); `\0777` is `\077` and `7`; `[\378]` is the set of
+  `\37` and `8`; `[--]` is a literal hyphen without a warning while
+  `[---]` warns; `[[]` warns and `[^[]` does not; the position of "bad
+  character range" counts each escape as two characters whatever it
+  consumed (`[\xff-\x00]` reports 5); `\U00110000` is "bad escape", not a
+  range error; in a bytes pattern `\u`, `\U` and `\N` are bad escapes; a
+  backslash before a letter outside ASCII is that letter, while `\q` is a
+  bad escape.
+- **Two inputs depend on the Python release**, and their rows are in
+  `pyre_python.jsonl`: `\z` is "bad escape" in 3.13 and the end of the
+  string from 3.14; a `\U` escape of 2**31 or more (`\U80000000`,
+  `\Uffffffff`) is "bad escape" from 3.13, where 3.11 and 3.12 raise
+  OverflowError from `chr`, which is not `re.error`. The port answers as
+  3.13.13. No row, sweep or inventory pattern of `pyre.jsonl` holds
+  either.
+
+**How the generator states the edge.** `gen_pyre_atom.py` runs
+`re._parser.parse` itself with a refusal raised at each place the port
+refuses (`_hooked`). `re._parser.SPECIAL_CHARS`, which `_parse` asks of
+every bare character, raises for `(` and the repeat characters; `_parse`
+raises when `_parse_sub` calls it for an alternative after the first;
+`WHITESPACE`, asked only under VERBOSE, raises for whitespace and `#`;
+`unicodedata.lookup` finds no name, so the reference itself raises
+"undefined character name" at the escape's backslash; FutureWarning is
+an error, whose message names its position. The first event in the
+reference's own order is the expected answer: `str(tree)`, an error by
+its name and position, or a refusal by its name and position. The hooks
+are taken off before any other `re` call of the generator runs.
+
+**The proof.** Every inventory text the generator finds is read as a
+chain: the pattern is parsed, and after each error or refusal parsed
+again from one past its position, until a read gives a tree. So every
+set and escape of the inventory is read and compared, though no
+inventory pattern with a repeat or a group parses whole yet. The
+inventory here is the 183 distinct string and bytes literals (166 and
+17) that `src/bettermemory` passes as the pattern of a function of
+`re`, found by an `ast` scan when the file is generated; the patterns
+the reference builds from parts at import wait for pyre-7, which imports
+the modules. Beside it: 171 patterns written out with their answers, 30
+direct calls of the two readers with a `State`, 20,000 patterns joined
+from 58 fragments by digest, and `re.escape` of every code point. That
+the escaped text of all 1,114,112 code points parses to their literals
+one by one is checked by the generator against `re._parser` and by the
+test against the port.
+
+### Fixtures and tests of pyre-2
+
+`tests/contract/gen_pyre.py` writes the engine's files (unit 1, "One
+fixture set for the whole engine, split by unit"). pyre-2 writes its own
+parts from its own modules (`gen_pyre_tree.py` for pyre-2a,
+`gen_pyre_atom.py` for pyre-2b), which `gen_pyre.py` lists under
+`pyre-2` in `_PARTS`, and a native test reads the parts it knows. Its
+parts of `pyre.jsonl` are class i: nothing in these parts reads the
+Unicode data, and the generator writes the same bytes under CPython 3.11.15,
+3.12.13 and 3.13.13 (run on each; the `tree.` and `token.` parts also
+under 3.15.2, which was not at hand for the `atom.` parts). CI also
+compares it under 3.14, which was not at hand to run. The `atom.` parts
+read `re._parser` through names a release may change (`SPECIAL_CHARS`,
+`WHITESPACE`, `_parse`, `_escape`, `_class_escape`). A row that a
+release answers otherwise belongs in `pyre_python.jsonl`.
+
+Three answers of this unit are the release's: `\z` and a `\U` escape
+of 2**31 or more (pyre-2b, above; six rows of `atom.parse` in
+`pyre_python.jsonl`), and the tree of an empty negative lookaround:
+`(?!)` or `(?<!)` parses to `(FAILURE, ())` from 3.13 and to
+`(ASSERT_NOT, (dir, []))` in 3.11 and 3.12. The port answers as 3.13.13.
+The patterns that hold an empty negative lookaround are in
+`pyre_python.jsonl` (class ii, gated on the Python release): four trees,
+among them `a(?!)|a(?!)`, whose
+common prefix takes the `FAILURE` item too, and the comparison of four
+items. No CI runner compares a file gated on the release, so the dump
+and the equality of a `Failure` item are also pinned in `pyre.jsonl`, by
+trees the generator builds without a parse and by the sweep.
+
+A text in a row has its backslashes written as `~`. A golden file may
+hold no run of backslashes (the host-fact guard reads one as a Windows
+path), and a pattern is mostly backslashes. A text that holds a `~` or a
+surrogate is a list of code points.
+
+| part | rows | holds |
+| --- | --- | --- |
+| `tree.constants` | 1 | `MAXREPEAT`, `MAXGROUPS`, `MAXWIDTH`, the flag bits, the names of the `AT` and `CATEGORY` codes |
+| `tree.names` | 1 | each `Why` with its message, each `Feature` |
+| `tree.dump` | 47 | 40 patterns, each with the tree `re._parser.parse` returned for it item by item and `str(tree)`; the test builds the tree and prints it. Every kind of item, every field, the bounds 0 and 4294967294, ten nested groups. 7 more are trees the generator builds itself: `FAILURE`, an empty set, an empty branch, group 0. pyre-2a does not parse, so these rows hold the print of a tree and the reference's tree for each pattern; their parse is held from pyre-3 on, and the parse of patterns of atoms by the `atom.` parts |
+| `tree.eq` | 2 | 25 items compared with `==` across two parses, as a matrix: each set beside a near miss (negated, one member more, another end of a range, another category); and 18 items the generator builds, compared across two builds, among them branches of none, one and two alternatives |
+| `tree.sweep` | 1 | 4,000 random trees (nesting up to 4, every kind, a branch of none to three alternatives, code points from 0 to U+10FFFF with a surrogate, bounds up to `MAXREPEAT`): `str(tree)` and the comparison of every pair of items of two builds, by SHA-256 |
+| `tree.state` | 12 | scripts of `State` calls, each call's answer, then `flags`, `groupdict` and `groupwidths`; a group closed twice; four scripts under a `MAXGROUPS` of 0 to 3 |
+| `token.script` | 26 | scripts of `Tokenizer` calls: each call's answer, `tell()` and the next token after it, errors and the state they leave included, offsets and an index at the ends of a 64-bit integer |
+| `token.sweep` | 1 | 20,000 random scripts over random texts of backslashes, digits, terminators and code points past the BMP, by SHA-256 |
+| `atom.parse` | 171 | patterns and their answers (`str(tree)`, `!Why@pos` or `?Feature@pos`): every branch of the two escape readers and of a set, every error and refusal of pyre-2b at its position, the near misses of the three warnings, a digit past ASCII after a backslash in and out of a set, bytes patterns, VERBOSE at each character of `WHITESPACE` and at spaces it does not hold |
+| `atom.escape` | 30 | `_escape` and `_class_escape` called on a tokenizer after its first token, with a `State` built by the ops of `tree.state`: references to a closed, an open and a missing group, inside and outside a lookbehind, and one ended by a digit past ASCII; `tell()` and the next token after |
+| `atom.sweep` | 1 | 20,000 patterns of up to seven of 58 fragments, each read as a str pattern, a bytes pattern or under VERBOSE, by SHA-256 |
+| `atom.inventory` | 1 | the 183 literals of the inventory, each one's chain by the first 16 hexadecimal digits of its SHA-256 |
+| `atom.re_escape` | 1 | `re.escape` of every code point by SHA-256, of the 256 bytes in full, and the code points it escapes |
+
+The three sweeps are digest rows: the row records the seed and the
+count, the test draws the same cases from the same linear congruence
+(`s = 6364136223846793005 s + 1442695040888963407 mod 2^64`, a draw is
+`s >> 33`) and compares the count and the digest. The rows of pyre-2
+are 51.6 KB of `pyre.jsonl` (56.8 KB with unit 1's rows and the header,
+of the 150 KB the engine's fixture may reach) and 1.1 KB of
+`pyre_python.jsonl` (1.8 KB).
+
+| test file | tests | what it holds |
+| --- | --- | --- |
+| `golden_pyre_tree` | 2 | every row of the eight `tree.` and `token.` parts of `pyre.jsonl`, and every row of the `tree.` parts of `pyre_python.jsonl`; each fails when a part has no row or a `tree.` or `token.` part is one it does not know |
+| `golden_pyre_atom` | 2 | every row of the five `atom.` parts of `pyre.jsonl` (the sweep and the inventory's chains regenerated, `re.escape` of every code point and the parse of what it writes), and every `atom.` row of `pyre_python.jsonl` |
+| `pyre_tree_kills` | 20 | one test per wrong reading: an unbounded maximum printed as a number, another spelling of the list, a sorted set, a copy that leaves out a sub-pattern, derived equality, an item without a sub-pattern equal only at its own address, a branch of no alternatives unequal to its like, a set equal to a near miss, a new state with a flag or a group, a name refused before its group is counted, "too many groups" at the bound, never, or after the name, group 0 closed, a group closed twice keeping its first width, the lookbehind check in another order, `tell` as the index, the final backslash raised late, `match` and `getwhile` taking an escaped character, `getuntil` dropping a backslash or misplacing an error, an unsigned position, an error placed by narrowed or wrapped numbers, a bytes pattern decoded |
+| `pyre_tree_robustness` | 11 | a pattern, a run and a name of 200,000 characters, a megabyte of backslashes (even and odd), code points up to `u32::MAX`, `seek` and offsets up to `usize::MAX`, a tree of 200,000 items, nesting 256 deep, 200,000 named groups, a group name of 2,000,000 code points opened three times, a tree nested 200,000 levels deep dumped, written by `Debug`, copied and dropped on a thread of 64 KiB, and in time linear in its depth; time held by `tests/timing`: ten times the input under `TENFOLD` (sixty) times the time plus 50 ms, the least of three to twelve rounds, each input built outside the clock |
+| `pyre_atom_kills` | 17 | one test per wrong reading: `\b` read by one table in and out of a set, `-` first or last read as a range, `\d` in a set as a letter or a set of its own, octal against group references, octal in a set, code points past U+10FFFF, Unicode escapes in a bytes pattern, a range error placed by what was read, a set sorted or keeping repeats, `]` first read as the end, the three warnings ignored or raised where `re` is silent, `\N{...}` refused early or elsewhere, an escaped letter taken or another character refused, a digit past ASCII read as a digit, the next unit's syntax refused late, early or elsewhere, VERBOSE refused at every token, at none, or at other spaces than those of `WHITESPACE`, `re.escape` with another set |
+| `pyre_atom_robustness` | 6 | a flat pattern of 200,000 characters, sets of 200,000 distinct members and of 200,000 equal ranges, a megabyte of backslashes inside and outside a set, `re.escape` of 200,000 code points and its parse, code points and group numbers at the edges, every pattern of up to three of 22 characters as str, bytes and VERBOSE with each position within it; time held by `tests/timing` as above |
+
+Fourteen mutants of the source were run against the golden and kills
+files (the dump of `MAXREPEAT`, equality by text, `tell`, the failed
+`seek`, the backslash in `getuntil`, the order in `opengroup` and in
+the lookbehind check, the escaped character in `match` and `getwhile`,
+the two error positions, group 0, the negation, `n` in `getwhile`).
+Thirteen fail both files. The fourteenth places the final backslash's
+error at the index instead of the last index, and is the same program:
+a backslash with nothing after it is at the last index.
+
+Eleven more mutants came from review. Ten fail both the kills file and
+the golden file: `closegroup` keeping the first width, a set compared
+without its negation or by the low end of a range, a new state with a
+flag set, `ANY` or `FAILURE` equal only at its own address, every
+branch unequal, "too many groups" at the bound or never, and an error
+placed by narrowing the offset before the subtraction. The eleventh
+places an error by wrapping arithmetic, which differs only where the
+exact position lies past an `isize`; it fails the robustness file.
+
+Twenty-three mutants of `pyre::atom` were run against the golden and
+kills files: `\b` dropped from the table of escapes, the anchors read
+after that table, `]` first ending a set, an unterminated set placed
+past its `[`, a range error placed by a fixed width, no `_uniq`, a
+doubled member compared without its backslash, the nested-set warning
+read after `^`, a third digit of ten taken, "invalid group reference"
+placed at the backslash, an incomplete escape placed by its full width,
+U+10FFFF refused, `\N{...}` refused one place over, VERBOSE refused at
+an escape, an alternative refused before its `|` is taken, `re.escape`
+without `#`, four octal digits in a set, three after `\0`, letters past
+ASCII refused, the negation swapped, the lookbehind check before "open
+group", the range-end warning one place over, `\u` read in a bytes
+pattern. Each fails the golden file. Twenty-one failed the kills file;
+it now holds a case for the other two (`[\1234]`, an open group inside
+a lookbehind), and fails all twenty-three.
+
+Nine more mutants of `pyre::atom`, from review, passed all six files of
+the unit: VERBOSE skipping only the tab, the space and `#`; skipping all
+of `WHITESPACE` but `\v`; skipping Unicode's spaces; skipping those of
+`str.isspace`; `_escape` reading a digit past ASCII as the start of a
+group reference; the digit test taking every digit past ASCII as 0, or
+the Arabic-Indic digits at their value, in every reader; the bare digit
+after an escape taken past ASCII; an octal escape in a set begun by
+one. Under the first, a VERBOSE pattern of several lines read its line
+breaks as literals where it is refused. `atom.parse` now holds each
+character of `WHITESPACE` under VERBOSE and spaces it does not hold, and
+a digit past ASCII after a backslash, after `\0`, `\1` and `\10`, in a
+set and in a `\x` escape; `atom.escape` holds `\1` ended by one with
+group 1 closed. Each of the nine fails the golden file and the kills
+file.
+
+Seven mutants of the dump, `Clone` and the drop of a tree: a comma left
+out between alternatives or between items, the alternatives of a branch
+copied empty, only the first sub-pattern of an item copied, the
+unbounded maximum printed by number, a drop that leaves the alternatives
+of a branch in place, and a dump that calls itself for each sub-pattern.
+Each fails at least one file. The five that change a text or a copy
+fail the golden and kills files; the last two change no answer and
+fail the robustness file, where 200,000 levels on a thread of 64 KiB
+overflow its stack.
+
+### Left for later units
+
+- pyre-3: `_parse_sub`, `_parse` and `parse` over the functions of
+  `pyre::atom`, which then replace `parse_flat`; `getwidth` (and with it
+  the width `closegroup` is given), `checkgroupname`, the use of `py_eq`
+  in `_parse_sub`, the names of the errors it raises, and the refusal of
+  `\B`, `\D` and `\W`, which the tree can hold. Its refusal of nesting
+  past 32 is for the matcher; the tree holds any depth (pyre-2a, "Any
+  depth").
+- pyre-7: the patterns the reference builds from parts at import, which
+  the `ast` scan of `atom.inventory` does not find.
 
 ## The store's writes: the reference's order (N3a design)
 
@@ -8820,10 +9286,11 @@ What the reference has and this build does not, by area:
   after its vendor-prefixed detectors (the value gate, the generic and
   URI patterns, spans and markers), and the review. The dedup's store
   side reads through a trait not yet wired to `store::digest`.
-- The regular expression engine (`pyre`) past its case folding: the
-  parser's tree and its parse, the lowering, the matcher and the methods
-  (pyre-2 to pyre-6), the inventory proof, the cross-check of the
-  hand-written matchers and the memo (pyre-7 to pyre-9).
+- The regular expression engine (`pyre`) past its case folding and the
+  parser's tree, state, tokenizer and atoms: the rest of the parser
+  (pyre-3), the lowering, the matcher and the methods (pyre-4 to
+  pyre-6), the inventory proof, the cross-check of the hand-written
+  matchers and the memo (pyre-7 to pyre-9).
 - The daemon, the MCP tools, the hooks and the command line.
 - Reading and writing the key ring's files on disk (the ring here holds
   their bytes); `datetime.astimezone` of a naive value (the reference
