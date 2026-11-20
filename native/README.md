@@ -50,6 +50,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
+| `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
 | `claims` | unit 1 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path` | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 
@@ -7551,8 +7552,8 @@ and none was extended.
 | `_PREFIXED_DETECTORS` (twelve patterns) | 85-175 | nothing (Unicode `\b`) | built, unit 1 |
 | `_MIN_BODY_DIVERSITY`, `_is_masked_token` | 184-189 | nothing | built, unit 1 |
 | `_is_spent_run` | 192-197 | nothing | built, unit 1 |
-| `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS`, `_NUMBER_SUFFIX_RE`, `_is_placeholder` | 269-319, 362-378 | nothing (`str.lower`) | unit 2 |
-| `_DATETIME_SHAPE_RE`, `_looks_like_secret` | 332-336, 381-472 | nothing (`str.isupper`, `isalpha`, `isdigit`, `\w`, `\d`) | unit 2 |
+| `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS`, `_NUMBER_SUFFIX_RE`, `_is_placeholder` | 269-319, 362-378 | nothing (`str.lower`) | built, unit 2 |
+| `_DATETIME_SHAPE_RE`, `_looks_like_secret` | 332-336, 381-472 | nothing (`str.isupper`, `isalpha`, `isdigit`, `\w`, `\d`) | built, unit 2 |
 | `_GENERIC_KEYWORD_RE`, `_URI_USERINFO_RE` | 238-265 | nothing (`re.IGNORECASE`, `\s`, `\b`, a lookbehind) | unit 3 |
 | `CredentialMatch`, `_CONTEXT_CHARS`, `_merged_secret_spans`, `secret_spans` | 475-546 | nothing | unit 4 |
 | `_redact_all`, `_safe_snippet`, `find_credential_markers` | 549-632 | nothing (`\s` in `re.sub`) | unit 4 |
@@ -7684,9 +7685,122 @@ points past U+10FFFF, a hand-built `Match` whose body lies outside the text).
   character past ASCII follows it: in `"sk-A" + "BCDEFGHIJ0123456789-é"`
   the match is code points 0 to 24, the hyphen inside.
 
+### Unit 2, built (`credentials::gate`)
+
+The line ranges were confirmed against the source as it is now: the
+tables at 269-319, `_DATETIME_SHAPE_RE` at 332-336, `_NUMBER_SUFFIX_RE` at
+339-359, `_is_placeholder` at 362-378 and `_looks_like_secret` at 381-472.
+
+`PLACEHOLDER_VALUES` and `PLACEHOLDER_WORDS` (the two tables in source
+order), `NUMBER_SUFFIX_PATTERN`, `DATETIME_SHAPE_PATTERN` and
+`INLINE_PATTERNS` (the pattern texts, checked against the golden header),
+`MIN_VALUE_LEN`, `MAX_VALUE_LEN` and `MIN_VALUE_DIVERSITY` (12, 1,024 and
+8, the numbers the function spells inline), `is_upper` (`str.isupper` of
+one character: `Lu` and `Other_Uppercase`, so Roman numerals and circled
+letters are uppercase and a titlecase letter is not), `number_suffix`
+(`_NUMBER_SUFFIX_RE.search`: the span its one match removes),
+`is_placeholder`, `datetime_shape` (`_DATETIME_SHAPE_RE.fullmatch`),
+`looks_like_secret` and `looks_like_secret_str`. Texts are code points, as
+a `str` is; every length is in code points.
+
+No regex crate is used and none was added. Per pattern, why the matcher
+answers as `re` does for every input:
+
+- `_NUMBER_SUFFIX_RE` (`[-_]?(?<!\d)\d+$`): `$` holds at the end and before
+  a final line feed, so the match must end at one of the two. The
+  lookbehind lets `\d+` start only where a run of `\d` (Unicode decimal
+  digits, `unicode::is_re_digit`) starts, so the only match is the whole
+  run that ends there, with the one `-` or `_` before it, which the
+  leftmost search takes. After it no second match is possible (the next
+  start follows a digit, or is past the line feed where `\d+` fails), so
+  `sub("", ...)` removes that span alone.
+- `re.split(r"[-_]+", ...)`: splitting at each separator rather than each
+  run adds only empty tokens, which `all(not t or ...)` passes.
+  `rstrip("0123456789")` is ASCII digits only.
+- `_DATETIME_SHAPE_RE`: each optional part opens with a character nothing
+  after it can start with (`:` the seconds, `.` the fraction, `Z`, `z`,
+  `+` and `-` the zone), and the greedy `\d+` and `\d{4,6}` are followed
+  by no digit, so one reading decides. The basic alternative cannot match
+  where the extended one read a `-` after four digits. `\d` is Unicode.
+- `(?:\.{0,2}/|~/|[A-Za-z]:/)` through `re.match`: a prefix test of `/`,
+  `./`, `../`, `~/` and an ASCII letter, colon and slash.
+- `[a-z0-9_.\-]+(?:/[a-z0-9_.\-]+)+` through `fullmatch`: `/` is outside
+  the class, so the pieces between slashes are the only reading: each
+  non-empty and of the class, with at least one slash (the test runs only
+  when the value holds one).
+- `[A-Za-z_][\w.]*` and `[A-Za-z_][\w.]*\(.*\)` through `fullmatch`: `(`
+  is not in `[\w.]`, so the run ends where the run of `\w` (Unicode) and
+  `.` ends and giving back cannot find a `(`; then `.*` takes anything but
+  a line feed up to the final `)`.
+- `[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+` through `fullmatch`: the pieces between
+  underscores, each non-empty and of `[A-Z0-9]`, the first character
+  `[A-Z]` and at least one underscore.
+
+Past ASCII the gate reads the interpreter's Unicode 15.1.0 data:
+`str.strip` (`unicode::is_space`), `str.lower` with its expansions and
+final sigma (`unicode::lower`), `str.isalpha`, `str.isdigit` (which,
+unlike `\d`, holds for superscripts) and `str.isupper`. `len(set(v)) < 8`
+counts distinct code points and stops at eight.
+
+Time: every step reads the value a bounded number of times, and a value
+over 1,024 code points is refused after the strips, so the gate is linear
+in its input. `is_placeholder` is linear in any length, as the
+reference's anchored suffix pattern is (a 200,000-digit run behind
+`changeme` is read once).
+
+#### Fixtures
+
+`tests/contract/gen_credentials_gate.py`:
+
+- `credentials_gate.jsonl`, not gated: a header pinning both tables, the
+  two compiled patterns' texts and the six inline patterns (read from the
+  two functions' source), then 1,011 hand cases (each strip and closer,
+  each placeholder spelling and suffix, each structured reference, each
+  datetime form and every way to break it, the length floor and ceiling,
+  each character class, long recipes) with all four
+  answers, and eight sweeps pinned as digests: seven of texts joined from
+  pieces and one of edits to secret-shaped bases, 74,000 cases in all,
+  their choices read from SHA-256 of the sweep name and case number. Every
+  character past ASCII has the same properties in every Unicode version
+  since 6.3, so the file holds on every runner.
+- `credentials_gate_unicode.jsonl`, gated on the Unicode version: every
+  code point in eight templates (the two read through `fullmatch` and
+  `search` of every code point, the six that call the gate or the
+  placeholder test of every code point below U+40000), hashed per block
+  of 0x4000.
+
+#### Tests
+
+`golden_credentials_gate.rs` (every case and every sweep of both files,
+the counts checked against the files', the header against the constants),
+`credentials_gate_kills.rs` (`str.isupper` read as `Lu` alone, `$` read
+only at the end, an ASCII `\d`, a `\d` used for `str.isdigit`, a closer
+stripped beside its opener, a call whose `.*` crosses a line feed, the
+length bounds off by one), `credentials_gate_robustness.rs` (time at four
+times the length under ten times the time at the length, the fastest of
+nine interleaved runs, for digit, separator, word, dot and parenthesis
+runs; the empty text, one code point, a lone surrogate, 100,000 spaces or
+quotes).
+
+#### What the reference does that looks wrong (not changed)
+
+- The suffix strip reads Unicode digits (`\d`) and the token strip ASCII
+  digits (`rstrip("0123456789")`), so a placeholder with a non-ASCII digit
+  suffix is a placeholder only when the whole value is in the table:
+  `_is_placeholder("changeme-١٢")` is True,
+  `_is_placeholder("dummy_password_١")` is False.
+- The datetime shape's `\d` is Unicode, so a fullwidth or Arabic-Indic
+  timestamp, which no ISO 8601 writer emits, is waved through as one:
+  `_DATETIME_SHAPE_RE.fullmatch("２０２６-01-15T00:30")`
+  matches.
+- `_NUMBER_SUFFIX_RE`'s `$` matches before a final line feed, so
+  `_is_placeholder("changeme1\n")` compares `"changeme\n"` and is False.
+  `_looks_like_secret` strips the line feed first, so the gate itself
+  never sees this.
+
 #### Left for later units
 
-Units 2 to 4 above. Unit 4 sorts `prefixed_spans`' output with the generic
+Units 3 and 4 above. Unit 4 sorts `prefixed_spans`' output with the generic
 and URI spans (a stable sort by start, so the order among equal starts is
 this function's order) before merging.
 ## What a memory claims (`claims.py`)
@@ -9503,9 +9617,10 @@ What the reference has and this build does not, by area:
   `verify.py`. The history readers of `origin_history.py` (its leaves
   and memo are built).
 - The write gates past the control tokens and the dedup: `credentials.py`
-  after its vendor-prefixed detectors (the value gate, the generic and
-  URI patterns, spans and markers), and the review. The dedup's store
-  side reads through a trait not yet wired to `store::digest`.
+  after its vendor-prefixed detectors and its value gate (the generic and
+  URI patterns, spans and markers: units 3 and 4), and the review. The
+  dedup's store side reads through a trait not yet wired to
+  `store::digest`.
 - The regular expression engine (`pyre`) past its case folding and the
   parser's tree, state, tokenizer and atoms: the rest of the parser
   (pyre-3), the lowering, the matcher and the methods (pyre-4 to

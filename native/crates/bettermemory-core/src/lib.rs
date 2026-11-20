@@ -45,7 +45,7 @@
 //! - [`origin_remote`]: a remote URL read into the triple `origin`
 //!   compares, with `urllib.parse.urlparse` as CPython 3.13.13 has it;
 //! - [`credentials`]: the write gate's credential detectors, its first
-//!   unit (the vendor-prefixed shapes);
+//!   two units (the vendor-prefixed shapes and the value gate);
 //! - [`origin_gitfiles`]: the repository files `origin` reads in-process,
 //!   its first two units (the pure decoders, and the leaves that read the
 //!   machine: a file's prefix, a path relative to the root, the root as

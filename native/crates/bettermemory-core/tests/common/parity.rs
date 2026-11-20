@@ -292,6 +292,10 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `\b` past ASCII is `re`'s `\w` of the Unicode data
         // (`gen_credentials_prefixed`).
         "credentials_prefixed_unicode.jsonl" => &[Unicode],
+        // `str.strip`, `str.lower`, `re`'s `\d` and `\w`, `str.isupper`,
+        // `isalpha` and `isdigit` of every code point
+        // (`gen_credentials_gate`).
+        "credentials_gate_unicode.jsonl" => &[Unicode],
         // A link or folder checked through a folder that cannot be
         // searched: 3.13's `Path.is_dir` raises, 3.14's answers False.
         "gitsystem_probe_python.jsonl" => &[Python],
