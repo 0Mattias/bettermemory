@@ -1,0 +1,104 @@
+{"cases":103,"k":"header"}
+{"k":"cm","m":"","o":""}
+{"k":"cm","m":"sha:abcdef0","o":"sha:<commit>"}
+{"k":"cm","m":"sha:0000000","o":"sha:<commit>"}
+{"k":"cm","m":"sha:1234567","o":"sha:<commit>"}
+{"k":"cm","m":"sha:abcdef0\n","o":"sha:<commit>"}
+{"k":"cm","m":"sha:abcdef0\n\n","o":"sha:abcdef0\n\n"}
+{"k":"cm","m":"sha:abcdef0\r","o":"sha:abcdef0\r"}
+{"k":"cm","m":"sha:abcdef0 ","o":"sha:abcdef0 "}
+{"k":"cm","m":"\nsha:abcdef0","o":"\nsha:abcdef0"}
+{"k":"cm","m":"sha:abcdeF0","o":"sha:abcdeF0"}
+{"k":"cm","m":"sha:abcdeg0","o":"sha:abcdeg0"}
+{"k":"cm","m":"sha:abcdef","o":"sha:abcdef"}
+{"k":"cm","m":"sha:abcdef01","o":"sha:abcdef01"}
+{"k":"cm","m":"SHA:abcdef0","o":"SHA:abcdef0"}
+{"k":"cm","m":"sha:<commit>","o":"sha:<commit>"}
+{"k":"cm","m":"currently","o":"currently"}
+{"k":"cm","m":"as of <date>","o":"as of <date>"}
+{"k":"cm","m_cps":[115,104,97,58,97,98,99,55296,101,102,48],"o_cps":[115,104,97,58,97,98,99,55296,101,102,48]}
+{"k":"text","qs":[],"sa":[true,null],"ss":["",""],"t":""}
+{"k":"text","qs":[],"sa":[true,false,null],"ss":["a","a","a"],"t":"a"}
+{"k":"text","qs":[],"sa":[true,true,null],"ss":["\"","\"","\""],"t":"\""}
+{"k":"text","qs":[[0,2]],"sa":[true,true,true,null],"ss":["\"\"","\"\"","\"\"","\"\""],"t":"\"\""}
+{"k":"text","qs":[[0,3]],"sa":[true,true,false,true,null],"ss":["\"a\"","\"a\"","\"a\"","\"a\"","\"a\""],"t":"\"a\""}
+{"k":"text","qs":[[4,9],[14,20]],"sa":[true,false,false,false,false,true,false,false,false,true,true,false,false,false,false,true,false,false,false,false,true,null],"ss":["say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\"","say \"now\" and \"then\""],"t":"say \"now\" and \"then\""}
+{"k":"text","qs":[[4,11]],"sa":[true,false,false,false,false,true,true,false,false,false,false,true,false,false,false,true,true,false,false,false,false,false,null],"ss":["odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three","odd \" one \"two\" three"],"t":"odd \" one \"two\" three"}
+{"k":"text","qs":[],"sa":[true,true,false,true,false,true,null],"ss":["\"a","\"a","\"a","b\"","b\"","b\"","b\""],"t":"\"a\nb\""}
+{"k":"text","qs":[[6,14]],"sa":[true,true,false,false,false,false,true,true,false,false,false,false,false,false,true,null],"ss":["\"open","\"open","\"open","\"open","\"open","\"open","\"closed\"","\"closed\"","\"closed\"","\"closed\"","\"closed\"","\"closed\"","\"closed\"","\"closed\"","\"closed\"","\"closed\""],"t":"\"open\n\"closed\""}
+{"k":"text","qs":[[0,5]],"sa":[true,true,false,false,false,false,null],"ss":["\u201cnow\u201d","\u201cnow\u201d","\u201cnow\u201d","\u201cnow\u201d","\u201cnow\u201d","\u201cnow\u201d","\u201cnow\u201d"],"t":"\u201cnow\u201d"}
+{"k":"text","qs":[[4,12]],"sa":[true,true,false,false,false,true,true,false,false,false,false,false,false,null],"ss":["\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d","\u201cnow\u201c later\u201d"],"t":"\u201cnow\u201c later\u201d"}
+{"k":"text","qs":[],"sa":[true,true,false,false,false,true,false,null],"ss":["\u201cnow","\u201cnow","\u201cnow","\u201cnow","\u201cnow","\u201d","\u201d","\u201d"],"t":"\u201cnow\n\u201d"}
+{"k":"text","qs":[],"sa":[true,false,false,false,false,false,true,null],"ss":["\u201dback\u201c","\u201dback\u201c","\u201dback\u201c","\u201dback\u201c","\u201dback\u201c","\u201dback\u201c","\u201dback\u201c","\u201dback\u201c"],"t":"\u201dback\u201c"}
+{"k":"text","qs":[[0,9]],"sa":[true,true,true,false,false,false,false,false,true,false,null],"ss":["\u201c\"mixed\"\u201d","\u201c\"mixed\"\u201d","\u201c\"mixed\"\u201d","\u201c\"mixed\"\u201d","\u201c\"mixed\"\u201d","\u201c\"mixed\"\u201d","\u201c\"mixed\"\u201d","\u201c\"mixed\"\u201d","\u201c\"mixed\"\u201d","\u201c\"mixed\"\u201d","\u201c\"mixed\"\u201d"],"t":"\u201c\"mixed\"\u201d"}
+{"k":"text","qs":[[0,3],[4,7]],"sa":[true,true,true,true,true,true,true,false,null],"ss":["\"\u201c\" \u201c\"\u201d","\"\u201c\" \u201c\"\u201d","\"\u201c\" \u201c\"\u201d","\"\u201c\" \u201c\"\u201d","\"\u201c\" \u201c\"\u201d","\"\u201c\" \u201c\"\u201d","\"\u201c\" \u201c\"\u201d","\"\u201c\" \u201c\"\u201d","\"\u201c\" \u201c\"\u201d"],"t":"\"\u201c\" \u201c\"\u201d"}
+{"k":"text","qs":[],"sa":[true,false,false,false,false,false,false,false,false,true,true,false,false,false,false,false,false,false,false,false,false,false,false,false,true,true,false,false,false,true,true,false,false,false,true,false,false,null],"ss":["It ships","It ships","It ships","It ships","It ships","It ships","It ships","It ships","It ships"," Then it waits"," Then it waits"," Then it waits"," Then it waits"," Then it waits"," Then it waits"," Then it waits"," Then it waits"," Then it waits"," Then it waits"," Then it waits"," Then it waits"," Then it waits"," Then it waits"," Then it waits"," Why"," Why"," Why"," Why"," Why"," Yes"," Yes"," Yes"," Yes"," Yes","No","No","No","No"],"t":"It ships. Then it waits! Why? Yes\nNo"}
+{"k":"text","qs":[],"sa":[true,false,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,true,true,false,false,false,false,true,null],"ss":["Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out","Python 3.13 is out"," Next"," Next"," Next"," Next"," Next"," Next","",""],"t":"Python 3.13 is out. Next."}
+{"k":"text","qs":[],"sa":[true,false,false,true,false,false,true,false,false,false,false,false,false,false,true,true,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,true,null],"ss":["v3.13.0 and 3","v3.13.0 and 3","v3.13.0 and 3","13.0 and 3","v3.13.0 and 3","v3.13.0 and 3","0 and 3","v3.13.0 and 3","v3.13.0 and 3","v3.13.0 and 3","v3.13.0 and 3","v3.13.0 and 3","v3.13.0 and 3","v3.13.0 and 3"," 13 and "," 13 and "," 13 and "," 13 and "," 13 and "," 13 and "," 13 and "," 13 and "," 13 and ","5 and 5","5 and 5","5 and 5","5 and 5","5 and 5","5 and 5","5 and 5","5 and 5","",""],"t":"v3.13.0 and 3. 13 and .5 and 5."}
+{"k":"text","qs":[],"sa":[true,false,false,true,false,false,null],"ss":["x9.9y","x9.9y","x9.9y","9y","x9.9y","x9.9y","x9.9y"],"t":"x9.9y"}
+{"k":"text","qs":[],"sa":[true,false,false,false,true,null],"ss":["end","end","end","end","",""],"t":"end."}
+{"k":"text","qs":[],"sa":[true,true,true,true,null],"ss":["","","","",""],"t":"..."}
+{"k":"text","qs":[],"sa":[true,false,true,false,null],"ss":["a","a","b","b","b"],"t":"a.b"}
+{"k":"text","qs":[],"sa":[true,false,false,false,false,false,false,false,false,false,false,false,false,false,true,null],"ss":["Today we ship","Today we ship","Today we ship","Today we ship","Today we ship","Today we ship","Today we ship","Today we ship","Today we ship","Today we ship","Today we ship","Today we ship","Today we ship","Today we ship","",""],"t":"Today we ship."}
+{"k":"text","qs":[],"sa":[true,true,true,true,false,false,false,false,false,null],"ss":["  \tToday","  \tToday","  \tToday","  \tToday","  \tToday","  \tToday","  \tToday","  \tToday","  \tToday","  \tToday"],"t":"  \tToday"}
+{"k":"text","qs":[],"sa":[true,true,true,false,false,false,false,false,null],"ss":["- Today","- Today","- Today","- Today","- Today","- Today","- Today","- Today","- Today"],"t":"- Today"}
+{"k":"text","qs":[],"sa":[true,true,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,null],"ss":["* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night","* Tomorrow Night"],"t":"* Tomorrow Night"}
+{"k":"text","qs":[[24,31]],"sa":[true,true,false,false,false,false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false,false,false,true,true,true,false,false,false,false,false,true,null],"ss":["(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\"","(Today) [Today] 'Today' \"Today\""],"t":"(Today) [Today] 'Today' \"Today\""}
+{"k":"text","qs":[],"sa":[true,false,true,true,false,false,false,false,false,true,true,false,null],"ss":["x: Today; y","x: Today; y","x: Today; y","x: Today; y","x: Today; y","x: Today; y","x: Today; y","x: Today; y","x: Today; y","x: Today; y","x: Today; y","x: Today; y","x: Today; y"],"t":"x: Today; y"}
+{"k":"text","qs":[],"sa":[true,false,false,false,false,false,false,false,false,false,false,null],"ss":["word Today","word Today","word Today","word Today","word Today","word Today","word Today","word Today","word Today","word Today","word Today","word Today"],"t":"word Today"}
+{"k":"text","qs":[],"sa":[true,false,false,false,true,true,false,null],"ss":[[97,55296,98],[97,55296,98],[97,55296,98],[97,55296,98]," c"," c"," c"," c"],"t_cps":[97,55296,98,46,32,99]}
+{"k":"text","qs":[],"sa":[true,false,true,false,null],"ss":[[55296],[55296],[55296],[55296],[55296]],"t_cps":[55296,46,55296]}
+{"e":0,"k":"iq","o":false,"s":0,"sp":[]}
+{"e":5,"k":"iq","o":true,"s":0,"sp":[[0,5]]}
+{"e":4,"k":"iq","o":true,"s":1,"sp":[[0,5]]}
+{"e":6,"k":"iq","o":false,"s":0,"sp":[[0,5]]}
+{"e":5,"k":"iq","o":true,"s":5,"sp":[[0,5]]}
+{"e":5,"k":"iq","o":true,"s":6,"sp":[[0,5]]}
+{"e":4,"k":"iq","o":false,"s":2,"sp":[[0,3],[3,6]]}
+{"e":4,"k":"iq","o":true,"s":2,"sp":[[0,3],[2,6]]}
+{"e":3,"k":"iq","o":false,"s":3,"sp":[[5,1]]}
+{"e":0,"k":"sn","o":"","s":0,"t":""}
+{"e":5,"k":"sn","o":"short","s":0,"t":"short"}
+{"e":3,"k":"sn","o":"short","s":2,"t":"short"}
+{"e":39,"k":"sn","o":"...xxxxxxxxxxxxxxxxxxxxcurrentlyyyyyyyyyyyyyyyyyyyyy...","s":30,"t":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxcurrentlyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"}
+{"e":25,"k":"sn","o":"xxxxxxxxxxxxxxxxxxxxtodayyyyyyyyyyyyyyyyyyyyy","s":20,"t":"xxxxxxxxxxxxxxxxxxxxtodayyyyyyyyyyyyyyyyyyyyy"}
+{"e":26,"k":"sn","o":"...xxxxxxxxxxxxxxxxxxxxtodayyyyyyyyyyyyyyyyyyyyy...","s":21,"t":"xxxxxxxxxxxxxxxxxxxxxtodayyyyyyyyyyyyyyyyyyyyyy"}
+{"e":13,"k":"sn","o":"line one line two three spaced...","s":9,"t":"line one\nline two\n\nthree   spaced\t\ttabs"}
+{"e":7,"k":"sn","o":"hit","s":4,"t":"\n\n  hit  \n\n"}
+{"e":26,"k":"sn","o":"......","s":25,"t":"                                                  "}
+{"e":30,"k":"sn","o":"...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","s":40,"t":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+{"e":120,"k":"sn","o":"...","s":100,"t":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+{"e":1000,"k":"sn","o":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","s":0,"t":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+{"e":3,"k":"sn","o_cps":[97,98,55296,99,100],"s":1,"t_cps":[97,98,55296,99,100]}
+{"e":7,"k":"sn","o":"hit x","s":4,"t":"\u001c\u001d\u001e\u001fhit\u001f x"}
+{"e":5,"k":"sn","o":"a b","s":0,"t":"a\u000b\f\rb"}
+{"e":5,"k":"tn","o":false,"s":0,"t":"Today we ship"}
+{"e":5,"k":"tn","o":true,"s":0,"t":"Today We Ship"}
+{"e":5,"k":"tn","o":false,"s":0,"t":"Today I broke it"}
+{"e":5,"k":"tn","o":true,"s":0,"t":"Today Is here"}
+{"e":5,"k":"tn","o":false,"s":0,"t":"Today"}
+{"e":5,"k":"tn","o":false,"s":0,"t":"Today "}
+{"e":5,"k":"tn","o":false,"s":0,"t":"Today -"}
+{"e":5,"k":"tn","o":true,"s":0,"t":"Today O'Neil"}
+{"e":5,"k":"tn","o":false,"s":0,"t":"Today o'Neil"}
+{"e":5,"k":"tn","o":true,"s":0,"t":"Today Rust-Lang"}
+{"e":5,"k":"tn","o":false,"s":0,"t":"Today Rust-lang"}
+{"e":5,"k":"tn","o":true,"s":0,"t":"Today\nNight"}
+{"e":5,"k":"tn","o":false,"s":0,"t":"today Night"}
+{"e":5,"k":"tn","o":false,"s":0,"t":"TODAY Night"}
+{"e":12,"k":"tn","o":true,"s":4,"t":"the Tomorrow Night theme"}
+{"e":11,"k":"tn","o":true,"s":6,"t":"a USA Today column"}
+{"e":15,"k":"tn","o":true,"s":10,"t":"It ships. Today Matters"}
+{"e":15,"k":"tn","o":true,"s":10,"t":"It ships, Today Matters"}
+{"e":9,"k":"tn","o":true,"s":0,"t":"This Week in Rust"}
+{"e":9,"k":"tn","o":false,"s":0,"t":"This week in Rust"}
+{"e":9,"k":"tn","o":true,"s":0,"t":"this Week"}
+{"e":9,"k":"tn","o":false,"s":0,"t":"THIS WEEK"}
+{"e":11,"k":"tn","o":false,"s":0,"t":"next  month"}
+{"e":10,"k":"tn","o":false,"s":0,"t":"Next MONTH"}
+{"e":11,"k":"tn","o":true,"s":0,"t":"Next 2Month"}
+{"e":3,"k":"tn","o":null,"s":0,"t":"   "}
+{"e":5,"k":"tn","o":false,"s":3,"t":"Today"}
+{"e":5,"k":"tn","o":false,"s":0,"t":"ToDay Night"}
+{"e":6,"k":"tn","o":true,"s":0,"t":"Today_ Night"}
+{"e":6,"k":"tn","o":true,"s":1,"t_cps":[55296,84,111,100,97,121,32,78,105,103,104,116]}

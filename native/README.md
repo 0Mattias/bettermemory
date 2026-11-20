@@ -59,6 +59,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
 | `claims` | unit 1 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path` | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
+| `durability` | unit 1 of `durability.py`: `canonical_marker`, `quoted_spans`, `in_quoted_span`, `TransientMatch`, `_snippet_around`, `_at_sentence_start`, `_is_titlecase_name` with `str.istitle`, `sentence_around` | `durability.jsonl`, `durability_unicode.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
 is the reference's digest (the one the golden header pins), and
@@ -6588,6 +6589,111 @@ and 27, lowercase, each first character). `ulid_order_and_round_trip`
 checks that text order is the order of `(ms, bytes)` and that `ulid_ms`
 reads back the milliseconds, over 3,004 rule-built pairs.
 
+## Transient markers (`durability.py`)
+
+The write gate's body checks: the transient-marker list and its
+detector, and the capture rules. The module is 873 lines of Python and
+reads nothing from the machine: every function is a function of its text.
+Ported whole it passes 600 lines of Rust, so it is cut into units, leaves
+first.
+
+### Map, by function
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `TRANSIENT_PHRASE_MARKERS` | 54-268 | nothing | unit 2 |
+| `SHA_MARKER`, `canonical_marker` (`_LEGACY_SHA_MARKER_RE`) | 270-298 | nothing | unit 1, built |
+| `_AS_OF_DATE_RE`, `_IN_FLIGHT_WORK_OBJECT`, `_PATTERN_OVERRIDES`, `_PHRASE_REGEXES`, `_TITLECASE_SKIP_MARKERS` | 303-406 | Unicode data (`\b`, `\w`, `\s`, `\d`, case folding) | unit 2 |
+| `quoted_spans`, `in_quoted_span` (`_QUOTED_SPAN_RE`) | 447-466 | nothing | unit 1, built |
+| `TransientMatch` | 469-480 | nothing | unit 1, built |
+| `_snippet_around` (`_CONTEXT_CHARS`) | 488-505 | Unicode data (`\s`, `str.strip`) | unit 1, built |
+| `_at_sentence_start` (`_SENTENCE_BOUNDARY_CHARS`) | 508-526 | Unicode data (general category) | unit 1, built |
+| `_is_titlecase_name` (`_NEXT_WORD_RE`) | 529-555 | Unicode data (`str.istitle`, `str.split`, `\s`, `\w`) | unit 1, built |
+| `sentence_around` (`_SENTENCE_END_RE`) | 558-570 | Unicode data (`\d`) | unit 1, built |
+| `_anchored_new_reference` | 573-588 | `search._raw_content_token_set`, `supersession.change_cues` and `anchor_tokens` | unit 2 |
+| `find_transient_markers` | 591-641 | nothing | unit 2 |
+| `CaptureRuleHit` and the capture patterns (`_SAYING_VERBS` to `_SUITE_WORD_RE`) | 660-771 | nothing | unit 3 |
+| `_first_unquoted`, `_unanchored_test_total`, `find_capture_rule_hits` | 774-858 | nothing | unit 3 |
+
+The cut: unit 1 is the leaves every detector shares; unit 2 the marker
+tables, their patterns and `find_transient_markers`, with
+`_anchored_new_reference` once the supersession vocabulary is ported;
+unit 3 the capture rules.
+
+### Unit 1, built (`durability`)
+
+A text is its code points (a `str` may hold a lone surrogate) and every
+position is a code point index. Every pattern is matched by hand; none
+goes through the `regex` crates, and no crate was added.
+
+- `canonical_marker`: `^sha:[0-9a-f]{7}$` by `re.match`. Its `$` also
+  matches before one newline that ends the text, so `"sha:abcdef0\n"`
+  folds to `sha:<commit>` and `"sha:abcdef0\n\n"` does not. The class is
+  ASCII lowercase hex only (no `IGNORECASE`).
+- `quoted_spans`: `"[^"\n]*"|“[^“”\n]*”` by
+  `finditer`. At each position the straight alternative is tried, then the
+  curly one. A match is at least two code points, so no empty match steps
+  the scan, and a failed attempt moves it on by one. Each body class
+  excludes its closing delimiter and the body run is the only repetition,
+  so the first closing delimiter before an excluded code point is the
+  match `re` takes. The scan is linear: an attempt fails only at a line
+  break, the end, or (curly) another opening quote, and no later attempt
+  on that line can succeed past that stop.
+- `in_quoted_span`: containment in any one span.
+- `_snippet_around`: twenty code points each side, clamped; newlines made
+  spaces; `str.strip`; runs of `\s` collapsed. On a `str` pattern `re`'s
+  `\s` is `str.isspace`, so both read `unicode::is_space`. `...` marks
+  each side that was cut, also when the window is empty.
+- `_at_sentence_start`: back over spaces and tabs only; the start of the
+  text, one of `_SENTENCE_BOUNDARY_CHARS`, or a code point of category
+  `Pd` or `So` opens a sentence. The reference raises `IndexError` for a
+  position more than one past the end; the port answers `None` there.
+- `_is_titlecase_name`: takes the match as its start and end. `str.split`,
+  `str.istitle` (CPython's loop: `Uppercase` or `Lt`, then `Lowercase`,
+  else uncased; `Uppercase` is `Lu` with the five `Other_Uppercase`
+  ranges written out, `Lowercase` is `verify_candidates`' `is_lower`), and
+  `_NEXT_WORD_RE` (`\s+([\w'’-]+)` at the match end). No code point
+  is both `\s` and in the word class, so the two greedy runs never
+  backtrack and the hand reading is exact. A match with no word in it
+  raises `IndexError` in the reference; the port answers `None`.
+- `sentence_around`: `[!?\n]|(?<!\d)\.|\.(?!\d)` with `\d` the Unicode
+  decimal digits. The first scan is `finditer(text, 0, pos)`: its
+  lookahead stops at `pos`, while the lookbehind sees the whole text
+  (`re` keeps the real beginning). The port reads the same two limits.
+  Positions past the end are clamped as `re` clamps `pos` and `endpos`.
+- `TransientMatch`, `SHA_MARKER`, `CONTEXT_CHARS`: the record and the
+  constants.
+
+Positions are `usize`. The reference raises `OverflowError` for a position
+past `2**63 - 1`; the port answers there as for any position past the
+end, a difference no caller reaches (every position is a match's).
+
+### What the reference does that looks wrong (reproduced, pinned)
+
+- `sentence_around(text, pos)` ends the sentence at a `.` just before
+  `pos` even between two digits, since the scan up to `pos` cannot see the
+  digit after it: `sentence_around("3.13", 2)` is `"13"` while
+  `sentence_around("3.13", 3)` is `"3.13"`, and
+  `sentence_around("x9.9y", 3)` is `"9y"`.
+- `canonical_marker("sha:abcdef0\n")` is `sha:<commit>`: `$` accepts the
+  trailing newline.
+
+### Fixtures and tests
+
+`tests/contract/gen_durability.py` writes `durability.jsonl` (not gated:
+ASCII, surrogates and the two curly double quotes, whose readings no
+Unicode version changes) and `durability_unicode.jsonl` (gated on the
+Unicode version: dashes, symbols, `Lt`, `Other_Uppercase`, wide spaces and
+digits, and every code point in seventeen digest rows, each code point
+read through the readers). No row depends on the Python release or the
+platform. `golden_durability.rs` checks every row and fails when the count
+checked is zero or differs from the file's; `durability_kills.rs` holds
+the cases a plausible wrong reading fails (the `$` newline, nested curly
+quotes, the hidden digit, `So` against `Sm`, the circled capital that is
+upper but not `\w`); `durability_robustness.rs` holds unpaired quotes and
+long runs at 200,000 and 400,000 code points (the fastest of three runs at
+2n within four times n) and positions at `usize::MAX`.
+
 ## How origin reads a repository's history (`origin_history.py`)
 
 `origin_history.py` (733 lines) is ported in two units, leaves first.
@@ -10146,9 +10252,11 @@ What the reference has and this build does not, by area:
   and memo are built).
 - The write gates past the control tokens and the dedup: `credentials.py`
   after its vendor-prefixed detectors and its value gate (the generic and
-  URI patterns, spans and markers: units 3 and 4), and the review. The
-  dedup's store side reads through a trait not yet wired to
-  `store::digest`.
+  URI patterns, spans and markers: units 3 and 4), `durability.py` past
+  its quoted spans and sentence helpers (the marker tables with
+  `find_transient_markers`, and the capture rules: units 2 and 3), and
+  the review. The dedup's store side reads through a trait not yet wired
+  to `store::digest`.
 - The regular expression engine (`pyre`) past its case folding and the
   parser's tree, state, tokenizer and atoms: the rest of the parser
   (pyre-3), the lowering, the matcher and the methods (pyre-4 to

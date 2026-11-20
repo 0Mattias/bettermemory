@@ -1,0 +1,46 @@
+{"cases":45,"k":"header"}
+{"k":"cm","m":"sha:\u0661\u0662\u0663\u0664\u0665\u0666\u0667","o":"sha:\u0661\u0662\u0663\u0664\u0665\u0666\u0667"}
+{"k":"text","qs":[],"sa":[true,false,false,true,true,false,false,false,false,false,null],"ss":["x \u2014 Today","x \u2014 Today","x \u2014 Today","x \u2014 Today","x \u2014 Today","x \u2014 Today","x \u2014 Today","x \u2014 Today","x \u2014 Today","x \u2014 Today","x \u2014 Today"],"t":"x \u2014 Today"}
+{"k":"text","qs":[],"sa":[true,false,false,true,false,false,false,false,false,null],"ss":["x \u2013Today","x \u2013Today","x \u2013Today","x \u2013Today","x \u2013Today","x \u2013Today","x \u2013Today","x \u2013Today","x \u2013Today","x \u2013Today"],"t":"x \u2013Today"}
+{"k":"text","qs":[],"sa":[true,false,false,false,false,false,false,false,null],"ss":["\u2192 Today","\u2192 Today","\u2192 Today","\u2192 Today","\u2192 Today","\u2192 Today","\u2192 Today","\u2192 Today","\u2192 Today"],"t":"\u2192 Today"}
+{"k":"text","qs":[],"sa":[true,true,true,false,false,false,false,false,false,false,false,false,false,false,null],"ss":["\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night","\ud83d\ude80 Today Night"],"t":"\ud83d\ude80 Today Night"}
+{"k":"text","qs":[],"sa":[true,true,true,false,false,false,false,false,null],"ss":["\u2022 Today","\u2022 Today","\u2022 Today","\u2022 Today","\u2022 Today","\u2022 Today","\u2022 Today","\u2022 Today","\u2022 Today"],"t":"\u2022 Today"}
+{"k":"text","qs":[],"sa":[true,false,false,false,false,false,false,false,false,false,null],"ss":["\u00e9t\u00e9 Today","\u00e9t\u00e9 Today","\u00e9t\u00e9 Today","\u00e9t\u00e9 Today","\u00e9t\u00e9 Today","\u00e9t\u00e9 Today","\u00e9t\u00e9 Today","\u00e9t\u00e9 Today","\u00e9t\u00e9 Today","\u00e9t\u00e9 Today","\u00e9t\u00e9 Today"],"t":"\u00e9t\u00e9 Today"}
+{"k":"text","qs":[],"sa":[true,false,false,false,false,false,false,false,false,false,false,false,false,null],"ss":["Release 3\u00b713","Release 3\u00b713","Release 3\u00b713","Release 3\u00b713","Release 3\u00b713","Release 3\u00b713","Release 3\u00b713","Release 3\u00b713","Release 3\u00b713","Release 3\u00b713","Release 3\u00b713","Release 3\u00b713","Release 3\u00b713","Release 3\u00b713"],"t":"Release 3\u00b713"}
+{"k":"text","qs":[],"sa":[true,false,true,false,false,false,false,true,true,false,true,true,false,null],"ss":["\u0663.\u0664 ok","\u0663.\u0664 ok","\u0664 ok","\u0663.\u0664 ok","\u0663.\u0664 ok","\u0663.\u0664 ok","\u0663.\u0664 ok"," \u0663"," \u0663"," \u0663"," x"," x"," x"," x"],"t":"\u0663.\u0664 ok. \u0663. x"}
+{"k":"text","qs":[],"sa":[true,false,true,false,null],"ss":["\uff11.\uff12","\uff11.\uff12","\uff12","\uff11.\uff12","\uff11.\uff12"],"t":"\uff11.\uff12"}
+{"k":"text","qs":[],"sa":[true,false,false,false,null],"ss":["x\u3002y","x\u3002y","x\u3002y","x\u3002y","x\u3002y"],"t":"x\u3002y"}
+{"k":"text","qs":[[0,8]],"sa":[true,true,false,false,false,false,false,false,false,false,true,true,true,false,false,false,false,null],"ss":["\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen","\u201cquoted\u201d \u2014 \u201copen"],"t":"\u201cquoted\u201d \u2014 \u201copen"}
+{"k":"text","qs":[],"sa":[true,false,false,false,false,false,false,false,null],"ss":["\u2028Today\u2029","\u2028Today\u2029","\u2028Today\u2029","\u2028Today\u2029","\u2028Today\u2029","\u2028Today\u2029","\u2028Today\u2029","\u2028Today\u2029","\u2028Today\u2029"],"t":"\u2028Today\u2029"}
+{"e":5,"k":"sn","o":"hit x","s":2,"t":"\u2003\u2003hit\u3000\u3000x"}
+{"e":33,"k":"sn","o":"...\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9hit\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9...","s":30,"t":"\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9hit\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9"}
+{"e":6,"k":"tn","o":false,"s":0,"t":"\u01c5ungla"}
+{"e":5,"k":"tn","o":true,"s":0,"t":"Today \u01c5ungla"}
+{"e":5,"k":"tn","o":false,"s":0,"t":"Today \u2160\u2161"}
+{"e":5,"k":"tn","o":false,"s":0,"t":"Today \u24b6b"}
+{"e":5,"k":"tn","o":true,"s":0,"t":"Today \u00c9t\u00e9"}
+{"e":5,"k":"tn","o":true,"s":0,"t":"Today\u00a0Night"}
+{"e":5,"k":"tn","o":true,"s":0,"t":"Today\u3000Night"}
+{"e":5,"k":"tn","o":true,"s":0,"t":"Today \u2019Night"}
+{"e":9,"k":"tn","o":true,"s":4,"t":"x \u2014 Today Night"}
+{"e":9,"k":"tn","o":true,"s":4,"t":"x \u2192 Today Night"}
+{"e":7,"k":"tn","o":true,"s":2,"t":"\ud83d\ude80 Today Night"}
+{"e":9,"k":"tn","o":true,"s":0,"t":"This\u00a0Week"}
+{"e":2,"k":"tn","o":false,"s":0,"t":"\u1e9e\u00df"}
+{"k":"sweep","lo":0,"n":65536,"sha":"0ce81ccfa13f69c1f19c8a4cc81ac07ae714117e8f594aa6ff9381e3f8924ac2"}
+{"k":"sweep","lo":65536,"n":65536,"sha":"d69e553c8e2deb82b98623d3d4e8d0e289b8c2dbeb025733cd1fcde5f0e9d156"}
+{"k":"sweep","lo":131072,"n":65536,"sha":"83fcd21e6f868e4fdca199b5fa6c9cd42e03641cb25ce9d890f7ce29fd938e6a"}
+{"k":"sweep","lo":196608,"n":65536,"sha":"77b8fc611b67cb423c674caaddbaaea082352546dadb6189798bfc12bc421d08"}
+{"k":"sweep","lo":262144,"n":65536,"sha":"34aa9c719bbf40d439dcaea223a9488c808f6fc8b66ef93b250305613e35a1d2"}
+{"k":"sweep","lo":327680,"n":65536,"sha":"65076aa821c52b58a81ffb392954cba387a901e14d19e969640306fe980c3c2c"}
+{"k":"sweep","lo":393216,"n":65536,"sha":"648318c0636ed511b9131037f42f0597416076d4066d48270841224fb7d2d35c"}
+{"k":"sweep","lo":458752,"n":65536,"sha":"e92a3b7983567e2a767df242a558d04fac6034fcaff2b40350985f993f6f948d"}
+{"k":"sweep","lo":524288,"n":65536,"sha":"28e4d9bcff5cfcc8fc6b6167e5fdf472eaf6efbceccea65c376d5f08d689a16f"}
+{"k":"sweep","lo":589824,"n":65536,"sha":"06a1ccaa9ea27dbeda3b5f95cc97a0bd01bd976f1eb3e2ee8edf34cb125efc8f"}
+{"k":"sweep","lo":655360,"n":65536,"sha":"0e9a1c45e3af5d637b24ceb47af3f66ec10b5aff3a561dd4a0708c2238b707ef"}
+{"k":"sweep","lo":720896,"n":65536,"sha":"f3cd2e54a88de14a3ef731e0ce9117144d0b4f5bbdb1dfe3b7a21bdf0da9becd"}
+{"k":"sweep","lo":786432,"n":65536,"sha":"df62362bbc598e967d2b0c85b57e485210f48d7b2118c8b96c474972386636f2"}
+{"k":"sweep","lo":851968,"n":65536,"sha":"b1cf05fdf555b9bb39c4d08a4fcdd64a4fc11c3fee9f02a813740c8bae182d4c"}
+{"k":"sweep","lo":917504,"n":65536,"sha":"cadfa3e3a718605eb31e9c22b73de1d4996f33b9ecc9db3196507a2d7f1b4332"}
+{"k":"sweep","lo":983040,"n":65536,"sha":"d8e4d5337aca3720fa8bef13b8417b0dbf32fe5637d14e72f3bd34c1e5dbadb3"}
+{"k":"sweep","lo":1048576,"n":65536,"sha":"90d3389be1a879b15bb3984decc3a36336d7755617b6e049ef3dda1dec94b214"}

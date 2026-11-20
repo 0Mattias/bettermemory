@@ -149,6 +149,9 @@ pub fn is_numeric(cp: u32) -> bool {
 
 /// `str.isspace` of one code point.
 pub fn is_space(cp: u32) -> bool {
+    if cp < 0x80 {
+        return matches!(cp, 0x09..=0x0D | 0x1C..=0x20);
+    }
     in_ranges(tables::SPACE, cp)
 }
 

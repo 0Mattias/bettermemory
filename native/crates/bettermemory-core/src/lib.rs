@@ -48,6 +48,9 @@
 //!   event kinds, their row classes and the fields a state row keeps);
 //! - [`control_tokens`]: the chat-template delimiters a stored text may
 //!   not carry, found, counted, refused and written by their bare names;
+//! - [`durability`]: the write gate's transient markers, its first unit
+//!   (the marker's canonical form, quoted spans, the snippet and sentence
+//!   helpers);
 //! - [`gitconfig`]: the text of a git config file as the reference reads it;
 //! - [`githead`]: HEAD and refs read from a git directory's files;
 //! - [`gitobjects`]: git objects read from a repository's files, its
@@ -82,6 +85,7 @@ pub mod config;
 pub mod control_tokens;
 pub mod credentials;
 pub mod datetime;
+pub mod durability;
 pub mod events;
 pub mod float_repr;
 pub mod fsdata;
