@@ -7260,7 +7260,14 @@ between macOS and Linux are left out, and its `n` rows are errno 0 under
 paths `repr` spells in each of its ways (quotes, a tab, a lone
 surrogate, a format character; a backslash only in
 `location_probe_kills`, since the host-fact guard reads its escaped pair
-in a fixture as a UNC prefix).
+in a fixture as a UNC prefix). The guard (`gen_store_files.host_fact`)
+reads the user's and the host's name wherever it stands, inside a longer
+word too, and exempts macOS's text for errno 88, `Malformed Mach-o file`,
+where that exact text stands alone, with no word character on either side
+(`PLATFORM_TEXTS`), so the file passes on a host named `Mac` while `Mac`
+beside that text or anywhere else, or a name running into it, is caught
+(`test_the_host_fact_guard_reads_a_name_wherever_it_stands`,
+`test_the_host_fact_guard_exempts_a_platform_text_only_standing_alone`).
 `location_probe_errno.jsonl` raises
 every number from 0 to 133 (Linux's last errno; macOS's is 106 or 107),
 -1, 1000 and 2**31 - 1, so a number the C library defines no errno for,

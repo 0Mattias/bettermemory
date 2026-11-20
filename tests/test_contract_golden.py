@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unicodedata
 import warnings
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -166,6 +167,463 @@ def test_the_host_fact_guard(data: bytes, caught: bool) -> None:
     from tests.contract.gen_store_files import host_fact
 
     assert (host_fact(data) is not None) is caught
+
+
+def _nested(text: str, depth: int) -> bytes:
+    """`text` as a JSON string, inside a JSON string `depth` - 1 times."""
+    for _ in range(depth):
+        text = json.dumps(text)
+    return text.encode()
+
+
+@pytest.mark.parametrize(
+    ("data", "hit"),
+    [
+        # macOS's text for errno 88, exempt as exactly that text, in any
+        # data.
+        (b'"cwd unreachable: Malformed Mach-o file"', None),
+        (b'{"detail":"cwd unreachable: Malformed Mach-o file"}\x00', None),
+        (b'{"detail":"cwd unreachable: Malformed Mach-o file"}\xff', None),
+        # A name beside it is caught, and so is the text spelled otherwise.
+        (b'"cwd unreachable: Malformed Mach-o file on Mac"', "Mac"),
+        (b'"fixtureuser: Malformed Mach-o file"', "fixtureuser"),
+        (b'"MacMalformed Mach-o file"', "Mac"),
+        (b"\x00Malformed Mach-o file\x00Mac", "Mac"),
+        (b'"Malformed Mach-O file"', "Mac"),
+        (b'"Malformed Mach-o\\nfile"', "Mac"),
+        # Inside a longer word.
+        (b"Macintosh", "Mac"),
+        (b"iMac", "Mac"),
+        (b"Mac_1", "Mac"),
+        (b"Mac9", "Mac"),
+        (b"fixtureusers", "fixtureuser"),
+        (b"xfixtureuser", "fixtureuser"),
+        (b"fixtureuser_2", "fixtureuser"),
+        (b"\x00fixtureusers", "fixtureuser"),
+        # Standing alone: the whole text, a value, a word in prose.
+        (b"Mac", "Mac"),
+        (b'{"hostname":"=Mac"}', "Mac"),
+        (b"runs on Mac today", "Mac"),
+        (b"fixtureuser", "fixtureuser"),
+        # In a path.
+        (b'"/srv/Mac/x"', "Mac"),
+        (b'"/srv/fixtureuser/notes"', "fixtureuser"),
+        (b'"D:\\\\fixtureuser\\\\x"', "fixtureuser"),
+        # Backslashes that start no JSON escape, in a text that is not
+        # JSON: as written, where read `\f` is a form feed.
+        (b"D:\\srv\\Mac\\x", "Mac"),
+        (b"D:\\srv\\fixtureuser", "fixtureuser"),
+        # After a separator, or before one.
+        (b"node-Mac", "Mac"),
+        (b"Mac.local", "Mac"),
+        (b"by fixtureuser@Mac", "fixtureuser"),
+        (b"a,Mac,b", "Mac"),
+        # Beside a JSON escape, in a JSON text or one nested in another.
+        (b'"x\\nMac"', "Mac"),
+        (b'"x\\tfixtureuser"', "fixtureuser"),
+        (b'"\\u2014Mac"', "Mac"),
+        (b'"\\u00e9Mac"', "Mac"),
+        (b'"Mac\\u00e9"', "Mac"),
+        (b'"fixtureuser\\u00e9"', "fixtureuser"),
+        (_nested("line\nfixtureuser", 2), "fixtureuser"),
+        (_nested("a\tMac", 2), "Mac"),
+        (_nested("a\r\nfixtureuser", 2), "fixtureuser"),
+        (_nested("x\u2014Mac", 2), "Mac"),
+        (_nested("\U0001f600fixtureuser", 2), "fixtureuser"),
+        (b'"\\\\u002ffixtureuser"', "fixtureuser"),
+        # Spelled with JSON escapes, one level deep or two, in either case.
+        (b'"\\u004dac"', "Mac"),
+        (b'"\\\\u004dac"', "Mac"),
+        (b'"\\u004Dac"', "Mac"),
+        # Down the fixture world's HOME, whose /home/ alone is no host path.
+        (b'"<scratch>/home/fixtureuser/x"', "fixtureuser"),
+        (b'"<scratch>/home/x/Mac"', "Mac"),
+        # After an encoding that ends in a word character: percent-encoding,
+        # terminal colour, a Python escape, as text or in JSON.
+        (b"https://e.com/?p=%2FUsers%2Ffixtureuser%2Fx", "fixtureuser"),
+        (b"file:///C%3A%5CUsers%5Cfixtureuser", "fixtureuser"),
+        (b"https://e.com/%7Efixtureuser/", "fixtureuser"),
+        (b"q=on%20Mac%20today", "Mac"),
+        (_nested("\x1b[1mfixtureuser\x1b[0m", 1), "fixtureuser"),
+        (b"\x1b[1mMac\x1b[0m", "Mac"),
+        (json.dumps({"b": ["", "x1bMac"]}).encode(), "Mac"),
+        (b"b'\\x00fixtureuser'", "fixtureuser"),
+    ],
+)
+def test_the_host_fact_guard_reads_a_name_wherever_it_stands(
+    monkeypatch: pytest.MonkeyPatch, data: bytes, hit: str | None
+) -> None:
+    import getpass
+    import socket
+
+    from tests.contract.gen_store_files import host_fact
+
+    monkeypatch.setattr(getpass, "getuser", lambda: "fixtureuser")
+    monkeypatch.setattr(socket, "gethostname", lambda: "Mac.local")
+    assert host_fact(data) == hit
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "fixtureus\u00e9r",
+        # Past U+FFFF: written as a surrogate pair, two escapes.
+        "fixtureus\U0001d4ear",
+    ],
+)
+@pytest.mark.parametrize("depth", [1, 2, 3])
+def test_the_host_fact_guard_reads_a_name_written_with_json_escapes(
+    monkeypatch: pytest.MonkeyPatch, name: str, depth: int
+) -> None:
+    """The fixtures are ASCII JSON, so a name holding a character outside
+    ASCII is written as an escape, one level deeper for each JSON text it
+    is nested in. A third level's escape starts with four backslashes,
+    read as a UNC prefix before a name is looked for."""
+    import getpass
+    import socket
+
+    from tests.contract.gen_store_files import host_fact
+
+    monkeypatch.setattr(getpass, "getuser", lambda: name)
+    monkeypatch.setattr(socket, "gethostname", lambda: "Mac.local")
+    data = _nested(f"/srv/{name}/x", depth)
+    assert name.encode() not in data
+    assert host_fact(data) == (name if depth < 3 else "\\\\\\\\")
+
+
+@pytest.mark.parametrize(
+    ("name", "before", "after"),
+    [
+        # A POSIX user name whose first byte is no UTF-8, as getuser reads it
+        # (surrogateescape): a lone low half first, a high half before it.
+        (b"\x80fixture".decode("utf-8", "surrogateescape"), "\ud83d", "/x"),
+        # A lone high half last, a low half after it.
+        ("fixture\ud83d", "/srv/", "\udc80"),
+    ],
+)
+@pytest.mark.parametrize("depth", [1, 2])
+def test_the_host_fact_guard_reads_a_lone_half_beside_the_other(
+    monkeypatch: pytest.MonkeyPatch, name: str, before: str, after: str, depth: int
+) -> None:
+    """A name holding a lone surrogate half, written with JSON escapes
+    beside an escape of the other half, is read with the halves apart: the
+    two joined spell one character past U+FFFF that no name holds."""
+    import getpass
+    import socket
+
+    from tests.contract.gen_store_files import host_fact
+
+    monkeypatch.setattr(getpass, "getuser", lambda: name)
+    monkeypatch.setattr(socket, "gethostname", lambda: "xyzhost.local")
+    data = _nested(before + name + after, depth)
+    if depth == 1 and before == "\ud83d":
+        assert data == b'"\\ud83d\\udc80fixture/x"'
+    assert host_fact(data) == name
+
+
+def test_the_host_fact_guard_reads_a_surrogate_pair_apart_and_joined() -> None:
+    """A surrogate pair's two escapes read as its two halves, the next level
+    read from them, then joined into the one character they spell, where
+    that differs; a lone half stays as it is."""
+    from tests.contract.gen_store_files import (
+        _json_readings,
+        _json_unescaped,
+        _paired,
+    )
+
+    high, low = chr(0xD835), chr(0xDCEA)
+    apart = f"a{high}{low}b"
+    assert _json_unescaped("a\\ud835\\udceab") == apart
+    assert _json_unescaped("a\\uD835\\uDCEAb") == apart
+    assert _paired(apart) == "a\U0001d4eab"
+    assert _paired(f"a{high}b{low}") == f"a{high}b{low}"
+    assert _paired(f"a{low}{high}b") == f"a{low}{high}b"
+    assert _json_readings("\\\\ud835\\\\udcea") == [
+        "\\\\ud835\\\\udcea",
+        "\\ud835\\udcea",
+        high + low,
+        "\U0001d4ea",
+    ]
+    assert _json_readings("\\\\ud835x") == ["\\\\ud835x", "\\ud835x", high + "x"]
+
+
+def test_the_host_fact_guard_reads_json_escapes_level_by_level() -> None:
+    """Each level of JSON escapes is read while one changes the text, up to
+    `_JSON_DEPTH` levels, eight."""
+    from tests.contract.gen_store_files import _JSON_DEPTH, _json_readings
+
+    assert _JSON_DEPTH == 8
+    assert _json_readings("/srv/x") == ["/srv/x"]
+    assert _json_readings('"a\\\\nb"') == ['"a\\\\nb"', '"a\\nb"', '"a\nb"']
+    readings = _json_readings(_nested("\u00e9", _JSON_DEPTH).decode())
+    assert len(readings) == _JSON_DEPTH + 1
+    assert "\u00e9" in readings[-1]
+    assert "\u00e9" not in readings[-2]
+    deeper = _json_readings(_nested("\u00e9", _JSON_DEPTH + 1).decode())
+    assert len(deeper) == _JSON_DEPTH + 1
+    assert not any("\u00e9" in r for r in deeper)
+
+
+def test_the_host_fact_guard_reads_no_short_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A name under three characters is no needle, standing alone too."""
+    import getpass
+    import socket
+
+    from tests.contract.gen_store_files import host_fact
+
+    monkeypatch.setattr(getpass, "getuser", lambda: "ab")
+    monkeypatch.setattr(socket, "gethostname", lambda: "xy.local")
+    assert host_fact(b'ab xy "/srv/ab/x" xy.local') is None
+
+
+@pytest.mark.parametrize(
+    ("columns", "hit"),
+    [
+        # One text, the name at its start or at its end.
+        (("fixtureuserabc",), "fixtureuser"),
+        (("xyzMac",), "Mac"),
+        # Two texts, which the record stores back to back.
+        (("fixtureuser", "abc"), "fixtureuser"),
+        (("xyz", "Mac"), "Mac"),
+        # Neither name: the file itself holds none.
+        (("abc", "xyz"), None),
+    ],
+)
+def test_the_host_fact_guard_reads_names_in_an_sqlite_file_as_substrings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    columns: tuple[str, ...],
+    hit: str | None,
+) -> None:
+    """An SQLite file stores a record's column texts back to back, so a
+    name in it counts wherever it stands, inside a longer word too."""
+    import getpass
+    import socket
+    from contextlib import closing
+
+    from tests.contract.gen_store_files import host_fact
+
+    monkeypatch.setattr(getpass, "getuser", lambda: "fixtureuser")
+    monkeypatch.setattr(socket, "gethostname", lambda: "Mac.local")
+    path = tmp_path / "rows.sqlite"
+    names = ", ".join(f"c{i} TEXT" for i in range(len(columns)))
+    marks = ", ".join("?" for _ in columns)
+    with closing(sqlite3.connect(path)) as db:
+        db.execute(f"CREATE TABLE t ({names})")
+        db.execute(f"INSERT INTO t VALUES ({marks})", columns)
+        db.commit()
+    assert host_fact(path.read_bytes()) == hit
+
+
+def test_the_errno_fixture_passes_the_host_fact_guard_on_a_host_named_mac(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``location_probe_errno.jsonl`` holds macOS's text for errno 88,
+    "Malformed Mach-o file", which the guard exempts where that exact text
+    stands alone (`PLATFORM_TEXTS`)."""
+    import getpass
+    import socket
+
+    from tests.contract.gen_store_files import host_fact
+
+    monkeypatch.setattr(getpass, "getuser", lambda: "fixtureuser")
+    monkeypatch.setattr(socket, "gethostname", lambda: "Mac.local")
+    data = (GOLDEN / "location_probe_errno.jsonl").read_bytes()
+    assert b"Malformed Mach-o file" in data
+    assert host_fact(data) is None
+
+
+@pytest.mark.parametrize(
+    ("user", "host", "data", "hit"),
+    [
+        # Standing alone in a JSON row: exempt, on a host named "Mac" or one
+        # whose name the text's start ends.
+        ("fixtureuser", "Mac", b'{"cwd":"cwd: Malformed Mach-o file"}\n', None),
+        ("fixtureuser", "xMal", b'{"cwd":"cwd: Malformed Mach-o file"}\n', None),
+        # A name running into it from either side: the text no longer
+        # stands alone and is read with the name.
+        ("fixtureuser", "xMal", b'{"cwd":"cwd: xMalformed Mach-o file"}', "xMal"),
+        ("ilety", "xyzhost", b'{"cwd":"cwd: Malformed Mach-o filety"}', "ilety"),
+        # A name sharing characters with the text and running past it
+        # across a character that is no word character.
+        ("fixtureuser", "file-srv", b"err: Malformed Mach-o file-srv x", "file-srv"),
+        ("fixtureuser", "srv-Mal", b"srv-Malformed Mach-o file", "srv-Mal"),
+        ("file.x", "xyzhost", b'"Malformed Mach-o file.x"', "file.x"),
+        ("ach-o f", "xyzhost", b'"Malformed Mach-o file"', None),
+        # The same with the name's first character escaped.
+        ("fixtureuser", "xMal", b'"cwd: \\u0078Malformed Mach-o file"', "xMal"),
+        # Beside a word character outside ASCII.
+        ("fixtureuser", "Mac", '"\u00e9Malformed Mach-o file"'.encode(), "Mac"),
+        ("fixtureuser", "Mac", '"Malformed Mach-o file\u00e9"'.encode(), "Mac"),
+        # A drive written straight after it, on a host whose name the text
+        # does not hold: the text does not stand alone, and the drive's
+        # letter follows the "e" of "file".
+        (
+            "fixtureuser",
+            "xyzhost",
+            b'"Malformed Mach-o fileD:/Documents/x"',
+            "D:/Documents",
+        ),
+        (
+            "fixtureuser",
+            "xyzhost",
+            rb"Malformed Mach-o fileC:\Windows\x",
+            "C:\\Windows",
+        ),
+        (
+            "fixtureuser",
+            "xyzhost",
+            rb'{"e":"Malformed Mach-o fileE:\\Documents\\x"}',
+            "E:\\\\Documents",
+        ),
+    ],
+)
+def test_the_host_fact_guard_exempts_a_platform_text_only_standing_alone(
+    monkeypatch: pytest.MonkeyPatch, user: str, host: str, data: bytes, hit: str | None
+) -> None:
+    import getpass
+    import socket
+
+    from tests.contract.gen_store_files import host_fact
+
+    monkeypatch.setattr(getpass, "getuser", lambda: user)
+    monkeypatch.setattr(socket, "gethostname", lambda: f"{host}.local")
+    assert host_fact(data) == hit
+
+
+def test_the_host_fact_guard_replaces_a_synthetic_path_by_an_empty_string() -> None:
+    """A synthetic path exactly as written is replaced by `""`, so the text
+    on either side is not joined; a platform text is left as it stands
+    (`_named` reads it); the fixture world's HOME loses its /home only."""
+    from tests.contract.gen_store_files import _exempted
+
+    row = '{"d":"cwd: Malformed Mach-o file","p":"/tmp/a b","q":"/tmp/a bc"}'
+    assert _exempted(row) == '{"d":"cwd: Malformed Mach-o file","p":"","q":"/tmp/a bc"}'
+    assert _exempted("<scratch>/home/x <scratch>/home") == "<scratch>/x <scratch>"
+    assert _exempted("<scratch>/homes") == "<scratch>/homes"
+
+
+@pytest.mark.parametrize(
+    ("data", "hit"),
+    [
+        (b"/private/x", "/private"),
+        (b"/var/folders/ab/T/x", "/var/folders"),
+        (b"/Users/x", "/Users"),
+        (b"/tmp/x", "/tmp"),
+        (b"/home/x", "/home/"),
+        (b"/Volumes/x", "/Volumes/"),
+        (b"/root/x", "/root/"),
+        (b"x/claude-501/y", "claude-501"),
+        (rb"\\?\C:\x", "\\\\?\\"),
+        (rb"\\\\srv\\x", "\\\\\\\\"),
+        (rb"C:\Users", ":\\Users"),
+        (rb"C:\\Users", ":\\\\Users"),
+        (b"x/AppData/y", "AppData"),
+        # A drive's user, system or documents folder.
+        (rb"C:\Windows\x", "C:\\Windows"),
+        (b"D:/Documents/x", "D:/Documents"),
+        (rb"E:\\Documents\\x", "E:\\\\Documents"),
+        # Its letter after a word character.
+        (rb"xC:\Windows\x", "C:\\Windows"),
+        (b"fileD:/Documents/x", "D:/Documents"),
+        (rb"_E:\\Documents\\x", "E:\\\\Documents"),
+    ],
+)
+def test_the_host_fact_guard_names_the_host_path_it_reads(
+    monkeypatch: pytest.MonkeyPatch, data: bytes, hit: str
+) -> None:
+    import getpass
+    import socket
+
+    from tests.contract.gen_store_files import host_fact
+
+    monkeypatch.setattr(getpass, "getuser", lambda: "fixtureuser")
+    monkeypatch.setattr(socket, "gethostname", lambda: "Mac.local")
+    assert host_fact(data) == hit
+
+
+def _hex_row(answer: str | bytes, upper: bool = False) -> bytes:
+    """A row shaped like fs_realpath.jsonl's, its answer's bytes as hex."""
+    raw = answer.encode() if isinstance(answer, str) else answer
+    spelled = raw.hex().upper() if upper else raw.hex()
+    return json.dumps({"q": {"p": "=<root>/a"}, "r": spelled}).encode()
+
+
+@pytest.mark.parametrize(
+    ("answer", "hit"),
+    [
+        # What a missed `<scratch>` replacement leaves.
+        ("/private/var/folders/ab/cd1234/T/tmpq/a", "/private"),
+        ("/var/folders/ab/cd1234/T/tmpq/a", "/var/folders"),
+        ("C:\\Users\\fixtureuser\\AppData\\Local\\Temp\\tmpq\\a", ":\\Users"),
+        ("/Users/fixtureuser/notes/a", "/Users"),
+        ("E:\\Windows\\x", "E:\\Windows"),
+        ("could not reach Mac: refused", "Mac"),
+        ('{"p":"/srv/\\u004dac"}', "Mac"),
+        # The fixture world's scratch path and HOME.
+        ("<scratch>/a", None),
+        ("<scratch>/home/x/a", None),
+        ("<scratch>/home/fixtureuser/a", "fixtureuser"),
+        # The exempt texts, in the bytes as in the text.
+        ('{"path":"/tmp/a b"}', None),
+        ("cwd: Malformed Mach-o file", None),
+        # A synthetic value written as hex is exempt as the whole run only.
+        ("\\\\?\\C:\\x", None),
+        ("\\\\?\\C:\\xy", "\\\\?\\"),
+        ("\\\\?\\C:\\", "\\\\?\\"),
+        ('{"abs":"/tmp/x y/\u00e9.md","rel":"a/b.txt"}', None),
+        ('{"abs":"/tmp/x y/\u00e9.md","rel":"a/b.txt "}', "/tmp"),
+        # Three bytes or more: a three-character name alone.
+        (b"Mac.", "Mac"),
+        (b"Mac", "Mac"),
+    ],
+)
+def test_the_host_fact_guard_reads_bytes_written_as_hex(
+    monkeypatch: pytest.MonkeyPatch, answer: str | bytes, hit: str | None
+) -> None:
+    """The fixtures write bytes as hex, some after replacing the run's
+    scratch path by `<scratch>`: a host path or name that replacement
+    misses is caught in the bytes the hex spells."""
+    import getpass
+    import socket
+
+    from tests.contract.gen_store_files import host_fact
+
+    monkeypatch.setattr(getpass, "getuser", lambda: "fixtureuser")
+    monkeypatch.setattr(socket, "gethostname", lambda: "Mac.local")
+    for data in (_hex_row(answer), _hex_row(answer, upper=True)):
+        assert b"Mac" not in data and b"fixtureuser" not in data
+        assert host_fact(data) == hit
+
+
+@pytest.mark.parametrize(
+    "spell",
+    [
+        # As text: UTF-8, then Latin-1.
+        lambda path: path.encode(),
+        lambda path: path.encode("latin-1"),
+        # The same bytes written as hex.
+        lambda path: _hex_row(path.encode()),
+        lambda path: _hex_row(path.encode("latin-1")),
+    ],
+    ids=["utf-8", "latin-1", "utf-8-hex", "latin-1-hex"],
+)
+def test_the_host_fact_guard_reads_utf_8_and_latin_1(
+    monkeypatch: pytest.MonkeyPatch, spell: Callable[[str], bytes]
+) -> None:
+    """A name holding a character outside ASCII is read in UTF-8 bytes and
+    in Latin-1 bytes, as text and as hex."""
+    import getpass
+    import socket
+
+    from tests.contract.gen_store_files import host_fact
+
+    name = "fixtureus\u00e9r"
+    monkeypatch.setattr(getpass, "getuser", lambda: name)
+    monkeypatch.setattr(socket, "gethostname", lambda: "Mac.local")
+    assert host_fact(spell(f"/srv/{name}/x")) == name
 
 
 def test_the_errno_generator_names_the_errno_its_numbers_must_run_past(

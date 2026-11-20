@@ -1082,6 +1082,44 @@ SYNTHETIC_PATHS = (
     '"\\\\\\\\s\\\\sh\\\\commondir"',
 )
 
+# Values other fixtures write as hex on purpose (`data.hex()`) that read as
+# a host path, each exempt only as the whole of a run of hex digits, its
+# bytes exactly these: nothing longer or shorter is exempt. The first is
+# canonical_json.jsonl's log payload, whose path holds a character outside
+# ASCII as itself, not as the JSON escape `SYNTHETIC_PATHS` lists; the
+# others are the verbatim paths gitsystem_answers.jsonl and
+# gitsystem_answers_unicode.jsonl ask `absolute` about.
+SYNTHETIC_HEX = (
+    '{"abs":"/tmp/x y/\u00e9.md","rel":"a/b.txt"}'.encode(),
+    b"\\\\?\\C:\\x",
+    b"\\\\?\\UNC\\server\\share\\x",
+    b"\\\\?\\unc\\server\\share\\x",
+    b"\\\\?\\UNC\\server\\share",
+    b"\\\\?\\unc\\server\\share",
+    b"\\\\?\\uNc\\server\\share",
+    b"\\\\?\\UnC\\server\\share\\x",
+    b"\\\\?\\UNC\\",
+    b"\\\\?\\unc\\",
+    b"\\\\?\\UNC\\s",
+    b"\\\\?\\\xc3\xbcNC\\s\\h\\x",
+    # gitfile_pin_text.jsonl's pin records and the verbatim path it reads
+    # back from one, written as hex (`gen_follow`).
+    b'{"format": 1, "git_dir": "\\\\\\\\srv\\\\sh\\\\g", "tree": "//srv/sh/t"}',
+    b'{"format": 1, "git_dir": "\\\\\\\\?\\\\C:\\\\g",'
+    b' "tree": "\\\\\\\\.\\\\C:\\\\t"}',
+    b"\\\\?\\C:\\g",
+)
+
+# Texts a platform writes that hold a host's short name inside a longer
+# word: macOS's text for errno 88, whose "Mach" holds a host named "Mac".
+# A name is passed over only where it lies wholly inside one of them that
+# stands alone, with no word character on either side (`_named`), so a
+# name beside it, or one running into it across any character, is read.
+PLATFORM_TEXTS = ("Malformed Mach-o file",)
+_PLATFORM_TEXT = re.compile(
+    "|".join(rf"(?<!\w){re.escape(text)}(?!\w)" for text in PLATFORM_TEXTS)
+)
+
 # What a host's path looks like: POSIX temp and home roots, macOS volumes,
 # Windows drive, UNC and verbatim prefixes (as text and as JSON escapes).
 _HOST_PATTERNS = (
@@ -1102,28 +1140,167 @@ _HOST_PATTERNS = (
     "AppData",
 )
 
+# A JSON string escape. The fixtures are ASCII JSON, and some hold JSON
+# texts inside their strings, so a name holding a character outside ASCII
+# is written with an escape (`\u00e9`), one level deeper for each JSON
+# text it is nested in (`\\u00e9`).
+_JSON_ESCAPE = re.compile(r"\\(?:u([0-9A-Fa-f]{4})|(.))", re.DOTALL)
+_JSON_SHORT = {"b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+# The most levels of JSON escapes `_json_readings` reads.
+_JSON_DEPTH = 8
+
+
+def _json_unescaped(text: str) -> str:
+    """`text` with each JSON string escape replaced by what it stands for,
+    each `\\uXXXX` alone, so a surrogate pair's two escapes
+    (`\\ud835\\udcd4`) read as its two halves (`_paired` joins them)."""
+
+    def one(m: re.Match[str]) -> str:
+        if m[1] is not None:
+            return chr(int(m[1], 16))
+        return _JSON_SHORT.get(m[2], m[2])
+
+    return _JSON_ESCAPE.sub(one, text)
+
+
+def _paired(text: str) -> str:
+    """`text` with each surrogate pair, a high half and then a low half, as
+    the one character past U+FFFF the two spell; a lone half stays."""
+    return text.encode("utf-16-le", "surrogatepass").decode(
+        "utf-16-le", "surrogatepass"
+    )
+
+
+def _json_readings(text: str) -> list[str]:
+    """`text` as written, then with its JSON escapes read, level by level,
+    while a level changes it (`_JSON_DEPTH` levels at most).
+
+    Each level is read with a surrogate pair's halves apart, the next level
+    read from it, and then, where that differs, with each pair joined
+    (`_paired`). A name past U+FFFF is read only joined. A name that starts
+    with a lone low half, as `getpass.getuser` reads a POSIX user name
+    whose first byte is no UTF-8 (`\\udc80` for 0x80, by surrogateescape),
+    is read only apart where a high half's escape stands before it, and so
+    is one that ends with a lone high half before a low half's escape."""
+    readings = [text]
+    level = text
+    for _ in range(_JSON_DEPTH):
+        read = _json_unescaped(level)
+        if read == level:
+            break
+        readings.append(read)
+        if (joined := _paired(read)) != read:
+            readings.append(joined)
+        level = read
+    return readings
+
+
+# A run of hex digits, the fixtures' spelling of bytes (`data.hex()`): of
+# even length, six digits (three bytes, the shortest name counted) or
+# more, with no hex digit on either side.
+_HEX_RUN = re.compile(rb"(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{2}){3,}(?![0-9A-Fa-f])")
+
+
+def _decoded(raw: bytes) -> tuple[str, ...]:
+    """`raw` read as UTF-8 (a byte it cannot read replaced) and as Latin-1,
+    which read ASCII alike, so ASCII is read once."""
+    if raw.isascii():
+        return (raw.decode("ascii"),)
+    return (raw.decode("utf-8", "replace"), raw.decode("latin-1"))
+
+
+def _readings(data: bytes) -> Iterator[str]:
+    """`data` as text (`_decoded`), then the bytes each run of hex digits
+    in it spells (`_HEX_RUN`), read the same ways, but for a run whose
+    bytes are one of `SYNTHETIC_HEX`."""
+    yield from _decoded(data)
+    for run in dict.fromkeys(_HEX_RUN.findall(data)):
+        raw = bytes.fromhex(run.decode("ascii"))
+        if raw not in SYNTHETIC_HEX:
+            yield from _decoded(raw)
+
+
+def _exempted(text: str) -> str:
+    """`text` with each of `SYNTHETIC_PATHS`, exactly as written, replaced
+    by an empty JSON string, `""`, so the text on either side of it is not
+    joined into a name. A platform text is not replaced (`_named`).
+
+    The fixture world's HOME (`<scratch>/home/x`) is not a host's /home/:
+    only that one component is dropped, so a user or host name further
+    down the path is still caught."""
+    for exempt in SYNTHETIC_PATHS:
+        text = text.replace(exempt, '""')
+    return re.sub(r"<scratch>/home(?=/|\b)", "<scratch>", text)
+
+
+def _named(text: str, names: list[str]) -> str | None:
+    """The first of `names` found in `text` at a place that does not lie
+    wholly inside one stand-alone occurrence of `PLATFORM_TEXTS`: a name
+    that shares characters with such a text and runs past it on either
+    side, across a hyphen or a dot too ("file-srv" in "Malformed Mach-o
+    file-srv"), is found."""
+    spans = [m.span() for m in _PLATFORM_TEXT.finditer(text)]
+    for name in names:
+        at = text.find(name)
+        while at != -1:
+            end = at + len(name)
+            if not any(a <= at and end <= b for a, b in spans):
+                return name
+            at = text.find(name, at + 1)
+    return None
+
 
 def host_fact(data: bytes) -> str | None:
     """The first host path, user name or host name in `data` (text or the
-    bytes of a binary file, read as Latin-1 too), if any."""
+    bytes of a binary file), if any, in each of its readings (`_readings`):
+    the data as UTF-8 and as Latin-1, then the bytes of each run of hex
+    digits in it read the same two ways. The fixtures write bytes as hex,
+    some of them after replacing the run's scratch path by `<scratch>`, so
+    a host path or name that replacement misses reaches them as hex.
+
+    A host path is any of `_HOST_PATTERNS` or a Windows drive's Users,
+    Windows or Documents folder, wherever its letter stands, after a word
+    character too (`fileD:/Documents`). The user name and the host's short
+    name (three characters or more) count wherever they stand, inside a
+    longer word too, in the text as written and in each level of its JSON
+    escapes read (`_json_readings`), a surrogate pair's halves apart and
+    joined, so a name written with escapes is caught as well, one past
+    U+FFFF or one holding a lone half. Where a word ends is no rule a
+    fixture keeps: an SQLite file stores a record's column texts back to
+    back (`"<name>abc"`), and an escape or an encoding before a name may
+    end in a word character, a JSON escape at any depth (`"\\\\nMac"`),
+    percent-encoding (`%2FMac`), a terminal colour (`\\x1b[1mMac`) or a
+    Python escape (`\\x00Mac`).
+
+    Before any search each reading's synthetic paths (`SYNTHETIC_PATHS`,
+    exactly as written) are replaced by an empty JSON string, `""`
+    (`_exempted`), so the text on either side is not joined into a name;
+    nothing more is replaced, so a name beside one is still caught. A name
+    is passed over only where it lies wholly inside one occurrence of a
+    platform text that stands alone, with no word character on either
+    side (`_named`): macOS spells errno 88 "Malformed Mach-o file", which
+    holds a host named "Mac" inside the longer word "Mach". A name running
+    into such a text is caught, across a word character ("xMal" in
+    "xMalformed Mach-o file", where the text does not stand alone) or any
+    other ("file-srv" in "Malformed Mach-o file-srv"). Host paths and
+    drives are read in the whole text, a drive's letter after the "e" of
+    "file" too. A run of hex digits whose bytes are one of `SYNTHETIC_HEX`
+    is not read."""
     import getpass
-    import re
     import socket
 
-    texts = [data.decode("utf-8", "replace"), data.decode("latin-1")]
-    needles = list(_HOST_PATTERNS)
-    for extra in (getpass.getuser(), socket.gethostname().split(".")[0]):
-        if len(extra) >= 3:
-            needles.append(extra)
-    drive = re.compile(r"\b[A-Za-z]:(\\\\|\\|/)(?:Users|Windows|Documents)")
-    for text in texts:
-        for synthetic in SYNTHETIC_PATHS:
-            text = text.replace(synthetic, '""')
-        # The fixture world's HOME (`<scratch>/home/x`) is not a host's
-        # /home/; only that one component is dropped, so a user or host name
-        # further down the path is still caught.
-        text = re.sub(r"<scratch>/home(?=/|\b)", "<scratch>", text)
-        if hit := next((n for n in needles if n in text), None):
+    names = [
+        extra
+        for extra in (getpass.getuser(), socket.gethostname().split(".")[0])
+        if len(extra) >= 3
+    ]
+    drive = re.compile(r"[A-Za-z]:(\\\\|\\|/)(?:Users|Windows|Documents)")
+    for text in _readings(data):
+        text = _exempted(text)
+        if hit := next((n for n in _HOST_PATTERNS if n in text), None):
+            return hit
+        readings = _json_readings(text)
+        if hit := next(filter(None, (_named(r, names) for r in readings)), None):
             return hit
         if found := drive.search(text):
             return found.group(0)
