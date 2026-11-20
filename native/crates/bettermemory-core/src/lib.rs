@@ -7,6 +7,8 @@
 //!   leaves first (the declared-value check, the actor rule, `resolve`);
 //! - [`json`]: `json.dumps` as the reference's call sites spell values
 //!   (the log payload's canonical text among them) and `json.loads`;
+//! - [`in_force`]: what is in force at delivery (`in_force.py` whole):
+//!   the supersession head, the newest extender, the held slot;
 //! - [`float_repr`]: Python's `float.__repr__`;
 //! - [`datetime`]: the datetime spellings and readings;
 //! - [`origin_history`]: how `origin` reads a repository's history, its
@@ -90,6 +92,7 @@ pub mod gitobjects;
 pub mod gitsystem;
 pub mod history;
 pub mod identity;
+pub mod in_force;
 pub mod json;
 pub mod lexicon;
 pub mod log;

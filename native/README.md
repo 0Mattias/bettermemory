@@ -21,6 +21,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | module | reproduces | pinned by |
 | --- | --- | --- |
 | `json` | `json.dumps` as each call site spells values (`log.canonical_payload` and nine more forms, `review.canonical_json`), `json.loads` | `canonical_json.jsonl`, `json_edges.jsonl` |
+| `in_force` | `in_force.py` whole: `InForce` (with `history`), `in_force` and its inner `newest`, `newest_head`, `admitted_sources`, `head`; the store's reads and the admission are traits (`LinkReader`, `RecordView`) | `in_force.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns, pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
@@ -523,6 +524,74 @@ first 17 of SHA-256(`b"machine-id " + i` as four big-endian bytes); the
 facts are the product of four hardware ids, four hostnames and four id
 file objects. Texts spelled by `repr` in the ungated file are ASCII or
 lone surrogates, which no Unicode version spells differently.
+
+## What is in force at delivery (`in_force.py`)
+
+`in_force` reproduces `in_force.py` whole, in one unit (about 200 lines of
+Rust). It needs nothing from the machine: the store and the admission
+are its arguments.
+
+| function | reference lines | needs | status |
+| --- | --- | --- | --- |
+| `InForce`, `history` | 47 to 65 | nothing | built |
+| `in_force`: the walk of inbound links | 67 to 95 | `Store.inbound_links`, `RecordView.prime`, `admits_id` | built |
+| `held_ids` read | 97 to 100 | `standing.held_ids` | built, as a trait method |
+| `newest`, `newest_head` | 102 to 109 | nothing | built |
+| `admitted_sources`, `head` | 111 to 126 | `admits_id` | built |
+| the answers | 128 to 141 | nothing | built |
+
+What each part reproduces, and why:
+
+- The store's two reads are the trait `LinkReader` (`inbound_links`,
+  `held_ids`) and the admission is the trait `RecordView` (`prime`,
+  `admits_id`). The store, `standing` and `admission` are not ported, so
+  their answers come in as data; the walk calls them in the reference's
+  order with the reference's arguments (`prime` with every source read,
+  duplicates kept, an empty list included; `admits_id` only where the
+  reference's `and` reaches it; `held_ids` with the asked ids followed by
+  every source in the order first read, and not at all when nothing is
+  asked). The golden file pins that order of calls.
+- A source's stamp is the last one read for it, as the reference's dict
+  assignment keeps it, while its place in the list given to `held_ids` is
+  where it was first read.
+- `newest` is the greatest `(stamp, id)`; Python compares `str` by code
+  point, which is the byte order of UTF-8, so Rust's `String` order is
+  the same. A lone surrogate cannot be an id here; the store's ids are
+  ULIDs.
+- `newest_head` keeps Python's `or`: an empty id among the sources not
+  held is falsy, so the newest of the whole pool, held ones included, is
+  taken instead.
+- The answer is a `Vec<InForce>` in the order of first occurrence of the
+  asked ids, which is the reference's dict order.
+- No regular expression is involved.
+
+Reference findings (reproduced, not changed):
+
+- The empty id falls through `newest_head`'s `or`: with `a` superseded
+  by `""` (stamp `1`) and by `c` (stamp `2`), `c` held, the reference
+  gives `a`'s slot to the held `c`, where its documentation says the
+  newest not held is followed (`in_force_kills.rs`,
+  `the_empty_id_falls_through_to_the_newest_held`).
+- The walk follows the sources of every row `inbound_links` answers, of
+  any type: a store answering a `contradicts` row would have its source
+  read and walked, though only `supersedes` and `extends` are followed.
+  The real store answers only the two types asked for.
+
+Fixtures and tests: `tests/contract/gen_in_force.py` writes
+`in_force.jsonl`, not gated (ASCII and code point order): 40 cases
+covering every branch (chains, ties, cycles, admission, held heads and
+extenders, the empty id, another link type, Unicode ids) with the answers
+and every call, and a sweep of 3000 cases drawn by a 64-bit linear
+congruential rule from a seed, pinned as a count and a SHA-256.
+`golden_in_force.rs` checks both; `in_force_kills.rs` holds nine cases a
+plausible wrong walk fails; `in_force_robustness.rs` runs chains and
+cycles of 20,000 records, a fan-in of 30,000, a 1 MiB id and 50,000
+asked ids, and holds time at 2n within five times time at n. The
+reference takes 0.14 s on the 20,000 chain; the port takes a few
+milliseconds in release.
+
+Nothing of the module is left for a later unit; wiring the traits to
+`store` and to `store::caller`'s admission is the store's and standing's.
 
 ## The ranker
 
