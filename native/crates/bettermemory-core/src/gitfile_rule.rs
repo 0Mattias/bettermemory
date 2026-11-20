@@ -18,8 +18,15 @@
 //!
 //! No clock, timer or thread decides an answer here, and every file is
 //! read through [`Fs`].
+//!
+//! The later units are modules of this one: git's reading of a git
+//! directory ([`gitdir`]) and the identity helpers ([`identity`]), the
+//! format from files and the trust of a `commondir` ([`trust`]), the pin
+//! records and the follow ([`follow`]), the judge and discovery
+//! ([`discovery`]). With them the module is whole on POSIX.
 
 pub mod bounded;
+pub mod discovery;
 pub mod follow;
 pub mod format;
 pub mod gitdir;

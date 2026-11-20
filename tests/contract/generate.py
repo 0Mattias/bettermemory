@@ -45,6 +45,7 @@ from . import (
     gen_edges,
     gen_fold,
     gen_follow,
+    gen_discovery,
     gen_fs_realpath,
     gen_fs_access,
     gen_fs_samestat,
@@ -271,6 +272,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitfile_identity_python": gen_identity.generate_python,
     "gitfile_trust": gen_trust.generate,
     "gitfile_trust_python": gen_trust.generate_python,
+    "gitfile_discovery": gen_discovery.generate,
+    "gitfile_discovery_python": gen_discovery.generate_python,
     "gitfile_pin_text": gen_follow.generate_text,
     "gitfile_pin_text_python": gen_follow.generate_text_python,
     "gitfile_follow": gen_follow.generate,
@@ -418,6 +421,7 @@ PYTHON_GATED = frozenset(
         "gitfile_trust_python",
         "gitfile_follow_python",
         "gitfile_pin_text_python",
+        "gitfile_discovery_python",
         "gitobjects_python",
         "machine_identity_python",
         "location_probe_python",
@@ -529,6 +533,9 @@ PLATFORM_GATED = frozenset(
 #: ``commondir`` files over links and modes (`gen_trust`);
 #: ``gitfile_follow`` and ``gitfile_follow_python`` follow ``.git`` entries
 #: over links, modes and pin records (`gen_follow`);
+#: ``gitfile_discovery`` and ``gitfile_discovery_python`` judge ``.git``
+#: entries and walk real trees with links, FIFOs and modes
+#: (`gen_discovery`);
 #: ``gitconfig_tree`` reads real trees with the host's ``os.path`` and ``pwd``;
 #: ``gitconfig_legacy`` and ``gitconfig_legacy_python`` read real trees with
 #: links, FIFOs and modes (`gen_gitconfig_legacy`; the second holds the link
@@ -602,6 +609,8 @@ POSIX_ONLY = frozenset(
         "gitfile_identity_python",
         "gitfile_trust",
         "gitfile_trust_python",
+        "gitfile_discovery",
+        "gitfile_discovery_python",
         "gitfile_follow",
         "gitfile_follow_python",
     }

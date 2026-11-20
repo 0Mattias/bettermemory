@@ -287,6 +287,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // a drive: `ntpath.isabs` is True there in 3.11 and 3.12, False
         // from 3.13 (`gen_follow._nt_gated`).
         "gitfile_pin_text_python.jsonl" => &[Python],
+        // A link loop, a record past the JSON decoder's recursion limit,
+        // `_git_common`'s strict walk, by input (`gen_discovery.gated`).
+        "gitfile_discovery_python.jsonl" => &[Python],
         // A link loop's class name is read as 3.11 and 3.13 read it, but
         // trees holding one are gated by the standing rule.
         "gitconfig_legacy_python.jsonl" => &[Python],

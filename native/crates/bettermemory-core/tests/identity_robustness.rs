@@ -1,14 +1,16 @@
 //! `gitfile_rule::identity` on hostile trees, on a 512 KiB thread (debug
 //! build): typed answers, no panic; a crowded folder costs `same_folder`,
-//! `names_here` and `tree_of` what an empty one does (they state, never
-//! list); the Windows flavour declines; a relative path (here and in
+//! `names_here`, `tree_of` and `working_tree_of` what an empty one does
+//! (they state, and read a folder up to its first name other than `.git`,
+//! never whole), and that read answers as a listing does, in memory and on
+//! disk; the Windows flavour declines; a relative path (here and in
 //! `read_small`) is taken from the context's working directory, never the
 //! process's; and a name in NFC against one in NFD is answered as the
 //! platform's own file system answers it.
 
 mod timing;
 
-use bettermemory_core::fsdata::{Flavour, Fs, MemFs, Node, StatResult};
+use bettermemory_core::fsdata::{Flavour, Fs, MemFs, Node, PyErr, StatResult};
 use bettermemory_core::gitfile_rule::gitdir::{Ctx, Failure};
 use bettermemory_core::gitfile_rule::identity::{
     is_link, names_folder, names_here, same_folder, tree_of, working_tree_of,
@@ -83,9 +85,11 @@ fn hostile_trees_answer_typed_on_a_small_stack() {
     });
 }
 
-/// `same_folder`, `names_here` and `tree_of` of a folder of 100,000 names
-/// cost what one of 10,000 does: they state two paths, never list (best of
-/// five; a scan would be 10 times).
+/// `same_folder`, `names_here`, `tree_of` and `working_tree_of` of a
+/// folder of 100,000 names cost what one of 10,000 does: they state two
+/// paths, and `working_tree_of` reads the folder up to its first name
+/// other than `.git`, as `scandir` under `all` does, never whole (best of
+/// five, 200 calls each; a scan would be 10 times).
 #[test]
 fn a_crowded_folder_is_not_scanned() {
     fn tree(n: usize) -> MemFs {
@@ -103,6 +107,7 @@ fn a_crowded_folder_is_not_scanned() {
                 assert_eq!(same_folder(&c, b"/w/.git/..", b"/w"), Ok(Some(true)));
                 assert_eq!(names_here(&c, b".git", b"/w", b"/w/.git"), Ok(Some(true)));
                 assert_eq!(tree_of(&c, b"/w/.git"), Ok(Some(b"/w".to_vec())));
+                assert_eq!(working_tree_of(&c, b"/w/.git"), Ok(Some(b"/w".to_vec())));
             }
         })
     };
@@ -113,19 +118,131 @@ fn a_crowded_folder_is_not_scanned() {
         &mut || time(&small),
         &mut || time(&large),
     );
-    // `working_tree_of` reads the listing whole (`scandir` stops at the
-    // first name other than `.git`): linear, so 10 times the names may
-    // cost 10 times; a pass over the listing per name would be 100.
-    let listing = |fs: &MemFs| {
-        let c = ctx(fs);
-        timing::once(|| assert_eq!(working_tree_of(&c, b"/w/.git"), Ok(Some(b"/w".to_vec()))))
+}
+
+/// The folders `holds_other_than` is asked of: what a listing of each
+/// says (`any` name other than `.git`), and its error where it fails.
+fn listed<F: Fs>(fs: &F, path: &[u8]) -> Result<bool, PyErr> {
+    fs.listdir(path)
+        .map(|names| names.iter().any(|name| name.as_slice() != b".git"))
+        .map_err(|e| e.class)
+}
+
+/// The folders of `scanned_as_listed`, as (path, files below it) pairs,
+/// and the links: names sorting on either side of `.git` and between its
+/// own key and the keys below it (`.git-x`, `.git.`, `.git0`).
+const SCANNED: &[(&str, &[&str])] = &[
+    ("empty", &[]),
+    ("dirgit", &[".git/HEAD", ".git/objects/x/y", ".git/refs/z"]),
+    ("filegit", &[".git"]),
+    ("bang", &["!", ".git/HEAD"]),
+    ("gi", &[".gi", ".git/HEAD"]),
+    ("dash", &[".git-x", ".git/HEAD"]),
+    ("dot", &[".git."]),
+    ("zero", &[".git/HEAD", ".git0"]),
+    ("after", &[".git/HEAD", "z"]),
+    ("filez", &[".git", "z"]),
+    ("gitdash", &[".git", ".git-x"]),
+    ("locked", &[".git/HEAD", "f"]),
+];
+
+/// `holds_other_than(path, ".git")` answers what a listing of the folder
+/// says, error for error, in memory and on disk: names sorting before
+/// `.git`, after it, and between its own key and the keys below it in
+/// `MemFs`'s map; a folder holding `.git` alone, as a folder with keys
+/// below it or as a file; an empty folder; a link to a folder; a file,
+/// nothing, a NUL, and a folder that cannot be listed.
+#[test]
+fn scanned_as_listed() {
+    let mut fs = MemFs::new(Flavour::Posix);
+    for (folder, files) in SCANNED {
+        fs.insert(format!("/s/{folder}").as_bytes(), Node::Dir);
+        for file in *files {
+            fs.insert(
+                format!("/s/{folder}/{file}").as_bytes(),
+                Node::File(Vec::new()),
+            );
+        }
+    }
+    // The `.git` folder's own key, and keys below it.
+    fs.insert(b"/s/dirgit/.git", Node::Dir);
+    fs.insert(b"/s/ldirgit", Node::Link(b"/s/dirgit".to_vec()));
+    fs.insert(b"/s/lafter", Node::Link(b"after".to_vec()));
+    fs.insert(b"/s/afile", Node::File(Vec::new()));
+    fs.lock(b"/s/locked");
+    let mut paths: Vec<String> = SCANNED.iter().map(|(f, _)| format!("/s/{f}")).collect();
+    for extra in ["ldirgit", "lafter", "afile", "nothing"] {
+        paths.push(format!("/s/{extra}"));
+    }
+    let answers = |fs: &dyn Fn(&[u8]) -> Result<bool, PyErr>| {
+        paths.iter().map(|p| fs(p.as_bytes())).collect::<Vec<_>>()
     };
-    timing::grows_within(
-        "working_tree_of: 10,000 and 100,000 names",
-        timing::TENFOLD,
-        &mut || listing(&small),
-        &mut || listing(&large),
+    let want = vec![
+        Ok(false),
+        Ok(false),
+        Ok(false),
+        Ok(true),
+        Ok(true),
+        Ok(true),
+        Ok(true),
+        Ok(true),
+        Ok(true),
+        Ok(true),
+        Ok(true),
+        Err(PyErr::Permission),
+        Ok(false),
+        Ok(true),
+        Err(PyErr::NotADirectory),
+        Err(PyErr::FileNotFound),
+    ];
+    let scanned = |p: &[u8]| fs.holds_other_than(p, b".git").map_err(|e| e.class);
+    assert_eq!(answers(&|p| listed(&fs, p)), want);
+    assert_eq!(answers(&scanned), want);
+    assert_eq!(
+        fs.holds_other_than(b"/s/a\0b", b".git")
+            .map_err(|e| e.class),
+        Err(PyErr::Value)
     );
+    #[cfg(unix)]
+    {
+        use bettermemory_core::fsdata::StdFs;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let base = scratch("scan");
+        for (folder, files) in SCANNED {
+            std::fs::create_dir(base.join(folder)).unwrap();
+            for file in *files {
+                let path = base.join(folder).join(file);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, b"").unwrap();
+            }
+        }
+        symlink(base.join("dirgit"), base.join("ldirgit")).unwrap();
+        symlink("after", base.join("lafter")).unwrap();
+        std::fs::write(base.join("afile"), b"").unwrap();
+        let locked = base.join("locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let root = base.as_os_str().as_bytes().to_vec();
+        let on_disk = |p: &[u8]| {
+            let mut full = root.clone();
+            full.extend_from_slice(&p[2..]);
+            full
+        };
+        // Root reads a mode-000 folder; the rest holds there too.
+        let refused = std::fs::read_dir(&locked).is_err();
+        let listed_here = answers(&|p| listed(&StdFs, &on_disk(p)));
+        let scanned_here = answers(&|p| {
+            StdFs
+                .holds_other_than(&on_disk(p), b".git")
+                .map_err(|e| e.class)
+        });
+        let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(scanned_here, listed_here);
+        if refused {
+            assert_eq!(scanned_here, want);
+        }
+    }
 }
 
 /// `Ctx::cwd` is the caller's contract: what `os.getcwd()` returned, so

@@ -158,7 +158,9 @@ pub fn tree_of<F: Fs + ?Sized>(
 
 /// `_working_tree_of(path)`: [`tree_of`], where that folder holds a name
 /// other than `.git` or cannot be listed; None where it holds `.git`
-/// alone.
+/// alone. The folder is read up to its first name other than `.git`
+/// ([`Fs::holds_other_than`]), as `all` over `os.scandir` reads it, so a
+/// crowded folder costs no more than a small one.
 pub fn working_tree_of<F: Fs + ?Sized>(
     ctx: &Ctx<'_, F>,
     path: &[u8],
@@ -166,10 +168,8 @@ pub fn working_tree_of<F: Fs + ?Sized>(
     let Some(owner) = tree_of(ctx, path)? else {
         return Ok(None);
     };
-    if let Ok(names) = ctx.fs.listdir(&ctx.at(&owner)?) {
-        if names.iter().all(|name| name.as_slice() == b".git") {
-            return Ok(None);
-        }
+    if ctx.fs.holds_other_than(&ctx.at(&owner)?, b".git") == Ok(false) {
+        return Ok(None);
     }
     Ok(Some(owner))
 }

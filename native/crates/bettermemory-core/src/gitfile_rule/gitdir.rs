@@ -11,7 +11,15 @@
 //! Every path goes to the file system through one place, [`Ctx::at`]: a
 //! relative path is taken from the working directory given as an input
 //! (`cwd`), never the process's own, as the reference's `os.open`,
-//! `os.lstat` and `os.access` take a relative path from `os.getcwd()`. On
+//! `os.lstat` and `os.access` take a relative path from `os.getcwd()`. The
+//! two part at the OS's path limit alone: the OS resolves a relative path
+//! from its working directory and measures the relative text against
+//! `PATH_MAX`, where the port measures it joined to `cwd`, so a relative
+//! path shorter than the limit whose join reaches it is ENAMETOOLONG here
+//! where the reference reads it. No caller of the reference passes a
+//! relative path; the README's unit 5 section says why this is kept, a
+//! stated difference beside the other one, [`read`]'s open that never
+//! waits on a FIFO where the reference's blocking open does. On
 //! the Windows flavour a relative path is declined ([`Failure::NotPorted`]):
 //! `ntpath`'s drive-relative joins are not ported. The strict resolutions
 //! are `posixpath`'s alone: on Windows they, and so a `commondir`, are
@@ -71,7 +79,10 @@ pub struct Ctx<'a, F: Fs + ?Sized> {
 impl<'a, F: Fs + ?Sized> Ctx<'a, F> {
     /// The path the OS would be asked for: `path` itself where absolute,
     /// else under the working directory. The one place a relative path is
-    /// resolved.
+    /// resolved. The OS would be handed the relative path and would take
+    /// it from its working directory, so `PATH_MAX` would bound the
+    /// relative text alone; here it bounds the join (see the module's
+    /// text).
     pub fn at(&self, path: &[u8]) -> Result<Vec<u8>, Failure> {
         if hostpath::isabs(self.flavour, path) {
             return Ok(path.to_vec());

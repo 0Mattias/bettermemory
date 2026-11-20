@@ -472,6 +472,21 @@ pub trait Fs {
     fn basic_info(&self, _path: &[u8]) -> BasicInfo {
         BasicInfo::Declined
     }
+
+    /// Whether the folder `path` (links followed) holds an entry named
+    /// other than `name`: `os.scandir(path)` under `all(entry.name ==
+    /// name for entry in entries)`, which reads the entries only up to the
+    /// first such one. An error opening the folder, or reading an entry
+    /// before that one, is the OSError `scandir` raises. By default the
+    /// folder is listed whole ([`Fs::listdir`]); `StdFs` and `MemFs` stop
+    /// at the first other name, so their cost does not grow with the
+    /// folder.
+    fn holds_other_than(&self, path: &[u8], name: &[u8]) -> Result<bool, OsError> {
+        Ok(self
+            .listdir(path)?
+            .iter()
+            .any(|other| other.as_slice() != name))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -742,6 +757,19 @@ impl Fs for StdFs {
             names.push(name_bytes(entry.file_name())?);
         }
         Ok(names)
+    }
+
+    fn holds_other_than(&self, path: &[u8], name: &[u8]) -> Result<bool, OsError> {
+        let path = native_path(path).map_err(|_| OsError::value())?;
+        for entry in std::fs::read_dir(path).map_err(|e| os_error(&e))? {
+            let entry = entry.map_err(|e| os_error(&e))?;
+            // A name with no spelling here (off unix, one that is not
+            // Unicode) is another name all the same.
+            if name_bytes(entry.file_name()).ok().as_deref() != Some(name) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn rewind(&self, file: &mut StdFile) -> Result<(), Refused> {
@@ -1602,6 +1630,45 @@ impl Fs for MemFs {
             _ => return None,
         };
         Some(text.to_owned())
+    }
+
+    fn holds_other_than(&self, path: &[u8], name: &[u8]) -> Result<bool, OsError> {
+        use std::ops::Bound;
+        let (id, node) = self.walk(path, true)?;
+        if node != Node::Dir {
+            return Err(OsError::new(PyErr::NotADirectory, "ENOTDIR"));
+        }
+        if self.mode(&id, &node) & READ == 0 {
+            return Err(OsError::new(PyErr::Permission, "EACCES"));
+        }
+        let mut prefix = id;
+        if !prefix.is_empty() {
+            prefix.push(b'/');
+        }
+        // The keys of one name are the name's own and a run of keys below
+        // it, so at most two steps pass over `name`: never a listing.
+        let mut from = Bound::Included(prefix.clone());
+        loop {
+            let Some((key, _)) = self.nodes.range((from, Bound::Unbounded)).next() else {
+                return Ok(false);
+            };
+            let Some(rest) = key.strip_prefix(prefix.as_slice()) else {
+                return Ok(false);
+            };
+            let first = rest.split(|&b| b == b'/').next().unwrap_or(rest);
+            if first != name {
+                return Ok(true);
+            }
+            from = if first.len() == rest.len() {
+                Bound::Excluded(key.clone())
+            } else {
+                // Past every key below `name/`: `0` follows `/`.
+                let mut past = prefix.clone();
+                past.extend_from_slice(name);
+                past.push(b'0');
+                Bound::Included(past)
+            };
+        }
     }
 }
 

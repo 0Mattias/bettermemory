@@ -77,8 +77,9 @@
 //!   text, and the reads over the file-system trait);
 //! - [`claims`]: what a memory claims, its first unit (the claim record,
 //!   the path spellings and the patterns a patch is read by);
-//! - [`gitfile_rule`]: the rule a `.git` entry is followed by, up to the
-//!   follow of an entry and its pin records.
+//! - [`gitfile_rule`]: the rule a `.git` entry is followed by, whole on
+//!   POSIX: from a `gitdir:` file's bytes to the judge of an entry and the
+//!   walk git's discovery makes.
 
 #![forbid(unsafe_code)]
 
