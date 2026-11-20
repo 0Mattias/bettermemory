@@ -11,8 +11,11 @@ The native build reads them in
 ``fcntl.fcntl``, ``sys.platform`` and ``time.sleep`` are replaced by a
 script that answers each call as the row says and logs it. Errors are
 ``OSError(errno.<name>, "text of <name>")``, so the class follows the
-errno as CPython picks it and the text is the script's, the same on every
-platform: the file is not gated.
+errno as CPython picks it and the text is the script's. The file is POSIX
+only: on Windows the logged open spells the path as ``WindowsPath`` does
+(backslashes) and an errno's name in a detail is that host's
+(``errno.errorcode`` reads ELOOP as ``WSAELOOP``), so the bytes follow the
+OS family; macOS and Linux write the same file.
 
 A row: ``path`` (what `_read_at` is given; with ``git`` instead, `read`
 of that git directory), ``plat`` (``posix`` or ``win32``), ``passes``

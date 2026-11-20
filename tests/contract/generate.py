@@ -547,13 +547,19 @@ PLATFORM_GATED = frozenset(
 #: clears the probe over links, modes and FIFOs (`gen_gitsystem_probe`);
 #: ``gitfile_leaves_posix`` reads links and mode-000 files
 #: (`gen_gitfile_leaves`); ``checkout_token_read_posix`` reads links, a
-#: FIFO and a loop (`gen_checkout_token_read`); ``location_stamps`` and
+#: FIFO and a loop (`gen_checkout_token_read`); ``checkout_token_read``
+#: runs the reads over a scripted OS whose logged calls spell the path as
+#: the host's ``Path`` does (backslashes on Windows) and whose errno names
+#: are the host's ``errno`` module's (``WSAELOOP`` for ELOOP on Windows),
+#: so its bytes follow the OS family (`gen_checkout_token_read`);
+#: ``location_stamps`` and
 #: ``location_stamps_python`` name devices by ``os.major``, which Windows'
 #: ``os`` lacks (`gen_location_stamps`); ``location_probe``, ``location_probe_python``
 #: and ``location_probe_errno`` probe trees with links and a mode-000
 #: folder, the last raising POSIX errno numbers (`gen_location_probe`).
 POSIX_ONLY = frozenset(
     {
+        "checkout_token_read",
         "checkout_token_read_posix",
         "store_restore_lock",
         "settings_paths",

@@ -5,6 +5,10 @@
 //! implementation would (a read made once, no `fcntl`, a close that never
 //! fails, no stat before the plain open), or a wrong rule applied to the
 //! row's answer.
+//!
+//! POSIX only, as `checkout_token_read.jsonl` is (`golden_checkout_token_read.rs`).
+
+#![cfg(unix)]
 
 mod common;
 mod ct_read_script;

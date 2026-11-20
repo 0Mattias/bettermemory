@@ -1,6 +1,13 @@
 //! Every case of `checkout_token_read.jsonl`: `read` and `_read_at` over
 //! a scripted OS, the answer and every call made, in order, as the
 //! reference made them.
+//!
+//! POSIX only: on Windows the reference's logged open spells the path
+//! with backslashes and an errno's name is that host's (`WSAELOOP`), so
+//! the file is not made there; `checkout_token_read_not_posix.rs` records
+//! the gap elsewhere.
+
+#![cfg(unix)]
 
 mod common;
 mod ct_read_script;

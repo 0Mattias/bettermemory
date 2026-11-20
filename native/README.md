@@ -2406,6 +2406,7 @@ that Unicode too.
 | `sqlite_spike`: `fts5_prefilter_matches_the_reference_sqlite` | `search.jsonl` (bm25 bits) | iii |
 | `golden_search_store`: `every_query_every_caller_pool_and_hits`, `every_store_line`, `offline_runs_equal_the_in_memory_ranking` (and three class (i) checks: the clamp, the digest's fingerprint, awkward queries) | `search_store.jsonl`, `search.jsonl` | iii |
 | `golden_store_files`: `every_case_every_answer` | `store_files.jsonl` | iii |
+| `golden_checkout_token_read`: `every_scripted_read_answers_and_calls_as_the_reference` (unix); `checkout_token_read_kills` (unix) | `checkout_token_read.jsonl` | i; os elsewhere (`checkout_token_read_not_posix`) |
 | `golden_location_stamps_posix`: `every_case_answers_as_the_reference` (unix) | `location_stamps.jsonl` | i; os elsewhere (`location_stamps_not_posix`) |
 | `golden_location_stamps_posix`: `every_release_bound_case_answers_as_the_reference` (unix) | `location_stamps_python.jsonl` | ii (Python); os elsewhere (`location_stamps_not_posix`) |
 | `golden_location_stamps`: `device_names_answer_as_each_platform_that_made_them` | `location_stamps_platform.jsonl` | ii (Python, platform) |
@@ -8005,7 +8006,7 @@ Findings about the reference (reproduced, pinned):
   (a race); the port makes the same two calls in the same order.
 
 Fixtures (`tests/contract/gen_checkout_token_read.py`):
-`checkout_token_read.jsonl` (77 rows, not gated) runs the reference over
+`checkout_token_read.jsonl` (77 rows, POSIX only) runs the reference over
 a scripted OS (`os.open`, `os.stat`, `os.fstat`, `os.read`, `os.close`,
 `fcntl.fcntl`, `sys.platform`, `time.sleep` replaced), errors raised as
 `OSError(errno.<NAME>, "text of <NAME>")`, and pins each answer with
@@ -8013,7 +8014,13 @@ every call made, in order: each open, stat, fstat, read and close
 error, both retry errnos, the plain open's every branch, the read
 retry's `fcntl` failures and the `win32` platform, sizes 4,095 to
 5,000, chunked and byte-at-a-time reads, the reread's every outcome,
-close failures, NULs and a relative path. `checkout_token_read_posix.jsonl`
+close failures, NULs and a relative path. Its bytes follow the OS family:
+on Windows the logged open spells the path as `WindowsPath` does
+(`open \r\.git\info\bettermemory`) and a detail names the errno as
+that host's `errno.errorcode` does (`WSAELOOP` for ELOOP), so Windows
+makes no such file and runs no test that reads it, in the parity job's
+step 1 either. The scripted reads, the `win32` rows among them, are
+compared on macOS and Linux only. `checkout_token_read_posix.jsonl`
 (17 rows, POSIX only) reads a real scratch tree: a token, an empty
 file, files of 5,000 and 4,096 bytes, a file holding the single byte
 0xFF and one holding 0x80, a FIFO, a folder, a link to the token, a
@@ -8022,11 +8029,12 @@ through a file, a name of 300 bytes, `/dev/null`, and `read` of a git
 directory; its texts (ELOOP, ENAMETOOLONG) are those macOS and glibc
 share.
 
-Tests: `golden_checkout_token_read` (every row, with the call log, over
-the scripted file system in `tests/ct_read_script`),
+Tests: `golden_checkout_token_read` (unix; every row, with the call log,
+over the scripted file system in `tests/ct_read_script`; recorded as
+having no case on Windows by `checkout_token_read_not_posix`),
 `golden_checkout_token_read_posix` (every row through `StdFs`; recorded
 as having no case on Windows by `checkout_token_read_not_posix`),
-`checkout_token_read_kills` (a single read, no `fcntl` retry, a close
+`checkout_token_read_kills` (unix, as it reads the same file: a single read, no `fcntl` retry, a close
 that never fails, no stat before the plain open, every errno retried,
 no plain open, `>=` for the size bound, text judged before size), and
 `checkout_token_read_robustness` (a 64 MiB chunk, a byte at a time, a
