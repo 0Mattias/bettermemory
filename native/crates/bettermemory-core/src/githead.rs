@@ -10,6 +10,7 @@
 
 pub mod discovery;
 pub mod fs;
+pub mod signature;
 
 pub use fs::{Flavour, MemFs, StdFs};
 

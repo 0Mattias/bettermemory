@@ -386,12 +386,14 @@ fn ceiling_offset<F: Fs + ?Sized>(
     Ok(best)
 }
 
-/// `_discover(start, stable=...)`.
-fn discover<F: Fs, A: Answers + ?Sized, R: Records + ?Sized, O: Owners + ?Sized>(
+/// `_discover(start, stable=...)`: `stable` is `_probe`'s, True for
+/// `signature` alone.
+pub(super) fn discover<F: Fs, A: Answers + ?Sized, R: Records + ?Sized, O: Owners + ?Sized>(
     rule: &Rule<'_, F, A, R>,
     host: &Host<'_, O>,
     env: &Env,
     start: &[u8],
+    stable: bool,
 ) -> Result<Option<Found>, Failure> {
     let ctx = rule.ctx;
     check_environment(ctx, env)?;
@@ -410,7 +412,7 @@ fn discover<F: Fs, A: Answers + ?Sized, R: Records + ?Sized, O: Owners + ?Sized>
     let how = Probe {
         owner: Some((host, env)),
         as_git: false,
-        stable: false,
+        stable,
     };
     loop {
         if let Some(found) = probe(rule, &how, &here)? {
@@ -439,7 +441,7 @@ pub fn find_gitdir<F: Fs, A: Answers + ?Sized, R: Records + ?Sized, O: Owners + 
     env: &Env,
     start: &[u8],
 ) -> Option<Found> {
-    discover(rule, host, env, start).ok().flatten()
+    discover(rule, host, env, start, false).ok().flatten()
 }
 
 /// `gitdir_at(root)`: [`find_gitdir`] without the walk.

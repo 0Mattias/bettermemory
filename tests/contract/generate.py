@@ -83,6 +83,7 @@ from . import (
     gen_gitsystem_record,
     gen_githead,
     gen_githead_discovery,
+    gen_githead_signature,
     gen_location_probe,
     gen_gitobjects,
     gen_gitobjects_files,
@@ -249,6 +250,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "witness_questions": gen_witness_questions.generate,
     "githead": gen_githead.generate,
     "githead_discovery": gen_githead_discovery.generate,
+    "githead_signature": gen_githead_signature.generate,
     "location_probe": gen_location_probe.generate,
     "location_probe_python": gen_location_probe.generate_python,
     "location_probe_errno": gen_location_probe.generate_errno,
@@ -597,7 +599,8 @@ PLATFORM_GATED = frozenset(
 #: ``githead_posix`` reads links, FIFOs and ENOTDIR, which Windows answers
 #: otherwise (`gen_githead`); ``githead_discovery`` walks trees with links,
 #: FIFOs and modes and reads owners and devices through ``os.lstat`` and
-#: ``os.stat`` (`gen_githead_discovery`); ``gitconfig_file`` reads links, FIFOs and
+#: ``os.stat`` (`gen_githead_discovery`); ``githead_signature`` stamps and
+#: rewrites such trees between reads (`gen_githead_signature`); ``gitconfig_file`` reads links, FIFOs and
 #: mode-000 files and opens directories (`gen_gitconfig_file`);
 #: ``fs_realpath`` and ``fs_realpath_python`` resolve links and FIFOs by
 #: ``posixpath`` (`gen_fs_realpath`); ``fs_stat`` states and lists links,
@@ -679,6 +682,7 @@ POSIX_ONLY = frozenset(
         "gitobjects_files_posix",
         "githead_discovery",
         "gitobjects_reader_posix",
+        "githead_signature",
         "location_probe",
         "location_probe_python",
         "location_probe_errno",

@@ -88,7 +88,8 @@
 //! - [`location_reads`]: the bounded reads of recorded paths as a timed
 //!   runtime on worker threads (the whole module);
 //! - [`githead`]: HEAD and refs read from a git directory's files, and
-//!   discovery (unit githead-1: the walk git's `setup.c` makes, `stamp`);
+//!   discovery (unit githead-1: the walk git's `setup.c` makes, `stamp`;
+//!   unit githead-2: `entry_above` and the change signature);
 //! - [`location_probe`]: the hook client's namespace probe (the cwd's
 //!   state, its view spelling, the host's name);
 //! - [`location_witness`]: the witness exchange's history half: the
