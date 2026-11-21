@@ -41,11 +41,23 @@ Parts, by ``part``:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib
+from collections.abc import Iterator
 from typing import Any
 
-from .gen_pyre_atom import _failed, _hooked, _line, _spelled
+from .gen_pyre_atom import (
+    PARSE,
+    SPECIAL,
+    _SOURCE,
+    Refused,
+    _failed,
+    _hooked,
+    _literals,
+    _position,
+    _spelled,
+)
 from .gen_pyre_tree import Lcg, _built, _sub, _tree, spell
 
 P: Any = importlib.import_module("re._parser")
@@ -267,16 +279,134 @@ FRAGMENTS = [
 ]
 
 
-def _outcome(pattern: str | bytes) -> str:
+#: How deep groups may nest before the port refuses (``MAX_DEPTH``).
+MAX_DEPTH = 100
+
+#: The ValueErrors of `fix_flags`, by the port's names.
+FIX_FLAGS = {
+    "cannot use LOCALE flag with a str pattern": "LocaleStr",
+    "ASCII and UNICODE flags are incompatible": "AsciiUnicode",
+    "cannot use UNICODE flag with a bytes pattern": "UnicodeBytes",
+    "ASCII and LOCALE flags are incompatible": "AsciiLocale",
+}
+
+TOKENIZER = P.Tokenizer
+STATE = P.State
+PARSE_SUB = P._parse_sub
+
+
+class _Tokens(P.Tokenizer):  # type: ignore[misc]
+    """The tokenizer as the port reads it. `_parse` takes ``?`` after a
+    ``(`` with ``match`` and the character after it with ``get``: after
+    ``(?`` a ``(`` (a conditional) or a ``>`` (an atomic group) is refused
+    at the ``(``. ``match`` is asked for ``+`` only after a repeat, where
+    the port refuses the possessive repeat. A group name of a str pattern
+    past ASCII is refused where ``re`` would place its error."""
+
+    def __init__(self, string: Any) -> None:
+        super().__init__(string)
+        # Where `gen_pyre_atom._Whitespace` places a refusal of VERBOSE.
+        _SOURCE[0] = self
+        self.last: str | None = None
+        self.opened: int | None = None
+
+    def get(self) -> Any:
+        this = super().get()
+        opened, self.opened = self.opened, None
+        if opened is not None and this in ("(", ">"):
+            raise Refused("Conditional" if this == "(" else "AtomicGroup", opened)
+        self.last = this
+        return this
+
+    def match(self, char: str) -> bool:
+        taken: bool = super().match(char)
+        if taken and char == "+":
+            raise Refused("Possessive", self.tell() - 1)
+        if taken and char == "?" and self.last == "(":
+            self.opened = self.tell() - 2
+        self.last = None
+        return taken
+
+    def checkgroupname(self, name: str, offset: int, *nested: int) -> None:
+        # 3.11 passes ``nested`` too.
+        if self.istext and not name.isascii():
+            raise Refused("UnicodeGroupName", self.tell() - len(name) - offset)
+        super().checkgroupname(name, offset, *nested)
+
+
+class _State(P.State):  # type: ignore[misc]
+    """``State``, refusing a reference to a group where ``re`` would
+    return ``GROUPREF``: at the backslash of ``\\1``, at the ``(`` of
+    ``(?P=name)``."""
+
+    def checklookbehindgroup(self, gid: int, source: Any) -> None:
+        super().checklookbehindgroup(gid, source)
+        text = source.decoded_string
+        end = source.tell()
+        if text[end - 1 : end] == ")":
+            raise Refused("Backreference", text.rindex("(?P=", 0, end))
+        raise Refused("Backreference", text.rindex(B, 0, end))
+
+
+def _parse_sub(source: Any, state: Any, verbose: Any, nested: int) -> Any:
+    """`_parse_sub`, refused past ``MAX_DEPTH`` levels of groups: a group's
+    body is read at ``nested`` twice its depth."""
+    if nested > 2 * MAX_DEPTH:
+        raise Refused("Nesting", source.tell())
+    return PARSE_SUB(source, state, verbose, nested)
+
+
+@contextlib.contextmanager
+def _full() -> Iterator[None]:
+    """`gen_pyre_atom._hooked` with groups and alternatives read."""
+    with _hooked():
+        P.SPECIAL_CHARS = SPECIAL
+        P._parse = PARSE
+        P.Tokenizer, P.State, P._parse_sub = _Tokens, _State, _parse_sub
+        try:
+            yield
+        finally:
+            P.Tokenizer, P.State, P._parse_sub = TOKENIZER, STATE, PARSE_SUB
+
+
+def _parsed(pattern: str | bytes, flags: int) -> Any:
+    with _full():
+        return P.parse(pattern, flags)
+
+
+def _failed_full(exc: Exception) -> str:
+    if isinstance(exc, ValueError) and str(exc) in FIX_FLAGS:
+        return "%" + FIX_FLAGS[str(exc)]
+    return _failed(exc)
+
+
+def _outcome(pattern: str | bytes, flags: int = 0) -> str:
     """The answer for ``pattern`` without the tree's text: its width."""
-    flags = 0
     try:
-        with _hooked():
-            tree = P.parse(pattern, flags)
+        tree = _parsed(pattern, flags)
     except Exception as exc:
-        return _failed(exc)
+        return _failed_full(exc)
     lo, hi = tree.getwidth()
     return f"={lo},{hi}"
+
+
+def _counted(pattern: str | bytes, flags: int = 0) -> str:
+    """`_outcome` with the groups and the flags the state is left with."""
+    try:
+        tree = _parsed(pattern, flags)
+    except Exception as exc:
+        return _failed_full(exc)
+    lo, hi = tree.getwidth()
+    return f"={lo},{hi} g{tree.state.groups} f{tree.state.flags}"
+
+
+def _line(pattern: str | bytes, flags: int = 0) -> str:
+    """The tree's ``str(tree)``, or the error or the refusal."""
+    try:
+        tree = _parsed(pattern, flags)
+    except Exception as exc:
+        return _failed_full(exc)
+    return str(tree)
 
 
 def _sweep_text(seed: int) -> str:
@@ -320,12 +450,376 @@ def _width_sweep() -> dict[str, Any]:
     }
 
 
+IC = C.SRE_FLAG_IGNORECASE
+L = C.SRE_FLAG_LOCALE
+M = C.SRE_FLAG_MULTILINE
+S = C.SRE_FLAG_DOTALL
+U = C.SRE_FLAG_UNICODE
+X = C.SRE_FLAG_VERBOSE
+A = C.SRE_FLAG_ASCII
+
+#: Written patterns of pyre-3b, a pattern alone or with the flags it is
+#: parsed under: each group form, the inline flags, the rewrites of
+#: `_parse_sub`, `fix_flags`, every error at its position and every
+#: refusal.
+GROUPS: list[str | bytes | tuple[str | bytes, int]] = [
+    # Groups and their unpacking.
+    "(a)",
+    "()",
+    "(?:a)",
+    "(?:)",
+    "(a)(b)",
+    "((a))",
+    "(a(b)c)",
+    "a(?:bc)d",
+    "(?:a(?:b)c)d",
+    "(?:a)*",
+    "(?:ab)*",
+    "(a)*",
+    "(a|b)",
+    "(?:a|b)",
+    "(?:ab|cd)e",
+    # Named groups and the group-name check.
+    "(?P<n>a)",
+    "(?P<n>a)(?P<m>b)",
+    "(?P<n>a)(?P<n>b)",
+    "(?P<a1_>x)",
+    "(?P<_>x)",
+    "(?P<Z9>x)",
+    "(?P<a\n>x)",
+    "(?P<1a>x)",
+    "(?P<0a>x)",
+    "(?P<\x80>a)",
+    "(?P<\x7f>a)",
+    "(?P<a-b>x)",
+    "(?P<a b>x)",
+    "(?P<a" + B + "b>x)",
+    "(?P<\xe9>x)",
+    "(?P<a\xe9>x)",
+    "(?P<>x)",
+    "(?P<a",
+    "(?P<",
+    "(?P",
+    "(?Px)",
+    "(?P" + B + "x)",
+    "(?P>x)",
+    b"(?P<n>a)",
+    # References to groups.
+    "(?P<n>a)(?P=n)",
+    "(?P=n)",
+    "(?P<n>(?P=n))",
+    "(?P<n>a)(?P=1a)",
+    "(?P<n>a)(?P=\xe9)",
+    "(?P=)",
+    "(?P=n",
+    "(a)" + B + "1",
+    B + "1",
+    "(a" + B + "1)",
+    "(a)(?<=" + B + "1)",
+    "(?<=(a)" + B + "1)",
+    "(?P<n>a)(?<=(?P=n))",
+    "(?<=(?P<n>a)(?<=b)(?P=n))",
+    "(?<=(?P<n>a)(?P=n))",
+    "(a)(b)" + B + "2" + B + "3",
+    # Comments.
+    "(?#x)",
+    "(?#)",
+    "a(?#x)b",
+    "(?#x",
+    "(?#" + B + ")",
+    "(?#" + B + ")x)",
+    "(?#a)(?i)b",
+    # Lookarounds.
+    "(?=a)",
+    "(?!a)",
+    "(?<=a)",
+    "(?<!a)",
+    "(?!)",
+    "(?<!)",
+    "(?=)",
+    "(?<=)",
+    "(?<=a|b)",
+    "(?<=(?<=a)b)",
+    "(?<=(a))(b)",
+    "(?<x)",
+    "(?<",
+    "(?<" + B + "=a)",
+    "(?=a",
+    "(?<=a",
+    "a(?=b)*",
+    "(?=a)+",
+    # What is refused: conditionals, atomic groups, possessive repeats.
+    "(?(1)a|b)",
+    "(a)(?(1)a|b)",
+    "(?(",
+    "(?>a)",
+    "(?>",
+    "(?:a)*+",
+    "(a)++",
+    # Errors of the group's opening and closing.
+    "(",
+    "(?",
+    "(a",
+    "((a)",
+    "(a))",
+    "a)",
+    ")",
+    "(?:a",
+    "(?Q)",
+    "(?" + B + "x)",
+    "(?" + B,
+    "(?)",
+    "(?=a)(",
+    # Global flags.
+    "(?i)a",
+    "(?im)a",
+    "(?s)(?m)a",
+    "(?#c)(?i)a",
+    "a(?i)",
+    "(a)(?i)",
+    "a|(?i)b",
+    "(?:(?i))",
+    "(?i)|b",
+    "(?x)a",
+    "(?x)a b",
+    "(?x)a|b c",
+    "(?x)a|(?-x:b c)",
+    "(?a)a",
+    "(?u)a",
+    "(?L)a",
+    b"(?L)a",
+    b"(?u)a",
+    b"(?a)a",
+    "(?au)a",
+    "(?ua)a",
+    "(?aa)a",
+    "(?ia)a",
+    "(?i",
+    "(?iz)",
+    "(?i1)",
+    "(?i\xe9)",
+    "(?\xe9)",
+    "(?i" + B + "m)",
+    # Scoped flags.
+    "(?i:a)",
+    "(?i:a)*",
+    "(?-i:a)",
+    "(?i-m:a)",
+    "(?s:.)*",
+    "(?x:a b)",
+    "(?-x:a b)",
+    ("(?-x:a b)", X),
+    ("(?x:(?-x:a b))", 0),
+    "(?x:a| )",
+    ("(a| )", X),
+    "(?x)(a| b)",
+    "(?ai:x)",
+    "(?ai)x",
+    b"(?Li:x)",
+    "(?ui)x",
+    "(?i-i:a)",
+    "(?im-sm:a)",
+    "(?-:a)",
+    "(?-",
+    "(?i-",
+    "(?i-m",
+    "(?i-z:a)",
+    "(?i-1:a)",
+    "(?-\xe9:a)",
+    "(?-a:a)",
+    "(?-u:a)",
+    "(?-L:a)",
+    "(?-im)",
+    "(?i-m)",
+    "(?a:a)",
+    b"(?L:a)",
+    b"(?-L:a)",
+    # Alternatives: the common prefix, the folding into a set.
+    "a|b",
+    "a|b|c",
+    "ab|ac",
+    "ab|ab",
+    "a|a",
+    "abc|abd|abe",
+    "ab|a",
+    "a|",
+    "|",
+    "|a",
+    "a||b",
+    "x(?:ab|ac)",
+    "a+b|a+c",
+    "(?:a)b|(?:a)c",
+    "(a)b|(a)c",
+    "(?=a)b|(?=a)c",
+    "a(?!)|a(?!)",
+    "^a|^b",
+    "a{2}|a{2}",
+    "[ab]|c",
+    "[^a]|b",
+    "[a-c]|[d]|e",
+    B + "d|a",
+    B + "w|" + B + "W",
+    ".|a",
+    "a|.",
+    "(a)|(b)",
+    "a|b|[^c]",
+    "[^ab]|c",
+    "a|[^bc]",
+    "a|bc|d",
+    "a|a|b",
+    "[ab]|[ba]",
+    "(?:a|b)*",
+    "(?i:a)|(?i:a)",
+    "(?:)|(?:)",
+    b"a|b",
+    # fix_flags, after the parse and before "unbalanced parenthesis".
+    ("a", A),
+    ("a", L),
+    ("a", A | U),
+    ("a", U),
+    ("a)", L),
+    ("(?a)a", U),
+    (b"a", U),
+    (b"a", A),
+    (b"a", L),
+    (b"a", A | L),
+    (b"(?L)a", A),
+    (b"(?a)a", L),
+    ("a", IC | M | S),
+    ("a b", X),
+    ("a" + B + " b", X),
+    ("(?-x:a b)c d", X),
+    # Nesting at the port's bound and past it.
+    "(" * MAX_DEPTH + ")" * MAX_DEPTH,
+    "(" * (MAX_DEPTH + 1) + ")" * (MAX_DEPTH + 1),
+    "(?:" * (MAX_DEPTH + 1),
+    "(?=" * MAX_DEPTH + ")" * MAX_DEPTH,
+]
+
+
+#: Patterns the release reads otherwise: a bytes group name past ASCII
+#: is an error from 3.12 and a DeprecationWarning in 3.11.
+GROUPS_PYTHON: list[str | bytes | tuple[str | bytes, int]] = [
+    b"(?P<\xe9>x)",
+]
+
+
+def _case(case: str | bytes | tuple[str | bytes, int]) -> tuple[str | bytes, int]:
+    if isinstance(case, tuple):
+        return case
+    return case, 0
+
+
+def _row(part: str, case: Any, key: str, answer: Any) -> dict[str, Any]:
+    pattern, flags = _case(case)
+    row = {"part": part, **_spelled(pattern)}
+    if flags:
+        row["flags"] = flags
+    row[key] = answer(pattern, flags)
+    return row
+
+
+#: The fragments the fuzz joins, and the flags it draws.
+FUZZ_FRAGMENTS = [
+    "a",
+    "b",
+    "ab",
+    "[ab]",
+    ".",
+    "^",
+    "(",
+    ")",
+    "|",
+    "(?:",
+    "(?P<a>",
+    "(?P<b>",
+    "(?P=a)",
+    "(?=",
+    "(?!",
+    "(?<=",
+    "(?<!",
+    "(?i)",
+    "(?x)",
+    "(?a)",
+    "(?i:",
+    "(?-i:",
+    "(?#c)",
+    "(?(1)",
+    "(?>",
+    B + "1",
+    "*",
+    "+?",
+    "{2}",
+    " ",
+    "\xe9",
+]
+FUZZ_FLAGS = [0, 0, 0, IC, M | S, X, A, L, U]
+FUZZ = 20000
+
+
+def _fuzz_case(seed: int) -> tuple[str | bytes, int]:
+    draw = Lcg(seed).draw
+    text = "".join(
+        FUZZ_FRAGMENTS[draw() % len(FUZZ_FRAGMENTS)] for _ in range(draw() % 8)
+    )
+    flags = FUZZ_FLAGS[draw() % len(FUZZ_FLAGS)]
+    if draw() % 3 == 0 and all(ord(ch) < 256 for ch in text):
+        return text.encode("latin-1"), flags
+    return text, flags
+
+
+def _fuzz(answer: Any) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    for i in range(FUZZ):
+        digest.update((answer(*_fuzz_case(SEED + i)) + "\n").encode("ascii"))
+    return {
+        "part": "parse.fuzz",
+        "seed": SEED,
+        "count": FUZZ,
+        "fragments": [spell(fragment) for fragment in FUZZ_FRAGMENTS],
+        "flags": FUZZ_FLAGS,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _chain(pattern: str | bytes, answer: Any) -> list[str]:
+    """`gen_pyre_atom._chain` read by the whole parser."""
+    lines = []
+    start = 0
+    while True:
+        line = answer(pattern[start:], 0)
+        lines.append(line)
+        at = _position(line)
+        if at is None:
+            return lines
+        start += at + 1
+
+
+def _inventory(answer: Any) -> dict[str, Any]:
+    """The chains of the patterns of ``atom.inventory``, in its order: the
+    first 16 hexadecimal digits of the SHA-256 of each chain's lines."""
+    chains = []
+    for pattern in _literals():
+        lines = "".join(line + "\n" for line in _chain(pattern, answer))
+        chains.append(hashlib.sha256(lines.encode("ascii")).hexdigest()[:16])
+    return {"part": "parse.inventory", "chains": chains}
+
+
 def rows() -> list[dict[str, Any]]:
     repeats = [
         {"part": "parse.repeat", **_spelled(pattern), "answer": _outcome(pattern)}
         for pattern in REPEATS
     ]
-    return [*repeats, *_widths(), _sweep(_outcome), _width_sweep()]
+    groups = [_row("parse.group", case, "answer", _counted) for case in GROUPS]
+    return [
+        *repeats,
+        *_widths(),
+        _sweep(_outcome),
+        _width_sweep(),
+        *groups,
+        _fuzz(_counted),
+        _inventory(_counted),
+    ]
 
 
 def rows_python() -> list[dict[str, Any]]:
@@ -335,4 +829,11 @@ def rows_python() -> list[dict[str, Any]]:
         line = _line(pattern)
         if line.startswith("["):
             trees.append({"part": "parse.tree", **_spelled(pattern), "dump": line})
-    return [*trees, _sweep(_line)]
+    for case in GROUPS:
+        row = _row("parse.tree", case, "dump", _line)
+        if row["dump"].startswith("["):
+            trees.append(row)
+    trees.extend(
+        _row("parse.group", case, "answer", _counted) for case in GROUPS_PYTHON
+    )
+    return [*trees, _sweep(_line), _fuzz(_line), _inventory(_line)]

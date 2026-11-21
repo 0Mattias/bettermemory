@@ -26,7 +26,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
-| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`, read by `parse_flat`) and `SubPattern.getwidth` (`SubPattern::getwidth`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
+| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
@@ -2928,6 +2928,9 @@ that Unicode too.
 | `golden_pyre_atom`: `pyre_atom_every_row` | `pyre.jsonl` (the `atom.` parts) | i |
 | `golden_pyre_atom`: `pyre_atom_python_every_row` | `pyre_python.jsonl` (the `atom.` parts) | ii (Python) |
 | `pyre_atom_kills` (16), `pyre_atom_robustness` (6) | none | i |
+| `golden_pyre_parse`: `pyre_parse_every_row` | `pyre.jsonl` (the `parse.` parts) | i |
+| `golden_pyre_parse`: `pyre_parse_python_every_row` | `pyre_python.jsonl` (the `parse.` parts) | ii (Python) |
+| `pyre_parse_kills` (17), `pyre_parse_robustness` (9) | none | i |
 | `golden_models_text`: `models_text_every_case`; `models_text_kills` (16), `models_text_robustness` (4) | `models_text.jsonl` (the last two none) | i |
 | `golden_models_text`: `models_text_unicode_every_case` | `models_text_unicode.jsonl` | ii (Unicode) |
 | `golden_models_text`: `models_text_platform_every_case` | `models_text_platform.jsonl` | iii |
@@ -3083,7 +3086,8 @@ Leaves first. A unit's lines are Rust source outside tests.
 | pyre-2a | `pyre/tree.rs`, `pyre/token.rs` | the tree, `State`, the dump that equals `str(tree)`, the refusal and error names, the `Tokenizer` | `_parser.py` 74-118, 161-176, 229-301 | nothing | built, 813 lines |
 | pyre-2b | `pyre/atom.rs` | `_escape`, `_class_escape`, `_uniq`, sets, flat sequences (`parse_flat`), `re.escape` | `_parser.py` 311-449, 522-636, 705-706, 875-879; `__init__.py` 303-313 | pyre-2a | built, 377 lines |
 | pyre-3a | `pyre/parse.rs`, `pyre/tree.rs` | repeats with their errors, `getwidth` | `_parser.py` 177-227, 638-703 | pyre-2 | built, 210 lines |
-| pyre-3b | `pyre/parse.rs` | `_parse_sub` with its rewrites, groups, scoped and leading flags, lookarounds, `checkgroupname`, `parse`, the refusal predicate over the finished tree, the nesting bound | `_parser.py` 303-309, 451-509, 708-873, 884-995 | pyre-3a | not built |
+| pyre-3b | `pyre/parse.rs` | `_parse_sub` with its rewrites, groups, scoped and leading flags, lookarounds, `checkgroupname`, `_parse_flags`, `fix_flags`, `parse` | `_parser.py` 303-309, 451-509, 708-873, 884-995 | pyre-3a | built, 475 lines |
+| pyre-3c | `pyre/parse.rs` | the refusal predicate over the finished tree, the nesting bound of the matcher | none (the engine's subset) | pyre-3b | not built |
 | pyre-4 | `pyre/lower.rs` | classes compiled as `_optimize_charset` does, nodes threaded by `next`, `_simple`, group repeats unrolled, the arena cap | `_compiler.py` 241-387, 401-408 | pyre-1, pyre-3 | not built |
 | pyre-5 | `pyre/exec.rs` | one loop, one stack, one trail; anchors, lookarounds, the three acceptance rules, the scan over starts, the step count | `_sre` (by differential) | pyre-4 | not built |
 | pyre-6 | `pyre/regex.rs` | `Regex`, `Match`, `finditer`, `findall`, `sub`, `subn`, `split`, `pos` and `endpos`, literal and function replacement | `_sre` (by differential) | pyre-5, pyre-2 | not built |
@@ -3115,15 +3119,15 @@ patterns: the inventory, the generated patterns, `re.escape`.
 | `SubPattern.dump` | 119-160 | standard output | not ported: it is the print of `re.DEBUG`, a flag the engine refuses |
 | `SubPattern.getwidth` | 177-227 | nothing | pyre-3a, built (`SubPattern::getwidth`) |
 | `Tokenizer` (`__init__`, `__next`, `match`, `get`, `getwhile`, `getuntil`, `pos`, `tell`, `seek`, `error`) | 229-301 | nothing | pyre-2a, built |
-| `Tokenizer.checkgroupname` | 303-309 | the Unicode data (`str.isidentifier`) | pyre-3b |
+| `Tokenizer.checkgroupname` | 303-309 | the Unicode data (`str.isidentifier`); a str name past ASCII is refused | pyre-3b, built (`Parser::checkgroupname`) |
 | `_class_escape` | 311-369 | `unicodedata.lookup` for `\N{...}` | pyre-2b, built (`class_escape`) |
 | `_escape` | 371-446 | the same | pyre-2b, built (`item_escape`) |
 | `_uniq` | 448-449 | nothing | pyre-2b, built (in `set`) |
-| `_parse_sub` | 451-509 | nothing | pyre-3b |
+| `_parse_sub` | 451-509 | nothing | pyre-3b, built (`Parser::sub`) |
 | `_parse`: an escape, a literal, a set, the dot, `^`, `$` | 522-636, 705-706, 875-879 | `warnings.warn` (FutureWarning, three places in a set) | pyre-2b, built (`set`, `parse_flat`) |
 | `_parse`: repeats | 638-703 | nothing | pyre-3a, built (`parse::repeat`) |
-| `_parse`: groups, the unpacking of plain groups | 708-873, 884-892 | `warnings.warn` (DeprecationWarning) | pyre-3b |
-| `_parse_flags`, `fix_flags`, `parse` | 894-995 | standard output under `re.DEBUG` | pyre-3b |
+| `_parse`: groups, the unpacking of plain groups | 708-873, 884-892 | `warnings.warn` (DeprecationWarning, inside a conditional, which is refused) | pyre-3b, built (`Parser::items`, `group`, `lookaround`) |
+| `_parse_flags`, `fix_flags`, `parse` | 894-995 | standard output under `re.DEBUG`, which is refused | pyre-3b, built (`Parser::parse_flags`, `fix_flags`, `parse`) |
 | `parse_template` | 997-1081 | nothing | pyre-10, not scheduled |
 | `re.escape` (`re/__init__.py`) | 303-313 | nothing | pyre-2b, built (`escape`) |
 
@@ -3878,17 +3882,166 @@ at `MAXREPEAT` taken as a bound, an unbounded repeat of a body that
 matches nothing measured as `MAXWIDTH`, and the errors placed after the
 repeat character. Each fails both.
 
+### Unit pyre-3b, built (`pyre::parse`, the groups)
+
+pyre-3b is the grouping half of the parser, 475 lines of Rust source
+outside tests, net (470 added in `parse.rs`; the names of the new errors,
+the refusal `UnicodeGroupName` and `BuildError::Value` in `tree.rs`;
+`atom::parse_flat` shrunk to a wrapper). The line ranges were confirmed
+against the 3.13.13 `_parser.py` whose digest `pyre_python.jsonl`
+records: `checkgroupname` 303-309, `_parse_sub` 451-509, the `(` branch
+of `_parse` 708-873, the unpacking 884-892, `_parse_flags` 894-962,
+`fix_flags` 964-979, `parse` 981-995.
+
+**`parse::parse(pattern, istext, flags)`** returns the tree and the
+`State` it leaves, `state.flags` as `fix_flags` returns them. A reader
+(`Parser`) holds the tokenizer, the state, whether it reads atoms only
+(`parse_flat`) and how deep it is in groups.
+
+- **`Parser::sub`** is `_parse_sub`. It reads alternatives at `|`; at
+  the top a leading `(?x)` turns VERBOSE on for the alternatives after
+  it. One alternative is returned as it is. Of several, the common
+  prefix is taken out: items are compared with `Node::py_eq`, as Python
+  compares the tuples, so an item that holds a sub-pattern (a repeat, a
+  group, a lookaround) equals no other: `ab|ac` is `a` and a set,
+  `a+b|a+c` stays a branch, two `FAILURE` items are equal. The prefix
+  stops at the shortest alternative, which is left empty (`a|a` is `a`
+  and a branch of two empty lists). Then, when every alternative is one
+  literal or one set that is not negated, they fold into one set, its
+  members once each in the order met (`atom::uniq`); otherwise they are
+  a branch. The reference takes the prefix one item per pass and
+  deletes the first item of every list, so its time is quadratic in the
+  prefix; the port measures the prefix in one pass and drains it once,
+  which gives the same tree.
+- **`Parser::items`** is `_parse`: the atoms and repeats of pyre-2b and
+  pyre-3a, the `(` branch, and at the end the unpacking of a plain group
+  (no number, no flags) into the items around it, one level, as the
+  reference splices it.
+- **`Parser::group`** is the `(` branch. `(?:` and a capture, which
+  opens its group through `State::opengroup` (the bound `MAXGROUPS`) and
+  closes it with the width `getwidth` gives; `(?P<name>`, whose name
+  passes `checkgroupname`; `(?P=name)`, refused as `Backreference` at
+  its `(` after the reference's checks (an unknown name, an open group,
+  a group of the same lookbehind are its errors); `(?#...)`, whose
+  backslash escapes a `)`; the lookarounds (`lookaround`), where
+  `state.lookbehindgroups` is set on entering the outermost lookbehind
+  and cleared on leaving it, and an empty negative one is `FAILURE`;
+  global flags, an error ("global flags not at the start of the
+  expression", at the `(`) unless they stand in the first alternative
+  at the top with nothing before them but comments and other global
+  flags; scoped flags, a group `(SUBPATTERN, (None, add, del, p))` that
+  is never unpacked, VERBOSE inside it as `add` and `del` say. Every
+  error is placed where the reference places it: "missing ), unterminated
+  subpattern" and "missing ), unterminated comment" at the `(`, "unknown
+  extension" at the `?`, the name errors at the name.
+- **`Parser::parse_flags`** is `_parse_flags`: the letters `i L m s x a
+  u`; `L` in a str pattern and `u` in a bytes one are errors, as are two
+  of `a u L`, turning one of them off, a flag turned on and off, and the
+  missing terminators. "unknown flag" is chosen over the missing
+  terminator by `str.isalpha` of the character read (`unicode::is_alpha`;
+  an escaped character is two characters and never alphabetic). The two
+  errors of a global flag ("cannot turn on (off) global flag") cannot be
+  reached: no letter names DEBUG, the one global flag, so the port has
+  no name for them.
+- **`fix_flags`** adds UNICODE to a str pattern without ASCII, and
+  raises its four ValueErrors, which are not `re.error` and have no
+  position: `BuildError::Value(Why)`, written `%Why` in the fixtures.
+  `parse` calls it after the whole parse and before "unbalanced
+  parenthesis", so `a)` under LOCALE is `%LocaleStr`.
+- **`checkgroupname`** asks `str.isidentifier`, which over ASCII is a
+  letter or `_` and then letters, digits and `_`, with no line feed (the
+  crate's `claims::is_identifier`, a port of `^[A-Za-z_]\w*$`, accepts a
+  trailing line feed and is not used). A bytes name past ASCII is the
+  reference's error. A str name past ASCII is refused, `UnicodeGroupName`
+  at the name, where the reference would place its error: XID data is not
+  carried, and a refusal is never another answer.
+
+Decisions:
+
+- **Refusals where they begin.** A conditional `(?(` and an atomic group
+  `(?>` are refused at their `(` as soon as the character after `(?` is
+  read: the tree has no node for either, and the reference's later
+  checks of a conditional (its group name or number, `grouprefpos`,
+  "conditional backref with more than two branches") are never reached,
+  so `parse` does not check `grouprefpos`. A possessive repeat is refused
+  as pyre-3a refuses it, `\1` as pyre-2b refuses it, now that a group
+  can be open or closed. VERBOSE is refused at the first whitespace or
+  `#` it would skip, as in `parse_flat`. DEBUG, whose dump the reference
+  prints, is refused at 0 after every check.
+- **No warning to refuse.** The task named "flags not at the start" as a
+  warning; in 3.13 it is an error, which the port raises. The one
+  warning of this part of `_parse` is the DeprecationWarning of a
+  conditional's group name, behind the refusal of conditionals.
+- **A depth bound for the stack.** The reader recurses twice per level
+  of groups, as the reference does. The reference raises RecursionError
+  at about 497 levels under its default recursion limit, a bound of the
+  caller's stack rather than of the text. The port refuses past
+  `MAX_DEPTH` (100) levels with `Nesting`, at the position after the
+  opening of the 101st, so no thread's stack is at risk; the matcher's
+  own bound is pyre-3c's.
+- **`parse_flat` is the same reader** with two refusals: a group at its
+  `(` and a second alternative after its `|`. `golden_pyre_atom` reads it
+  unchanged; the three atom test files gained one match arm each for
+  `BuildError::Value`, which a flat pattern never meets.
+- **Patterns.** This unit reproduces no pattern of the reference: it is
+  part of the engine (decision `pyre-design-2026-11-19`, rule 1), and its
+  answers are asked of `re._parser` itself.
+
+**Reference findings** (reproduced, or out of reach):
+
+- `_parse_sub` takes a common prefix in time quadratic in its length:
+  `re._parser.parse('a' * 20000 + 'b|' + 'a' * 20000 + 'c')` takes about
+  four times as long as at 10,000 (0.17 s against 0.04 s here). The port's tree is the same, in linear time.
+- A capturing group without a name past `MAXGROUPS` raises TypeError,
+  not "too many groups": the reference computes `len(name) + 1` with
+  `name` None. The pattern needs 2**30 groups and cannot be built in
+  practice; the port answers "too many groups" at the `(` plus one.
+- Global flags and the errors of `_parse_flags` differ by name only:
+  `(?i1)` is "missing -, : or )" and `(?iz)` "unknown flag", at the same
+  position.
+
+#### Fixtures and tests of pyre-3b
+
+`gen_pyre_parse.py` reads the whole parser now (`_full`): the hooks of
+`gen_pyre_atom._hooked` with groups and alternatives read, a tokenizer
+(`_Tokens`) that refuses a conditional and an atomic group at their `(`,
+a possessive repeat at its `+`, and a str group name past ASCII at the
+name; a `State` (`_State`) that refuses a reference to a group where the
+reference would return `GROUPREF`; and `_parse_sub` refused past
+`MAX_DEPTH`. `parse.repeat` and `parse.sweep` are read by the whole
+parser since this unit: `a*|b`, `a*(` and `(a)*` and the sweep's two
+digests changed. The ValueErrors of `fix_flags` are `%Name`; a success in
+the new parts is `=lo,hi gN fF`, with the state's group count and flags.
+
+| part | file | rows | holds |
+| --- | --- | --- | --- |
+| `parse.group` | `pyre.jsonl` | 208 | written patterns: every group form, the name checks (`(?P<a\n>x)`, `(?P<1a>x)`, `(?P<a1_>x)`, `(?P<é>x)`), references, comments, lookarounds, refusals, every error of the `(` branch and of `_parse_flags` at its position, global and scoped flags, alternatives with and without a common prefix or a fold, `fix_flags` under the flags argument, nesting at `MAX_DEPTH` and past it |
+| `parse.fuzz` | `pyre.jsonl` | 1 | 20,000 patterns of up to seven of 31 fragments (groups, lookarounds, flags, alternatives, references), under one of nine flag sets, as str or bytes, by SHA-256 of their answers |
+| `parse.inventory` | `pyre.jsonl` | 1 | the patterns of `atom.inventory` read as chains by the whole parser, 16 hex digits of SHA-256 each; `atom.inventory` itself keeps the chains of `parse_flat` |
+| `parse.tree` | `pyre_python.jsonl` | 171 in all | `str(tree)` of each written pattern that parses |
+| `parse.group` | `pyre_python.jsonl` | 1 | a bytes group name past ASCII, an error from 3.12 and a DeprecationWarning in 3.11 |
+| `parse.fuzz`, `parse.inventory` | `pyre_python.jsonl` | 2 | the same, by SHA-256 of the tree texts |
+
+| test file | tests | what it holds |
+| --- | --- | --- |
+| `golden_pyre_parse` | 2 | every `parse.` row of both files; the sweeps, the fuzz and the inventory's chains regenerated |
+| `pyre_parse_kills` | 17 | pyre-3a's six; the prefix by Python equality, the fold only of one-member alternatives, unpacking only of plain groups, `FAILURE`, global flags only first, the errors of inline flags, `fix_flags` between the parse and the balance, group names, references checked then refused, refusals and the depth bound, unterminated groups |
+| `pyre_parse_robustness` | 9 | pyre-3a's six; groups of six kinds nested 100,000 deep on a thread of 1 MiB, long alternations, a common prefix of 100,000, many groups, comments and lookarounds in linear time, every pattern of up to four of 14 group characters under three readings |
+
+Three mutants were run against the golden and kills files: the common
+prefix compared by the dump's text (a structural equality), global
+flags allowed anywhere, and a negated set folded with the others. Each
+fails both; the third failed neither until `[^ab]|c` and `a|[^bc]` were
+added (a negated set of one member is `NOT_LITERAL`, not a set).
+
 ### Left for later units
 
-- pyre-3b: `_parse_sub`, `_parse` and `parse` over the functions of
-  `pyre::atom` and `pyre::parse`, which then replace `parse_flat`;
-  groups and the unpacking of plain groups, scoped and leading flags,
-  `_parse_flags`, `fix_flags`, lookarounds, `checkgroupname`, the use of
-  `py_eq` in `_parse_sub`, the width `closegroup` is given (from
-  `getwidth`), the names of the errors it raises, the refusal of `\B`,
-  `\D` and `\W`, which the tree can hold, and of a nullable loop and a
-  capture in a repeat. Its refusal of nesting past 32 is for the
-  matcher; the tree holds any depth (pyre-2a, "Any depth").
+- pyre-3c: the refusal predicate over the finished tree (`\B`, `\D`,
+  `\W`, a nullable loop, a capture under a repeat or in a lookaround, a
+  choice in a lookbehind, VERBOSE, ASCII, LOCALE and the other flags the
+  engine has no rule for) and the matcher's nesting bound of 32. The
+  tree holds any depth (pyre-2a, "Any depth"); the parser's own bound,
+  `MAX_DEPTH`, is only for its stack.
 - pyre-7: the patterns the reference builds from parts at import, which
   the `ast` scan of `atom.inventory` does not find.
 
@@ -13195,9 +13348,10 @@ What the reference has and this build does not, by area:
   the review. The dedup's store side reads through a trait not yet wired
   to `store::digest`.
 - The regular expression engine (`pyre`) past its case folding and the
-  parser's tree, state, tokenizer, atoms, repeats and widths: the rest of
-  the parser (`_parse_sub`, groups, flags, lookarounds, `checkgroupname`,
-  `parse`, the refusal predicate and the nesting bound: pyre-3b), the lowering, the matcher and the methods (pyre-4 to
+  parser (its tree, state, tokenizer, atoms, repeats, widths, groups,
+  lookarounds, inline flags, alternatives and `parse`): the refusal
+  predicate over the finished tree and the matcher's nesting bound
+  (pyre-3c), the lowering, the matcher and the methods (pyre-4 to
   pyre-6), the inventory proof, the cross-check of the hand-written
   matchers and the memo (pyre-7 to pyre-9).
 - This machine's id past its record and clone rule: `machine.py`'s

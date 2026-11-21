@@ -24,6 +24,7 @@ fn line(answer: Built<SubPattern>) -> String {
         Err(BuildError::Unsupported { at, what }) => format!("?{what:?}@{at}"),
         Err(BuildError::Overflow) => "%Overflow".into(),
         Err(BuildError::DigitLimit) => "%DigitLimit".into(),
+        Err(BuildError::Value(why)) => format!("%{why:?}"),
     }
 }
 

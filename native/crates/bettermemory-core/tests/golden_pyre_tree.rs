@@ -50,7 +50,7 @@ const CATEGORIES: [Category; 6] = [
     Category::CATEGORY_WORD,
     Category::CATEGORY_NOT_WORD,
 ];
-const WHYS: [Why; 19] = [
+const WHYS: [Why; 39] = [
     Why::BadEscapeEnd,
     Why::BadEscape,
     Why::IncompleteEscape,
@@ -70,8 +70,28 @@ const WHYS: [Why; 19] = [
     Why::NothingToRepeat,
     Why::MultipleRepeat,
     Why::MinGreaterThanMax,
+    Why::UnexpectedEnd,
+    Why::UnknownExtension,
+    Why::UnknownGroupName,
+    Why::UnterminatedComment,
+    Why::UnterminatedSubpattern,
+    Why::GlobalFlagsNotAtStart,
+    Why::BadGroupName,
+    Why::InlineLocaleStr,
+    Why::InlineUnicodeBytes,
+    Why::InlineIncompatible,
+    Why::MissingFlagEnd,
+    Why::UnknownFlag,
+    Why::MissingFlag,
+    Why::TurnOffTypeFlags,
+    Why::MissingColon,
+    Why::FlagOnAndOff,
+    Why::LocaleStr,
+    Why::AsciiUnicode,
+    Why::UnicodeBytes,
+    Why::AsciiLocale,
 ];
-const FEATURES: [Feature; 26] = [
+const FEATURES: [Feature; 27] = [
     Feature::Backreference,
     Feature::NamedCharacter,
     Feature::SetWarning,
@@ -98,6 +118,7 @@ const FEATURES: [Feature; 26] = [
     Feature::Template,
     Feature::Group,
     Feature::Alternation,
+    Feature::UnicodeGroupName,
 ];
 
 /// The place of a name in its list. No wildcard arm: a variant added to
@@ -124,6 +145,26 @@ fn why_index(why: Why) -> usize {
         Why::NothingToRepeat => 16,
         Why::MultipleRepeat => 17,
         Why::MinGreaterThanMax => 18,
+        Why::UnexpectedEnd => 19,
+        Why::UnknownExtension => 20,
+        Why::UnknownGroupName => 21,
+        Why::UnterminatedComment => 22,
+        Why::UnterminatedSubpattern => 23,
+        Why::GlobalFlagsNotAtStart => 24,
+        Why::BadGroupName => 25,
+        Why::InlineLocaleStr => 26,
+        Why::InlineUnicodeBytes => 27,
+        Why::InlineIncompatible => 28,
+        Why::MissingFlagEnd => 29,
+        Why::UnknownFlag => 30,
+        Why::MissingFlag => 31,
+        Why::TurnOffTypeFlags => 32,
+        Why::MissingColon => 33,
+        Why::FlagOnAndOff => 34,
+        Why::LocaleStr => 35,
+        Why::AsciiUnicode => 36,
+        Why::UnicodeBytes => 37,
+        Why::AsciiLocale => 38,
     }
 }
 
@@ -155,6 +196,7 @@ fn feature_index(feature: Feature) -> usize {
         Feature::Template => 23,
         Feature::Group => 24,
         Feature::Alternation => 25,
+        Feature::UnicodeGroupName => 26,
     }
 }
 

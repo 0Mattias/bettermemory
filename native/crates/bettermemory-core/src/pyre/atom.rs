@@ -4,11 +4,9 @@
 //! escape, a literal, a set, the dot, `^`, `$`: 522 to 636, 705 to 706,
 //! 875 to 879), and `re.escape` (`Lib/re/__init__.py` 303 to 313).
 //!
-//! [`parse_flat`] stands in for `parse` until the parser's next unit
-//! builds `_parse_sub`, `_parse` and `parse` over these functions. It reads
-//! what they read, with repeats (`pyre::parse`), and refuses by name what
-//! it does not: a group and an alternative where `_parse` would read one,
-//! and VERBOSE at the first token the flag changes.
+//! [`parse_flat`] is `pyre::parse::parse` limited to atoms and repeats: it
+//! refuses by name a group and an alternative where `_parse` would read
+//! one, and VERBOSE at the first token the flag changes.
 //!
 //! Where `re` warns (FutureWarning, three places in a set) the engine
 //! refuses (`Feature::SetWarning`): it cannot warn, and a refusal is never
@@ -18,9 +16,10 @@
 
 use std::collections::HashSet;
 
-use super::parse::repeat;
 use super::token::{Built, Tok, Tokenizer};
-use super::tree::{At, BuildError, Category, Feature, Member, Node, State, SubPattern, Why};
+use super::tree::{
+    At, BuildError, Category, Feature, Member, Node, State, SubPattern, Why, VERBOSE,
+};
 
 const BACKSLASH: u32 = 0x5c;
 
@@ -224,7 +223,7 @@ pub fn item_escape(source: &mut Tokenizer, c: u32, state: &State) -> Built<Node>
 }
 
 /// `_uniq`: each member once, where it first appears.
-fn uniq(mut members: Vec<Member>) -> Vec<Member> {
+pub(super) fn uniq(mut members: Vec<Member>) -> Vec<Member> {
     let mut seen = HashSet::with_capacity(members.len());
     members.retain(|member| seen.insert(*member));
     members
@@ -315,54 +314,20 @@ pub fn set(source: &mut Tokenizer) -> Built<Node> {
 }
 
 /// `WHITESPACE`: what VERBOSE skips, with `#`, which starts a comment.
-fn verbose_skips(c: u32) -> bool {
+pub(super) fn verbose_skips(c: u32) -> bool {
     matches!(c, 0x09..=0x0d | 0x20 | 0x23)
 }
 
 /// `parse(pattern)` for a pattern of atoms: escapes, literals, sets, the
-/// dot, `^` and `$`, and the repeats over them ([`repeat`]), the tree
-/// `re._parser.parse` returns for them. What `_parse` would read next and
-/// this does not is refused at the token that begins it: a group (`(`),
-/// an alternative (after its `|`); under `verbose`, whitespace or `#`
-/// outside a set. A `)` is "unbalanced parenthesis", as in `parse`. `istext` is
-/// false for a bytes pattern, given as its bytes.
+/// dot, `^` and `$`, and the repeats over them, the tree
+/// `re._parser.parse` returns for them. It is [`super::parse::parse`] with
+/// a group refused at its `(` and a second alternative after its `|`;
+/// under `verbose`, whitespace or `#` outside a set is refused. A `)` is
+/// "unbalanced parenthesis", as in `parse`. `istext` is false for a bytes
+/// pattern, given as its bytes.
 pub fn parse_flat(pattern: &[u32], istext: bool, verbose: bool) -> Built<SubPattern> {
-    let mut source = Tokenizer::new(pattern, istext)?;
-    let state = State::new();
-    let mut items = Vec::new();
-    while let Some(this) = source.next {
-        if this.is('|') || this.is(')') {
-            break;
-        }
-        source.get()?;
-        if verbose && !this.esc && verbose_skips(this.c) {
-            return Err(source.refuse(Feature::Verbose, 1));
-        }
-        if this.esc {
-            items.push(item_escape(&mut source, this.c, &state)?);
-            continue;
-        }
-        items.push(match char::from_u32(this.c) {
-            Some('(') => return Err(source.refuse(Feature::Group, 1)),
-            Some('*' | '+' | '?' | '{') => {
-                repeat(&mut source, this, &mut items)?;
-                continue;
-            }
-            Some('[') => set(&mut source)?,
-            Some('.') => Node::Any,
-            Some('^') => Node::At(At::AT_BEGINNING),
-            Some('$') => Node::At(At::AT_END),
-            _ => Node::Literal(this.c),
-        });
-    }
-    // `_parse_sub` takes the `|` before it reads the next alternative.
-    if source.matches('|')? {
-        return Err(source.refuse(Feature::Alternation, 1));
-    }
-    if source.next.is_some() {
-        return Err(source.error(Why::UnbalancedParenthesis, 0));
-    }
-    Ok(SubPattern(items))
+    let flags = if verbose { VERBOSE } else { 0 };
+    super::parse::parsed(pattern, istext, flags, true).map(|(tree, _)| tree)
 }
 
 /// `re.escape`: a backslash before each of `()[]{}?*+-|^$\.&~#`, the space,

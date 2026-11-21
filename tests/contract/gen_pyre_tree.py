@@ -104,6 +104,26 @@ WHY = {
     "NothingToRepeat": "nothing to repeat",
     "MultipleRepeat": "multiple repeat",
     "MinGreaterThanMax": "min repeat greater than max repeat",
+    "UnexpectedEnd": "unexpected end of pattern",
+    "UnknownExtension": "unknown extension ?%s",
+    "UnknownGroupName": "unknown group name %r",
+    "UnterminatedComment": "missing ), unterminated comment",
+    "UnterminatedSubpattern": "missing ), unterminated subpattern",
+    "GlobalFlagsNotAtStart": "global flags not at the start of the expression",
+    "BadGroupName": "bad character in group name %r",
+    "InlineLocaleStr": "bad inline flags: cannot use 'L' flag with a str pattern",
+    "InlineUnicodeBytes": "bad inline flags: cannot use 'u' flag with a bytes pattern",
+    "InlineIncompatible": "bad inline flags: flags 'a', 'u' and 'L' are incompatible",
+    "MissingFlagEnd": "missing -, : or )",
+    "UnknownFlag": "unknown flag",
+    "MissingFlag": "missing flag",
+    "TurnOffTypeFlags": "bad inline flags: cannot turn off flags 'a', 'u' and 'L'",
+    "MissingColon": "missing :",
+    "FlagOnAndOff": "bad inline flags: flag turned on and off",
+    "LocaleStr": "cannot use LOCALE flag with a str pattern",
+    "AsciiUnicode": "ASCII and UNICODE flags are incompatible",
+    "UnicodeBytes": "cannot use UNICODE flag with a bytes pattern",
+    "AsciiLocale": "ASCII and LOCALE flags are incompatible",
 }
 
 #: ``pyre::tree::Feature``, in its order.
@@ -134,6 +154,7 @@ FEATURE = [
     "Template",
     "Group",
     "Alternation",
+    "UnicodeGroupName",
 ]
 
 AT = [
@@ -348,7 +369,9 @@ def _names() -> dict[str, Any]:
     }
     for name, message in WHY.items():
         joined = message.startswith("missing ") and message[8:] in texts
-        assert message in texts or joined, (name, message)
+        # A constant the source joins to the character it read.
+        suffixed = message.endswith("%s") and message[:-2] in texts
+        assert message in texts or joined or suffixed, (name, message)
     return {"part": "tree.names", "why": WHY, "feature": FEATURE}
 
 

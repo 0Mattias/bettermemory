@@ -1,7 +1,8 @@
 //! `pyre::parse` and `SubPattern::getwidth` over hostile input: long runs
 //! of repeats, a million digits in a bound, unclosed braces that send the
-//! tokenizer back, trees nested far deeper than a parse allows, and every
-//! short pattern over the characters a repeat reads. No panic, every
+//! tokenizer back, trees nested far deeper than a parse allows, groups
+//! nested 100,000 deep, long alternations and common prefixes, and every
+//! short pattern over the characters a repeat or a group reads. No panic, every
 //! position within the pattern, and time linear in the input, held by
 //! `tests/timing`: ten times the input costs under `TENFOLD` times the
 //! time.
@@ -11,8 +12,10 @@ mod timing;
 use std::thread;
 
 use bettermemory_core::pyre::atom::parse_flat;
-use bettermemory_core::pyre::parse::INT_MAX_STR_DIGITS;
-use bettermemory_core::pyre::tree::{BuildError, Node, SubPattern, MAXREPEAT, MAXWIDTH};
+use bettermemory_core::pyre::parse::{parse, INT_MAX_STR_DIGITS};
+use bettermemory_core::pyre::tree::{
+    BuildError, Feature, Node, SubPattern, Why, MAXREPEAT, MAXWIDTH, VERBOSE,
+};
 
 /// Holds `run` over 20,000 and 200,000 to `timing::TENFOLD`.
 fn linear<T, R>(name: &str, make: impl Fn(usize) -> T, run: impl Fn(&T) -> R) {
@@ -152,7 +155,7 @@ fn every_short_pattern_answers_within_itself() {
                     let len = pattern.len() as isize;
                     assert!((0..=len).contains(&at), "{pattern:?}: {at}");
                 }
-                Err(BuildError::Overflow | BuildError::DigitLimit) => {
+                Err(BuildError::Overflow | BuildError::DigitLimit | BuildError::Value(_)) => {
                     panic!("no short bound overflows: {pattern:?}")
                 }
             }
@@ -179,6 +182,111 @@ fn bounds_at_the_edges_of_their_integers() {
             };
             let high = if max == 0 { 1 } else { high.min(MAXWIDTH) };
             assert_eq!(hi, high, "{min} {max}");
+        }
+    }
+}
+
+fn full(pattern: &[u32]) -> Result<SubPattern, BuildError> {
+    parse(pattern, true, 0).map(|(tree, _)| tree)
+}
+
+/// Groups and lookarounds nested 100,000 deep, on a thread of 1 MiB: the
+/// parser refuses past `MAX_DEPTH` and never recurses further.
+#[test]
+fn deep_groups_are_refused_before_the_stack_is_at_risk() {
+    let handle = thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(|| {
+            ["(", "(?:", "(?=", "(?<!", "(?P<a>", "(?i:"]
+                .iter()
+                .map(|open| full(&cps(&open.repeat(100_000))).err())
+                .collect::<Vec<_>>()
+        })
+        .expect("a thread");
+    for answer in handle.join().expect("no overflow of the stack") {
+        match answer {
+            Some(BuildError::Unsupported {
+                what: Feature::Nesting,
+                ..
+            }) => {}
+            // A second `(?P<a>` is a redefinition before the bound.
+            Some(BuildError::Invalid {
+                why: Why::Redefinition,
+                at: 10,
+            }) => {}
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+/// Many alternatives, long common prefixes, many groups and many flag
+/// groups are read in time linear in the pattern. The reference takes a
+/// common prefix one item per pass over every alternative and deletes the
+/// first item of each list, quadratic in the prefix (README, reference
+/// findings); the port takes it in one pass.
+#[test]
+fn alternatives_and_groups_are_read_in_linear_time() {
+    linear(
+        "alternatives",
+        |n| cps(&"ab|".repeat(n / 3)),
+        |p| full(p).map(|tree| tree.0.len()),
+    );
+    linear(
+        "a common prefix",
+        |n| {
+            let half = "a".repeat(n / 2);
+            cps(&format!("{half}b|{half}c"))
+        },
+        |p| full(p).map(|tree| tree.0.len()),
+    );
+    linear(
+        "groups",
+        |n| cps(&"(a)(?:b)(?i:c)".repeat(n / 14)),
+        |p| full(p).map(|tree| tree.0.len()),
+    );
+    linear(
+        "comments and lookarounds",
+        |n| cps(&"(?#x)(?=a)(?<!b)".repeat(n / 16)),
+        |p| full(p).map(|tree| tree.0.len()),
+    );
+}
+
+/// Every pattern of up to four characters over what a group reads, as
+/// text and as bytes, under no flags and under VERBOSE: no panic, every
+/// position within the pattern.
+#[test]
+fn every_short_group_pattern_answers_within_itself() {
+    let alphabet = cps("(?:|)aP<=!#i-x");
+    let mut patterns: Vec<Vec<u32>> = vec![Vec::new()];
+    let mut from = 0;
+    for _ in 0..4 {
+        let to = patterns.len();
+        for i in from..to {
+            for &c in &alphabet {
+                let mut pattern = patterns[i].clone();
+                pattern.push(c);
+                patterns.push(pattern);
+            }
+        }
+        from = to;
+    }
+    assert_eq!(patterns.len(), 1 + 14 + 196 + 2_744 + 38_416);
+    for pattern in &patterns {
+        for (istext, flags) in [(true, 0), (false, 0), (true, VERBOSE)] {
+            match parse(pattern, istext, flags) {
+                Ok((tree, state)) => {
+                    let (lo, hi) = tree.getwidth();
+                    assert!(lo <= MAXWIDTH && hi <= MAXWIDTH, "{pattern:?}");
+                    assert!(state.groups() <= 1 + pattern.len(), "{pattern:?}");
+                }
+                Err(BuildError::Invalid { at, .. } | BuildError::Unsupported { at, .. }) => {
+                    let len = pattern.len() as isize;
+                    assert!((0..=len).contains(&at), "{pattern:?}: {at}");
+                }
+                Err(BuildError::Overflow | BuildError::DigitLimit | BuildError::Value(_)) => {
+                    panic!("no flag conflict or bound here: {pattern:?}")
+                }
+            }
         }
     }
 }

@@ -649,11 +649,48 @@ pub enum Why {
     MultipleRepeat,
     /// "min repeat greater than max repeat".
     MinGreaterThanMax,
+    /// "unexpected end of pattern" (pyre-3b, the groups).
+    UnexpectedEnd,
+    /// "unknown extension ?" with what follows it: `?P`, `?<` and the
+    /// character read.
+    UnknownExtension,
+    /// "unknown group name %r".
+    UnknownGroupName,
+    /// "missing ), unterminated comment".
+    UnterminatedComment,
+    /// "missing ), unterminated subpattern".
+    UnterminatedSubpattern,
+    /// "global flags not at the start of the expression".
+    GlobalFlagsNotAtStart,
+    /// "bad character in group name %r" (and `%a` in a bytes pattern).
+    BadGroupName,
+    /// The errors of `_parse_flags`: "bad inline flags: cannot use 'L'
+    /// flag with a str pattern", "... 'u' flag with a bytes pattern",
+    /// "... flags 'a', 'u' and 'L' are incompatible", "missing -, : or )",
+    /// "unknown flag", "missing flag", "bad inline flags: cannot turn off
+    /// flags 'a', 'u' and 'L'", "missing :", "bad inline flags: flag
+    /// turned on and off".
+    InlineLocaleStr,
+    InlineUnicodeBytes,
+    InlineIncompatible,
+    MissingFlagEnd,
+    UnknownFlag,
+    MissingFlag,
+    TurnOffTypeFlags,
+    MissingColon,
+    FlagOnAndOff,
+    /// The ValueErrors of `fix_flags` ([`BuildError::Value`]): "cannot use
+    /// LOCALE flag with a str pattern", "ASCII and UNICODE flags are
+    /// incompatible", "cannot use UNICODE flag with a bytes pattern",
+    /// "ASCII and LOCALE flags are incompatible".
+    LocaleStr,
+    AsciiUnicode,
+    UnicodeBytes,
+    AsciiLocale,
 }
 
-/// What the engine refuses of the patterns `re` accepts. The first block
-/// is refused for good, by the unit named; the last three are syntax of
-/// pyre-3 that is not built yet.
+/// What the engine refuses of the patterns `re` accepts, each by the unit
+/// named.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Feature {
     /// `\1` and `(?P=name)`.
@@ -695,9 +732,14 @@ pub enum Feature {
     Nodes,
     /// A replacement text that holds a backslash (pyre-6).
     Template,
-    /// Not built yet: `(`; `|`.
+    /// `(` and a second alternative, refused by `atom::parse_flat` alone,
+    /// which reads atoms and repeats only.
     Group,
     Alternation,
+    /// A group name in a str pattern that holds a code point past ASCII:
+    /// `str.isidentifier` needs the Unicode data of XID, which the crate
+    /// does not carry (pyre-3b).
+    UnicodeGroupName,
 }
 
 /// Why a pattern is not built. `at` is a position as Python counts it
@@ -718,4 +760,7 @@ pub enum BuildError {
     /// position: a bound of a repeat of more than 4,300 digits, the
     /// default of `sys.get_int_max_str_digits()`.
     DigitLimit,
+    /// `re` raises ValueError, which is not `re.error` and has no
+    /// position: `fix_flags` on flags that do not fit the pattern's type.
+    Value(Why),
 }

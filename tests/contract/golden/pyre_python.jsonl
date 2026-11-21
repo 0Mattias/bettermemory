@@ -1,4 +1,4 @@
-{"fixture":"pyre_python","part":"header","rows":{"pyre-1":9,"pyre-2":11,"pyre-3":63}}
+{"fixture":"pyre_python","part":"header","rows":{"pyre-1":9,"pyre-2":11,"pyre-3":179}}
 {"part":"python","unit":"pyre-1","value":"3.13.13"}
 {"part":"unicode","unit":"pyre-1","value":"15.1.0"}
 {"part":"sre_magic","unit":"pyre-1","value":20230612}
@@ -79,6 +79,122 @@
 {"dump":"[(LITERAL, 97), (LITERAL, 42)]","part":"parse.tree","pattern":"a~*"}
 {"dump":"[(MAX_REPEAT, (0, MAXREPEAT, [(LITERAL, 42)]))]","part":"parse.tree","pattern":"~**"}
 {"dump":"[(MAX_REPEAT, (0, MAXREPEAT, [(LITERAL, 97)])), (LITERAL, 98)]","part":"parse.tree","pattern":"a*b"}
+{"dump":"[(BRANCH, (None, [[(MAX_REPEAT, (0, MAXREPEAT, [(LITERAL, 97)]))], [(LITERAL, 98)]]))]","part":"parse.tree","pattern":"a*|b"}
+{"dump":"[(MAX_REPEAT, (0, MAXREPEAT, [(SUBPATTERN, (1, 0, 0, [(LITERAL, 97)]))]))]","part":"parse.tree","pattern":"(a)*"}
 {"bytes":true,"dump":"[(MAX_REPEAT, (0, MAXREPEAT, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"a*"}
 {"bytes":true,"dump":"[(MAX_REPEAT, (2, 2, [(LITERAL, 255)]))]","part":"parse.tree","pattern":"~xff{2}"}
-{"count":20000,"fragments":["a","b","[ab]",".","^","$","~b","~d","~A","*","+","?","{","}",",","0","2","{2}","{,3}","{2,}","{1,2}","{3,2}","{0}","{4294967295}","{4294967294}","*?","+?","??","*+","{2}?","{2}+","(",")","|","~","~{","~*"],"part":"parse.sweep","seed":20261121,"sha256":"084acb8fd49c6923bde7ffd6611c107f1afc2639a74461c1e9968a9bd6055e02"}
+{"dump":"[(SUBPATTERN, (1, 0, 0, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(a)"}
+{"dump":"[(SUBPATTERN, (1, 0, 0, []))]","part":"parse.tree","pattern":"()"}
+{"dump":"[(LITERAL, 97)]","part":"parse.tree","pattern":"(?:a)"}
+{"dump":"[]","part":"parse.tree","pattern":"(?:)"}
+{"dump":"[(SUBPATTERN, (1, 0, 0, [(LITERAL, 97)])), (SUBPATTERN, (2, 0, 0, [(LITERAL, 98)]))]","part":"parse.tree","pattern":"(a)(b)"}
+{"dump":"[(SUBPATTERN, (1, 0, 0, [(SUBPATTERN, (2, 0, 0, [(LITERAL, 97)]))]))]","part":"parse.tree","pattern":"((a))"}
+{"dump":"[(SUBPATTERN, (1, 0, 0, [(LITERAL, 97), (SUBPATTERN, (2, 0, 0, [(LITERAL, 98)])), (LITERAL, 99)]))]","part":"parse.tree","pattern":"(a(b)c)"}
+{"dump":"[(LITERAL, 97), (LITERAL, 98), (LITERAL, 99), (LITERAL, 100)]","part":"parse.tree","pattern":"a(?:bc)d"}
+{"dump":"[(LITERAL, 97), (LITERAL, 98), (LITERAL, 99), (LITERAL, 100)]","part":"parse.tree","pattern":"(?:a(?:b)c)d"}
+{"dump":"[(MAX_REPEAT, (0, MAXREPEAT, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(?:a)*"}
+{"dump":"[(MAX_REPEAT, (0, MAXREPEAT, [(LITERAL, 97), (LITERAL, 98)]))]","part":"parse.tree","pattern":"(?:ab)*"}
+{"dump":"[(MAX_REPEAT, (0, MAXREPEAT, [(SUBPATTERN, (1, 0, 0, [(LITERAL, 97)]))]))]","part":"parse.tree","pattern":"(a)*"}
+{"dump":"[(SUBPATTERN, (1, 0, 0, [(IN, [(LITERAL, 97), (LITERAL, 98)])]))]","part":"parse.tree","pattern":"(a|b)"}
+{"dump":"[(IN, [(LITERAL, 97), (LITERAL, 98)])]","part":"parse.tree","pattern":"(?:a|b)"}
+{"dump":"[(BRANCH, (None, [[(LITERAL, 97), (LITERAL, 98)], [(LITERAL, 99), (LITERAL, 100)]])), (LITERAL, 101)]","part":"parse.tree","pattern":"(?:ab|cd)e"}
+{"dump":"[(SUBPATTERN, (1, 0, 0, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(?P<n>a)"}
+{"dump":"[(SUBPATTERN, (1, 0, 0, [(LITERAL, 97)])), (SUBPATTERN, (2, 0, 0, [(LITERAL, 98)]))]","part":"parse.tree","pattern":"(?P<n>a)(?P<m>b)"}
+{"dump":"[(SUBPATTERN, (1, 0, 0, [(LITERAL, 120)]))]","part":"parse.tree","pattern":"(?P<a1_>x)"}
+{"dump":"[(SUBPATTERN, (1, 0, 0, [(LITERAL, 120)]))]","part":"parse.tree","pattern":"(?P<_>x)"}
+{"dump":"[(SUBPATTERN, (1, 0, 0, [(LITERAL, 120)]))]","part":"parse.tree","pattern":"(?P<Z9>x)"}
+{"bytes":true,"dump":"[(SUBPATTERN, (1, 0, 0, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(?P<n>a)"}
+{"dump":"[]","part":"parse.tree","pattern":"(?#x)"}
+{"dump":"[]","part":"parse.tree","pattern":"(?#)"}
+{"dump":"[(LITERAL, 97), (LITERAL, 98)]","part":"parse.tree","pattern":"a(?#x)b"}
+{"dump":"[]","part":"parse.tree","pattern":"(?#~)x)"}
+{"dump":"[(LITERAL, 98)]","part":"parse.tree","pattern":"(?#a)(?i)b"}
+{"dump":"[(ASSERT, (1, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(?=a)"}
+{"dump":"[(ASSERT_NOT, (1, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(?!a)"}
+{"dump":"[(ASSERT, (-1, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(?<=a)"}
+{"dump":"[(ASSERT_NOT, (-1, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(?<!a)"}
+{"dump":"[(FAILURE, ())]","part":"parse.tree","pattern":"(?!)"}
+{"dump":"[(FAILURE, ())]","part":"parse.tree","pattern":"(?<!)"}
+{"dump":"[(ASSERT, (1, []))]","part":"parse.tree","pattern":"(?=)"}
+{"dump":"[(ASSERT, (-1, []))]","part":"parse.tree","pattern":"(?<=)"}
+{"dump":"[(ASSERT, (-1, [(IN, [(LITERAL, 97), (LITERAL, 98)])]))]","part":"parse.tree","pattern":"(?<=a|b)"}
+{"dump":"[(ASSERT, (-1, [(ASSERT, (-1, [(LITERAL, 97)])), (LITERAL, 98)]))]","part":"parse.tree","pattern":"(?<=(?<=a)b)"}
+{"dump":"[(ASSERT, (-1, [(SUBPATTERN, (1, 0, 0, [(LITERAL, 97)]))])), (SUBPATTERN, (2, 0, 0, [(LITERAL, 98)]))]","part":"parse.tree","pattern":"(?<=(a))(b)"}
+{"dump":"[(LITERAL, 97), (MAX_REPEAT, (0, MAXREPEAT, [(ASSERT, (1, [(LITERAL, 98)]))]))]","part":"parse.tree","pattern":"a(?=b)*"}
+{"dump":"[(MAX_REPEAT, (1, MAXREPEAT, [(ASSERT, (1, [(LITERAL, 97)]))]))]","part":"parse.tree","pattern":"(?=a)+"}
+{"dump":"[(LITERAL, 97)]","part":"parse.tree","pattern":"(?i)a"}
+{"dump":"[(LITERAL, 97)]","part":"parse.tree","pattern":"(?im)a"}
+{"dump":"[(LITERAL, 97)]","part":"parse.tree","pattern":"(?s)(?m)a"}
+{"dump":"[(LITERAL, 97)]","part":"parse.tree","pattern":"(?#c)(?i)a"}
+{"dump":"[(BRANCH, (None, [[], [(LITERAL, 98)]]))]","part":"parse.tree","pattern":"(?i)|b"}
+{"dump":"[(LITERAL, 97)]","part":"parse.tree","pattern":"(?x)a"}
+{"dump":"[(BRANCH, (None, [[(LITERAL, 97)], [(SUBPATTERN, (None, 0, 64, [(LITERAL, 98), (LITERAL, 32), (LITERAL, 99)]))]]))]","part":"parse.tree","pattern":"(?x)a|(?-x:b c)"}
+{"dump":"[(LITERAL, 97)]","part":"parse.tree","pattern":"(?a)a"}
+{"dump":"[(LITERAL, 97)]","part":"parse.tree","pattern":"(?u)a"}
+{"bytes":true,"dump":"[(LITERAL, 97)]","part":"parse.tree","pattern":"(?L)a"}
+{"bytes":true,"dump":"[(LITERAL, 97)]","part":"parse.tree","pattern":"(?a)a"}
+{"dump":"[(LITERAL, 97)]","part":"parse.tree","pattern":"(?aa)a"}
+{"dump":"[(LITERAL, 97)]","part":"parse.tree","pattern":"(?ia)a"}
+{"dump":"[(SUBPATTERN, (None, 2, 0, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(?i:a)"}
+{"dump":"[(MAX_REPEAT, (0, MAXREPEAT, [(SUBPATTERN, (None, 2, 0, [(LITERAL, 97)]))]))]","part":"parse.tree","pattern":"(?i:a)*"}
+{"dump":"[(SUBPATTERN, (None, 0, 2, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(?-i:a)"}
+{"dump":"[(SUBPATTERN, (None, 2, 8, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(?i-m:a)"}
+{"dump":"[(MAX_REPEAT, (0, MAXREPEAT, [(SUBPATTERN, (None, 16, 0, [(ANY, None)]))]))]","part":"parse.tree","pattern":"(?s:.)*"}
+{"dump":"[(SUBPATTERN, (None, 0, 64, [(LITERAL, 97), (LITERAL, 32), (LITERAL, 98)]))]","part":"parse.tree","pattern":"(?-x:a b)"}
+{"dump":"[(SUBPATTERN, (None, 0, 64, [(LITERAL, 97), (LITERAL, 32), (LITERAL, 98)]))]","flags":64,"part":"parse.tree","pattern":"(?-x:a b)"}
+{"dump":"[(SUBPATTERN, (None, 64, 0, [(SUBPATTERN, (None, 0, 64, [(LITERAL, 97), (LITERAL, 32), (LITERAL, 98)]))]))]","part":"parse.tree","pattern":"(?x:(?-x:a b))"}
+{"dump":"[(SUBPATTERN, (None, 258, 0, [(LITERAL, 120)]))]","part":"parse.tree","pattern":"(?ai:x)"}
+{"dump":"[(LITERAL, 120)]","part":"parse.tree","pattern":"(?ai)x"}
+{"bytes":true,"dump":"[(SUBPATTERN, (None, 6, 0, [(LITERAL, 120)]))]","part":"parse.tree","pattern":"(?Li:x)"}
+{"dump":"[(LITERAL, 120)]","part":"parse.tree","pattern":"(?ui)x"}
+{"dump":"[(SUBPATTERN, (None, 256, 0, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(?a:a)"}
+{"bytes":true,"dump":"[(SUBPATTERN, (None, 4, 0, [(LITERAL, 97)]))]","part":"parse.tree","pattern":"(?L:a)"}
+{"dump":"[(IN, [(LITERAL, 97), (LITERAL, 98)])]","part":"parse.tree","pattern":"a|b"}
+{"dump":"[(IN, [(LITERAL, 97), (LITERAL, 98), (LITERAL, 99)])]","part":"parse.tree","pattern":"a|b|c"}
+{"dump":"[(LITERAL, 97), (IN, [(LITERAL, 98), (LITERAL, 99)])]","part":"parse.tree","pattern":"ab|ac"}
+{"dump":"[(LITERAL, 97), (LITERAL, 98), (BRANCH, (None, [[], []]))]","part":"parse.tree","pattern":"ab|ab"}
+{"dump":"[(LITERAL, 97), (BRANCH, (None, [[], []]))]","part":"parse.tree","pattern":"a|a"}
+{"dump":"[(LITERAL, 97), (LITERAL, 98), (IN, [(LITERAL, 99), (LITERAL, 100), (LITERAL, 101)])]","part":"parse.tree","pattern":"abc|abd|abe"}
+{"dump":"[(LITERAL, 97), (BRANCH, (None, [[(LITERAL, 98)], []]))]","part":"parse.tree","pattern":"ab|a"}
+{"dump":"[(BRANCH, (None, [[(LITERAL, 97)], []]))]","part":"parse.tree","pattern":"a|"}
+{"dump":"[(BRANCH, (None, [[], []]))]","part":"parse.tree","pattern":"|"}
+{"dump":"[(BRANCH, (None, [[], [(LITERAL, 97)]]))]","part":"parse.tree","pattern":"|a"}
+{"dump":"[(BRANCH, (None, [[(LITERAL, 97)], [], [(LITERAL, 98)]]))]","part":"parse.tree","pattern":"a||b"}
+{"dump":"[(LITERAL, 120), (LITERAL, 97), (IN, [(LITERAL, 98), (LITERAL, 99)])]","part":"parse.tree","pattern":"x(?:ab|ac)"}
+{"dump":"[(BRANCH, (None, [[(MAX_REPEAT, (1, MAXREPEAT, [(LITERAL, 97)])), (LITERAL, 98)], [(MAX_REPEAT, (1, MAXREPEAT, [(LITERAL, 97)])), (LITERAL, 99)]]))]","part":"parse.tree","pattern":"a+b|a+c"}
+{"dump":"[(LITERAL, 97), (IN, [(LITERAL, 98), (LITERAL, 99)])]","part":"parse.tree","pattern":"(?:a)b|(?:a)c"}
+{"dump":"[(BRANCH, (None, [[(SUBPATTERN, (1, 0, 0, [(LITERAL, 97)])), (LITERAL, 98)], [(SUBPATTERN, (2, 0, 0, [(LITERAL, 97)])), (LITERAL, 99)]]))]","part":"parse.tree","pattern":"(a)b|(a)c"}
+{"dump":"[(BRANCH, (None, [[(ASSERT, (1, [(LITERAL, 97)])), (LITERAL, 98)], [(ASSERT, (1, [(LITERAL, 97)])), (LITERAL, 99)]]))]","part":"parse.tree","pattern":"(?=a)b|(?=a)c"}
+{"dump":"[(LITERAL, 97), (FAILURE, ()), (BRANCH, (None, [[], []]))]","part":"parse.tree","pattern":"a(?!)|a(?!)"}
+{"dump":"[(AT, AT_BEGINNING), (IN, [(LITERAL, 97), (LITERAL, 98)])]","part":"parse.tree","pattern":"^a|^b"}
+{"dump":"[(BRANCH, (None, [[(MAX_REPEAT, (2, 2, [(LITERAL, 97)]))], [(MAX_REPEAT, (2, 2, [(LITERAL, 97)]))]]))]","part":"parse.tree","pattern":"a{2}|a{2}"}
+{"dump":"[(IN, [(LITERAL, 97), (LITERAL, 98), (LITERAL, 99)])]","part":"parse.tree","pattern":"[ab]|c"}
+{"dump":"[(BRANCH, (None, [[(NOT_LITERAL, 97)], [(LITERAL, 98)]]))]","part":"parse.tree","pattern":"[^a]|b"}
+{"dump":"[(IN, [(RANGE, (97, 99)), (LITERAL, 100), (LITERAL, 101)])]","part":"parse.tree","pattern":"[a-c]|[d]|e"}
+{"dump":"[(IN, [(CATEGORY, CATEGORY_DIGIT), (LITERAL, 97)])]","part":"parse.tree","pattern":"~d|a"}
+{"dump":"[(IN, [(CATEGORY, CATEGORY_WORD), (CATEGORY, CATEGORY_NOT_WORD)])]","part":"parse.tree","pattern":"~w|~W"}
+{"dump":"[(BRANCH, (None, [[(ANY, None)], [(LITERAL, 97)]]))]","part":"parse.tree","pattern":".|a"}
+{"dump":"[(BRANCH, (None, [[(LITERAL, 97)], [(ANY, None)]]))]","part":"parse.tree","pattern":"a|."}
+{"dump":"[(BRANCH, (None, [[(SUBPATTERN, (1, 0, 0, [(LITERAL, 97)]))], [(SUBPATTERN, (2, 0, 0, [(LITERAL, 98)]))]]))]","part":"parse.tree","pattern":"(a)|(b)"}
+{"dump":"[(BRANCH, (None, [[(LITERAL, 97)], [(LITERAL, 98)], [(NOT_LITERAL, 99)]]))]","part":"parse.tree","pattern":"a|b|[^c]"}
+{"dump":"[(BRANCH, (None, [[(IN, [(NEGATE, None), (LITERAL, 97), (LITERAL, 98)])], [(LITERAL, 99)]]))]","part":"parse.tree","pattern":"[^ab]|c"}
+{"dump":"[(BRANCH, (None, [[(LITERAL, 97)], [(IN, [(NEGATE, None), (LITERAL, 98), (LITERAL, 99)])]]))]","part":"parse.tree","pattern":"a|[^bc]"}
+{"dump":"[(BRANCH, (None, [[(LITERAL, 97)], [(LITERAL, 98), (LITERAL, 99)], [(LITERAL, 100)]]))]","part":"parse.tree","pattern":"a|bc|d"}
+{"dump":"[(IN, [(LITERAL, 97), (LITERAL, 98)])]","part":"parse.tree","pattern":"a|a|b"}
+{"dump":"[(IN, [(LITERAL, 97), (LITERAL, 98)])]","part":"parse.tree","pattern":"[ab]|[ba]"}
+{"dump":"[(MAX_REPEAT, (0, MAXREPEAT, [(IN, [(LITERAL, 97), (LITERAL, 98)])]))]","part":"parse.tree","pattern":"(?:a|b)*"}
+{"dump":"[(BRANCH, (None, [[(SUBPATTERN, (None, 2, 0, [(LITERAL, 97)]))], [(SUBPATTERN, (None, 2, 0, [(LITERAL, 97)]))]]))]","part":"parse.tree","pattern":"(?i:a)|(?i:a)"}
+{"dump":"[(BRANCH, (None, [[], []]))]","part":"parse.tree","pattern":"(?:)|(?:)"}
+{"bytes":true,"dump":"[(IN, [(LITERAL, 97), (LITERAL, 98)])]","part":"parse.tree","pattern":"a|b"}
+{"dump":"[(LITERAL, 97)]","flags":256,"part":"parse.tree","pattern":"a"}
+{"dump":"[(LITERAL, 97)]","flags":32,"part":"parse.tree","pattern":"a"}
+{"bytes":true,"dump":"[(LITERAL, 97)]","flags":256,"part":"parse.tree","pattern":"a"}
+{"bytes":true,"dump":"[(LITERAL, 97)]","flags":4,"part":"parse.tree","pattern":"a"}
+{"dump":"[(LITERAL, 97)]","flags":26,"part":"parse.tree","pattern":"a"}
+{"dump":"[(LITERAL, 97), (LITERAL, 32), (LITERAL, 98)]","flags":64,"part":"parse.tree","pattern":"a~ b"}
+{"dump":"[(SUBPATTERN, (1, 0, 0, [(SUBPATTERN, (2, 0, 0, [(SUBPATTERN, (3, 0, 0, [(SUBPATTERN, (4, 0, 0, [(SUBPATTERN, (5, 0, 0, [(SUBPATTERN, (6, 0, 0, [(SUBPATTERN, (7, 0, 0, [(SUBPATTERN, (8, 0, 0, [(SUBPATTERN, (9, 0, 0, [(SUBPATTERN, (10, 0, 0, [(SUBPATTERN, (11, 0, 0, [(SUBPATTERN, (12, 0, 0, [(SUBPATTERN, (13, 0, 0, [(SUBPATTERN, (14, 0, 0, [(SUBPATTERN, (15, 0, 0, [(SUBPATTERN, (16, 0, 0, [(SUBPATTERN, (17, 0, 0, [(SUBPATTERN, (18, 0, 0, [(SUBPATTERN, (19, 0, 0, [(SUBPATTERN, (20, 0, 0, [(SUBPATTERN, (21, 0, 0, [(SUBPATTERN, (22, 0, 0, [(SUBPATTERN, (23, 0, 0, [(SUBPATTERN, (24, 0, 0, [(SUBPATTERN, (25, 0, 0, [(SUBPATTERN, (26, 0, 0, [(SUBPATTERN, (27, 0, 0, [(SUBPATTERN, (28, 0, 0, [(SUBPATTERN, (29, 0, 0, [(SUBPATTERN, (30, 0, 0, [(SUBPATTERN, (31, 0, 0, [(SUBPATTERN, (32, 0, 0, [(SUBPATTERN, (33, 0, 0, [(SUBPATTERN, (34, 0, 0, [(SUBPATTERN, (35, 0, 0, [(SUBPATTERN, (36, 0, 0, [(SUBPATTERN, (37, 0, 0, [(SUBPATTERN, (38, 0, 0, [(SUBPATTERN, (39, 0, 0, [(SUBPATTERN, (40, 0, 0, [(SUBPATTERN, (41, 0, 0, [(SUBPATTERN, (42, 0, 0, [(SUBPATTERN, (43, 0, 0, [(SUBPATTERN, (44, 0, 0, [(SUBPATTERN, (45, 0, 0, [(SUBPATTERN, (46, 0, 0, [(SUBPATTERN, (47, 0, 0, [(SUBPATTERN, (48, 0, 0, [(SUBPATTERN, (49, 0, 0, [(SUBPATTERN, (50, 0, 0, [(SUBPATTERN, (51, 0, 0, [(SUBPATTERN, (52, 0, 0, [(SUBPATTERN, (53, 0, 0, [(SUBPATTERN, (54, 0, 0, [(SUBPATTERN, (55, 0, 0, [(SUBPATTERN, (56, 0, 0, [(SUBPATTERN, (57, 0, 0, [(SUBPATTERN, (58, 0, 0, [(SUBPATTERN, (59, 0, 0, [(SUBPATTERN, (60, 0, 0, [(SUBPATTERN, (61, 0, 0, [(SUBPATTERN, (62, 0, 0, [(SUBPATTERN, (63, 0, 0, [(SUBPATTERN, (64, 0, 0, [(SUBPATTERN, (65, 0, 0, [(SUBPATTERN, (66, 0, 0, [(SUBPATTERN, (67, 0, 0, [(SUBPATTERN, (68, 0, 0, [(SUBPATTERN, (69, 0, 0, [(SUBPATTERN, (70, 0, 0, [(SUBPATTERN, (71, 0, 0, [(SUBPATTERN, (72, 0, 0, [(SUBPATTERN, (73, 0, 0, [(SUBPATTERN, (74, 0, 0, [(SUBPATTERN, (75, 0, 0, [(SUBPATTERN, (76, 0, 0, [(SUBPATTERN, (77, 0, 0, [(SUBPATTERN, (78, 0, 0, [(SUBPATTERN, (79, 0, 0, [(SUBPATTERN, (80, 0, 0, [(SUBPATTERN, (81, 0, 0, [(SUBPATTERN, (82, 0, 0, [(SUBPATTERN, (83, 0, 0, [(SUBPATTERN, (84, 0, 0, [(SUBPATTERN, (85, 0, 0, [(SUBPATTERN, (86, 0, 0, [(SUBPATTERN, (87, 0, 0, [(SUBPATTERN, (88, 0, 0, [(SUBPATTERN, (89, 0, 0, [(SUBPATTERN, (90, 0, 0, [(SUBPATTERN, (91, 0, 0, [(SUBPATTERN, (92, 0, 0, [(SUBPATTERN, (93, 0, 0, [(SUBPATTERN, (94, 0, 0, [(SUBPATTERN, (95, 0, 0, [(SUBPATTERN, (96, 0, 0, [(SUBPATTERN, (97, 0, 0, [(SUBPATTERN, (98, 0, 0, [(SUBPATTERN, (99, 0, 0, [(SUBPATTERN, (100, 0, 0, []))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]","part":"parse.tree","pattern":"(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((())))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))"}
+{"dump":"[(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, [(ASSERT, (1, []))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]))]","part":"parse.tree","pattern":"(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))"}
+{"answer":"!BadGroupName@4","bytes":true,"part":"parse.group","pattern":"(?P<\u00e9>x)"}
+{"count":20000,"fragments":["a","b","[ab]",".","^","$","~b","~d","~A","*","+","?","{","}",",","0","2","{2}","{,3}","{2,}","{1,2}","{3,2}","{0}","{4294967295}","{4294967294}","*?","+?","??","*+","{2}?","{2}+","(",")","|","~","~{","~*"],"part":"parse.sweep","seed":20261121,"sha256":"715185196c69b9160378018f7b95c770243da0916f03ec177d4d57f4029bb62f"}
+{"count":20000,"flags":[0,0,0,2,24,64,256,4,32],"fragments":["a","b","ab","[ab]",".","^","(",")","|","(?:","(?P<a>","(?P<b>","(?P=a)","(?=","(?!","(?<=","(?<!","(?i)","(?x)","(?a)","(?i:","(?-i:","(?#c)","(?(1)","(?>","~1","*","+?","{2}"," ","\u00e9"],"part":"parse.fuzz","seed":20261121,"sha256":"003922adf6192ce11a62ca843d686e27959e43d224dae036178a22a6cc0f4534"}
+{"chains":["f5914e41ecc71dbe","af2e3181cdf8160b","65b00769cd53fb1f","2c462ae2b4baf446","f882f83486c3c2c9","a5766663cfb172a2","57b7cb569b636dd8","79b4faef3801ac59","97c26bc79d9f7cf5","2ab29efe14c5ca10","90e18f9e3466f0b7","b0b8f532d1b55ddd","1f83c776f73580d1","adb32e3730a5d862","e0ad5e00db2c17e5","d33863e59e048a52","acd949fa7a423e11","6b5ffb01f2e38aa3","6710a6080ca90c68","56d36f693583589c","85693392a8c6dd7e","9e8c5490ca9f91a0","f98835b21385de10","7ac49dbb357101dd","cf46674dcfa43275","8c92597fe97c309b","602cc9acbd84aae6","33c35063c4f952c2","d20e5fcfc7690a91","d2eab9d2d98f7929","ebac0a309ac5bdd5","47829d3c264307d2","89b09c189a1bdd7a","db07b5905f9e90a9","1e5135eb9eb7567a","5108db543eec916f","240fe5500bc2f505","442c49f7c1862c3d","ca525cdb0815d2ed","51df25f70ad12daa","3eeb6d0633f96196","0885071b40d55bb7","d36eab74fa305c18","88504784bab3334e","7bed30202faafa85","248a27f8e2966a77","5d31c7a351e45f46","dfdfe29685cd42ef","17e446be9bbe7c18","57f49f1b5f86ebb0","e443c73087f98139","defe7c6f9f9f0057","ea8eae2aa63b1d81","4a80cfdf06a4e8c5","a1d508368b03d1be","a9327d99140f125a","57c5a032d95dcf6f","c8ae4159ecdc692c","0f808dff2257a404","448a108ca0a121f6","2ed7a9b258924c34","373a4c7d14fd09dd","8bf10095c311e6d8","5671387aff8b8551","1384e389691e9de4","7f3c251fc1414cfa","a813ee31396cf4f6","ec3d7dc24fe98fee","0f5e1f252cc88df4","f9ffa115a83c1d53","52a5719cb17ba119","9bcb0f255ecd7ae6","2525a49ea492030f","1c49ad47b89fd8e8","3e35a9e2c61fb6c8","5c19ec90f0a8fd34","356ebf6337f142d0","5cb1c5a677e7bf49","4c7a46f83fe238e6","2d8c58a1092b6cc5","c8bb74bb62a5747a","e4c5e2f537061739","f4311db68b62354c","add06bee7389081e","6ab567346f7822ca","dd32d24596bb5796","bff897c1aba7106a","23015a358cd7016d","c23b54cf6328e592","348e5ca828b8cb66","f6e6f0179524db28","6635482cf3bbc96f","2cada7db471279ff","ae07edb3b7269319","c700fc58a9d26c21","ac335e54d333cd7e","1cd6e865bbde135b","991ae939be70e6f1","9eca144fa5ce3351","145f0338dd4c2075","cba8ab675634bf6e","ae278bfb9682ec53","72abd35c164af43b","986e5646ed7fa2fa","3c16fd6b2ffa6912","708e591af21a49d9","e5f4a44533927a5a","7b8186f7ad9a7bb3","9198204883c9c2b0","2503bbf2bf296e19","8f7d48d74b2cbf27","cea53c925148bf98","9d22462943d4c1cd","093dab32b5932ccd","344bbe64db4e701b","23818a2d9cbf7e3b","1e8a16456ed51636","f03aa9d973374816","2ec3204d118e1d9b","c7a069244bcbe20a","e8e9dde6a1738427","a07725a25d491f92","151fdec62d584400","5d55f5482fd74f90","e3fa445bc4338af9","45a97b4c2363d8d7","6fa40330847b08fb","fc16ad9ed656ec86","528cb467c8bf98be","8140fb71bc335761","faf6e51e50ac80f5","f10a86d9945e04b7","eaf1283f3b894722","f8b59357df22adc8","65783519b820a00e","a1ed24e03a2cd2a4","2882e82f0aca901f","7e2852bcd3a2f7da","552f3d737c24a444","3efdac9d06976101","30ee20fb4c3ffd30","294dc30567326f11","2866288bc8084c3f","302addf0ef31d3e8","515ea2f2d6e1c270","5ce8993a14498c87","fa9d070decf7932e","e78ede987a5c9b85","09135acb8b811ae8","abe13f0b782d0931","2c60edbb55e81a5d","c5d6ea39135eced2","871b1db9b507187b","2d4aedbd7b23e37e","2d5852d92ffb50f1","375fb580ebe8ea78","f3589e4721798e6e","c1f7e0fefc204639","d0f810cb704ba21c","15a9cef1a177ef15","2842f31f859f5b42","dd90148b6b72c41d","e6087401362ad1bf","c50dbe3803f8b719","ec9041703bafe2ca","cd9e94cf486c7a8f","c5731e5725cc2f6d","ce759a0150172a8e","f0a6f2d41ca3a4a8","a6beef521bae0bdb","d0d5c7776b42ee6f","15784058b7ac3ee6","286da6ae9d5e6ff7","4e53b12677e6a885","9e6e6d2b4c51d825","baa084ba17abd544","dfdfe29685cd42ef","47435c543a1bfee6","ea8eae2aa63b1d81","8ae7b9d03f3c7a57","3566029ce387d430","b6a0ff7a51c64c0d","e8e86725fd9708eb"],"part":"parse.inventory"}

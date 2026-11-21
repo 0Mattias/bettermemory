@@ -1,4 +1,4 @@
-{"cap_bytes":150000,"fixture":"pyre","part":"header","reproduces":{"python":"3.13.13","sre_magic":20230612,"unicode":"15.1.0"},"rows":{"pyre-1":20,"pyre-2":291,"pyre-3":154}}
+{"cap_bytes":150000,"fixture":"pyre","part":"header","reproduces":{"python":"3.13.13","sre_magic":20230612,"unicode":"15.1.0"},"rows":{"pyre-1":20,"pyre-2":291,"pyre-3":375}}
 {"flags":0,"part":"ascii","sets":[[0],[1],[2],[3],[4],[5],[6],[7],[8],[9],[10],[11],[12],[13],[14],[15],[16],[17],[18],[19],[20],[21],[22],[23],[24],[25],[26],[27],[28],[29],[30],[31],[32],[33],[34],[35],[36],[37],[38],[39],[40],[41],[42],[43],[44],[45],[46],[47],[48],[49],[50],[51],[52],[53],[54],[55],[56],[57],[58],[59],[60],[61],[62],[63],[64],[65],[66],[67],[68],[69],[70],[71],[72],[73],[74],[75],[76],[77],[78],[79],[80],[81],[82],[83],[84],[85],[86],[87],[88],[89],[90],[91],[92],[93],[94],[95],[96],[97],[98],[99],[100],[101],[102],[103],[104],[105],[106],[107],[108],[109],[110],[111],[112],[113],[114],[115],[116],[117],[118],[119],[120],[121],[122],[123],[124],[125],[126],[127]],"sre_flags":32,"unit":"pyre-1"}
 {"flags":2,"part":"ascii","sets":[[0],[1],[2],[3],[4],[5],[6],[7],[8],[9],[10],[11],[12],[13],[14],[15],[16],[17],[18],[19],[20],[21],[22],[23],[24],[25],[26],[27],[28],[29],[30],[31],[32],[33],[34],[35],[36],[37],[38],[39],[40],[41],[42],[43],[44],[45],[46],[47],[48],[49],[50],[51],[52],[53],[54],[55],[56],[57],[58],[59],[60],[61],[62],[63],[64],[65,97],[66,98],[67,99],[68,100],[69,101],[70,102],[71,103],[72,104],[73,105],[74,106],[75,107],[76,108],[77,109],[78,110],[79,111],[80,112],[81,113],[82,114],[83,115],[84,116],[85,117],[86,118],[87,119],[88,120],[89,121],[90,122],[91],[92],[93],[94],[95],[96],[65,97],[66,98],[67,99],[68,100],[69,101],[70,102],[71,103],[72,104],[73,105],[74,106],[75,107],[76,108],[77,109],[78,110],[79,111],[80,112],[81,113],[82,114],[83,115],[84,116],[85,117],[86,118],[87,119],[88,120],[89,121],[90,122],[123],[124],[125],[126],[127]],"sre_flags":34,"unit":"pyre-1"}
 {"flags":2,"fullmatch":[true,true,false,false,false,false,false],"kills":"no fold at all","literal":107,"negated":false,"part":"kill","pattern":"k","sre_flags":34,"texts":["K","k","j","kk","","Kk","k\n"],"unit":"pyre-1"}
@@ -20,7 +20,7 @@
 {"flags":0,"fullmatch":[false,true,false],"kills":"NOT_LITERAL not the negation","literal":75,"negated":true,"part":"kill","pattern":"[^K]","sre_flags":32,"texts":["K","k",""],"unit":"pyre-1"}
 {"flags":2,"fullmatch":[false,true,true],"kills":"NOT_LITERAL not the negation","literal":49,"negated":true,"part":"kill","pattern":"[^1]","sre_flags":34,"texts":["1","2","\u0011"],"unit":"pyre-1"}
 {"MAXGROUPS":1073741823,"MAXREPEAT":4294967295,"MAXWIDTH":"18446744073709551616","at":["AT_BEGINNING","AT_BEGINNING_STRING","AT_BOUNDARY","AT_NON_BOUNDARY","AT_END","AT_END_STRING"],"category":["CATEGORY_DIGIT","CATEGORY_NOT_DIGIT","CATEGORY_SPACE","CATEGORY_NOT_SPACE","CATEGORY_WORD","CATEGORY_NOT_WORD"],"flags":{"ASCII":256,"DEBUG":128,"DOTALL":16,"IGNORECASE":2,"LOCALE":4,"MULTILINE":8,"UNICODE":32,"VERBOSE":64},"part":"tree.constants"}
-{"feature":["Backreference","NamedCharacter","SetWarning","Verbose","Ascii","Locale","Debug","Conditional","AtomicGroup","Possessive","NotBoundary","NotDigit","NotWord","NullableLoop","CaptureInRepeat","CaptureInLookaround","ChoiceInLookbehind","ClassPastBmpIgnorecase","BytesCategory","BytesBoundary","BytesIgnorecase","Nesting","Nodes","Template","Group","Alternation"],"part":"tree.names","why":{"BadEscape":"bad escape %s","BadEscapeEnd":"bad escape (end of pattern)","BadRange":"bad character range %s-%s","IncompleteEscape":"incomplete escape %s","InvalidGroupReference":"invalid group reference %d","LookbehindGroup":"cannot refer to group defined in the same lookbehind subpattern","MinGreaterThanMax":"min repeat greater than max repeat","MissingBrace":"missing {","MissingCharacterName":"missing character name","MissingGroupName":"missing group name","MultipleRepeat":"multiple repeat","NothingToRepeat":"nothing to repeat","OctalRange":"octal escape value %s outside of range 0-0o377","OpenGroup":"cannot refer to an open group","Redefinition":"redefinition of group name %r as group %d; was group %d","TooManyGroups":"too many groups","UnbalancedParenthesis":"unbalanced parenthesis","UnterminatedName":"missing %s, unterminated name","UnterminatedSet":"unterminated character set"}}
+{"feature":["Backreference","NamedCharacter","SetWarning","Verbose","Ascii","Locale","Debug","Conditional","AtomicGroup","Possessive","NotBoundary","NotDigit","NotWord","NullableLoop","CaptureInRepeat","CaptureInLookaround","ChoiceInLookbehind","ClassPastBmpIgnorecase","BytesCategory","BytesBoundary","BytesIgnorecase","Nesting","Nodes","Template","Group","Alternation","UnicodeGroupName"],"part":"tree.names","why":{"AsciiLocale":"ASCII and LOCALE flags are incompatible","AsciiUnicode":"ASCII and UNICODE flags are incompatible","BadEscape":"bad escape %s","BadEscapeEnd":"bad escape (end of pattern)","BadGroupName":"bad character in group name %r","BadRange":"bad character range %s-%s","FlagOnAndOff":"bad inline flags: flag turned on and off","GlobalFlagsNotAtStart":"global flags not at the start of the expression","IncompleteEscape":"incomplete escape %s","InlineIncompatible":"bad inline flags: flags 'a', 'u' and 'L' are incompatible","InlineLocaleStr":"bad inline flags: cannot use 'L' flag with a str pattern","InlineUnicodeBytes":"bad inline flags: cannot use 'u' flag with a bytes pattern","InvalidGroupReference":"invalid group reference %d","LocaleStr":"cannot use LOCALE flag with a str pattern","LookbehindGroup":"cannot refer to group defined in the same lookbehind subpattern","MinGreaterThanMax":"min repeat greater than max repeat","MissingBrace":"missing {","MissingCharacterName":"missing character name","MissingColon":"missing :","MissingFlag":"missing flag","MissingFlagEnd":"missing -, : or )","MissingGroupName":"missing group name","MultipleRepeat":"multiple repeat","NothingToRepeat":"nothing to repeat","OctalRange":"octal escape value %s outside of range 0-0o377","OpenGroup":"cannot refer to an open group","Redefinition":"redefinition of group name %r as group %d; was group %d","TooManyGroups":"too many groups","TurnOffTypeFlags":"bad inline flags: cannot turn off flags 'a', 'u' and 'L'","UnbalancedParenthesis":"unbalanced parenthesis","UnexpectedEnd":"unexpected end of pattern","UnicodeBytes":"cannot use UNICODE flag with a bytes pattern","UnknownExtension":"unknown extension ?%s","UnknownFlag":"unknown flag","UnknownGroupName":"unknown group name %r","UnterminatedComment":"missing ), unterminated comment","UnterminatedName":"missing %s, unterminated name","UnterminatedSet":"unterminated character set","UnterminatedSubpattern":"missing ), unterminated subpattern"}}
 {"dump":"[]","part":"tree.dump","pattern":"","tree":[]}
 {"dump":"[(LITERAL, 97)]","part":"tree.dump","pattern":"a","tree":[["lit",97]]}
 {"dump":"[(LITERAL, 0), (LITERAL, 1114111), (LITERAL, 55296)]","part":"tree.dump","pattern":"~x00~U0010ffff~ud800","tree":[["lit",0],["lit",1114111],["lit",55296]]}
@@ -423,10 +423,10 @@
 {"answer":"=2,2","part":"parse.repeat","pattern":"a~*"}
 {"answer":"=0,18446744073709551616","part":"parse.repeat","pattern":"~**"}
 {"answer":"=1,18446744073709551616","part":"parse.repeat","pattern":"a*b"}
-{"answer":"?Alternation@2","part":"parse.repeat","pattern":"a*|b"}
-{"answer":"?Group@2","part":"parse.repeat","pattern":"a*("}
+{"answer":"=0,18446744073709551616","part":"parse.repeat","pattern":"a*|b"}
+{"answer":"!UnterminatedSubpattern@2","part":"parse.repeat","pattern":"a*("}
 {"answer":"!UnbalancedParenthesis@2","part":"parse.repeat","pattern":"a*)"}
-{"answer":"?Group@0","part":"parse.repeat","pattern":"(a)*"}
+{"answer":"=0,18446744073709551616","part":"parse.repeat","pattern":"(a)*"}
 {"answer":"!BadEscapeEnd@2","part":"parse.repeat","pattern":"a*~"}
 {"answer":"!BadEscapeEnd@4","part":"parse.repeat","pattern":"a{2}~"}
 {"answer":"!BadEscapeEnd@2","part":"parse.repeat","pattern":"a{~"}
@@ -462,5 +462,226 @@
 {"part":"parse.width","tree":[["max",2,2,[["max",4294967294,4294967294,[["max",4294967294,4294967294,[["lit",97]]]]]]]],"width":["18446744073709551616","18446744073709551616"]}
 {"part":"parse.width","tree":[["max",0,4294967294,[["max",0,null,[["lit",97]]]]]],"width":["0","18446744073709551616"]}
 {"part":"parse.width","tree":[["max",4294967294,4294967294,[["max",0,0,[["lit",97]]]]]],"width":["0","0"]}
-{"count":20000,"fragments":["a","b","[ab]",".","^","$","~b","~d","~A","*","+","?","{","}",",","0","2","{2}","{,3}","{2,}","{1,2}","{3,2}","{0}","{4294967295}","{4294967294}","*?","+?","??","*+","{2}?","{2}+","(",")","|","~","~{","~*"],"part":"parse.sweep","seed":20261121,"sha256":"c3ed318fa119bd2731bcdfcc95c2116516140ad62fa7c661baa0c2fff6eb8d80"}
+{"count":20000,"fragments":["a","b","[ab]",".","^","$","~b","~d","~A","*","+","?","{","}",",","0","2","{2}","{,3}","{2,}","{1,2}","{3,2}","{0}","{4294967295}","{4294967294}","*?","+?","??","*+","{2}?","{2}+","(",")","|","~","~{","~*"],"part":"parse.sweep","seed":20261121,"sha256":"961d0a3f3b2cb0eea42f9519c2210b19db1843e371823a90accd93490ab308b9"}
 {"count":4000,"part":"parse.width_sweep","seed":20261121,"sha256":"b9326eea52febbc7dc945d5bacb2f7d3f01d781f94d82d3ca106959ba6ca6b64"}
+{"answer":"=1,1 g2 f32","part":"parse.group","pattern":"(a)"}
+{"answer":"=0,0 g2 f32","part":"parse.group","pattern":"()"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"(?:a)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?:)"}
+{"answer":"=2,2 g3 f32","part":"parse.group","pattern":"(a)(b)"}
+{"answer":"=1,1 g3 f32","part":"parse.group","pattern":"((a))"}
+{"answer":"=3,3 g3 f32","part":"parse.group","pattern":"(a(b)c)"}
+{"answer":"=4,4 g1 f32","part":"parse.group","pattern":"a(?:bc)d"}
+{"answer":"=4,4 g1 f32","part":"parse.group","pattern":"(?:a(?:b)c)d"}
+{"answer":"=0,18446744073709551616 g1 f32","part":"parse.group","pattern":"(?:a)*"}
+{"answer":"=0,18446744073709551616 g1 f32","part":"parse.group","pattern":"(?:ab)*"}
+{"answer":"=0,18446744073709551616 g2 f32","part":"parse.group","pattern":"(a)*"}
+{"answer":"=1,1 g2 f32","part":"parse.group","pattern":"(a|b)"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"(?:a|b)"}
+{"answer":"=3,3 g1 f32","part":"parse.group","pattern":"(?:ab|cd)e"}
+{"answer":"=1,1 g2 f32","part":"parse.group","pattern":"(?P<n>a)"}
+{"answer":"=2,2 g3 f32","part":"parse.group","pattern":"(?P<n>a)(?P<m>b)"}
+{"answer":"!Redefinition@12","part":"parse.group","pattern":"(?P<n>a)(?P<n>b)"}
+{"answer":"=1,1 g2 f32","part":"parse.group","pattern":"(?P<a1_>x)"}
+{"answer":"=1,1 g2 f32","part":"parse.group","pattern":"(?P<_>x)"}
+{"answer":"=1,1 g2 f32","part":"parse.group","pattern":"(?P<Z9>x)"}
+{"answer":"!BadGroupName@4","part":"parse.group","pattern":"(?P<a\n>x)"}
+{"answer":"!BadGroupName@4","part":"parse.group","pattern":"(?P<1a>x)"}
+{"answer":"!BadGroupName@4","part":"parse.group","pattern":"(?P<0a>x)"}
+{"answer":"?UnicodeGroupName@4","part":"parse.group","pattern":"(?P<\u0080>a)"}
+{"answer":"!BadGroupName@4","part":"parse.group","pattern":"(?P<\u007f>a)"}
+{"answer":"!BadGroupName@4","part":"parse.group","pattern":"(?P<a-b>x)"}
+{"answer":"!BadGroupName@4","part":"parse.group","pattern":"(?P<a b>x)"}
+{"answer":"!BadGroupName@4","part":"parse.group","pattern":"(?P<a~b>x)"}
+{"answer":"?UnicodeGroupName@4","part":"parse.group","pattern":"(?P<\u00e9>x)"}
+{"answer":"?UnicodeGroupName@4","part":"parse.group","pattern":"(?P<a\u00e9>x)"}
+{"answer":"!MissingGroupName@4","part":"parse.group","pattern":"(?P<>x)"}
+{"answer":"!UnterminatedName@4","part":"parse.group","pattern":"(?P<a"}
+{"answer":"!MissingGroupName@4","part":"parse.group","pattern":"(?P<"}
+{"answer":"!UnexpectedEnd@3","part":"parse.group","pattern":"(?P"}
+{"answer":"!UnknownExtension@1","part":"parse.group","pattern":"(?Px)"}
+{"answer":"!UnknownExtension@1","part":"parse.group","pattern":"(?P~x)"}
+{"answer":"!UnknownExtension@1","part":"parse.group","pattern":"(?P>x)"}
+{"answer":"=1,1 g2 f0","bytes":true,"part":"parse.group","pattern":"(?P<n>a)"}
+{"answer":"?Backreference@8","part":"parse.group","pattern":"(?P<n>a)(?P=n)"}
+{"answer":"!UnknownGroupName@4","part":"parse.group","pattern":"(?P=n)"}
+{"answer":"!OpenGroup@10","part":"parse.group","pattern":"(?P<n>(?P=n))"}
+{"answer":"!BadGroupName@12","part":"parse.group","pattern":"(?P<n>a)(?P=1a)"}
+{"answer":"?UnicodeGroupName@12","part":"parse.group","pattern":"(?P<n>a)(?P=\u00e9)"}
+{"answer":"!MissingGroupName@4","part":"parse.group","pattern":"(?P=)"}
+{"answer":"!UnterminatedName@4","part":"parse.group","pattern":"(?P=n"}
+{"answer":"?Backreference@3","part":"parse.group","pattern":"(a)~1"}
+{"answer":"!InvalidGroupReference@1","part":"parse.group","pattern":"~1"}
+{"answer":"!OpenGroup@2","part":"parse.group","pattern":"(a~1)"}
+{"answer":"?Backreference@7","part":"parse.group","pattern":"(a)(?<=~1)"}
+{"answer":"!LookbehindGroup@9","part":"parse.group","pattern":"(?<=(a)~1)"}
+{"answer":"?Backreference@12","part":"parse.group","pattern":"(?P<n>a)(?<=(?P=n))"}
+{"answer":"!LookbehindGroup@24","part":"parse.group","pattern":"(?<=(?P<n>a)(?<=b)(?P=n))"}
+{"answer":"!LookbehindGroup@18","part":"parse.group","pattern":"(?<=(?P<n>a)(?P=n))"}
+{"answer":"?Backreference@6","part":"parse.group","pattern":"(a)(b)~2~3"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?#x)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?#)"}
+{"answer":"=2,2 g1 f32","part":"parse.group","pattern":"a(?#x)b"}
+{"answer":"!UnterminatedComment@0","part":"parse.group","pattern":"(?#x"}
+{"answer":"!UnterminatedComment@0","part":"parse.group","pattern":"(?#~)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?#~)x)"}
+{"answer":"=1,1 g1 f34","part":"parse.group","pattern":"(?#a)(?i)b"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?=a)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?!a)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?<=a)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?<!a)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?!)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?<!)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?=)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?<=)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?<=a|b)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?<=(?<=a)b)"}
+{"answer":"=1,1 g3 f32","part":"parse.group","pattern":"(?<=(a))(b)"}
+{"answer":"!UnknownExtension@1","part":"parse.group","pattern":"(?<x)"}
+{"answer":"!UnexpectedEnd@3","part":"parse.group","pattern":"(?<"}
+{"answer":"!UnknownExtension@1","part":"parse.group","pattern":"(?<~=a)"}
+{"answer":"!UnterminatedSubpattern@0","part":"parse.group","pattern":"(?=a"}
+{"answer":"!UnterminatedSubpattern@0","part":"parse.group","pattern":"(?<=a"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"a(?=b)*"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?=a)+"}
+{"answer":"?Conditional@0","part":"parse.group","pattern":"(?(1)a|b)"}
+{"answer":"?Conditional@3","part":"parse.group","pattern":"(a)(?(1)a|b)"}
+{"answer":"?Conditional@0","part":"parse.group","pattern":"(?("}
+{"answer":"?AtomicGroup@0","part":"parse.group","pattern":"(?>a)"}
+{"answer":"?AtomicGroup@0","part":"parse.group","pattern":"(?>"}
+{"answer":"?Possessive@6","part":"parse.group","pattern":"(?:a)*+"}
+{"answer":"?Possessive@4","part":"parse.group","pattern":"(a)++"}
+{"answer":"!UnterminatedSubpattern@0","part":"parse.group","pattern":"("}
+{"answer":"!UnexpectedEnd@2","part":"parse.group","pattern":"(?"}
+{"answer":"!UnterminatedSubpattern@0","part":"parse.group","pattern":"(a"}
+{"answer":"!UnterminatedSubpattern@0","part":"parse.group","pattern":"((a)"}
+{"answer":"!UnbalancedParenthesis@3","part":"parse.group","pattern":"(a))"}
+{"answer":"!UnbalancedParenthesis@1","part":"parse.group","pattern":"a)"}
+{"answer":"!UnbalancedParenthesis@0","part":"parse.group","pattern":")"}
+{"answer":"!UnterminatedSubpattern@0","part":"parse.group","pattern":"(?:a"}
+{"answer":"!UnknownExtension@1","part":"parse.group","pattern":"(?Q)"}
+{"answer":"!UnknownExtension@1","part":"parse.group","pattern":"(?~x)"}
+{"answer":"!BadEscapeEnd@2","part":"parse.group","pattern":"(?~"}
+{"answer":"!UnknownExtension@1","part":"parse.group","pattern":"(?)"}
+{"answer":"!UnterminatedSubpattern@5","part":"parse.group","pattern":"(?=a)("}
+{"answer":"=1,1 g1 f34","part":"parse.group","pattern":"(?i)a"}
+{"answer":"=1,1 g1 f42","part":"parse.group","pattern":"(?im)a"}
+{"answer":"=1,1 g1 f56","part":"parse.group","pattern":"(?s)(?m)a"}
+{"answer":"=1,1 g1 f34","part":"parse.group","pattern":"(?#c)(?i)a"}
+{"answer":"!GlobalFlagsNotAtStart@1","part":"parse.group","pattern":"a(?i)"}
+{"answer":"!GlobalFlagsNotAtStart@3","part":"parse.group","pattern":"(a)(?i)"}
+{"answer":"!GlobalFlagsNotAtStart@2","part":"parse.group","pattern":"a|(?i)b"}
+{"answer":"!GlobalFlagsNotAtStart@3","part":"parse.group","pattern":"(?:(?i))"}
+{"answer":"=0,1 g1 f34","part":"parse.group","pattern":"(?i)|b"}
+{"answer":"=1,1 g1 f96","part":"parse.group","pattern":"(?x)a"}
+{"answer":"?Verbose@5","part":"parse.group","pattern":"(?x)a b"}
+{"answer":"?Verbose@7","part":"parse.group","pattern":"(?x)a|b c"}
+{"answer":"=1,3 g1 f96","part":"parse.group","pattern":"(?x)a|(?-x:b c)"}
+{"answer":"=1,1 g1 f256","part":"parse.group","pattern":"(?a)a"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"(?u)a"}
+{"answer":"!InlineLocaleStr@3","part":"parse.group","pattern":"(?L)a"}
+{"answer":"=1,1 g1 f4","bytes":true,"part":"parse.group","pattern":"(?L)a"}
+{"answer":"!InlineUnicodeBytes@3","bytes":true,"part":"parse.group","pattern":"(?u)a"}
+{"answer":"=1,1 g1 f256","bytes":true,"part":"parse.group","pattern":"(?a)a"}
+{"answer":"!InlineIncompatible@4","part":"parse.group","pattern":"(?au)a"}
+{"answer":"!InlineIncompatible@4","part":"parse.group","pattern":"(?ua)a"}
+{"answer":"=1,1 g1 f256","part":"parse.group","pattern":"(?aa)a"}
+{"answer":"=1,1 g1 f258","part":"parse.group","pattern":"(?ia)a"}
+{"answer":"!MissingFlagEnd@3","part":"parse.group","pattern":"(?i"}
+{"answer":"!UnknownFlag@3","part":"parse.group","pattern":"(?iz)"}
+{"answer":"!MissingFlagEnd@3","part":"parse.group","pattern":"(?i1)"}
+{"answer":"!UnknownFlag@3","part":"parse.group","pattern":"(?i\u00e9)"}
+{"answer":"!UnknownExtension@1","part":"parse.group","pattern":"(?\u00e9)"}
+{"answer":"!MissingFlagEnd@3","part":"parse.group","pattern":"(?i~m)"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"(?i:a)"}
+{"answer":"=0,18446744073709551616 g1 f32","part":"parse.group","pattern":"(?i:a)*"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"(?-i:a)"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"(?i-m:a)"}
+{"answer":"=0,18446744073709551616 g1 f32","part":"parse.group","pattern":"(?s:.)*"}
+{"answer":"?Verbose@5","part":"parse.group","pattern":"(?x:a b)"}
+{"answer":"=3,3 g1 f32","part":"parse.group","pattern":"(?-x:a b)"}
+{"answer":"=3,3 g1 f96","flags":64,"part":"parse.group","pattern":"(?-x:a b)"}
+{"answer":"=3,3 g1 f32","part":"parse.group","pattern":"(?x:(?-x:a b))"}
+{"answer":"?Verbose@6","part":"parse.group","pattern":"(?x:a| )"}
+{"answer":"?Verbose@3","flags":64,"part":"parse.group","pattern":"(a| )"}
+{"answer":"?Verbose@7","part":"parse.group","pattern":"(?x)(a| b)"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"(?ai:x)"}
+{"answer":"=1,1 g1 f258","part":"parse.group","pattern":"(?ai)x"}
+{"answer":"=1,1 g1 f0","bytes":true,"part":"parse.group","pattern":"(?Li:x)"}
+{"answer":"=1,1 g1 f34","part":"parse.group","pattern":"(?ui)x"}
+{"answer":"!FlagOnAndOff@5","part":"parse.group","pattern":"(?i-i:a)"}
+{"answer":"!FlagOnAndOff@7","part":"parse.group","pattern":"(?im-sm:a)"}
+{"answer":"!MissingFlag@3","part":"parse.group","pattern":"(?-:a)"}
+{"answer":"!MissingFlag@3","part":"parse.group","pattern":"(?-"}
+{"answer":"!MissingFlag@4","part":"parse.group","pattern":"(?i-"}
+{"answer":"!MissingColon@5","part":"parse.group","pattern":"(?i-m"}
+{"answer":"!UnknownFlag@4","part":"parse.group","pattern":"(?i-z:a)"}
+{"answer":"!MissingFlag@4","part":"parse.group","pattern":"(?i-1:a)"}
+{"answer":"!UnknownFlag@3","part":"parse.group","pattern":"(?-\u00e9:a)"}
+{"answer":"!TurnOffTypeFlags@4","part":"parse.group","pattern":"(?-a:a)"}
+{"answer":"!TurnOffTypeFlags@4","part":"parse.group","pattern":"(?-u:a)"}
+{"answer":"!TurnOffTypeFlags@4","part":"parse.group","pattern":"(?-L:a)"}
+{"answer":"!MissingColon@5","part":"parse.group","pattern":"(?-im)"}
+{"answer":"!MissingColon@5","part":"parse.group","pattern":"(?i-m)"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"(?a:a)"}
+{"answer":"=1,1 g1 f0","bytes":true,"part":"parse.group","pattern":"(?L:a)"}
+{"answer":"!TurnOffTypeFlags@4","bytes":true,"part":"parse.group","pattern":"(?-L:a)"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"a|b"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"a|b|c"}
+{"answer":"=2,2 g1 f32","part":"parse.group","pattern":"ab|ac"}
+{"answer":"=2,2 g1 f32","part":"parse.group","pattern":"ab|ab"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"a|a"}
+{"answer":"=3,3 g1 f32","part":"parse.group","pattern":"abc|abd|abe"}
+{"answer":"=1,2 g1 f32","part":"parse.group","pattern":"ab|a"}
+{"answer":"=0,1 g1 f32","part":"parse.group","pattern":"a|"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"|"}
+{"answer":"=0,1 g1 f32","part":"parse.group","pattern":"|a"}
+{"answer":"=0,1 g1 f32","part":"parse.group","pattern":"a||b"}
+{"answer":"=3,3 g1 f32","part":"parse.group","pattern":"x(?:ab|ac)"}
+{"answer":"=2,18446744073709551616 g1 f32","part":"parse.group","pattern":"a+b|a+c"}
+{"answer":"=2,2 g1 f32","part":"parse.group","pattern":"(?:a)b|(?:a)c"}
+{"answer":"=2,2 g3 f32","part":"parse.group","pattern":"(a)b|(a)c"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"(?=a)b|(?=a)c"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"a(?!)|a(?!)"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"^a|^b"}
+{"answer":"=2,2 g1 f32","part":"parse.group","pattern":"a{2}|a{2}"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"[ab]|c"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"[^a]|b"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"[a-c]|[d]|e"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"~d|a"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"~w|~W"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":".|a"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"a|."}
+{"answer":"=1,1 g3 f32","part":"parse.group","pattern":"(a)|(b)"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"a|b|[^c]"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"[^ab]|c"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"a|[^bc]"}
+{"answer":"=1,2 g1 f32","part":"parse.group","pattern":"a|bc|d"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"a|a|b"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"[ab]|[ba]"}
+{"answer":"=0,18446744073709551616 g1 f32","part":"parse.group","pattern":"(?:a|b)*"}
+{"answer":"=1,1 g1 f32","part":"parse.group","pattern":"(?i:a)|(?i:a)"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?:)|(?:)"}
+{"answer":"=1,1 g1 f0","bytes":true,"part":"parse.group","pattern":"a|b"}
+{"answer":"=1,1 g1 f256","flags":256,"part":"parse.group","pattern":"a"}
+{"answer":"%LocaleStr","flags":4,"part":"parse.group","pattern":"a"}
+{"answer":"%AsciiUnicode","flags":288,"part":"parse.group","pattern":"a"}
+{"answer":"=1,1 g1 f32","flags":32,"part":"parse.group","pattern":"a"}
+{"answer":"%LocaleStr","flags":4,"part":"parse.group","pattern":"a)"}
+{"answer":"%AsciiUnicode","flags":32,"part":"parse.group","pattern":"(?a)a"}
+{"answer":"%UnicodeBytes","bytes":true,"flags":32,"part":"parse.group","pattern":"a"}
+{"answer":"=1,1 g1 f256","bytes":true,"flags":256,"part":"parse.group","pattern":"a"}
+{"answer":"=1,1 g1 f4","bytes":true,"flags":4,"part":"parse.group","pattern":"a"}
+{"answer":"%AsciiLocale","bytes":true,"flags":260,"part":"parse.group","pattern":"a"}
+{"answer":"%AsciiLocale","bytes":true,"flags":256,"part":"parse.group","pattern":"(?L)a"}
+{"answer":"%AsciiLocale","bytes":true,"flags":4,"part":"parse.group","pattern":"(?a)a"}
+{"answer":"=1,1 g1 f58","flags":26,"part":"parse.group","pattern":"a"}
+{"answer":"?Verbose@1","flags":64,"part":"parse.group","pattern":"a b"}
+{"answer":"=3,3 g1 f96","flags":64,"part":"parse.group","pattern":"a~ b"}
+{"answer":"?Verbose@10","flags":64,"part":"parse.group","pattern":"(?-x:a b)c d"}
+{"answer":"=0,0 g101 f32","part":"parse.group","pattern":"(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((())))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))"}
+{"answer":"?Nesting@101","part":"parse.group","pattern":"((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((()))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))"}
+{"answer":"?Nesting@303","part":"parse.group","pattern":"(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:"}
+{"answer":"=0,0 g1 f32","part":"parse.group","pattern":"(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=(?=))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))"}
+{"count":20000,"flags":[0,0,0,2,24,64,256,4,32],"fragments":["a","b","ab","[ab]",".","^","(",")","|","(?:","(?P<a>","(?P<b>","(?P=a)","(?=","(?!","(?<=","(?<!","(?i)","(?x)","(?a)","(?i:","(?-i:","(?#c)","(?(1)","(?>","~1","*","+?","{2}"," ","\u00e9"],"part":"parse.fuzz","seed":20261121,"sha256":"60cb1cd9419f7f7a433f835baaf5a34514c41957aa42dec8eda66acee3aa6066"}
+{"chains":["a82a26718330d9c6","84b1cd0e03074b14","7adb0e5c850c7b2a","84b1cd0e03074b14","d8a7650a64e8f4db","cb26df1f77f63e89","cb26df1f77f63e89","cb26df1f77f63e89","0549cd4ac6d396cd","5bd15f6feff6defa","7aa0b82a0d8edbac","46b16e62c5a6de1a","7f10c3ec2c4f6a06","1ac388a09b80ea4c","9757f6e32f43c7b3","cb26df1f77f63e89","4d7e16796f60b568","20c0750797b65130","02bf6cd8278f1d57","20c0750797b65130","75076969b4533595","4a28ae1bfd413c0b","cb26df1f77f63e89","c11eb34f7b260f9f","843d37df86013497","09bf934197eae485","d9c1ee02a8596de9","61cb2177c174db1b","4271cb152751f04b","46b16e62c5a6de1a","05d3447c9e96dfa3","84b1cd0e03074b14","cb26df1f77f63e89","7c1b200c2e863641","0eef5661dbc0dd8d","093e603868678829","d8a7650a64e8f4db","7f10c3ec2c4f6a06","cb26df1f77f63e89","cb26df1f77f63e89","cb26df1f77f63e89","7f10c3ec2c4f6a06","cb26df1f77f63e89","2af8685a8c87c4df","7f10c3ec2c4f6a06","cb26df1f77f63e89","5dc9e69c5e2d4ffb","cb26df1f77f63e89","466c74bae9798b13","4ef2f39ecb74294d","08ce431d9f9222e4","b2751f1c11e623ca","0549cd4ac6d396cd","7495dd0616f20e5a","7495dd0616f20e5a","89b8b5d25a00fe63","cb26df1f77f63e89","d46502828fbb8b59","cb26df1f77f63e89","d46502828fbb8b59","cb26df1f77f63e89","20c0750797b65130","3884659a82514bd6","cb26df1f77f63e89","89b8b5d25a00fe63","7f10c3ec2c4f6a06","cb26df1f77f63e89","cb26df1f77f63e89","cb26df1f77f63e89","89b8b5d25a00fe63","cb26df1f77f63e89","cb26df1f77f63e89","0d4dcc713bb6d704","cb26df1f77f63e89","6af9df2371345d2b","7495dd0616f20e5a","05d8793c4b66e123","ab7062c3b938e15a","1783d5cc39b4434f","c33c38993e85f875","3b756657b97800b9","b955c9fbf9aacaa0","84b1cd0e03074b14","b302823a91fc9f4a","d9c1ee02a8596de9","28eba2b1e045d28e","a8fc5b766b1baede","b0bc289caf52b72e","1ac388a09b80ea4c","4f8c13eab6b5cb6d","71ee5baaec5e7d70","e9514fb8745ebdbe","448516f9058b6c53","4d7e16796f60b568","0e16b9b1ff1727f0","495d1a59857baf1e","c0ebcf891e5cf592","14f2b18e1209cce4","efb6323667d07693","1562a3b5adfad777","0e16b9b1ff1727f0","4ef2f39ecb74294d","9c81fd4571edc341","6a8e970d1bd5e366","154a1803c767cd19","b6366bfae4bc2320","7fe2e2a4fbdd3006","d9c1ee02a8596de9","29a5382daf30d8d6","7511c04cac131abf","4271cb152751f04b","0e16b9b1ff1727f0","6a8e970d1bd5e366","f505c285c9bf84b3","33b8e2285795f8cb","b0fa83791a61fc10","1e7da7a6fbc94d3e","b62e629fdf135547","4271cb152751f04b","e9514fb8745ebdbe","1ac388a09b80ea4c","1ac388a09b80ea4c","37482f52d9b7942a","7e0ebec9c0bb1c78","cb26df1f77f63e89","89b8b5d25a00fe63","cb26df1f77f63e89","0e16b9b1ff1727f0","495d1a59857baf1e","b078b4f68707b006","495d1a59857baf1e","8af9fe8d4cbefc05","8b9e87a3937896ab","cb26df1f77f63e89","46b16e62c5a6de1a","1ac388a09b80ea4c","84b1cd0e03074b14","84b1cd0e03074b14","367481b871257add","ca07825699ad5c08","e5e8039bb1700efe","0faf6d4c76ca8959","27b09f8cfb13401a","46b16e62c5a6de1a","0160030e5302a76f","6af9df2371345d2b","6af9df2371345d2b","2af8685a8c87c4df","20c0750797b65130","cb26df1f77f63e89","cb26df1f77f63e89","cb26df1f77f63e89","91997f3cb4ee34bf","c4c0fb5cbb24a296","b0fa83791a61fc10","a7b6b1a1a4667191","4a9e7130057b491c","4271cb152751f04b","128fb732f4f6f13e","367481b871257add","1e7da7a6fbc94d3e","7adb0e5c850c7b2a","6a8e970d1bd5e366","567307141d5d6d93","abb57b0f01c118aa","f07fe20808c91b6c","5421f799c8ce40c9","72c437dc713a0e49","01862bc78eb52193","1ccfd1ce3d970889","4dbfe0cbfedab080","9f1e0368db9d1349","9957bb74345466c1","dd348c056d7761a6","5421f799c8ce40c9","5421f799c8ce40c9","1ccfd1ce3d970889","09a5d517123d1456","a8c02a896a8df058","4f74a371a14d89c6","df1af2fa78a9b9a0","11555605cd201740","4dbfe0cbfedab080"],"part":"parse.inventory"}

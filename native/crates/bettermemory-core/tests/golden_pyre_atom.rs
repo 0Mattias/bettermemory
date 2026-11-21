@@ -64,6 +64,7 @@ fn line<T>(answer: Built<T>, shown: impl FnOnce(T) -> String) -> String {
         Err(BuildError::Unsupported { at, what }) => format!("?{what:?}@{at}"),
         Err(BuildError::Overflow) => "%Overflow".into(),
         Err(BuildError::DigitLimit) => "%DigitLimit".into(),
+        Err(BuildError::Value(why)) => format!("%{why:?}"),
     }
 }
 
@@ -169,7 +170,7 @@ fn chain(pattern: &[u32], istext: bool) -> Vec<String> {
         let at = match read {
             Ok(_) => None,
             Err(BuildError::Invalid { at, .. } | BuildError::Unsupported { at, .. }) => Some(at),
-            Err(BuildError::Overflow | BuildError::DigitLimit) => None,
+            Err(BuildError::Overflow | BuildError::DigitLimit | BuildError::Value(_)) => None,
         };
         lines.push(line(read, |tree| tree.dump()));
         let Some(at) = at else { return lines };

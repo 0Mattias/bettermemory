@@ -1,21 +1,24 @@
 //! Every row of the `parse.*` parts of `pyre.jsonl` and `pyre_python.jsonl`
-//! against `pyre::parse` (the repeats, read through `parse_flat`) and
-//! `SubPattern::getwidth`: written repeat patterns, trees built by hand,
-//! and two sweeps regenerated here by the generator's rule and compared by
-//! count and digest. An answer of `pyre.jsonl` holds no tree text:
-//! `=lo,hi` for the width of the tree, `!Why@at` for an error of `re`,
-//! `?Feature@at` for a refusal, `%Overflow` for the OverflowError of a
-//! repeat's bound. `pyre_python.jsonl` holds the tree texts. Rows of other
-//! parts belong to other units' tests.
+//! against `pyre::parse::parse` and `SubPattern::getwidth`: written
+//! patterns (repeats, groups, flags, alternatives), trees built by hand,
+//! the reference's own patterns read as chains, and three sweeps
+//! regenerated here by the generator's rule and compared by count and
+//! digest. An answer of `pyre.jsonl` holds no tree text: `=lo,hi` for the
+//! width of the tree (with ` gN fF`, the groups and the flags of the
+//! state, in `parse.group`, `parse.fuzz` and `parse.inventory`), `!Why@at`
+//! for an error of `re`, `?Feature@at` for a refusal, `%Overflow`,
+//! `%DigitLimit` and `%Why` for the OverflowError and the two ValueErrors.
+//! `pyre_python.jsonl` holds the tree texts. Rows of other parts belong to
+//! other units' tests.
 
 mod common;
 
 use std::collections::BTreeSet;
 
-use bettermemory_core::pyre::atom::parse_flat;
+use bettermemory_core::pyre::parse::parse;
 use bettermemory_core::pyre::token::Built;
 use bettermemory_core::pyre::tree::{
-    self, At, BuildError, Category, Member, Node, SubPattern, MAXREPEAT,
+    self, At, BuildError, Category, Member, Node, State, SubPattern, MAXREPEAT,
 };
 use common::parity::Ledger;
 use serde_json::Value;
@@ -63,27 +66,43 @@ fn unspell(v: &Value) -> Vec<u32> {
 }
 
 /// The generator's `_failed`, or `shown` of the tree.
-fn line(answer: Built<SubPattern>, shown: impl FnOnce(SubPattern) -> String) -> String {
+fn line<T>(answer: Built<T>, shown: impl FnOnce(T) -> String) -> String {
     match answer {
         Ok(tree) => shown(tree),
         Err(BuildError::Invalid { at, why }) => format!("!{why:?}@{at}"),
         Err(BuildError::Unsupported { at, what }) => format!("?{what:?}@{at}"),
         Err(BuildError::Overflow) => "%Overflow".into(),
         Err(BuildError::DigitLimit) => "%DigitLimit".into(),
+        Err(BuildError::Value(why)) => format!("%{why:?}"),
     }
 }
 
 /// The generator's `_outcome`.
 fn outcome(pattern: &[u32], istext: bool) -> String {
-    line(parse_flat(pattern, istext, false), |tree| {
+    line(parse(pattern, istext, 0), |(tree, _)| {
         let (lo, hi) = tree.getwidth();
         format!("={lo},{hi}")
     })
 }
 
-/// The generator's `gen_pyre_atom._line`.
+/// The generator's `_counted`.
+fn counted(pattern: &[u32], istext: bool, flags: u32) -> String {
+    line(
+        parse(pattern, istext, flags),
+        |(tree, state): (SubPattern, State)| {
+            let (lo, hi) = tree.getwidth();
+            format!("={lo},{hi} g{} f{}", state.groups(), state.flags)
+        },
+    )
+}
+
+/// The generator's `_line`.
+fn dumped_with(pattern: &[u32], istext: bool, flags: u32) -> String {
+    line(parse(pattern, istext, flags), |(tree, _)| tree.dump())
+}
+
 fn dumped(pattern: &[u32], istext: bool) -> String {
-    line(parse_flat(pattern, istext, false), |tree| tree.dump())
+    dumped_with(pattern, istext, 0)
 }
 
 const ATS: [At; 6] = [
@@ -241,10 +260,21 @@ fn check_repeat(row: &Value) {
     assert_eq!(got, text(&row["answer"]), "{}", row["pattern"]);
 }
 
+/// A row's pattern, whether it is text, and its flags.
+fn case(row: &Value) -> (Vec<u32>, bool, u32) {
+    let flags = row.get("flags").map_or(0, |f| number(f) as u32);
+    (unspell(&row["pattern"]), row.get("bytes").is_none(), flags)
+}
+
+fn check_group(row: &Value) {
+    let (pattern, istext, flags) = case(row);
+    let got = counted(&pattern, istext, flags);
+    assert_eq!(got, text(&row["answer"]), "{}", row["pattern"]);
+}
+
 fn check_tree(row: &Value) {
-    let pattern = unspell(&row["pattern"]);
-    let istext = row.get("bytes").is_none();
-    let got = dumped(&pattern, istext);
+    let (pattern, istext, flags) = case(row);
+    let got = dumped_with(&pattern, istext, flags);
     assert_eq!(got, text(&row["dump"]), "{}", row["pattern"]);
 }
 
@@ -276,6 +306,86 @@ fn check_sweep(row: &Value, answer: fn(&[u32], bool) -> String) {
     assert_eq!(common::hex(&digest.finalize()), text(&row["sha256"]));
 }
 
+/// The generator's `_fuzz`, over `answer`.
+fn check_fuzz(row: &Value, answer: fn(&[u32], bool, u32) -> String) {
+    let seed = number(&row["seed"]);
+    let count = number(&row["count"]);
+    assert!(count >= 1000, "a fuzz of {count} cases");
+    let fragments: Vec<Vec<u32>> = list(&row["fragments"]).iter().map(unspell).collect();
+    let flag_sets: Vec<u32> = list(&row["flags"])
+        .iter()
+        .map(|f| number(f) as u32)
+        .collect();
+    let mut digest = Sha256::new();
+    for i in 0..count {
+        let mut lcg = Lcg(seed + i);
+        let mut pattern = Vec::new();
+        for _ in 0..lcg.draw() % 8 {
+            let at = (lcg.draw() % fragments.len() as u64) as usize;
+            pattern.extend_from_slice(&fragments[at]);
+        }
+        let flags = flag_sets[(lcg.draw() % flag_sets.len() as u64) as usize];
+        let istext = !(lcg.draw().is_multiple_of(3) && pattern.iter().all(|&c| c < 256));
+        digest.update(answer(&pattern, istext, flags).as_bytes());
+        digest.update(b"\n");
+    }
+    assert_eq!(common::hex(&digest.finalize()), text(&row["sha256"]));
+}
+
+/// The patterns of `atom.inventory` in its order, each with whether it is
+/// text.
+fn inventory() -> Vec<(Vec<u32>, bool)> {
+    let file = common::jsonl("pyre.jsonl");
+    let row = file
+        .iter()
+        .find(|row| text(&row["part"]) == "atom.inventory")
+        .expect("the atom.inventory row");
+    let texts = list(&row["str"]).iter().map(|p| (unspell(p), true));
+    let raw = list(&row["bytes"]).iter().map(|p| (unspell(p), false));
+    texts.chain(raw).collect()
+}
+
+/// Where an answer's error or refusal is, `None` for a tree or an error
+/// without a position.
+fn position(line: &str) -> Option<isize> {
+    if !line.starts_with(['!', '?']) {
+        return None;
+    }
+    line.rsplit_once('@')
+        .map(|(_, at)| at.parse().expect("a position"))
+}
+
+/// The generator's `_chain` and `_inventory`: 16 hex digits per pattern.
+fn chains(answer: fn(&[u32], bool, u32) -> String) -> Vec<String> {
+    let mut out = Vec::new();
+    for (pattern, istext) in inventory() {
+        let mut lines = String::new();
+        let mut start = 0usize;
+        loop {
+            let rest = &pattern[start.min(pattern.len())..];
+            let line = answer(rest, istext, 0);
+            lines.push_str(&line);
+            lines.push('\n');
+            match position(&line) {
+                Some(at) => start += usize::try_from(at).expect("a position") + 1,
+                None => break,
+            }
+        }
+        out.push(common::hex(&Sha256::digest(lines.as_bytes()))[..16].to_string());
+    }
+    out
+}
+
+fn check_inventory(row: &Value, answer: fn(&[u32], bool, u32) -> String) {
+    let want: Vec<&str> = list(&row["chains"]).iter().map(text).collect();
+    assert!(want.len() >= 100, "an inventory of {} patterns", want.len());
+    let got = chains(answer);
+    assert_eq!(got.len(), want.len());
+    for (i, (got, want)) in got.iter().zip(&want).enumerate() {
+        assert_eq!(got, want, "the chain of inventory pattern {i}");
+    }
+}
+
 fn check_width_sweep(row: &Value) {
     let seed = number(&row["seed"]);
     let count = number(&row["count"]);
@@ -302,12 +412,15 @@ fn pyre_parse_every_row() {
             "parse.width" => check_width(row),
             "parse.sweep" => check_sweep(row, outcome),
             "parse.width_sweep" => check_width_sweep(row),
+            "parse.group" => check_group(row),
+            "parse.fuzz" => check_fuzz(row, counted),
+            "parse.inventory" => check_inventory(row, counted),
             other => panic!("a part this test does not know: {other}"),
         }
         parts.insert(part);
         checked += 1;
     }
-    assert_eq!(parts.len(), 4, "a part with no row: {parts:?}");
+    assert_eq!(parts.len(), 7, "a part with no row: {parts:?}");
     common::assert_count("pyre.jsonl parse parts", checked, rows.len());
 }
 
@@ -323,7 +436,10 @@ fn pyre_parse_python_every_row() {
         let part = text(&row["part"]);
         match part {
             "parse.tree" => ledger.case(format!("{part} {}", row["pattern"]), || check_tree(row)),
+            "parse.group" => ledger.case(format!("{part} {}", row["pattern"]), || check_group(row)),
             "parse.sweep" => ledger.case(part, || check_sweep(row, dumped)),
+            "parse.fuzz" => ledger.case(part, || check_fuzz(row, dumped_with)),
+            "parse.inventory" => ledger.case(part, || check_inventory(row, dumped_with)),
             other => panic!("a part this test does not know: {other}"),
         }
     }
