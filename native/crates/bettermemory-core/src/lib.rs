@@ -115,7 +115,8 @@
 //!   members index, the witness, file-binding and checkout reads; the
 //!   witness, remote, file-binding, boundary and checkout writes; the
 //!   views and their liveness, continuity, the checkout of an object
-//!   store, the history readings);
+//!   store, the history readings) and unit 2b (the machine rows and the
+//!   proposals);
 //! - [`location_continuity`]: `location.continuity`, witness O where birth
 //!   time cannot decide;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;

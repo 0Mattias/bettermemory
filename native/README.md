@@ -91,7 +91,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks` | `membership_shared.jsonl`, `membership_shared_python.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
-| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl` |
+| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl` |
 | `location_continuity` | `location.continuity` (`location.py` 1040-1094) | `location_continuity.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `entry`, `cli::common` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff` | `cli_common.jsonl`, `cli_common_python.jsonl` |
@@ -2881,7 +2881,7 @@ further `impl<S: MembershipStore> Membership<S>` blocks over the
 | --- | --- | --- | --- |
 | `_PATH_LIVENESS`, `__init__`, `reads_here`, `open` | 251, 268-337 | the location's liveness (a seam) | built (membership-1) |
 | `_call`, `_stamp`, `_put`, `_delete`, `_event` | 338-369 | the store (a seam), the clock | built (membership-1) |
-| `record_machine`, `machines` | 370-424 | the store | membership-2b (membprop) |
+| `record_machine`, `machines` | 370-424 | the store | built (membership-2b) |
 | `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project` | 425-578 | the store | built (membership-1) |
 | `merge` (binds `membership_declare._merge`) | 579-588 | the store | membership-2 |
 | `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses` | 589-636 | the store | built (membership-1) |
@@ -2893,7 +2893,9 @@ further `impl<S: MembershipStore> Membership<S>` blocks over the
 | `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer` | 972-1028, 1079-1207 | the liveness, `location.continuity` | built (membership-3, membview) |
 | `_touch_view` | 1029-1078 | the store (`_put_view`) | membership-4 |
 | `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent` | 1208-1315 | the history reader | built (membership-3, membview) |
-| `_open_proposals` to `settle_legacy_questions` | 1349-1558 | the store | membership-2b (membprop) |
+| `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal` | 1349-1365, 1371-1487 | the store | built (membership-2b) |
+| `pending` | 1366-1370 | `membership_queries.restated` | membership-4 |
+| `settle_legacy_questions` and the rest to 1558 | 1488-1558 | the store, `membership_queries` | membership-4 |
 | `below_root`, `_declared_below`, `_checkout_name`, `_give_token`, `token_written` | 1559-1674 | the token writer | membership-3 |
 | `_record_counts`, `_records_by_project`, `_home_from`, `why` | 1675-1826 | `Store.membership_log` | membership-4 (deferred) |
 | `portable_export`, `_foreign`, `_decides`, `__all__` | 1827-1996 | nothing beyond the above | membership-4 (deferred) |
@@ -3103,6 +3105,56 @@ store calls in order with the event payloads through `_jsonable`, the
 collected rows, and the tables' digest after each sequence. Tests:
 `golden_membership_writes`, `membership_writes_kills`,
 `membership_writes_robustness`.
+
+### Unit membership-2b
+
+`src/membership/machines.rs` and `src/membership/proposals.rs`, further
+`impl` blocks over the model of membership-1.
+
+- `record_machine` (370-411) reads the machine's row in one call; with
+  none it puts the row (`facts_json` from `MachineFacts::to_dict`, the
+  stamp taken before the put) and, for a predecessor, `machine_cloned`
+  with the recorded facts or None. With a row it compares the stored
+  facts by Python's `==` (`location_witness::py_eq`: a dict's keys in
+  any order, `1 == 1.0 == True`, a tuple never equal to a list), and on a
+  difference puts the row with `facts_json` replaced in its place, as
+  `{**row, "facts_json": facts}` keeps it, then `machine_facts_updated`.
+  A row without `facts_json` raises KeyError.
+- `machines` (412-424) reads `id` and `minted` through `str()` and the
+  facts through `dict(... or {})` (`membership_lines::dict_of`). The
+  record `Machine` holds a str predecessor, so a stored predecessor that
+  is neither None nor a str declines (NotPorted), where the reference
+  keeps the value as it is. No store writes one.
+- `_open_proposals`, `proposal` (KeyError with the id's repr) and
+  `_put_proposal` go through `proposal_from` and `proposal_row`.
+- `_open_proposal` is `open_proposal_with(opening, signature)`. The
+  keywords are `Opening`; `line` is `Line::Text` or `Line::Of`, a
+  function of the minted id. An open proposal of the kind on the
+  checkout is returned as it is; with `distinct`, only one whose
+  evidence value under that key equals the given one by Python's `==`,
+  a missing key read as None as `dict.get` reads it. Otherwise the id is
+  minted first, then the evidence made plain, the line built and the
+  stamp taken, so a stamp that fails leaves the minted id unused, as in
+  the reference. The event names the candidates as a list.
+- `_close` is `close`: nothing for a proposal not open as given; else the
+  stored row, read anew, is put answered, and `proposal_answered` names
+  the given proposal's checkout, not the stored one's.
+- `restate_proposal` compares the restated proposal with the stored one
+  by the dataclass's `==` (`fields_eq`: evidence by Python's `==`), so
+  evidence equal by value in another key order puts nothing and still
+  answers the restated value. `dataclasses.replace` keeps the same
+  signature tuple, which equals itself by identity, so a signature that
+  holds a NaN puts nothing either. Evidence with str keys is compared
+  through a hash index, linear in its size as the reference's dict `==`.
+- `pending` (1366-1370) calls `membership_queries.restated` and waits for
+  membership-4.
+
+No pattern of the reference is matched here. Fixtures:
+`tests/contract/gen_membership_proposals.py` runs the reference over
+`gen_membership_core`'s recording store with the `machine` and
+`proposal` kinds added and writes `membership_proposals.jsonl` (not
+gated). Tests: `golden_membership_proposals`,
+`membership_proposals_kills`, `membership_proposals_robustness`.
 
 ## The fold check
 

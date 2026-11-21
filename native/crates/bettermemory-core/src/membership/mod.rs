@@ -11,7 +11,9 @@
 //! Membership<S>` blocks over the `pub(crate)` state and helpers here.
 
 pub mod history;
+pub mod machines;
 pub mod projects;
+pub mod proposals;
 pub mod reads;
 pub mod views;
 pub mod vocab;
