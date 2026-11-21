@@ -11,6 +11,7 @@ pub mod gitconfig_file;
 pub mod gitconfig_tree;
 pub mod githead;
 pub mod gitobjects;
+pub mod gitobjects_files;
 pub mod location_stamps;
 pub mod opened;
 pub mod parity;

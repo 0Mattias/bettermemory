@@ -62,8 +62,9 @@
 //! - [`location_probe`]: the hook client's namespace probe (the cwd's
 //!   state, its view spelling, the host's name);
 //! - [`gitobjects`]: git objects read from a repository's files, its
-//!   first two units (the byte parsers; the zlib streams and the delta
-//!   chain over a file handle);
+//!   first three units (the byte parsers; the zlib streams and the delta
+//!   chain over a file handle; the file reads, the object format and the
+//!   alternates walk);
 //! - [`fsdata`]: the file system as the config readers ask it, as data;
 //! - [`fsutil`]: `_fsutil.py`, its first unit (`unlink_retrying` with
 //!   its Windows retry, `bounded_stream_read`);

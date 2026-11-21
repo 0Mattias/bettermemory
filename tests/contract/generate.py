@@ -77,6 +77,7 @@ from . import (
     gen_githead,
     gen_location_probe,
     gen_gitobjects,
+    gen_gitobjects_files,
     gen_gitobjects_streams,
     gen_gitfile_leaves,
     gen_json,
@@ -223,6 +224,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "location_probe_errno": gen_location_probe.generate_errno,
     "gitobjects": gen_gitobjects.generate,
     "gitobjects_python": gen_gitobjects.generate_python,
+    "gitobjects_files": gen_gitobjects_files.generate,
+    "gitobjects_files_posix": gen_gitobjects_files.generate_posix,
     "gitobjects_streams": gen_gitobjects_streams.generate,
     "githead_posix": gen_githead.generate_posix,
     "capture_vocabulary": gen_capture_vocabulary.generate,
@@ -561,6 +564,8 @@ PLATFORM_GATED = frozenset(
 #: loops); ``location_remotes`` and ``location_spellings`` read real trees
 #: with modes, links and FIFOs (`gen_location_remotes`); ``location_stamped``
 #: changes such trees between reads (`gen_location_stamped`);
+#: ``gitobjects_files_posix`` walks alternates over links, FIFOs and modes,
+#: its directories spelled by ``posixpath.realpath`` (`gen_gitobjects_files`);
 #: ``gitsystem_record`` reads and writes the record over links, modes and
 #: FIFOs (`gen_gitsystem_record`); ``gitsystem_probe`` builds, sweeps and
 #: clears the probe over links, modes and FIFOs (`gen_gitsystem_probe`);
@@ -596,6 +601,7 @@ POSIX_ONLY = frozenset(
         "store_records_e",
         "store_rows_written",
         "githead_posix",
+        "gitobjects_files_posix",
         "location_probe",
         "location_probe_python",
         "location_probe_errno",

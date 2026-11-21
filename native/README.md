@@ -51,7 +51,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
 | `fsutil` | unit 1 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads | `fsutil.jsonl`, `fsutil_python.jsonl` |
-| `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl` |
+| `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`) | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl` |
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only) |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
@@ -2388,6 +2388,9 @@ that Unicode too.
 | `gitobjects_kills` (13), `gitobjects_robustness` (5) | none | i |
 | `golden_gitobjects_streams`: `gitobjects_streams_every_case` | `gitobjects_streams.jsonl` | ii (zlib) |
 | `gitobjects_streams_kills` (15), `gitobjects_streams_robustness` (8) | none | i |
+| `golden_gitobjects_files`: in memory, and on disk (unix) | `gitobjects_files.jsonl` | i |
+| `golden_gitobjects_files_posix`: in memory and on disk (unix) | `gitobjects_files_posix.jsonl` | i; os elsewhere (`gitobjects_files_not_posix`) |
+| `gitobjects_files_kills` (12; 11 off unix), `gitobjects_files_robustness` (5) | none | i |
 | `golden_gitfile_leaves`: `gitfile_leaves_every_case` | `gitfile_leaves.jsonl` | i |
 | `golden_gitfile_leaves_posix`: in memory and on disk (unix) | `gitfile_leaves_posix.jsonl` | i; os elsewhere (`gitfile_leaves_not_posix`) |
 | `gitfile_leaves_robustness` (9; 8 off unix) | none | i |
@@ -7717,8 +7720,9 @@ mode-000 folder can still be listed (a root user);
 `src/bettermemory/gitobjects.py` (1,234 lines, read at 465bc600) reads
 commits, trees and object names from a repository's loose objects, pack
 indexes, packs and alternates, with no git process. Its Rust port is well
-over 600 lines, so it is cut into units, leaves first. Units 1 and 2 are
-built (`gitobjects`, `gitobjects::stream`); the rest is designed below.
+over 600 lines, so it is cut into units, leaves first. Units 1, 2 and 3
+are built (`gitobjects`, `gitobjects::stream`, `gitobjects::files`); unit
+4 is designed below.
 
 ### Map, by function
 
@@ -7732,10 +7736,11 @@ built (`gitobjects`, `gitobjects::stream`); the rest is designed below.
 | `_hex_name`, `_parse_commit`, `_parse_tree` | 1181-1234 | nothing | 1, built |
 | `_Stream.read`, `read_to_end`, `_inflate_at` | 947-986 | zlib inflate over a file handle (seek, read) | 2, built |
 | `_chain`, `_listed_in`, `_take` | 864-944 | a pack file handle (seek, read), zlib | 2, built |
-| `_is_evicted`, `_open`, `_read_whole` | 579-614, 989-992 | `stat` (`st_flags`, `st_file_attributes`), an open that does not wait on a FIFO, `fstat`, `readall` | 3 |
-| `_dir_key`, `_object_dirs`, `_link_alternates` | 500-535, 995-999 | `realpath`, `normcase`, `normpath`, `isabs`, `isdir` | 3 |
-| `_object_format`, `_list_new`, `_rescan`, `_load` | 477-498, 537-575 | `listdir`, `isfile`, `gitfile_rule.object_format` (ported) | 3 |
-| `ObjectReader`: `has`, `has_many`, `_take_loose`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `name_length`, `complete`, `evicted`, `object_dirs`, `_raw`, `_places`, `_object`, `_loose`, `_packed` | 272-746 | all of the above, and `listdir` of a fanout directory | 4 |
+| `_is_evicted`, `_open`, `_read_whole` | 579-614, 989-992 | `stat` (`st_flags`, `st_file_attributes`), an open that does not wait on a FIFO, `fstat`, `readall` | 3, built |
+| `_dir_key`, `_object_dirs`, `_link_alternates` | 500-535, 995-999 | `realpath`, `normcase`, `normpath`, `isabs`, `isdir` | 3, built |
+| `_object_format`, `_list_new`, `_rescan`, `_load` | 477-498, 537-575 | `listdir`, `isfile`, `gitfile_rule.object_format` (ported) | 3, built |
+| `ObjectReader.__init__`, `object_dirs`, `complete`, `evicted` | 287-328 | the loaded state | 3, built |
+| `ObjectReader`: `has`, `has_many`, `_take_loose`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `name_length`, `_raw`, `_places`, `_object`, `_loose`, `_packed` | 330-476, 616-746 | all of the above, and `listdir` of a fanout directory | 4 |
 
 Units 3 and 4: unit 3 is the file reads through `fsdata`'s `Fs`
 (extended with `st_flags` and `st_file_attributes` for eviction, and
@@ -8074,6 +8079,131 @@ Fixtures and tests:
   the packs once `want` is empty (no name is looked up), and a first
   block of 16 KiB (the bytes, the input consumed and the reads do not
   depend on how a call's output is cut into blocks).
+
+### Unit 3, built (`gitobjects::files`)
+
+Lines 109-124, 287-328, 477-614 and 989-1003 were confirmed against the
+source at a0b86dc3. `gitobjects::files` holds `ObjectReader`, the
+reference's reader as far as it loads: its state (`hash_len`, the
+directories, `packs`, the index paths listed, `unreadable`, the evicted
+paths in the order met) and the questions answered from that state alone.
+The machine reaches it through `fsdata`'s `Fs`; the working directory
+`os.path.realpath` reads is an argument, and the git on PATH that
+`gitfile_rule.object_format` asks is a `GitFacts` given at construction.
+Where the reference raises, the answer is `Stop::Raised(class)`; the
+Windows flavour's `realpath`, not ported, is `Stop::NotPorted`, a
+decline.
+
+What each function reproduces:
+
+- `new`: `ObjectReader.__init__`; nothing is read.
+- `load`: `_load`. `_loaded` is set before anything is read, so a
+  question after a raise answers from the state the raise left (a format
+  read, no directories: `complete` False, `object_dirs` empty) and never
+  raises again.
+- `object_format`: `_object_format`. `config` is read whole through
+  `_open`: missing, not a regular file or not openable is length 20
+  (sha1, git's default); evicted is None; otherwise `object_format` of
+  the bytes, 32 for sha256, 20 for sha1, None where git dies on the
+  format.
+- `object_dirs_walk` and `link_alternates`: `_object_dirs` and
+  `_link_alternates`. `objects` must be a directory (`isdir`: `stat`,
+  any error False). Its key is `_dir_key`; each alternates entry
+  (`alternate_entries`, unit 1) is `normpath`ed, a relative one joined to
+  `realpath(objdir)` first; an entry whose key was seen or that is no
+  directory is passed over; each kept one is walked at once, depth first,
+  and no file below depth 5 (`ALT_DEPTH`) is read, so a chain lists six
+  alternates and no seventh. The recursion is the reference's, at most
+  seven frames.
+- `dir_key`: `_dir_key`. `normcase` is the identity on POSIX. Non-strict
+  `realpath` raises no OSError, so the fallback to the path itself is
+  reached only by a file system that raises one; its ValueError (a NUL)
+  goes through, as the reference catches OSError alone.
+- `list_new` and `rescan`: `_list_new` and `_rescan`. Per directory,
+  `listdir` of `pack` (any error passes the directory over), sorted by
+  bytes; each name ending in `.idx` is listed by its joined path once for
+  the reader's life, its pack must be a regular file (`isfile`), and the
+  index is read whole and parsed (`parse_index`, unit 1); a failed read
+  or parse sets `unreadable`. Nothing is listed where the format is None.
+- `open`: `_open`. `stat` (an OSError is None, a ValueError raised); a
+  file that is not regular is None; `_is_evicted` records the path, once,
+  and opens nothing; then the non-waiting `Fs::open` (O_NONBLOCK) and
+  `fstat`, which must say regular again, else the file is closed and the
+  answer is None.
+- `read_whole`: `_read_whole`, `readall` as reads of 64 KiB until an
+  empty one; a read that raises is None.
+- `is_evicted`: `_is_evicted`, SF_DATALESS in `st_flags` or
+  RECALL_ON_DATA_ACCESS (0x400000 alone, not `gitfile_rule`'s
+  RECALL_ON_OPEN as well) in `st_file_attributes`.
+- `object_dirs`, `complete`, `evicted`: the three properties; `evicted`
+  loads nothing.
+- `FsHandle`: an open file of `Fs` behind unit 2's `Handle`, for unit 4's
+  packed reads. `seek` is the new `Fs::seek` (`lseek` from the start:
+  `StdFs` through `SeekFrom::Start`, `MemFs` moving its position, a FIFO
+  and a socket ESPIPE as for `rewind`; by default not offered, which the
+  handle reads as an OSError); `read` is one `read_once`, a non-blocking
+  read with nothing answering empty, as `FileIO.read`'s None reaches
+  `fh.read(n) or b""`.
+
+Decisions:
+
+- The loaded state is a struct of its own and not yet the whole reader:
+  unit 4 adds the object questions to it.
+- `Fs::seek` is added after the trait's `rewind` with a default that
+  declines, so other implementations need no change.
+- The open is `Fs::open`, which never waits on a FIFO; the case "config a
+  FIFO stated regular" (a `stat` that claims a regular file) opens a real
+  FIFO on disk and reads nothing.
+- No pattern of the module is matched in this unit.
+
+Reference findings (reproduced, pinned):
+
+- An alternates entry holding a NUL, raw or C-quoted as `\000`, makes
+  `ObjectReader.object_dirs` and `complete` raise `ValueError`, where the
+  module says a damaged file never raises. Reproduction:
+  `objects/info/alternates` holding a line of `x`, a NUL byte and `y`;
+  `ObjectReader(git_dir).complete` raises ValueError, and asked again is
+  False. The golden cases "a NUL raw", "a NUL quoted" and "a NUL
+  absolute", each in four orders.
+- A git directory path holding a NUL raises the same from the first
+  question (`os.stat` in `_open`). The golden cases "a NUL in the git
+  directory".
+- A `config` the reader cannot open (mode 000) is read as no config:
+  object names of 20 bytes and `complete` True, for a sha256 repository
+  too, where git dies reading the config. The golden case "an unreadable
+  config".
+- An index listed while its pack was missing is never read by a later
+  `_rescan`, since `_listed` holds it. The golden case "rescan after a
+  pack appears".
+
+Fixtures and tests:
+
+- `gitobjects_files.jsonl` (class i, 52 cases) and
+  `gitobjects_files_posix.jsonl` (POSIX only, 37 cases), written by
+  `tests/contract/gen_gitobjects_files.py` from scratch trees on disk,
+  with `os.stat` patched for eviction (`st_flags`, `st_file_attributes`)
+  and for a FIFO stated regular, and `gitfile_rule`'s two questions of
+  the git on PATH answered by the case. The first holds the trees with no
+  link, FIFO, mode or alternates: no config, sha1, sha256, formats git
+  dies on, `compatObjectFormat` under five releases and three answers,
+  evicted configs, indexes beside, without and in place of their packs,
+  truncated, sorted by bytes, rescans, and a NUL in the git directory.
+  The second holds the alternates walk (relative, absolute, C-quoted,
+  comments, a file, cycles through links, a link as the objects
+  directory, chains of 5, 6 and 7, a NUL raw, quoted and absolute in four
+  orders), FIFOs, modes and an evicted alternates file. Paths are
+  recorded relative to the scratch root.
+- `golden_gitobjects_files` and `golden_gitobjects_files_posix` ask each
+  case in memory (`MemFs`) and, on unix, on disk (`StdFs`), under a
+  wrapper that makes the generator's `stat` claims;
+  `gitobjects_files_kills` (12 tests); `gitobjects_files_robustness` (5
+  tests: 20,000 missing entries against 2,000 for linear growth, entries
+  of a MiB and a NUL, sixty directories each naming all, a link cycle,
+  3,000 pack names against 300).
+
+Left for unit 4: `has`, `has_many`, `_take_loose`, `resolve`, `header`,
+`read`, `commit`, `tree`, `fingerprint`, `name_length`, `_raw`,
+`_places`, `_object`, `_loose`, `_packed`.
 
 ## A location capture's vocabulary
 
@@ -11572,8 +11702,8 @@ What the reference has and this build does not, by area:
   MAC by chain segment and replaced detail, the versions' changes and
   body diffs, the record and link rows, `record_history` and the
   renderers (units 2 to 5).
-- Reading a checkout: `gitobjects.py` past its byte parsers and zlib streams (the files,
-  the reader: units 3 and 4), `origin_gitfiles.py` past its decoders, machine leaves
+- Reading a checkout: `gitobjects.py` past its byte parsers, zlib streams and object
+  files (the reader: unit 4), `origin_gitfiles.py` past its decoders, machine leaves
   and config facts (`_config_facts` and its memo, units 4, 6 and 7), `checkout_token.py` past its text and its reads (the
   write, the remint and the claim: units 3 and 4), the origin's settling
   (`origin.py`), `location.py` and the rest of `location_git.py`.

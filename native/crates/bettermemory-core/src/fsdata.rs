@@ -415,6 +415,13 @@ pub trait Fs {
     fn rewind(&self, _file: &mut Self::File) -> Result<(), Refused> {
         Err(Refused::NotOffered)
     }
+    /// `fh.seek(offset)` of an unbuffered file (`lseek(fd, offset,
+    /// SEEK_SET)`): the next read starts at `offset`, past the end too. A
+    /// FIFO or a socket raises OSError (ESPIPE), as [`Fs::rewind`]. By
+    /// default not offered; `StdFs` and `MemFs` answer.
+    fn seek(&self, _file: &mut Self::File, _offset: u64) -> Result<(), Refused> {
+        Err(Refused::NotOffered)
+    }
     /// `fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))` up to its first
     /// NUL: the path the kernel holds for the open file, each component
     /// in the case and Unicode form its folder stores. A path of 1,024
@@ -775,6 +782,13 @@ impl Fs for StdFs {
     fn rewind(&self, file: &mut StdFile) -> Result<(), Refused> {
         (&file.file)
             .seek(SeekFrom::Start(0))
+            .map(|_| ())
+            .map_err(|e| Refused::Raised(py_err(&e)))
+    }
+
+    fn seek(&self, file: &mut StdFile, offset: u64) -> Result<(), Refused> {
+        (&file.file)
+            .seek(SeekFrom::Start(offset))
             .map(|_| ())
             .map_err(|e| Refused::Raised(py_err(&e)))
     }
@@ -1586,6 +1600,17 @@ impl Fs for MemFs {
             Node::Fifo | Node::Socket => Err(Refused::Raised(PyErr::Os)),
             _ => {
                 file.at = 0;
+                Ok(())
+            }
+        }
+    }
+
+    fn seek(&self, file: &mut MemFile, offset: u64) -> Result<(), Refused> {
+        match file.node {
+            // ESPIPE.
+            Node::Fifo | Node::Socket => Err(Refused::Raised(PyErr::Os)),
+            _ => {
+                file.at = usize::try_from(offset).unwrap_or(usize::MAX);
                 Ok(())
             }
         }

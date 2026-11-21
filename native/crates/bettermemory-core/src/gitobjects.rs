@@ -16,6 +16,7 @@
 //! digit limit, an index out of range, a short `struct` read, a malformed
 //! hex prefix), the port answers [`Raised`].
 
+pub mod files;
 pub mod stream;
 
 use sha2::{Digest, Sha256};
