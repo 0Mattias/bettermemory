@@ -47,6 +47,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `location_stamps` | `location_stamps.py` whole: `in_ticks`, `kept_in_ticks`, `stat_each`, `capture_ticks`, `_device_name` (macOS's `os.major`/`os.minor`, and Linux's under a CPython built against glibc or musl), `_drvfs` (the mount table read through `Fs`), `_init_stamps`, `filetime_ns`, `basic_info_ns` (FILE_BASIC_INFO through `Fs::basic_info`, declined by `StdFs`) | `location_stamps.jsonl`, `location_stamps_python.jsonl`, `location_stamps_platform.jsonl` |
 | `location_view` | `location.py`'s view continuity: `_git_dir_at`, `continuity`, `_head_at`, `view_state`, `_carries_project_file`, `_same_number`, with `object_key`, `_at_dotgit`, the project file's parse and the history's `holds` as arguments | `location_view.jsonl`, `location_view_posix.jsonl` |
 | `location_git` | the readers of `location_git.py` that need neither discovery nor the object reader: `_Git`, `_resolve_head` (the peel a callback), `_ref_tips`, `_manifest`, `Reach`, `reachable_among`, `walk` | `location_git_readers.jsonl`, `location_git_readers_posix.jsonl` |
+| `location_witness` | the history half of `location_witness.py` (unit location_witness-1): `NeedWitnesses` with `joined`, `AnsweredHistory`, `AnsweredGit`, `answered_history`, `_independent_answers`, `independent_answer`, and the exchange keeping (`_NONCE`, `EXCHANGE_SECONDS`, `_EXCHANGES_CAP`, `_Kept`, `_EXCHANGES` as `Exchanges`, `_drop`, `ExchangeReads` with `carried`) | `location_witness.jsonl` |
 | `location_reads` | `location_reads.py` whole as a timed runtime: `READ_HANDOFF`, `READ_LANES`, `READ_SLOTS`, `_Flight`, `_Slots`, the board (`_FLIGHTS`, `_LANDED`, `_SLOTS`, `UNANSWERED`, `NOT_READ`) as a `Board` the caller holds, `_stalled`, `_board`, `_give_up`, `_fly`, `bounded_read`, `bounded_reads`, `_Lanes` | `location_reads.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
@@ -2873,6 +2874,8 @@ that Unicode too.
 | `golden_location_probe`: `location_probe_loops` (unix) | `location_probe_python.jsonl` | ii (Python) |
 | `golden_location_probe`: `location_probe_errnos` (unix) | `location_probe_errno.jsonl` | iii |
 | `location_probe_kills` (18 on unix, 14 elsewhere), `location_probe_robustness` (2) | none | i |
+| `golden_location_witness`: `location_witness_every_case` | `location_witness.jsonl` | i |
+| `location_witness_kills` (21), `location_witness_robustness` (6) | none | i |
 | `golden_gitobjects`: `gitobjects_every_case` | `gitobjects.jsonl` | i |
 | `golden_gitobjects`: `gitobjects_python_every_case` | `gitobjects_python.jsonl` | ii (Python) |
 | `gitobjects_kills` (13), `gitobjects_robustness` (5) | none | i |
@@ -6972,6 +6975,116 @@ kinds (103-110) in `capture` (section "A location capture's vocabulary").
 - `golden_location_git_readers`, `golden_location_git_readers_posix`
   (in memory and on disk), `location_git_readers_not_posix`,
   `location_git_readers_kills`, `location_git_readers_robustness`.
+
+## The witness exchange's history half (`location_witness.py`)
+
+`location_witness.py` holds the messages of the witness exchange (design
+8.7). It reads no machine state: every input is the client's decoded
+answers, the clock and a random nonce. Its two halves refer to each
+other only through `ExchangeReads` and `AnsweredGit`, so the cut keeps
+those two together.
+
+### Map of the module
+
+| Function | Reference lines | What it needs from the machine | Status |
+| --- | --- | --- | --- |
+| `NeedWitnesses`, `joined` | 52-93 | none | built (location_witness-1), `NeedWitnesses::joined` |
+| `AnsweredHistory` | 95-179 | none | built (location_witness-1) |
+| `AnsweredGit` | 181-224 | none (`INDEPENDENT_MAX` an argument) | built (location_witness-1) |
+| `answered_history` | 227-239 | none | built (location_witness-1) |
+| `_independent_answers` | 242-258 | none | built (location_witness-1), `independent_answers` |
+| `independent_answer` | 261-286 | the client's git (`RepositoryHistory.independent`, a closure) | built (location_witness-1) |
+| `AnsweredToken` | 289-352 | none | location_witness-2 (lane lwask) |
+| `_NONCE`, `EXCHANGE_SECONDS`, `_EXCHANGES_CAP`, `_EXCHANGES_LOCK` | 355-371 | none | built (location_witness-1); the lock is the caller's |
+| `_Kept`, `_EXCHANGES`, `_drop` | 374-395 | the monotonic clock (an argument) | built (location_witness-1), `Kept`, `Exchanges`, `Exchanges::drop_due` |
+| `ExchangeReads`, `carried` | 398-462 | the monotonic clock and `secrets.token_hex(16)` (arguments) | built (location_witness-1) |
+| `remint_answer`, `remint_refused`, `AnsweredLiveness`, `asked_views` | 465 to the end | the capture, the store's records | location_witness-2 (lane lwask) |
+
+### Unit location_witness-1, built
+
+`location_witness.rs` reproduces the history half.
+
+- `NeedWitnesses { question }` holds the question as a `PyValue` dict.
+  `joined` merges as the reference does, which is not a union: each
+  list a key names keeps every item once in the order first named (a
+  dict with a `path` key by `repr` of its path, the first kept; a dict
+  without one by Python's `==` against what is held, so `{"a": 1}` and
+  `{"a": true}` and `{"a": 1.0}` are one item; any other item by its
+  `repr`, so `1`, `"1"`, `true` and `1.0` are four), and any value that
+  is no list, a flag among them, is the first named, not or-ed. A key
+  whose first value is a flag keeps it when a list comes later, and the
+  other way round. Python's `==` is `py_eq` (numbers by value, dicts
+  whatever their order); identity, which makes a NaN equal to itself in
+  `in`, is not modelled.
+- `AnsweredHistory::new` reads the answers in the reference's order and
+  returns the class it raises: each `x or ()` iterated as Python does (a
+  string by its characters, a dict by its keys, an int, a float or
+  `true` TypeError, a falsy value nothing), an `ancestry` item unpacked
+  into two (a two-character string unpacks, three items are
+  ValueError), and `str(x).lower()` as `capture::str_of` at
+  `STR_DEPTH_TOP` then `unicode::lower`. A value nested past that depth
+  is RecursionError, which the reference's `str()` raises there, not a
+  question: reading it as `NeedWitnesses` would answer where the
+  reference raises. Its methods return `Result<_, NeedWitnesses>`:
+  `holds` and `holds_objects` (sets), `fingerprint` (the walk pair's
+  first item as given, not lowered), `parents`, `blobs` (an empty answer
+  is an answer) and `reachable_among`, a `location_git::Reach` with the
+  relations sorted (the reference's dict and sets carry no order) and
+  `handled` 0. `ancestry_bounded` is false only for JSON `false`.
+  The traits of `membership_records` are not implemented here: the
+  adapter belongs to the membership resolution unit.
+- `AnsweredGit::new(answers, bound)` takes `INDEPENDENT_MAX` as `bound`
+  (256 in `location_git.py`; `repository_history::INDEPENDENT_MAX` once
+  that unit is folded). `independent(commits, asked)` takes the
+  exchange's asked sets (`ExchangeReads.asked`) or None for a reader
+  built without an exchange, where every set not answered is asked and
+  nothing is recorded.
+- `answered_history(answers, bound)` is `History::Git` only for
+  `independent_ok` exactly `true` and an `exchange` key of any value.
+- `independent_answers` keys each well-formed entry by its sorted
+  lowered set, a later entry replacing an earlier in place; a `top` that
+  is no list, empty, or names one not asked is None.
+- `independent_answer(question, answers, history)` takes the client's
+  git as `Option<&mut dyn FnMut(&[PyStr]) -> Option<Vec<String>>>`,
+  asked of the sorted lowered set (which may hold ids that are no hash,
+  as the reference passes them); its answer is sorted and kept once each,
+  as `sorted` of a set.
+- The module globals are `Exchanges` (insertion ordered, at most
+  `EXCHANGES_CAP` = 256), which the caller keeps behind its own lock.
+  `ExchangeReads::new` takes the answers, the session and machine, the
+  `Exchanges`, `now` and the sixteen bytes of the fresh nonce (written as
+  lowercase hex); the exchange it takes up leaves `Exchanges` before the
+  history reader is built, so a class that reader raises loses it, as in
+  the reference. `carried(exchanges, now)` gives the nonce, or None for
+  the reference's `{}`. An exchange whose `until` equals `now` is
+  dropped (`<=`). `set_read` is the reference's `self[folder] = ...`.
+- `_NONCE` (`[0-9a-f]{32}` under `fullmatch`) is matched by hand
+  (`nonce_ok`) under rule 3 of the regular expression decision: a leaf
+  built before the engine's unit pyre-6, a pattern with no choice;
+  `_FULL_HASH` is `githead::full_hash`, already built. Both are the
+  reference's own literals, which the engine's inventory reads from its
+  source.
+
+**Fixtures.** `tests/contract/gen_location_witness.py` writes
+`location_witness.jsonl` (ungated): readers over crafted answers
+(malformed walks, mixed case and non-string ids, ids as strings, dicts
+and numbers, ancestry not asked, every `ancestry_bounded` spelling,
+independent entries with a top outside the set, empty or repeated, more
+than the bound), `joined` merges, `independent_answer` with and without
+a history, and exchange sequences with the clock and nonce patched
+(owner mismatch, expiry at exactly `EXCHANGE_SECONDS`, a silent client,
+an error after the take-up, cap eviction order). Each row holds JSON
+texts both sides decode and the answer as `json.dumps` text.
+Rows whose ids are floats read them through `str` of a float, whose
+shortest-repr text is the same from Python 3.1 on and on every platform.
+Tests:
+`golden_location_witness`, `location_witness_kills`,
+`location_witness_robustness`. No row depends on the operating system.
+
+**Left for later units.** `AnsweredToken`, `AnsweredLiveness`,
+`remint_answer`, `remint_refused` and `asked_views` (location_witness-2,
+lane lwask); the `HistoryReader` and `IndependentReader` adapters
+(membership resolution).
 
 ## The git on PATH and what it reads (`gitsystem.py`)
 
@@ -12817,7 +12930,8 @@ What the reference has and this build does not, by area:
   remint and the claim: unit 4), the origin's settling
   (`origin.py`), `location.py` past its view continuity (`continuity`,
   `view_state` and their helpers are built; `path_liveness`,
-  `path_liveness_many` and `_liveness_read` are not), and of
+  `path_liveness_many` and `_liveness_read` are not), `location_witness.py`
+  past its history half (the question half: location_witness-2), and of
   `location_git.py` the discovery (`GitDies`,
   `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit`), `_git`,
   `RepositoryHistory` and `_clear_above`.

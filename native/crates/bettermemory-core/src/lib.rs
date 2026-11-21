@@ -82,6 +82,10 @@
 //!   discovery (unit githead-1: the walk git's `setup.c` makes, `stamp`);
 //! - [`location_probe`]: the hook client's namespace probe (the cwd's
 //!   state, its view spelling, the host's name);
+//! - [`location_witness`]: the witness exchange's history half: the
+//!   question raised (`NeedWitnesses`), the readers over the client's
+//!   answers, git's reading of tied witnesses and the keeping of one
+//!   exchange's reads between rounds (unit location_witness-1);
 //! - [`gitobjects`]: git objects read from a repository's files, its
 //!   first three units (the byte parsers; the zlib streams and the delta
 //!   chain over a file handle; the file reads, the object format and the
@@ -143,6 +147,7 @@ pub mod location_probe;
 pub mod location_reads;
 pub mod location_stamps;
 pub mod location_view;
+pub mod location_witness;
 pub mod log;
 pub mod machine;
 pub mod membership_lines;
