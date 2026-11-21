@@ -86,7 +86,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `difflib` | `history._body_diff` (`body_diff`), `str.splitlines`, and CPython 3.13.13's `difflib.unified_diff` as it calls it: `SequenceMatcher` with autojunk (`__chain_b`, `find_longest_match`, `get_matching_blocks`, `get_opcodes`, `get_grouped_opcodes`), `_format_range_unified`, `unified_diff` with `lineterm=""` and no dates (`unified_diff_lines` joined with newlines) | `difflib.jsonl` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
 | `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl` |
@@ -1148,6 +1148,121 @@ dangling link's message is the module's own and sits in the POSIX file.
 from this unit at 616 lines of source (the bound is 600); then
 `append_history_replaced` with the restore writer, and `open.rs` moved
 onto `log::ring`.
+
+## The key checks and a rotation's finish (`store_keys.py`)
+
+`store_keys.py` holds the key checks a store open makes and the key
+ring's binding to one file (reference `src/bettermemory/store_keys.py`).
+`store::rotation` holds its first unit. The ring is `log::ring::KeyFiles`;
+the private ring readers of `store/open.rs` and `store/write.rs` are not
+used.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_signs_a_segment` | 74-87 | nothing | built (`signs_a_segment`) |
+| `KeysDirUnreadableError` | 102-122 | nothing | built (`keys_dir_unreadable`: reason and message) |
+| `prepare_store_dir` | 125-140 | `lstat`, `readlink`, `mkdir` | built earlier in `store::create` |
+| `_store_id_at`, `_bound_store_check` | 143-260 | SQLite, `stat` | store_keys-3 |
+| `_resolved_for_guard`, `_bound_words`, `_sentence`, `_warn_bound_elsewhere`, `_key_ring_elsewhere` | 266-350 | `realpath`, logging | store_keys-2 |
+| `_claim_key_ring` | 353-417 | the ring's lock, `realpath` | store_keys-3 |
+| `KeyState`, `key_state` | 423-693 | the ring, SQLite | store_keys-2 (`key_path`, `withheld`), store_keys-3 |
+| `RingFit`, `head_status`, `ring_fit`, `_fit_read_only`, `_unclaimed_fit`, `_warn_unclaimed` | 696-877 | SQLite, logging | store_keys-2 |
+| `pending_key_path` | 880-885 | nothing | built |
+| `write_key_once` | 888-905 | `open(O_EXCL, 0600)`, `fsync` | built |
+| `_bound_here_or_nowhere` | 908-920 | `realpath`, `stat` | built (POSIX; declines under the Windows flavour) |
+| `_current_named` | 923-932 | the ring's read | built |
+| `finish_rotation` | 935-988 | read, rename, the pause | built |
+| `_rename_read_attempts` | 991-996 | the platform (an argument) | built |
+| `_finish_for_signing` | 999-1013 | `lstat`, the pause | built |
+| `_signing_key`, `configured_strict_provenance` | 1016-1080 | SQLite, the environment | store_keys-3 |
+
+### Unit store_keys-1, as built
+
+`finish_rotation` reads the pending key `<id>.key.pending`; not there,
+it answers the current key when meta names it. Unreadable, it logs a
+warning and answers None. A key that is not 32 bytes or whose
+fingerprint is not meta's, or a ring bound to another file, answers None
+and leaves the file alone. Otherwise the current key, when it is another,
+is kept under its fingerprint (`write_key_once`, then a read that it is
+the same key), the pending key is renamed over the current one, and the
+finish logs at INFO. Any OSError or `KeyUnreadableError` in that step
+answers the current key if meta names it by then, else a warning.
+`_finish_for_signing` repeats it with a pause of 0.01 s doubling while it
+answers None and the pending file is there.
+
+Decisions:
+
+- The rename is `_fsutil.replace_atomic` ported privately here (one
+  rename off Windows; on Windows up to `REPLACE_ATTEMPTS` while it raises
+  PermissionError, CPython's `winerror_to_errno` read through
+  `fsutil::winerror_is_eacces`). `store::open::replace_atomic` writes
+  bytes and is not that function. The Windows branch is an argument, so
+  it runs here (`store_rotation_kills`).
+- Effects are arguments: `cwd` is `os.getcwd()` for `Path.resolve`,
+  `windows` is `sys.platform == "win32"`, `attempts` is
+  `_rename_read_attempts`, `sleep` is `time.sleep`.
+- The log lines are returned as values (`LogLine`: level and
+  `getMessage()`). An exception's text is spelled as `str(exc)` spells
+  it: `[Errno n] strerror: 'path'`, with ` -> 'dst'` for the rename and
+  `repr`'s quotes; `os.write`'s error names no file. Every path in a
+  text is spelled as `str(Path)` (`config::pure_path`: no `.` part,
+  repeated slash or trailing slash); a path that is not UTF-8 is spelled
+  lossily in a log line and with `surrogateescape` in `repr`, both
+  unnormalized. The sync's failure is swallowed (a unit test injects
+  one).
+- A binding nested past the JSON limit raises RecursionError in the
+  reference, which no `except` there catches: `Declined::Py`.
+- `_signs_a_segment` takes `SegmentStart` (the fingerprint a segment is
+  under and its first row): `log::TrustSegment` carries neither.
+- `_bound_here_or_nowhere` resolves the store file with
+  `fsdata::realpath` over the `Path` spelling (`config::pure_path`), and
+  `samefile` stats both paths by that spelling joined to `cwd` when
+  relative, so `cwd` stands for `os.getcwd()` in both; a store path that
+  is not UTF-8 goes unnormalized.
+- `KeysDirUnreadableError` compares `link` and `keys_dir` as pathlib
+  does, by their spellings (`//k` is not `/k`; `./k` is `k`).
+- The Windows flavour: a ring bound to a file declines
+  (`Declined::NotPorted`) where the reference resolves the path; a ring
+  bound to none finishes. This is the crate's stated gap (ENG-124),
+  recorded in `store_rotation_not_posix.rs`. On a Windows host a failed
+  rename is spelled `[WinError n] text: 'src' -> 'dst'`, the text being
+  the system's with trailing white space and dots removed as CPython
+  does; an error of `open`, `read` or `write` there carries an errno the
+  C runtime maps and words it holds, which are not ported, so a finish
+  that would log one declines (`Declined::NotPorted`).
+- `KeysDirUnreadableError` removes one leading `it ` (`removeprefix`).
+  `store::create`'s `refuse_dangling_keys_dir` removes every one
+  (`trim_start_matches`); its reasons always begin with a single one, so
+  no input reaches the difference there.
+
+No regular expression.
+
+Fixture `store_rotation.jsonl` (POSIX only, `gen_store_rotation.py`): 51
+finishes (store paths with a trailing slash, a `.` part, a double slash
+and a relative spelling among them), 10 signing finishes, 10 `write_key_once` and path cases over a
+scratch keys directory (links, a hard link, mode-000 files, read-only
+folders), each the answer, the log lines
+and every entry afterwards with its bytes and mode; 13 `_signs_a_segment`
+and 13 `KeysDirUnreadableError` rows. `strerror`'s words are spelled
+`<ENAME>`, not pinned. Fixture `store_rotation_python.jsonl` (POSIX only,
+Python-gated) holds the one finish whose binding is nested 100,000 deep:
+whether `json.loads` raises RecursionError there follows the interpreter
+and its C stack (3.14 on Linux reads it), so the row is held to CPython
+3.13.13 alone; the port raises at its fixed depth either way.
+
+| test file | what | class |
+| --- | --- | --- |
+| `golden_store_rotation.rs` | every case of `store_rotation.jsonl` and `store_rotation_python.jsonl` | i |
+| `store_rotation_not_posix.rs` | the fixture's gap elsewhere; the Windows decline | os |
+| `store_rotation_kills.rs` | the Windows retry, a later attempt finishing, `repr`'s quotes, the retired copy written once, the length and fingerprint checks, one prefix removed | i |
+| `store_rotation_robustness.rs` | an 8 MiB pending file, a 1 MiB fingerprint, a binding 100,000 deep, a path past PATH_MAX, `_signs_a_segment` linear over 100,000 segments | i |
+
+**Left for store_keys-2:** `_warn_bound_elsewhere`, `_key_ring_elsewhere`,
+`KeyState.key_path` and `withheld`, the parts of `RingFit`,
+`_fit_read_only`, `_unclaimed_fit`, `_warn_unclaimed`. Then
+store_keys-3: `_store_id_at`, `_claim_key_ring`, `key_state`,
+`_signing_key`, and wiring the finish into `store/open.rs` and
+`store/write.rs`.
 
 ## This machine's id (`machine.py`)
 

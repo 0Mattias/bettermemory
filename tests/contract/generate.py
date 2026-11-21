@@ -145,6 +145,7 @@ from . import (
     gen_store_records_d,
     gen_store_records_e,
     gen_store_membership,
+    gen_store_rotation,
     gen_history_rows,
     gen_history_detail,
     gen_store_reads,
@@ -290,6 +291,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_records_d": gen_store_records_d.generate,
     "store_records_e": gen_store_records_e.generate,
     "store_membership": gen_store_membership.generate,
+    "store_rotation": gen_store_rotation.generate,
+    "store_rotation_python": gen_store_rotation.generate_python,
     "history_rows": gen_history_rows.generate,
     "history_rows_python": gen_history_rows.generate_python,
     "store_reads": gen_store_reads.generate,
@@ -587,6 +590,10 @@ PYTHON_VERSION = "3.13.13"
 #: version output and its prefix, ``=``, cluster and ``--`` readings as
 #: 3.13.13 gives them; 3.12 words the choices and wraps the usage line
 #: otherwise, and ``--`` is read otherwise across releases (`gen_argparse`).
+#: ``store_rotation_python`` finishes a rotation whose binding is nested
+#: 100,000 arrays deep: `json.loads` raises RecursionError where the
+#: interpreter stops recursing, which 3.14 on Linux does not reach
+#: (`gen_store_rotation`).
 PYTHON_GATED = frozenset(
     {
         "argparse_python",
@@ -637,6 +644,7 @@ PYTHON_GATED = frozenset(
         "machine_identity_python",
         "machine_facts_platform",
         "location_probe_python",
+        "store_rotation_python",
     }
 )
 
@@ -829,6 +837,9 @@ PLATFORM_GATED = frozenset(
 #: over links, mode-000 files and folders (`gen_log_keyfiles`);
 #: ``origin_gitfiles_root_posix`` makes links, a FIFO and a mode-000 file
 #: and spells a root as the host's ``Path`` does (`gen_origin_gitfiles_root`).
+#: ``store_rotation`` and ``store_rotation_python`` finish key rotations
+#: over links, hard links, mode-000 files and read-only folders
+#: (`gen_store_rotation`).
 POSIX_ONLY = frozenset(
     {
         "attestation_paths_posix",
@@ -853,6 +864,8 @@ POSIX_ONLY = frozenset(
         "store_records_d",
         "store_records_e",
         "store_membership",
+        "store_rotation",
+        "store_rotation_python",
         "store_rows_written",
         "githead_posix",
         "gitobjects_files_posix",

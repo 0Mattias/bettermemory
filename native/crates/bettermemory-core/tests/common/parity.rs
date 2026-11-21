@@ -203,6 +203,7 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `pysyntax_literal.jsonl`, every other text, is not gated.
         | "pysyntax_literal_python.jsonl"
         | "machine_identity_python.jsonl"
+        | "store_rotation_python.jsonl"
         | "capture_vocabulary_python.jsonl" => &[Python],
         // `str.isspace` and `str.isalnum` past ASCII (`gen_control_tokens`).
         "control_tokens_unicode.jsonl" => &[Unicode],

@@ -51,6 +51,7 @@ pub mod pool;
 pub mod provenance;
 pub mod reads;
 pub mod restore_lock;
+pub mod rotation;
 pub mod rows;
 pub mod schema;
 pub mod tables;
