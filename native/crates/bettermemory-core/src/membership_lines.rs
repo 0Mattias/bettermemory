@@ -13,7 +13,9 @@
 
 use crate::capture::{str_of, STR_DEPTH_TOP};
 use crate::printable::{printable_into, quoted_into};
-use crate::pyvalue::{PyError, PyStr, PyValue};
+use std::collections::HashMap;
+
+use crate::pyvalue::{py_int, PyError, PyStr, PyValue};
 
 /// A project a line names: (name, id), as `line_first_sight` takes them.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -866,7 +868,7 @@ pub struct Raised {
     pub message: String,
 }
 
-fn raised(class: &'static str, message: impl Into<String>) -> Raised {
+pub(crate) fn raised(class: &'static str, message: impl Into<String>) -> Raised {
     Raised {
         class,
         message: message.into(),
@@ -890,7 +892,7 @@ pub struct RestatedRow {
     pub folder: Option<PyStr>,
 }
 
-fn type_name(value: &PyValue) -> &'static str {
+pub(crate) fn type_name(value: &PyValue) -> &'static str {
     match value {
         PyValue::None => "NoneType",
         PyValue::Bool(_) => "bool",
@@ -905,7 +907,7 @@ fn type_name(value: &PyValue) -> &'static str {
     }
 }
 
-fn truth(value: &PyValue) -> bool {
+pub(crate) fn truth(value: &PyValue) -> bool {
     match value {
         PyValue::None => false,
         PyValue::Bool(b) => *b,
@@ -920,7 +922,7 @@ fn truth(value: &PyValue) -> bool {
 
 /// `iter(value)`'s items: a sequence's items, a str's characters, a dict's
 /// keys; TypeError for anything else.
-fn items(value: &PyValue) -> Result<Vec<PyValue>, Raised> {
+pub(crate) fn items(value: &PyValue) -> Result<Vec<PyValue>, Raised> {
     match value {
         PyValue::List(v) | PyValue::Tuple(v) => Ok(v.clone()),
         PyValue::Str(s) => Ok(s.iter().map(|&c| PyValue::Str(vec![c])).collect()),
@@ -933,7 +935,7 @@ fn items(value: &PyValue) -> Result<Vec<PyValue>, Raised> {
 }
 
 /// `str(value)`, with the port's depth limit (`capture::str_of`).
-fn str_raising(value: &PyValue) -> Result<PyStr, Raised> {
+pub(crate) fn str_raising(value: &PyValue) -> Result<PyStr, Raised> {
     str_of(value, STR_DEPTH_TOP).map_err(|e| match e {
         PyError::RecursionError => raised(
             "RecursionError",
@@ -950,7 +952,7 @@ fn str_raising(value: &PyValue) -> Result<PyStr, Raised> {
 
 /// The hash check a dict makes of a key: a list or a dict (also inside a
 /// tuple) is unhashable.
-fn hashable(key: &PyValue) -> Result<(), Raised> {
+pub(crate) fn hashable(key: &PyValue) -> Result<(), Raised> {
     let mut work = vec![key];
     while let Some(v) = work.pop() {
         match v {
@@ -967,16 +969,86 @@ fn hashable(key: &PyValue) -> Result<(), Raised> {
     Ok(())
 }
 
-/// `dict(value or {})` reduced to what is read of it: the value of key
-/// `"dir"`, the last one written. Raises as `dict()` does.
-fn evidence_dir(value: &PyValue) -> Result<Option<PyValue>, Raised> {
-    if !truth(value) {
-        return Ok(None);
+/// A text equal for two dict keys exactly when Python's `==` holds of
+/// them: numbers across int, float and bool by value, strs by code
+/// points, tuples item by item. None for a key equal to nothing (a NaN).
+fn key_text(key: &PyValue) -> Option<String> {
+    // Tuples are walked with an explicit stack, so a key nested to any
+    // depth costs no native stack.
+    let mut stack: Vec<(std::slice::Iter<'_, PyValue>, String)> = Vec::new();
+    let mut next = key;
+    loop {
+        let mut done = match next {
+            PyValue::Tuple(items) => {
+                stack.push((items.iter(), String::from("t")));
+                None
+            }
+            other => Some(leaf_text(other)?),
+        };
+        loop {
+            let Some((items, out)) = stack.last_mut() else {
+                return done;
+            };
+            if let Some(t) = done.take() {
+                out.push_str(&format!("{}:{t}", t.len()));
+            }
+            match items.next() {
+                Some(item) => {
+                    next = item;
+                    break;
+                }
+                None => {
+                    let (_, out) = stack.pop().expect("a frame");
+                    done = Some(out);
+                }
+            }
+        }
     }
-    let pairs: Vec<(PyValue, PyValue)> = match value {
-        PyValue::Dict(v) => v.clone(),
+}
+
+fn leaf_text(key: &PyValue) -> Option<String> {
+    Some(match key {
+        PyValue::Bool(_) | PyValue::Int(_) => match py_int(key) {
+            Ok(PyValue::Int(ref t)) => format!("i{t}"),
+            _ => return None,
+        },
+        PyValue::Float(f) if f.is_nan() => return None,
+        PyValue::Float(f) if f.is_finite() && f.fract() == 0.0 => match py_int(key) {
+            Ok(PyValue::Int(ref t)) => format!("i{t}"),
+            _ => return None,
+        },
+        PyValue::Float(f) => format!("f{}", f.to_bits()),
+        other => format!("{other:?}"),
+    })
+}
+
+/// `dict(value or {})` as pairs in the dict's order: a key equal to an
+/// earlier one keeps that key and position and takes the later value.
+/// Raises as `dict()` does: an element that is no sequence TypeError, one
+/// of another length than 2 ValueError, an unhashable key TypeError.
+pub(crate) fn dict_of(value: &PyValue) -> Result<Vec<(PyValue, PyValue)>, Raised> {
+    let mut out: Vec<(PyValue, PyValue)> = Vec::new();
+    let mut at: HashMap<String, usize> = HashMap::new();
+    let mut put = |k: PyValue, v: PyValue| match key_text(&k) {
+        Some(t) => match at.get(&t) {
+            Some(&i) => out[i].1 = v,
+            None => {
+                at.insert(t, out.len());
+                out.push((k, v));
+            }
+        },
+        None => out.push((k, v)),
+    };
+    if !truth(value) {
+        return Ok(Vec::new());
+    }
+    match value {
+        PyValue::Dict(v) => {
+            for (k, x) in v {
+                put(k.clone(), x.clone());
+            }
+        }
         PyValue::List(_) | PyValue::Tuple(_) | PyValue::Str(_) => {
-            let mut pairs = Vec::new();
             for (i, element) in items(value)?.into_iter().enumerate() {
                 let pair = match &element {
                     PyValue::List(_) | PyValue::Tuple(_) | PyValue::Str(_) | PyValue::Dict(_) => {
@@ -1003,9 +1075,8 @@ fn evidence_dir(value: &PyValue) -> Result<Option<PyValue>, Raised> {
                 let mut pair = pair.into_iter();
                 let (k, v) = (pair.next().expect("two"), pair.next().expect("two"));
                 hashable(&k)?;
-                pairs.push((k, v));
+                put(k, v);
             }
-            pairs
         }
         other => {
             return Err(raised(
@@ -1013,9 +1084,15 @@ fn evidence_dir(value: &PyValue) -> Result<Option<PyValue>, Raised> {
                 format!("'{}' object is not iterable", type_name(other)),
             ))
         }
-    };
+    }
+    Ok(out)
+}
+
+/// `dict(value or {})` reduced to what is read of it: the value of key
+/// `"dir"`. Raises as `dict()` does.
+fn evidence_dir(value: &PyValue) -> Result<Option<PyValue>, Raised> {
     let dir = cps("dir");
-    Ok(pairs.into_iter().rev().find_map(|(k, v)| match &k {
+    Ok(dict_of(value)?.into_iter().find_map(|(k, v)| match &k {
         PyValue::Str(s) if *s == dir => Some(v),
         _ => None,
     }))

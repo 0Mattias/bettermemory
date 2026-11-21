@@ -1,0 +1,13 @@
+{"count":12,"k":"python"}
+{"d":{"seen_order":"\u0661\u0662"},"drop":[],"f":"view","o":["K1","M1","/work/r","t1","t2",12]}
+{"d":{"seen_order":"\u00a07\u3000"},"drop":[],"f":"view","o":["K1","M1","/work/r","t1","t2",7]}
+{"d":{"seen_order":"\u0967"},"drop":[],"f":"view","o":["K1","M1","/work/r","t1","t2",1]}
+{"d":{"seen_order":"1\u200b"},"drop":[],"f":"view","o":{"raised":["ValueError",null]}}
+{"d":{"seen_order":"\uff11\uff10"},"drop":[],"f":"view","o":["K1","M1","/work/r","t1","t2",10]}
+{"d":{"line":"caf\u00e9"},"drop":[],"f":"proposal","o":{"w":{"line":"caf\u00e9"}}}
+{"d":{"line":"\u202eevil"},"drop":[],"f":"proposal","o":{"w":{"line":{"$c":[92,117,50,48,50,101,101,118,105,108]}}}}
+{"d":{"line":"\u0378"},"drop":[],"f":"proposal","o":{"w":{"line":"\u0378"}}}
+{"d":{"line":"\ud83d\ude00"},"drop":[],"f":"proposal","o":{"w":{"line":"\ud83d\ude00"}}}
+{"d":{"line":"a\u0300"},"drop":[],"f":"proposal","o":{"w":{"line":"a\u0300"}}}
+{"d":{"line":"\u2028"},"drop":[],"f":"proposal","o":{"w":{"line":{"$c":[92,117,50,48,50,56]}}}}
+{"d":{"stamps_json":[["n","\u0661","\u00a02",3,4]]},"drop":[],"f":"checkout","o":{"w":{"stamps_json":[["n",1,2,3,4]]}}}

@@ -48,6 +48,9 @@
 //!   compare, join and rebase recorded paths in either spelling; the
 //!   manifest's JSON and match, the reader traits and the checkout,
 //!   view, project and proposal records);
+//! - [`membership_rows`]: the membership table rows read into records and
+//!   written back, the object-key and stamp codecs, `_jsonable`,
+//!   `_signature`, `_unwritten` and `_Tally`;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
 //! - [`events`]: the telemetry recorder's rows, its first unit (the
 //!   event kinds, their row classes and the fields a state row keeps);
@@ -134,6 +137,7 @@ pub mod log;
 pub mod machine;
 pub mod membership_lines;
 pub mod membership_records;
+pub mod membership_rows;
 pub mod models_text;
 pub mod origin_gitfiles;
 pub mod origin_history;

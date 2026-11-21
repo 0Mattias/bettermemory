@@ -61,6 +61,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
+| `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
@@ -1359,6 +1360,102 @@ Tests: `golden_membership_records_records` (every row counted),
 a path nested 100,000 deep (RecursionError, as `str` raises) and a
 size nested as deep (TypeError), the 4,300-digit limit and
 `float.max`, 100,000 views at the `i64` bounds).
+
+## The membership table rows (`membership_rows.py`)
+
+`membership_rows.py` (278 lines) converts the membership records to and
+from table rows. The whole module is one unit, in
+`src/membership_rows.rs`.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_key_columns`, `_key_from` | 44-57 | nothing | built |
+| `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json` | 68-99 | nothing | built |
+| `_view_from`, `_checkout_from`, `_checkout_row` | 102-165 | nothing | built |
+| `_project_from`, `_project_row` | 168-193 | nothing | built |
+| `_proposal_from`, `_proposal_row`, `_jsonable` | 196-242 | nothing | built |
+| `_signature` (with `Location.root_file`, `membership_records.py` 506), `_unwritten` | 245-268 | nothing | built |
+| `_Tally` | 271-278 | nothing | built |
+
+A row is a `PyValue::Dict` of its columns with the `_json` ones decoded,
+as `membership_lines::restated_row` takes it. A missing column is
+KeyError with the key's repr, and each reader reads the columns in the
+reference's order (keyword arguments are evaluated in order; `_proposal_from`
+reads `signature_json` first and iterates it after `answered_by`;
+`_checkout_from` reads `unresolved_json` with `.get` first and reads
+`stamps_json` again for `ticks` last), so the first exception is the
+reference's. `str()` is `capture::str_of` at `STR_DEPTH_TOP`, `int()` is
+`pyvalue::py_int` (an int kept as canonical decimal text of any size),
+`bool()` is the value's truth.
+
+Decisions:
+
+- The record fields the reference passes through as stored (`git_dir`,
+  `token`, `last_head`, `branch`, `replaced_by`, `merged_into`,
+  `provisional`, `parent`, `tenant`, `checkout`, `answer`,
+  `answered_by`) are `Option<PyStr>`. The store's TEXT columns hold str
+  or None; any other value answers the refusal `Refused` (class
+  `membership_rows::REFUSED`, the message naming the column). The
+  refusal is noted and the row read on, so a row on which the reference
+  raises later raises the same here. A `seen_order` outside i64
+  (`View.order` is an i64) is refused the same way. The golden file
+  marks these rows `{"refused": true}`.
+- `_jsonable` descends at most `JSONABLE_DEPTH` (900) levels and then
+  answers RecursionError. The reference meets the interpreter's
+  recursion limit, which follows the Python release, at a depth near
+  1,000; no fixture row reaches either.
+- `_jsonable`'s set branch has no input: `PyValue` holds no set, and no
+  row decodes to one.
+- `dict(row["evidence_json"] or {})` is `membership_lines::dict_of`, a
+  generalisation of the restated row's `evidence_dir`, which now reads
+  through it: a key equal to an earlier one (Python's `==`: 1, 1.0 and
+  True are one key) keeps that key and position and takes the later
+  value, found through a hash of a text equal exactly when the keys are
+  (`key_text`), so a dict of n pairs is built in linear time. A NaN key
+  equals nothing. The reference's NaN from `json.loads` is one object,
+  equal to itself by identity, so two NaN keys decoded from one JSON
+  text collapse there and not here; no stored row holds one.
+- `_Tally` is `Tally`: its dicts insertion-ordered vectors of pairs, its
+  lists vectors, its sets `BTreeSet`s. Set order is observed only after
+  `membership_resolve` sorts the sets, which that unit checks; nothing
+  here iterates them.
+- `Location.root_file` is a private function over `Location.files`:
+  the first file for a folder checkout, else the file whose folder is
+  the root by `_same_path` (`capture::paths::norm`, pure).
+- `_unwritten` joins `info` and the token name (`checkout_token::TOKEN_NAME`,
+  the reference's `_TOKEN_NAME`, both `bettermemory`) under `git_dir or ""`
+  with `path_under`, in the spelling of the path itself, not the host's.
+
+No regular expression is read. Nothing here reads the machine, so the
+Windows flavour gap (ENG-124) does not reach this module.
+
+Fixtures: `gen_membership_rows.py` writes `membership_rows.jsonl` (not
+gated, 804 cases and a digest) and `membership_rows_python.jsonl` (gated
+on the Python release: `int()` of non-ASCII digits and whitespace, lines
+past ASCII through `printable`). The row cases are each reader's base
+row with every column missing in turn and neighbouring pairs missing
+together, every `str()` column given hostile values (ints, floats, NaN,
+bools, None, containers, a lone surrogate, the 4,300-digit bound, 50
+levels of lists), every pass-through column non-str values, `seen_order`
+through every ASCII `int()` path and the i64 bounds, stamps of every
+length and item type with ticks in several positions, `unresolved_json`
+of each shape, evidence through each `dict()` path, signatures of each
+iterable shape; each answer is the record written back by the row
+writer (round trip row, record, row), written against the base row's.
+`_jsonable` and `_signature`/`_unwritten` have cases of their own. The
+digest pins 2,000 checkout rows drawn from recorded pools by the 64-bit
+LCG of `membership_records`.
+
+Tests: `golden_membership_rows` (every case counted, the digest, the
+gated file), `membership_rows_kills` (6, among them `restated_row` and
+`_proposal_from` raising the same first exception and agreeing on id,
+kind, candidates and reason over every proposal row of the file),
+`membership_rows_robustness` (3: values nested 100,000 deep, the i64
+and 4,300-digit bounds, 20,000 evidence pairs within the tenfold growth
+bound).
+
+Left for later units: `store_membership`'s puts, deletes and reads, and
+every `Membership` method.
 
 ## The fold check
 

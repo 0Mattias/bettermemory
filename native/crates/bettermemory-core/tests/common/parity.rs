@@ -235,6 +235,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // writes a separator after two that name no server and share
         // (`gen_membership_records`).
         "membership_records_paths_python.jsonl" => &[Python],
+        // `int()` of non-ASCII digits and lines past ASCII (`gen_membership_rows`).
+        "membership_rows_python.jsonl" => &[Python],
         // `ntpath.normcase` and `abspath` ask the OS on a Windows host, so
         // `_dir_key` of a name past ASCII, `_rebase` from a Windows root and
         // the `ntpath` sweeps follow the host; the file holds rows of the
