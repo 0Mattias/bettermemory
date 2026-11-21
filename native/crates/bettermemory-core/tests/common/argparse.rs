@@ -42,7 +42,38 @@ pub fn build(spec: &Value) -> ArgumentParser {
         spec["desc"].as_str(),
         spec["help"].as_bool().unwrap(),
     );
-    for call in spec["args"].as_array().unwrap() {
+    add_args(&mut p, &spec["args"]);
+    p
+}
+
+/// One tree of `argparse_subparsers.jsonl`'s header, built at `width`.
+#[allow(dead_code)]
+pub fn build_tree(spec: &Value, width: i64) -> ArgumentParser {
+    let mut p = build(spec);
+    add_sub(&mut p, &spec["sub"], width);
+    add_args(&mut p, &spec["after"]);
+    p
+}
+
+fn add_sub(p: &mut ArgumentParser, sub: &Value, width: i64) {
+    p.add_subparsers(sub["dest"].as_str(), width).unwrap();
+    for child in sub["parsers"].as_array().unwrap() {
+        let c = p
+            .add_parser(
+                child["name"].as_str().unwrap(),
+                child["help"].as_str(),
+                child["desc"].as_str(),
+            )
+            .unwrap();
+        add_args(c, &child["args"]);
+        if let Some(s) = child.get("sub") {
+            add_sub(c, s, width);
+        }
+    }
+}
+
+fn add_args(p: &mut ArgumentParser, args: &Value) {
+    for call in args.as_array().unwrap() {
         let names: Vec<&str> = call[0]
             .as_array()
             .unwrap()
@@ -78,7 +109,6 @@ pub fn build(spec: &Value) -> ArgumentParser {
         };
         p.add_argument(&names, arg).unwrap();
     }
-    p
 }
 
 /// An outcome as a case row holds it (`ns`, or `code`, `out`, `err`).

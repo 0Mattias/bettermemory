@@ -91,12 +91,32 @@ fn get_lines(parts: &[PyStr], indent: usize, prefix: Option<usize>, width: i64) 
 
 /// `parser.format_usage()` with the formatter at `width`.
 pub fn format_usage(p: &ArgumentParser, width: i64) -> PyStr {
-    let prefix = cps("usage: ");
+    format_usage_with(p, width, &cps("usage: "), false)
+}
+
+/// `format_help` of a formatter given `add_usage(usage, actions, groups,
+/// prefix)`, the actions all of the parser's or its positionals alone.
+pub fn format_usage_with(
+    p: &ArgumentParser,
+    width: i64,
+    prefix: &[u32],
+    positionals_only: bool,
+) -> PyStr {
+    let prefix = prefix.to_vec();
     let prog = p.prog.clone();
     let (mut opt, mut pos) = (Vec::new(), Vec::new());
-    for a in &p.actions {
+    let actions: Vec<&super::Action> = p
+        .actions
+        .iter()
+        .filter(|a| !positionals_only || a.option_strings.is_empty())
+        .collect();
+    for a in actions.iter().copied() {
         if a.option_strings.is_empty() {
-            pos.push(metavar(a, a.dest.clone().unwrap_or_default()));
+            let mut part = metavar(a, a.dest.clone().unwrap_or_default());
+            if a.kind == Kind::Parsers {
+                part.extend(cps(" ..."));
+            }
+            pos.push(part);
             continue;
         }
         let mut part = a.option_strings[0].clone();
@@ -107,7 +127,7 @@ pub fn format_usage(p: &ArgumentParser, width: i64) -> PyStr {
         opt.push(if a.required { part } else { bracket(part) });
     }
     let mut usage = prog.clone();
-    if !p.actions.is_empty() {
+    if !actions.is_empty() {
         let all: Vec<PyStr> = opt.iter().chain(&pos).cloned().collect();
         // `' '.join([s for s in [prog, action_usage] if s])`
         let joined = all.join(&0x20);

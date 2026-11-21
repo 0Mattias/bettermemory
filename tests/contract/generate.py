@@ -232,6 +232,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "datetime": gen_time.generate,
     "argparse": gen_argparse.generate,
     "argparse_python": gen_argparse.generate_python,
+    "argparse_subparsers": gen_argparse.generate_subparsers,
+    "argparse_subparsers_python": gen_argparse.generate_subparsers_python,
     "origin_history": gen_origin_history.generate,
     "origin_dates_reads": gen_origin_dates_reads.generate,
     "origin_history_located": gen_origin_history_located.generate,
@@ -599,9 +601,12 @@ PYTHON_VERSION = "3.13.13"
 #: 100,000 arrays deep: `json.loads` raises RecursionError where the
 #: interpreter stops recursing, which 3.14 on Linux does not reach
 #: (`gen_store_rotation`).
+#: ``argparse_subparsers_python`` is the same for subparsers: the invalid
+#: choice text and the choice listing are worded otherwise before 3.12.
 PYTHON_GATED = frozenset(
     {
         "argparse_python",
+        "argparse_subparsers_python",
         "models_text_platform",
         "location_stamps_platform",
         "location_stamps_python",

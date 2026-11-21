@@ -1,0 +1,26 @@
+{"cases":25,"fixture":"argparse_subparsers","python":"3.13.13","trees":[{"after":[],"args":[[["--version"],{"action":"version","version":"bettermemory 9.0.0"}]],"desc":"MCP memory for coding agents, checked against your files and git history on every read. Run with no arguments to start the MCP server over stdio.","help":true,"prog":"bettermemory","sub":{"dest":"cmd","parsers":[{"args":[[["event"],{"choices":["session-start","stop","prompt"]}],[["--quiet"],{"action":"store_true"}],[["--dry-run"],{"action":"store_true"}],[["--transcript-path"],{"default":null}],[["--session-id"],{"default":null}],[["--prompt"],{"default":null}]],"desc":null,"help":"Run a harness hook through the daemon: session-start, stop or prompt. Reads the hook's stdin JSON, prints the daemon's answer, always exits 0.","name":"hook"}]}},{"after":[[["tail"],{}]],"args":[[["base"],{}],[["-v"],{"action":"store_true"}]],"desc":null,"help":true,"prog":"tree","sub":{"dest":null,"parsers":[{"args":[[["-n"],{"action":"store_true"}],[["-v"],{"default":"child"}]],"desc":null,"help":"add one","name":"add"},{"args":[[["--base"],{"dest":"base"}]],"desc":null,"help":null,"name":"rm","sub":{"dest":"how","parsers":[{"args":[],"desc":null,"help":null,"name":"all"},{"args":[[["name"],{}]],"desc":null,"help":null,"name":"one"}]}}]}},{"after":[],"args":[],"desc":null,"help":false,"prog":"none","sub":{"dest":"c","parsers":[]}},{"after":[],"args":[[["first-positional-name"],{}],[["second-positional-name"],{}]],"desc":null,"help":true,"prog":"a-program-with-a-long-name","sub":{"dest":"cmd","parsers":[{"args":[[["--far"],{}]],"desc":null,"help":null,"name":"go"}]}}]}
+{"a":[],"ns":[["cmd",null]],"p":0,"w":78}
+{"a":["hook","stop"],"ns":[["cmd","hook"],["event","stop"],["quiet",false],["dry_run",false],["transcript_path",null],["session_id",null],["prompt",null]],"p":0,"w":78}
+{"a":["hook","prompt","--quiet","--dry-run"],"ns":[["cmd","hook"],["event","prompt"],["quiet",true],["dry_run",true],["transcript_path",null],["session_id",null],["prompt",null]],"p":0,"w":78}
+{"a":["hook","session-start","--transcript-path","/t","--session-id","s"],"ns":[["cmd","hook"],["event","session-start"],["quiet",false],["dry_run",false],["transcript_path","/t"],["session_id","s"],["prompt",null]],"p":0,"w":78}
+{"a":["hook","stop","--prompt","p q"],"ns":[["cmd","hook"],["event","stop"],["quiet",false],["dry_run",false],["transcript_path",null],["session_id",null],["prompt","p q"]],"p":0,"w":78}
+{"a":["hook","--quiet","stop"],"ns":[["cmd","hook"],["event","stop"],["quiet",true],["dry_run",false],["transcript_path",null],["session_id",null],["prompt",null]],"p":0,"w":78}
+{"a":["a","b","go","--far","x"],"ns":[["first-positional-name","a"],["second-positional-name","b"],["cmd","go"],["far","x"]],"p":3,"w":78}
+{"a":["b","rm","one"],"ns":[["base",null],["v",false],["tail","one"],["how",null]],"p":1,"w":78}
+{"a":["a","b","go","--far","x"],"ns":[["first-positional-name","a"],["second-positional-name","b"],["cmd","go"],["far","x"]],"p":3,"w":40}
+{"a":["b","rm","one"],"ns":[["base",null],["v",false],["tail","one"],["how",null]],"p":1,"w":40}
+{"a":["a","b","go","--far","x"],"ns":[["first-positional-name","a"],["second-positional-name","b"],["cmd","go"],["far","x"]],"p":3,"w":20}
+{"a":["b","rm","one"],"ns":[["base",null],["v",false],["tail","one"],["how",null]],"p":1,"w":20}
+{"a":["a","b","go","--far","x"],"ns":[["first-positional-name","a"],["second-positional-name","b"],["cmd","go"],["far","x"]],"p":3,"w":5}
+{"a":["b","rm","one"],"ns":[["base",null],["v",false],["tail","one"],["how",null]],"p":1,"w":5}
+{"a":["a","b","go","--far","x"],"ns":[["first-positional-name","a"],["second-positional-name","b"],["cmd","go"],["far","x"]],"p":3,"w":0}
+{"a":["b","rm","one"],"ns":[["base",null],["v",false],["tail","one"],["how",null]],"p":1,"w":0}
+{"a":["b","add","t"],"ns":[["base","b"],["v","child"],["tail","t"],["n",false]],"p":1,"w":78}
+{"a":["b","add","-n","t"],"ns":[["base","b"],["v","child"],["tail","t"],["n",true]],"p":1,"w":78}
+{"a":["b","-v","add","t"],"ns":[["base","b"],["v","child"],["tail","t"],["n",false]],"p":1,"w":78}
+{"a":["b","add","-v","x","t"],"ns":[["base","b"],["v","x"],["tail","t"],["n",false]],"p":1,"w":78}
+{"a":["b","rm","all","t"],"ns":[["base",null],["v",false],["tail","t"],["how","all"]],"p":1,"w":78}
+{"a":["b","rm","one","n","t"],"ns":[["base",null],["v",false],["tail","t"],["how","one"],["name","n"]],"p":1,"w":78}
+{"a":["b","rm","one"],"ns":[["base",null],["v",false],["tail","one"],["how",null]],"p":1,"w":78}
+{"a":["b","rm","--base","q","all","t"],"ns":[["base","q"],["v",false],["tail","t"],["how","all"]],"p":1,"w":78}
+{"a":[],"ns":[["c",null]],"p":2,"w":78}

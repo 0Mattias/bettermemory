@@ -436,3 +436,285 @@ def generate_python() -> dict[str, bytes]:
     }
     header["cases"] = len(rows)
     return {"argparse_python.jsonl": jsonl([header, *rows, sweep])}
+
+
+# Subparsers (unit argparse-1b): ``argparse_subparsers.jsonl`` and its
+# Python-gated sibling ``argparse_subparsers_python.jsonl``, split as the
+# flat files are. A tree spec is a flat spec with ``sub`` (``dest`` and
+# ``parsers``, each ``{"name", "help", "desc", "args"}`` and an optional
+# ``sub`` of its own) and ``after`` (the `add_argument` calls made after
+# `add_subparsers`). Each case builds its tree afresh at its width, the
+# children's formatter at the same width (the product's children take the
+# terminal's width, which the port's width argument stands for).
+
+ROOT: dict[str, Any] = {
+    # `cli/__init__.py` 89-102 and 152-177: the root and the hook
+    # subparser, the version text spelled for the fixture.
+    "prog": "bettermemory",
+    "desc": (
+        "MCP memory for coding agents, checked against your files and "
+        "git history on every read. Run with no arguments to start the "
+        "MCP server over stdio."
+    ),
+    "help": True,
+    "args": [[["--version"], {"action": "version", "version": "bettermemory 9.0.0"}]],
+    "sub": {
+        "dest": "cmd",
+        "parsers": [
+            {
+                "name": "hook",
+                "help": (
+                    "Run a harness hook through the daemon: session-start, stop or "
+                    "prompt. Reads the hook's stdin JSON, prints the daemon's answer, "
+                    "always exits 0."
+                ),
+                "desc": None,
+                "args": [
+                    [["event"], {"choices": ["session-start", "stop", "prompt"]}],
+                    [["--quiet"], {"action": "store_true"}],
+                    [["--dry-run"], {"action": "store_true"}],
+                    [["--transcript-path"], {"default": None}],
+                    [["--session-id"], {"default": None}],
+                    [["--prompt"], {"default": None}],
+                ],
+            }
+        ],
+    },
+    "after": [],
+}
+
+NESTED: dict[str, Any] = {
+    "prog": "tree",
+    "desc": None,
+    "help": True,
+    "args": [[["base"], {}], [["-v"], {"action": "store_true"}]],
+    "sub": {
+        "dest": None,
+        "parsers": [
+            {
+                "name": "add",
+                "help": "add one",
+                "desc": None,
+                "args": [
+                    [["-n"], {"action": "store_true"}],
+                    [["-v"], {"default": "child"}],
+                ],
+            },
+            {
+                "name": "rm",
+                "help": None,
+                "desc": None,
+                "args": [[["--base"], {"dest": "base"}]],
+                "sub": {
+                    "dest": "how",
+                    "parsers": [
+                        {"name": "all", "help": None, "desc": None, "args": []},
+                        {
+                            "name": "one",
+                            "help": None,
+                            "desc": None,
+                            "args": [[["name"], {}]],
+                        },
+                    ],
+                },
+            },
+        ],
+    },
+    "after": [[["tail"], {}]],
+}
+
+NO_CHOICES: dict[str, Any] = {
+    "prog": "none",
+    "desc": None,
+    "help": False,
+    "args": [],
+    "sub": {"dest": "c", "parsers": []},
+    "after": [],
+}
+
+WIDE: dict[str, Any] = {
+    "prog": "a-program-with-a-long-name",
+    "desc": None,
+    "help": True,
+    "args": [[["first-positional-name"], {}], [["second-positional-name"], {}]],
+    "sub": {
+        "dest": "cmd",
+        "parsers": [
+            {"name": "go", "help": None, "desc": None, "args": [[["--far"], {}]]}
+        ],
+    },
+    "after": [],
+}
+
+TREES = [ROOT, NESTED, NO_CHOICES, WIDE]
+
+#: `add_subparsers` and `add_parser` calls the reference refuses: twice
+#: `add_subparsers`, and a name added twice. 3.11 exits on the first and
+#: 3.14 raises ValueError, so these rows are in the gated file.
+SPEC_ERRORS = ["multiple", "conflicting"]
+
+
+def _add_sub(parser: argparse.ArgumentParser, sub: dict[str, Any], width: int) -> None:
+    # A ``dest`` of None is the keyword left out (`SUPPRESS`): passed as
+    # None it makes `parse_args` raise TypeError.
+    kw = {} if sub["dest"] is None else {"dest": sub["dest"]}
+    action = parser.add_subparsers(**kw)
+    for child in sub["parsers"]:
+        ckw: dict[str, Any] = {
+            "description": child["desc"],
+            "formatter_class": lambda prog: argparse.HelpFormatter(prog, width=width),
+        }
+        if child["help"] is not None:
+            ckw["help"] = child["help"]
+        cp = action.add_parser(child["name"], **ckw)
+        for names, akw in child["args"]:
+            cp.add_argument(*names, **akw)
+        if "sub" in child:
+            _add_sub(cp, child["sub"], width)
+
+
+def _build_tree(spec: dict[str, Any], width: int) -> argparse.ArgumentParser:
+    parser = _build(spec, width)
+    _add_sub(parser, spec["sub"], width)
+    for names, kw in spec["after"]:
+        parser.add_argument(*names, **kw)
+    return parser
+
+
+def _run_tree(p: int, width: int, argv: list[str]) -> dict[str, Any]:
+    parser = _build_tree(TREES[p], width)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            ns = parser.parse_args(argv)
+        except SystemExit as e:
+            code = e.code
+        else:
+            return {"ns": [[k, _t(v)] for k, v in vars(ns).items()]}
+    return {"code": code, "out": _t(out.getvalue()), "err": _t(err.getvalue())}
+
+
+def _spec_error(kind: str) -> str:
+    parser = _build_tree(TREES[0], 78)
+    try:
+        if kind == "multiple":
+            parser.add_subparsers(dest="again")
+        else:
+            parser._subparsers._group_actions[-1].add_parser("hook")  # type: ignore[union-attr]
+    except argparse.ArgumentError:
+        return "ArgumentError"
+    return "none"
+
+
+def _tree_cases() -> list[tuple[int, int, list[str]]]:
+    c: list[tuple[int, int, list[str]]] = []
+    for argv in [
+        [],
+        ["hook", "stop"],
+        ["hook", "prompt", "--quiet", "--dry-run"],
+        ["hook", "session-start", "--transcript-path", "/t", "--session-id", "s"],
+        ["hook", "stop", "--prompt", "p q"],
+        ["hook", "stop", "extra"],
+        ["hook", "stop", "--bogus"],
+        ["hook", "start"],
+        ["hook"],
+        ["hooks"],
+        ["serve"],
+        ["\udc80"],
+        ["hook", "\udc80"],
+        ["--version"],
+        ["--version", "hook"],
+        ["hook", "stop", "--version"],
+        ["hook", "stop", "--ver"],
+        ["hook", "stop", "--q", "--dry"],
+        ["--", "hook", "stop"],
+        ["hook", "--", "stop"],
+        ["hook", "stop", "--"],
+        ["--", "--", "hook", "stop"],
+        ["hook", "stop", "-h"],
+        ["-h", "hook"],
+        ["--bogus", "hook", "stop"],
+        ["hook", "--quiet", "stop"],
+        ["hook", "stop", "--session-id"],
+        ["hook", "stop", "--transcript-path=-x"],
+        ["hook", "-1"],
+        ["-1"],
+    ]:
+        c.append((0, 78, argv))
+    for width in [78, 40, 20, 5, 0]:
+        c.append((0, width, ["nope"]))
+        c.append((0, width, ["hook", "nope"]))
+        c.append((3, width, ["a", "b", "go", "--far", "x"]))
+        c.append((3, width, ["a", "b", "stay"]))
+        c.append((3, width, ["a", "b", "go", "--far"]))
+        c.append((1, width, ["b", "rm", "one"]))
+    for argv in [
+        ["b", "add", "t"],
+        ["b", "add", "-n", "t"],
+        ["b", "add"],
+        ["b", "-v", "add", "t"],
+        ["b", "add", "-v", "x", "t"],
+        ["b", "add", "t", "u"],
+        ["b", "rm", "all", "t"],
+        ["b", "rm", "one", "n", "t"],
+        ["b", "rm", "one"],
+        ["b", "rm", "--base", "q", "all", "t"],
+        ["b", "rm", "two", "t"],
+        ["b", "rm"],
+        ["b", "mv", "t"],
+        ["b"],
+        ["b", "add", "-x", "t", "-y"],
+        ["-z", "b", "add", "t"],
+        ["b", "--", "add", "t"],
+        ["--", "b", "add", "t"],
+        ["b", "add", "--", "t"],
+    ]:
+        c.append((1, 78, argv))
+    for argv in [[], ["x"], ["--", "x"]]:
+        c.append((2, 78, argv))
+    return c
+
+
+def _tree_ungated(p: int, argv: list[str], outcome: dict[str, Any]) -> bool:
+    def names(spec: dict[str, Any]) -> set[str]:
+        out = {n for ns, _ in spec["args"] + spec.get("after", []) for n in ns}
+        out |= {"-h", "--help"}
+        for child in spec.get("sub", {}).get("parsers", []):
+            out |= names(child)
+        return out
+
+    exact = names(TREES[p])
+    return "ns" in outcome and all(a in exact or not a.startswith("-") for a in argv)
+
+
+def _tree_header(name: str) -> dict[str, Any]:
+    return {"fixture": name, "python": REPRODUCES, "trees": TREES}
+
+
+def _tree_rows(gated: bool) -> list[dict[str, Any]]:
+    rows = []
+    for p, width, argv in _tree_cases():
+        outcome = _run_tree(p, width, argv)
+        if _tree_ungated(p, argv, outcome) != gated:
+            rows.append({"p": p, "w": width, "a": [_t(a) for a in argv], **outcome})
+    return rows
+
+
+def generate_subparsers() -> dict[str, bytes]:
+    rows = _tree_rows(False)
+    header = {**_tree_header("argparse_subparsers"), "cases": len(rows)}
+    return {"argparse_subparsers.jsonl": jsonl([header, *rows])}
+
+
+def generate_subparsers_python() -> dict[str, bytes]:
+    v = sys.version_info
+    running = f"{v.major}.{v.minor}.{v.micro}"
+    header = _tree_header("argparse_subparsers_python")
+    if running != REPRODUCES:
+        # Declined: the rows are 3.13.13's alone.
+        header["declined"] = running
+        return {"argparse_subparsers_python.jsonl": jsonl([header])}
+    rows = _tree_rows(True)
+    spec = [{"spec": k, "raises": _spec_error(k)} for k in SPEC_ERRORS]
+    header["cases"] = len(rows)
+    return {"argparse_subparsers_python.jsonl": jsonl([header, *rows, *spec])}

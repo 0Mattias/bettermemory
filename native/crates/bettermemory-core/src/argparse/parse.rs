@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{usage, ArgumentParser, HelpText, Kind, Namespace, Outcome};
+use super::{subparsers, usage, ArgumentParser, HelpText, Kind, Namespace, Outcome};
 use crate::pyvalue::{repr_str, PyStr, PyValue};
 use crate::unicode::cps;
 
@@ -46,14 +46,30 @@ fn action_name(p: &ArgumentParser, i: usize) -> PyStr {
     if let Some(m) = &a.metavar {
         return m.clone();
     }
-    a.dest.clone().unwrap_or_default()
+    match (&a.dest, &a.choices) {
+        (Some(d), _) => d.clone(),
+        (None, Some(c)) if !c.is_empty() => {
+            let mut out = vec![0x7B];
+            out.extend(c.join(&0x2C));
+            out.push(0x7D);
+            out
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// `str(ArgumentError(action, message))`.
 fn argument_error(p: &ArgumentParser, i: usize, message: &str, tail: &[u32]) -> Stop {
-    let mut m = cps("argument ");
-    m.extend(action_name(p, i));
-    m.extend(cps(": "));
+    let name = action_name(p, i);
+    // An action without a name (`None`) makes the text the message alone.
+    let mut m = if name.is_empty() && p.actions[i].dest.is_none() {
+        Vec::new()
+    } else {
+        let mut m = cps("argument ");
+        m.extend(name);
+        m.extend(cps(": "));
+        m
+    };
     m.extend(cps(message));
     m.extend(tail);
     Stop::Error(m)
@@ -131,26 +147,50 @@ impl ArgumentParser {
     }
 }
 
-/// `_match_arguments_partial` over positionals of `nargs` None, whose
-/// pattern is `(-*A-*)` each.
-fn match_partial(count: usize, pattern: &[u8]) -> Vec<usize> {
-    'k: for k in (1..=count).rev() {
-        let (mut at, mut out) = (0, Vec::new());
-        for _ in 0..k {
-            let from = at;
-            while pattern.get(at) == Some(&b'-') {
-                at += 1;
+/// One positional's `nargs` pattern matched at `at` and the rest after
+/// it, in the order `re` tries them: `(-*A-*)` or `(-*A[-AO]*)`, each
+/// trailing run greedy and given back one at a time.
+fn match_from(
+    kinds: &[Nargs],
+    pattern: &[u8],
+    at: usize,
+    failed: &mut Vec<Vec<bool>>,
+) -> Option<Vec<usize>> {
+    let Some((first, rest)) = kinds.split_first() else {
+        return Some(Vec::new());
+    };
+    if failed[kinds.len()][at] {
+        return None;
+    }
+    let mut a = at;
+    while pattern.get(a) == Some(&b'-') {
+        a += 1;
+    }
+    if pattern.get(a) == Some(&b'A') {
+        let longest = match first {
+            Nargs::Parser => pattern.len() - a - 1,
+            _ => pattern[a + 1..].iter().take_while(|&&c| c == b'-').count(),
+        };
+        for tail in (0..=longest).rev() {
+            let end = a + 1 + tail;
+            if let Some(mut more) = match_from(rest, pattern, end, failed) {
+                more.insert(0, end - at);
+                return Some(more);
             }
-            if pattern.get(at) != Some(&b'A') {
-                continue 'k;
-            }
-            at += 1;
-            while pattern.get(at) == Some(&b'-') {
-                at += 1;
-            }
-            out.push(at - from);
         }
-        return out;
+    }
+    failed[kinds.len()][at] = true;
+    None
+}
+
+/// `_match_arguments_partial`: the most leading positionals whose
+/// patterns match together, and each one's count.
+fn match_partial(kinds: &[Nargs], pattern: &[u8]) -> Vec<usize> {
+    for k in (1..=kinds.len()).rev() {
+        let mut failed = vec![vec![false; pattern.len() + 1]; k + 1];
+        if let Some(out) = match_from(&kinds[..k], pattern, 0, &mut failed) {
+            return out;
+        }
     }
     Vec::new()
 }
@@ -163,6 +203,7 @@ struct Run<'a> {
     ns: &'a mut Namespace,
     seen: Vec<bool>,
     extras: Vec<PyStr>,
+    unrecognized: &'a mut Vec<PyStr>,
     positionals: Vec<usize>,
     width: i64,
     hook: &'a dyn HelpText,
@@ -170,10 +211,7 @@ struct Run<'a> {
 
 impl Run<'_> {
     fn set(&mut self, dest: &[u32], value: PyValue) {
-        match self.ns.iter_mut().find(|(k, _)| k == dest) {
-            Some(slot) => slot.1 = value,
-            None => self.ns.push((dest.to_vec(), value)),
-        }
+        subparsers::set(self.ns, dest, value);
     }
 
     /// `take_action` with `_get_values`, `_check_value` and the action's
@@ -182,9 +220,9 @@ impl Run<'_> {
         self.seen[i] = true;
         let a = &self.p.actions[i];
         match &a.kind {
-            Kind::Store => {
-                let value = args.into_iter().next().unwrap_or_default();
+            Kind::Store | Kind::Parsers => {
                 if let Some(choices) = &a.choices {
+                    let value = args.first().cloned().unwrap_or_default();
                     if !choices.contains(&value) {
                         let mut tail = repr_str(&value);
                         tail.extend(cps(" (choose from "));
@@ -193,6 +231,11 @@ impl Run<'_> {
                         return Err(argument_error(self.p, i, "invalid choice: ", &tail));
                     }
                 }
+                if a.kind == Kind::Parsers {
+                    let (w, h) = (self.width, self.hook);
+                    return subparsers::call(self.p, &args, self.ns, self.unrecognized, w, h);
+                }
+                let value = args.into_iter().next().unwrap_or_default();
                 let dest = a.dest.clone().unwrap_or_default();
                 self.set(&dest, PyValue::Str(value));
             }
@@ -218,7 +261,6 @@ impl Run<'_> {
                     stderr: Vec::new(),
                 }));
             }
-            Kind::Parsers => return Err(Stop::NotPorted),
         }
         Ok(())
     }
@@ -291,17 +333,22 @@ impl Run<'_> {
 
     fn consume_positionals(&mut self, mut start: usize) -> Result<usize, Stop> {
         let p = self.p;
-        if self
-            .positionals
-            .iter()
-            .any(|&i| p.actions[i].kind != Kind::Store)
-        {
-            return Err(Stop::NotPorted);
+        let mut kinds = Vec::new();
+        for &i in &self.positionals {
+            match nargs(&p.actions[i].kind) {
+                Nargs::Zero => return Err(Stop::NotPorted),
+                Nargs::Parser if p.subparsers.is_none() => return Err(Stop::NotPorted),
+                n => kinds.push(n),
+            }
         }
-        let counts = match_partial(self.positionals.len(), &self.pattern[start..]);
+        let counts = match_partial(&kinds, &self.pattern[start..]);
         for (n, &count) in counts.iter().enumerate() {
             let mut args = self.args[start..start + count].to_vec();
-            if self.pattern[start..start + count].contains(&b'-') {
+            if matches!(kinds[n], Nargs::Parser) {
+                if self.pattern[start] == b'-' {
+                    args.remove(0);
+                }
+            } else if self.pattern[start..start + count].contains(&b'-') {
                 let at = args.iter().position(|a| a[..] == [DASH, DASH]);
                 args.remove(at.expect("the '--' the pattern marks"));
             }
@@ -322,6 +369,7 @@ pub(crate) fn parse_known(
     p: &ArgumentParser,
     args: &[PyStr],
     ns: &mut Namespace,
+    unrecognized: &mut Vec<PyStr>,
     width: i64,
     hook: &dyn HelpText,
 ) -> Result<Vec<PyStr>, Stop> {
@@ -352,6 +400,7 @@ pub(crate) fn parse_known(
         ns,
         seen: vec![false; p.actions.len()],
         extras: Vec::new(),
+        unrecognized,
         positionals,
         width,
         hook,

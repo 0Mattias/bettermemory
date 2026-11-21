@@ -7,10 +7,12 @@
 //! Effects are arguments: the help formatter's width is passed in (the
 //! reference reads it from `shutil.get_terminal_size`), and the help text
 //! and the filling of a long version text come through [`HelpText`], which
-//! a later unit (argparse-2) fills. Subparsers are argparse-1b's: the
-//! action kind [`Kind::Parsers`] exists and answers [`NotPorted`].
+//! a later unit (argparse-2) fills. Subparsers (`add_subparsers`,
+//! `add_parser` and the PARSER `nargs`) are argparse-1b's, in
+//! [`subparsers`].
 
 pub mod parse;
+pub mod subparsers;
 pub mod usage;
 
 use crate::pyvalue::{PyStr, PyValue};
@@ -77,6 +79,13 @@ pub enum SpecError {
     /// The `TypeError` of passing `required` to an action class that does
     /// not take it (`help` and `version` as positionals).
     UnexpectedRequired,
+    /// "cannot have multiple subparser arguments".
+    MultipleSubparsers,
+    /// "conflicting subparser: NAME".
+    ConflictingSubparser,
+    /// The `AttributeError` of `add_parser` on a parser without
+    /// subparsers (the caller holds no `_SubParsersAction`).
+    NoSubparsers,
 }
 
 /// An answer the reference gives that this unit does not reproduce yet.
@@ -122,6 +131,8 @@ pub struct ArgumentParser {
     pub actions: Vec<Action>,
     /// `_has_negative_number_optionals`.
     pub negative_optionals: bool,
+    /// The `_SubParsersAction` `add_subparsers` made, if any.
+    pub subparsers: Option<subparsers::Subparsers>,
 }
 
 fn cps(s: &str) -> PyStr {
@@ -155,6 +166,7 @@ impl ArgumentParser {
             description: description.map(cps),
             actions: Vec::new(),
             negative_optionals: false,
+            subparsers: None,
         };
         if add_help {
             let help = Arg {
@@ -260,25 +272,16 @@ impl ArgumentParser {
         width: i64,
         hook: &dyn HelpText,
     ) -> Result<Parsed, NotPorted> {
-        let mut ns: Namespace = Vec::new();
-        for a in &self.actions {
-            if let (Some(d), Some(v)) = (&a.dest, &a.default) {
-                if !ns.iter().any(|(k, _)| k == d) {
-                    ns.push((d.clone(), v.clone()));
-                }
-            }
-        }
-        let message = match parse::parse_known(self, argv, &mut ns, width, hook) {
-            Ok(extras) if extras.is_empty() => return Ok(Parsed::Namespace(ns)),
-            Ok(extras) => {
-                let mut m = cps("unrecognized arguments: ");
-                m.extend(extras.join(&0x20));
-                m
-            }
-            Err(parse::Stop::Error(m)) => m,
+        let (ns, extras) = match subparsers::parse_known_args(self, argv, width, hook) {
+            Ok(known) => known,
             Err(parse::Stop::Exit(o)) => return Ok(Parsed::Exit(o)),
-            Err(parse::Stop::NotPorted) => return Err(NotPorted),
+            Err(_) => return Err(NotPorted),
         };
+        if extras.is_empty() {
+            return Ok(Parsed::Namespace(ns));
+        }
+        let mut message = cps("unrecognized arguments: ");
+        message.extend(extras.join(&0x20));
         Ok(Parsed::Exit(self.error(&message, width)))
     }
 

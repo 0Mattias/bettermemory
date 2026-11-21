@@ -24,7 +24,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `in_force` | `in_force.py` whole: `InForce` (with `history`), `in_force` and its inner `newest`, `newest_head`, `admitted_sources`, `head`; the store's reads and the admission are traits (`LinkReader`, `RecordView`) | `in_force.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
-| `argparse` | unit argparse-1a: the flat-parser subset of CPython 3.13.13's `argparse` the hook mains use: `ArgumentParser(prog, description, add_help)`, `add_argument` (`store`, `store_true`, `help`, `version`; positionals of one argument with `choices`), `parse_args` (`_parse_known_args` with `_parse_optional`, `_get_option_tuples`, `consume_optional`, `consume_positionals`, `_match_argument`, `_match_arguments_partial`, the negative-number matcher), `error` and `_format_usage` with its wrapping, as an `Outcome` without a process exit | `argparse.jsonl`, `argparse_python.jsonl` |
+| `argparse` | unit argparse-1a: the flat-parser subset of CPython 3.13.13's `argparse` the hook mains use: `ArgumentParser(prog, description, add_help)`, `add_argument` (`store`, `store_true`, `help`, `version`; positionals of one argument with `choices`), `parse_args` (`_parse_known_args` with `_parse_optional`, `_get_option_tuples`, `consume_optional`, `consume_positionals`, `_match_argument`, `_match_arguments_partial`, the negative-number matcher), `error` and `_format_usage` with its wrapping, as an `Outcome` without a process exit; unit argparse-1b: `add_subparsers(dest)` with its `prog` derived from the parent's positionals, `add_parser`, the PARSER `nargs` and `_SubParsersAction.__call__` with the child's namespace merged in the reference's order and its leftovers after the parent's | `argparse.jsonl`, `argparse_python.jsonl`, `argparse_subparsers.jsonl`, `argparse_subparsers_python.jsonl` |
 | `native_text`, `caches`, `daemon_client`, `install_hints` | `native_text.py` 15-40 (`has_surrogates`, `utf8_text`, `encoded_json`, `origin_projection`), `_caches.py` whole (`register` under a key, `clear_all`), `_daemon_client.py` 149-172 (`STORE_FILENAME` re-exported, `START_TIMEOUT_SECONDS`, `HOOK_TIMEOUT_SECONDS`, `HOOK_HARNESS_TIMEOUT_SECONDS`, `HOOK_MARGIN_SECONDS`, `hook_budget_seconds`), `_install_hints.py` 41-130 (every spelling) | `native_text.jsonl`, `daemon_client.jsonl`, `install_hints.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks; its second unit (`src/origin_history/located.rs`): `located_key`, `history_guard`, `cuts`, `shallow_file`, `cuts_in` | `origin_history.jsonl`, `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` |
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves | `origin_dates_reads.jsonl` |
@@ -6741,7 +6741,7 @@ of 100,000 digits and a list nested 100,000 deep, and holds `record_text`,
 the held lines and the scope filter to `timing::TENFOLD` at ten times the
 input.
 
-## The hook mains' argument parser (`argparse`, unit argparse-1a)
+## The hook mains' argument parser (`argparse`, units argparse-1a and argparse-1b)
 
 `hook.main` (`hook.py` 1251-1352) and `hook.prompt_main` (984-1063)
 parse their argv through the standard library's `argparse`. The reference
@@ -6758,12 +6758,12 @@ machine and its status:
 | `add_argument`, `_get_positional_kwargs`, `_get_optional_kwargs`, the conflict check | 1468-1560, 1599-1697 | nothing | argparse-1a for `store`, `store_true`, `version`, `help`; the `ValueError`, `ArgumentError`, `IndexError` and `TypeError` of a bad spec (an empty name, `dest=` beside a positional name, `required=` on a positional, `help` or `version` as a positional) are classes (`SpecError`) only |
 | `parse_args`, `_parse_known_args2`, `_parse_known_args` with `consume_optional` and `consume_positionals` | 1925-2282 | nothing | argparse-1a (`parse::parse_known`) |
 | `_parse_optional`, `_get_option_tuples`, `_negative_number_matcher` | 2352-2441, 1427 | Unicode's decimal digits | argparse-1a |
-| `_match_argument`, `_match_arguments_partial`, `_get_nargs_pattern` | 2313-2350, 2442-2482 | nothing | argparse-1a for `nargs` None and 0; PARSER is argparse-1b |
+| `_match_argument`, `_match_arguments_partial`, `_get_nargs_pattern` | 2313-2350, 2442-2482 | nothing | argparse-1a for `nargs` None and 0; argparse-1b for PARSER |
 | `_get_values`, `_check_value`, `_get_action_name`, `ArgumentError.__str__` | 2520-2610, 728-768 | nothing | argparse-1a without type converters |
 | `HelpFormatter._format_usage` with `get_lines`, `_get_actions_usage_parts_with_split`, `format_help`'s last pass | 286-497 | the terminal width (an argument) | argparse-1a without groups |
 | `_VersionAction.__call__`, `_format_text`, `_fill_text` | 1175-1182, 500-504, 646-651 | the width | argparse-1a for a text that fits; `textwrap.fill` of a longer one is the `HelpText` hook's |
 | `error`, `exit`, `_print_message` | 2658-2685 | stdout, stderr, the exit | argparse-1a, as an `Outcome` |
-| `add_subparsers`, `add_parser`, `_SubParsersAction` | 1185-1290, 1873-1903 | nothing | argparse-1b (`Kind::Parsers` answers `NotPorted`) |
+| `add_subparsers`, `add_parser`, `_SubParsersAction.__call__`, the leftovers of `_parse_known_args2` | 1185-1293, 1873-1903, 1945-1974 | the width | argparse-1b (`subparsers`); `title=`, `description=`, `required=`, `metavar=`, `prog=` of `add_subparsers` and `aliases=`, `deprecated=` of `add_parser` are not taken |
 | `format_help`, `_format_action`, `_split_lines`, `textwrap` | 500-660, 2618-2640 | the width | argparse-2, through `HelpText::format_help` and `HelpText::fill` |
 | `nargs` `?`, `*`, `+`, integers, REMAINDER; `type=`; mutually exclusive groups; `fromfile_prefix_chars`; intermixed parsing; deprecation warnings | | | not needed by the two mains; not built |
 
@@ -6843,6 +6843,72 @@ parser by a test `HelpText` that returns the case's stdout;
 100,000 code points and surrogates, and ten times the argv within
 `TENFOLD` times the time. `argparse_not_posix` is not needed: nothing
 here reads the platform.
+
+**Unit argparse-1b: subparsers.** `add_subparsers(dest, width)` adds
+the `_SubParsersAction` as a positional of `nargs` PARSER whose choices are
+the parsers' names; its `prog` prefix is what `format_help` of a formatter
+given `add_usage(None, positionals, [], '')` writes at the width, stripped
+(`usage::format_usage_with`), so it holds the parent's positionals added
+before it and may hold newlines at a small width. `add_parser(name, help,
+description)` makes a parser with `add_help` whose `prog` is the prefix, a
+space and the name; a name added twice is `ConflictingSubparser`, a second
+`add_subparsers` `MultipleSubparsers`. The PARSER pattern `(-*A[-AO]*)` is
+matched with the others of `_match_arguments_partial` by a backtracking
+matcher in `re`'s order (each trailing run greedy, given back one at a
+time, failures memoised), so a positional after the subparsers takes what
+it needs from the end. Only a leading `--` of the PARSER's arguments is
+removed. `_get_values` checks the name against the choices first (the
+`invalid choice` error, the action named by its dest, or `{a,b}` when the
+dest is SUPPRESS, or no name at all when there are no choices); then
+`__call__` sets the dest to the name and runs the child's
+`parse_known_args` on a fresh namespace: the child's errors exit with the
+child's usage and `prog`, its attributes are set on the parent's namespace
+in its order (an existing one keeps its place), and its leftovers follow
+the parent's own in `unrecognized arguments`. The usage part of the action
+is its metavar followed by ` ...`.
+
+Decisions of argparse-1b:
+
+- The children take the parent's width. The product's children use the
+  default formatter, which reads the terminal; the port's width argument
+  stands for that reading.
+- A dest named `_unrecognized_args` meets the reference's own attribute
+  (`_parse_known_args2` extends the leftovers with it and deletes it);
+  that reading answers `NotPorted`.
+- `add_parser` on a parser without subparsers is `NoSubparsers` (the
+  reference's caller holds no action to call it on).
+- The `unknown parser` error of `__call__` cannot be reached after the
+  choice check and is not ported.
+- A chain of subparsers 100 levels deep or more (`MAX_DEPTH`) answers
+  `NotPorted`. Each level costs the reference about six Python frames, so
+  3.13.13 raises `RecursionError` from 166 levels on and the depth follows
+  the release; the port's recursion would otherwise end in a stack
+  overflow. Below 100 levels the answers agree.
+- `add_parser`'s `help` is `Option<&str>`, so `help=None` passed
+  explicitly (which still adds a `_ChoicesPseudoAction`) cannot be said;
+  only argparse-2's help listing would read it, and the product passes a
+  string.
+- No pattern is added: the PARSER pattern is over the private `A`/`O`/`-`
+  alphabet and is matched by hand under rule 3, as the other `nargs`
+  patterns.
+
+Fixtures of argparse-1b: `gen_argparse.py` writes
+`argparse_subparsers.jsonl` (not gated: namespace cases with exact option
+strings) and `argparse_subparsers_python.jsonl` (gated on the Python
+release: the two refused calls, which 3.11 and 3.14 answer otherwise,
+every exit, error text, choice listing,
+usage line at widths 78 to 0, `--` and prefix reading). Its trees are the
+root and hook subparser of `cli/__init__.py` 89-102 and 152-177, a tree
+with a positional before and after unnamed subparsers and a nested
+subparser, subparsers without parsers, and long positional names that
+make the `prog` prefix wrap. `golden_argparse_subparsers`,
+`argparse_subparsers_kills` and `argparse_subparsers_robustness` (a tree
+99 deep answers, trees 100, 166 and 20,000 deep decline on a 2 MiB
+thread, every width, a child's argv ten times longer within `TENFOLD`)
+check them. Help output of a subparser (the choices' help lines) is
+argparse-2's: the help rows hand the case's stdout to the parser through the
+test `HelpText`, so they check that help ran and its exit status, not the
+`{a,b}` group or the choices' help lines.
 
 ## The store's writes: the reference's order (N3a design)
 
@@ -17613,9 +17679,9 @@ What the reference has and this build does not, by area:
 - The daemon, the MCP tools, the hooks past the pure leaves of `hook.py`
   (hook-1a, in `hook.rs`) and the Stop audit's front half (hook-2a, a
   sequence over `StopSide` in `hook_stop.rs`), and the command line. Of
-  the hook mains' argument parsing, the flat parser (argparse-1a) is
-  built; the subparsers (argparse-1b) and the help formatter
-  (argparse-2) are not.
+  the hook mains' argument parsing, the flat parser (argparse-1a) and
+  the subparsers (argparse-1b) are built; the help formatter
+  (argparse-2) is not.
 - `datetime.astimezone` of a naive value (the reference reads it as the
   machine's local time).
 
