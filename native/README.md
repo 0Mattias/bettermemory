@@ -43,6 +43,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `git_read_budget`, `git_calls` | `git_read_budget.py` whole (`ReadBudget`, the scopes as a `Scope` value, `_progress` as `Progresses`, `call_scope`, `call`, `health_call`, `async_call`, `reading`, `expired`, `wait_for`, `unread`, `hit`, `allowance`, `exhausted`, `for_resume`); `_git.py`'s tallies, `run_git`'s counts around one call, `printed_path`, `subcommand`, the `log_nonzero_exit` message | `git_read_budget.jsonl` |
+| `git_run` | `_git.py`'s `run_git` whole over a `GitProcess` (the command, `_environment`, stdin, the timeout given, both streams as text or bytes, the counts through `git_calls::run_git`, the logged lines as values) and `log_nonzero_exit` | `git_run.jsonl` |
 | `location_stamps` | `location_stamps.py` whole: `in_ticks`, `kept_in_ticks`, `stat_each`, `capture_ticks`, `_device_name` (macOS's `os.major`/`os.minor`, and Linux's under a CPython built against glibc or musl), `_drvfs` (the mount table read through `Fs`), `_init_stamps`, `filetime_ns`, `basic_info_ns` (FILE_BASIC_INFO through `Fs::basic_info`, declined by `StdFs`) | `location_stamps.jsonl`, `location_stamps_python.jsonl`, `location_stamps_platform.jsonl` |
 | `location_git` | the readers of `location_git.py` that need neither discovery nor the object reader: `_Git`, `_resolve_head` (the peel a callback), `_ref_tips`, `_manifest`, `Reach`, `reachable_among`, `walk` | `location_git_readers.jsonl`, `location_git_readers_posix.jsonl` |
 | `location_reads` | `location_reads.py` whole as a timed runtime: `READ_HANDOFF`, `READ_LANES`, `READ_SLOTS`, `_Flight`, `_Slots`, the board (`_FLIGHTS`, `_LANDED`, `_SLOTS`, `UNANSWERED`, `NOT_READ`) as a `Board` the caller holds, `_stalled`, `_board`, `_give_up`, `_fly`, `bounded_read`, `bounded_reads`, `_Lanes` | `location_reads.jsonl` |
@@ -7722,7 +7723,7 @@ holds a path spelled by the host, an errno or an interpreter's message.
 | `_unanswered`, `_Failed`, `_TimedOut`, `_Missing`, the readers, `note_failed`, `note_timed_out` | `_git.py` 136-223 | thread-locals, a global | built: `UNANSWERED` (an atomic) and `Tally` (a value each thread owns) |
 | `run_git`'s counts around one call | `_git.py` 270-375 | the spawn, `os.path.isdir` | built: `git_calls::run_git` over a `Spawn` outcome |
 | the message `log_nonzero_exit` logs | `_git.py` 378-396 | none | built: `nonzero_exit_line` |
-| `_environment`, `run_git`'s spawn, stdin, stderr, decoding, the log calls | `_git.py` | the process | not built: unit `_git-1` (wave 3) |
+| `_environment`, `run_git`'s spawn, stdin, stderr, decoding, the log calls, `log_nonzero_exit` | `_git.py` 255-266, 297-396 | the process, `os.environ`, `os.path.isdir` | built: unit `_git-1`, `git_run` (below) |
 
 Decisions:
 
@@ -7809,6 +7810,64 @@ Tests: `golden_git_read_budget` (every row: programs over a scripted
 clock, run by the same interpreter as the generator's), the kills in
 `git_read_budget_kills` and `git_read_budget_robustness` (float extremes,
 2,000 nested scopes, linear time of `for_resume` and `subcommand`).
+
+### Unit `_git-1`, built (`git_run`)
+
+`git_run::run_git` is `_git.run_git` whole (297-375; the two overloads at
+269-296 are one function with `Call::text`), and `log_nonzero_exit`
+(378-396) beside it. The constants (`SCRUBBED_ENV` 75-91,
+`RESHAPING_ENV` 93-99, `NO_FETCH` 110, `PINS` 121-130) and
+`_environment` (255-266) are `gitsystem::ask`'s, reused, not copied.
+Golden file: `git_run.jsonl` (`gen_git_run.py`), not gated: every
+exception text is a scripted string, `os.environ` a fixed map, and no
+row holds a host path, an errno name or a C library's text.
+
+- The process is a trait of this module, `GitProcess`, whose `run`
+  takes the argv, the working directory, the environment, stdin and the
+  timeout, and answers `Spawned`: the exit code and both streams, or
+  FileNotFoundError, TimeoutExpired, another OSError (each with
+  `str(exc)` where the reference logs it) or another exception.
+  `gitsystem`'s `Git` is not used: its command has no stdin or stderr and
+  cuts output at `OUTPUT_LIMIT`, which `run_git` does not. No process
+  implementation is built here; the crate runs no git yet, and the errno
+  a platform gives for a missing working directory is the implementer's.
+- The counts, the allowance and the budget's raise are
+  `git_calls::run_git`'s, composed: its spawn closure starts the process,
+  records the allowed timeout and the `Spawned` value, and answers the
+  fieldless `Spawn`. Its `cwd_is_dir` is wrapped so the answer is
+  recorded; the not-found warning is chosen from that recorded answer,
+  and `os.path.isdir` is never asked a second time (at most once per
+  call, never without a `cwd`, as the reference asks it).
+- The environment is built inside the spawn closure, after the
+  allowance, as the reference builds it in `subprocess.run`'s arguments.
+- Log calls are values: `run_git` answers its result with the lines it
+  logged, `(Level, message)` in order. The not-found line is `git
+  cannot run in {cwd}` where `cwd` is given and is not a folder, else
+  `git binary not found on PATH: {exc}`; the timeout line spells the
+  allowed timeout by `float_repr::repr` (`5.0`, not `5`) and the place
+  as `str(cwd)`, else `git_dir`, else `None`; the OSError line is `git
+  invocation failed in {where}: {exc}`. The shared deadline's raise
+  comes before its warning, so that path logs nothing.
+- Text streams are `gitsystem::answers::text` (`decode("utf-8",
+  "replace")`, every CR kept); bytes are returned as they came. A
+  non-zero exit is a `Completed` like any other, with no count.
+- `log_nonzero_exit` takes the exit code and the stderr (`Out`), decodes
+  bytes the same way, spells `where` by `str` (`None` for None) and
+  builds the line over code points in the shape of
+  `git_calls::nonzero_exit_line` (stderr stripped, its first line), so a
+  lone surrogate in an argument, in `where` or in a text stderr is kept
+  as the reference keeps it. Rows whose texts hold a surrogate are
+  written as code point lists (kind `nzc`), since a JSON reader refuses
+  a lone surrogate in a string.
+
+No pattern of `re` is used here.
+
+Tests: `golden_git_run` (52 rows: 42 calls with the argv, cwd, stdin,
+timeout and environment the process was given, the answer, the counts'
+moves, the `isdir` calls, the logged lines and the clock reads; 10
+`log_nonzero_exit` lines, 2 of them as code point lists), `git_run_kills` and `git_run_robustness`
+(2,000,000 invalid UTF-8 bytes in linear time, 100,000 arguments, lone
+surrogates and float extremes).
 
 ## A record id's text
 

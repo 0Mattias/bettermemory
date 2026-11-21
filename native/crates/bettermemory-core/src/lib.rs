@@ -66,6 +66,8 @@
 //! - [`git_read_budget`] and [`git_calls`]: the shared deadline of a
 //!   call's history reads (`git_read_budget.py` whole), and `_git.py`'s
 //!   call tallies, `printed_path`, `subcommand` and the nonzero-exit line;
+//! - [`git_run`]: `_git.run_git` whole over a process the caller hands in,
+//!   and `log_nonzero_exit`, the logged lines returned as values;
 //! - [`location_stamps`]: a git directory's init stamps and whether its
 //!   file system keeps FILETIME's ticks (the whole module);
 //! - [`location_git`]: a repository's head, ref tips, content manifest
@@ -122,6 +124,7 @@ pub mod fsdata;
 pub mod fsutil;
 pub mod git_calls;
 pub mod git_read_budget;
+pub mod git_run;
 pub mod gitconfig;
 pub mod gitfile_rule;
 pub mod githead;
