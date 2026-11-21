@@ -49,6 +49,7 @@ pub mod open;
 pub mod pool;
 pub mod provenance;
 pub mod restore_lock;
+pub mod schema;
 pub mod tables;
 pub mod tx;
 pub mod write;

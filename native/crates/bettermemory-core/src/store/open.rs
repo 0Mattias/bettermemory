@@ -36,6 +36,7 @@ use super::create::{
 };
 use super::digest::{self, DigestError};
 use super::restore_lock;
+use super::schema;
 use super::{keys, log_row, meta_get, open_checks, sql_value, SqlValue, StoreError};
 use super::{StoreVersionError, BUSY_TIMEOUT, LOG_SELECT, SCHEMA_REVISION};
 use crate::json::{self, DumpOptions};
@@ -746,9 +747,8 @@ fn restore_to_settle(keys_dir: &Path, store_id: &str) -> bool {
     })
 }
 
-/// `_add_membership_tables`' `wanted`: the membership and additive objects
-/// `sqlite_master` lacks, the membership store id when meta has none, and
-/// each optional column a membership table lacks.
+/// `_add_membership_tables`' `wanted` (`schema::wanted`) over this
+/// connection's `sqlite_master`.
 fn membership_wanted(
     conn: &Connection,
     meta: &[(String, String)],
@@ -768,46 +768,7 @@ fn membership_wanted(
         }
         out
     };
-    let texts = admission::schema_texts();
-    let mut objects: Vec<String> = Vec::new();
-    for text in &texts[1..3] {
-        let mut rest = text.as_str();
-        while let Some(at) = rest.find("IF NOT EXISTS ") {
-            rest = &rest[at + "IF NOT EXISTS ".len()..];
-            let name: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-            if !name.is_empty() && !objects.contains(&name) {
-                objects.push(name);
-            }
-        }
-    }
-    objects.sort();
-    let mut wanted: Vec<String> = objects
-        .into_iter()
-        .filter(|o| !master.iter().any(|(n, _)| n == o))
-        .collect();
-    if meta_get(meta, "membership_store_id").is_none_or(str::is_empty) {
-        wanted.push("the store id".to_owned());
-    }
-    if let Some((_, sql)) = master.iter().find(|(n, _)| n == "checkouts") {
-        if !has_word(sql, "unresolved_json") {
-            wanted.push("checkouts.unresolved_json".to_owned());
-        }
-    }
-    Ok(wanted)
-}
-
-/// `re.search(rf"\b{word}\b", text)` for an ASCII word.
-fn has_word(text: &str, word: &str) -> bool {
-    let cps = unicode::cps(text);
-    let w = unicode::cps(word);
-    (0..cps.len().saturating_sub(w.len() - 1)).any(|i| {
-        cps[i..].starts_with(&w)
-            && (i == 0 || !unicode::is_word(cps[i - 1]))
-            && cps.get(i + w.len()).is_none_or(|&c| !unicode::is_word(c))
-    })
+    Ok(schema::wanted(&master, meta))
 }
 
 /// `_daemon_client.version_key`.
@@ -1551,12 +1512,5 @@ mod tests {
         assert!(newer_engine(Some("junk"), "9.0.0"));
         assert!(!newer_engine(Some("9.0.0"), "junk"));
         assert!(newer_engine(Some("9.0.0+local"), "9.0.1+x"));
-    }
-
-    #[test]
-    fn words_are_bounded() {
-        assert!(has_word("a unresolved_json TEXT", "unresolved_json"));
-        assert!(!has_word("unresolved_jsonx", "unresolved_json"));
-        assert!(!has_word("xunresolved_json", "unresolved_json"));
     }
 }

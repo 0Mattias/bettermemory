@@ -59,7 +59,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
@@ -1131,6 +1131,122 @@ native release (sha2 0.11.1, which uses the aarch64 SHA instructions) 142.8,
 The prediction of at least ten times is missed: both are bound by
 HMAC-SHA256 on the CPU's SHA instructions (the reference's `hmac` is
 OpenSSL's), and walking the rows costs about 29 ms of the native time.
+
+## The additive schema steps (`store_schema.py`, unit store_schema-1)
+
+`store::schema` holds the schema steps a writing open runs on a store an
+earlier build made, and four leaves of `store_schema.py`. Read from
+`src/bettermemory/store_schema.py` at the unit's base (lines as there).
+Nothing is wired into `open_for_writing` or `run_steps` yet: `store::open`
+still refuses a store a step would change (`NotPorted::MembershipStep`),
+and now reads its `wanted` list through `schema::wanted`, the one copy of
+it.
+
+| function | reference | needs from the machine | status |
+| --- | --- | --- | --- |
+| `wanted` | `_add_membership_tables` 1227-1251 | `sqlite_master` (rows given) | built |
+| `add_membership_tables` | 1214-1291, `_MEMBERSHIP_*` and `_ADDITIVE_*` 1204-1211 | the connection, the `create::Provider`'s membership id | built |
+| `add_returned_marks`, `RETURNED_BACKFILL_KEY` | 1300-1329 | the connection | built |
+| `add_proposals_index` | 1332-1371 | the connection | built |
+| `add_session_index` | 1374-1411 | the connection | built |
+| `add_path_targets` | 1414-1423 | nothing (no column) | built |
+| `absent_text` | 1059-1067 | nothing | built |
+| `orphan_names` | 1135-1150 | the host's path flavour (a parameter, `IS_WINDOWS` for the host) | built |
+| `refuse_unmigrated_v8` | 1169-1179 | `Fs::stat`, `Fs::listdir` | built for POSIX (`#[cfg(unix)]`) |
+| `holds_v8_files`, `is_v8_name` | 1183-1201 | `Fs::listdir` | built |
+
+What each reproduces:
+
+- `wanted`: the membership and additive objects `sqlite_master` lacks, by
+  exact name, sorted; `the store id` when meta's value is missing or empty
+  (a falsy `meta.get`); `checkouts.unresolved_json` when the table's text
+  does not hold the word (`\b` search, case-sensitive). The only optional
+  column of `_MEMBERSHIP_SPECS` is that one (`OPTIONAL`). An empty list
+  returns before the id is drawn, so the provider is asked only when
+  something is wanted.
+- `add_membership_tables`: `BEGIN IMMEDIATE`, every statement of the two
+  schema texts (split on `;` as the reference splits them), `ALTER TABLE
+  ... ADD COLUMN ... TEXT` for each optional column `PRAGMA table_info`
+  lacks, `INSERT OR IGNORE` of the id, `COMMIT`; a rollback when any fails
+  inside the transaction. The ALTER set comes from `PRAGMA` and `wanted`
+  from the word search, and the two disagree: a column named only in a
+  comment is never added, and a column named in another case
+  (`Unresolved_JSON`) makes `wanted` name it and the ALTER fail with
+  `duplicate column name` (an OperationalError the step raises). Meta's
+  dict gains the id the table holds after (`str()` of it: an integer
+  value reads `7`), not necessarily the minted one.
+- The read-only store: an OperationalError whose text, spaces removed and
+  lowercased, holds `readonly` is the warning `store <path> is read-only;
+  not added: <wanted>` (or `; no backfill marked`), returned as a value
+  in the order the reference logs it. `add_returned_marks` and
+  `add_proposals_index` return their warnings beside the outcome, so a
+  warning the membership step gave stays when the statement after it
+  raises (the reference has logged it by then). Any other sqlite error is
+  `StepError::Sqlite` with the class `_pysqlite_seterror` gives its
+  primary code and SQLite's message alone (rusqlite's `SqlInputError`
+  appends the statement and an offset, which the reference's text lacks).
+- `add_returned_marks`: the membership step, then `INSERT OR IGNORE` of
+  `returned_backfill = pending`; meta's dict reads `pending` after it even
+  when the table keeps an earlier value (`done`), as the reference sets
+  it unconditionally.
+- The two index steps compare names lowercased (an index named in
+  capitals counts as there) where the membership step compares them
+  exactly (`LOG_CORROBORATIONS` leaves `log_corroborations` wanted; its
+  `IF NOT EXISTS` statement is then a no-op, as SQLite's names are
+  case-insensitive, and only the id is written).
+- `absent_text(kind, args)`: `str(args[0])` for one argument, `str` of the
+  tuple otherwise; `NotFound` adds `no record ... in the store`.
+- `orphan_names(value, windows)`: `json.loads` (ValueError and
+  RecursionError give none), a list's non-empty strings whose
+  `Path(name).name` is the name: no `/` and not `.`, and under Windows no
+  backslash and no drive (any character then a colon).
+- `holds_v8_files`: a listing that fails holds none; `.events.jsonl`,
+  `.tombstones`, `.events.*.jsonl`, or a memory file.
+- `refuse_unmigrated_v8(fs, path)`: the file test and the parent read
+  the path as `PurePosixPath` spells it (`config::pure_path`, so
+  `a//memory.sqlite` names `a`, and `a/memory.sqlite/` or
+  `a/memory.sqlite/.` is tested as `a/memory.sqlite`); no refusal when a
+  regular file is there, the parent is not a folder, or it holds no v8
+  file. Not built for Windows, where the reference's `WindowsPath` takes
+  a drive and backslashes; `store_schema_not_posix` records the gap.
+
+The pattern `_V8_MEMORY_NAME` (`.*-[0-9A-HJKMNP-TV-Z]{26}\.md$` under
+`match`) is matched by hand under rule 3 of the pattern decision
+(`store_schema-1` is named there; `pyre` has no `api` module yet). The
+reference tests `name.endswith(".md")` first, so the pattern reduces to a
+dash at 30 from the end, 26 upper-case Crockford characters and `.md`;
+`$` before a final newline cannot arise. A newline before the dash does:
+`.*` does not cross it, so `a\nb-<ULID>.md` is no memory file
+(`store_schema_steps.jsonl` pins it, and the seeded sweep mixes newlines in).
+The pattern is in the engine's inventory already: `gen_pyre_atom` scans
+every literal the reference passes to `re`. It gains the engine
+cross-check when pyre-6 lands.
+
+Fixtures (`gen_store_schema`): `store_schema_steps.jsonl` (ungated) runs each
+step on in-memory stores made from the five schema texts and changed by
+the row's SQL (each object dropped, the id missing, empty or an integer,
+`checkouts` without the column, bare, with the column only in a comment or
+in capitals, indexes in capitals, the backfill done, no meta table, a
+trigger whose error spells `read only` with a space, a meta dict without
+the id), recording whether the id was drawn, the warnings,
+the error, meta, and what `sqlite_master` lacks or holds beyond the full
+schema; `orphan_names` under both flavours (the reference's `Path`
+replaced by `PurePosixPath` and `PureWindowsPath`), `holds_v8_files` over
+names and 4,000 seeded names by digest, and `absent_text`.
+`store_schema_posix.jsonl` (POSIX only) runs the steps on a mode-0444
+store file (among them no meta table, no proposals table and the indexes
+in capitals) and `refuse_unmigrated_v8` over real folders (a trailing `/`
+and `/.` among them), the scratch root spelled `<T>`. Its generator
+refuses to run as root, and its test asserts that the mode-0444 file
+cannot be opened for writing.
+Tests: `golden_store_schema`, `golden_store_schema_posix` (with
+`store_schema_not_posix` recording the gap off POSIX), `store_schema_kills`,
+`store_schema_robustness` (deep and wide orphan values, megabyte names,
+growth claims through `timing`).
+
+Left for later units: wiring the steps into the writing open and
+`run_steps` (`store_steps.py`), the log's warning itself (no `log.py`
+dependency here), and the engine cross-check of `_V8_MEMORY_NAME`.
 
 ## The membership records (`membership_records.py`)
 
@@ -12249,8 +12365,9 @@ What the reference has and this build does not, by area:
   write transaction (`mutate`, `begin`, its `returned` marks),
   `put_memory`, `tombstone`, `delete_tombstone` and the row writers
   (`store::home`, `store::tables`): the rest of the public record API
-  (the episode prune), the membership kinds, schema steps, rekey,
-  reclaim, a restore's rows, re-spelling the index.
+  (the episode prune), the membership kinds, wiring the schema steps
+  into the writing open and `run_steps`, rekey, reclaim, a restore's
+  rows, re-spelling the index.
 - A record's history past the rows that name it: `history.py`'s row
   MAC by chain segment and replaced detail, the versions' changes and
   body diffs, the record and link rows, `record_history` and the

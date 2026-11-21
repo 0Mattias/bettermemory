@@ -42,7 +42,8 @@
 //!   the rows that say the store's history was replaced);
 //! - [`store`]: a store file read without writing to it: the version
 //!   contract, the tables, the key ring from a keys directory, the chain
-//!   verified on disk, the FTS5 prefilter;
+//!   verified on disk, the FTS5 prefilter, and the additive schema steps
+//!   with their leaves (`store::schema`);
 //! - [`membership_records`]: the vocabulary and records of the membership
 //!   model, units 1 to 3 (the legacy ask rule and the helpers that
 //!   compare, join and rebase recorded paths in either spelling; the

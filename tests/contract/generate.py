@@ -101,6 +101,7 @@ from . import (
     gen_search_ranker,
     gen_search_dedup,
     gen_store,
+    gen_store_schema,
     gen_membership_records,
     gen_membership_rows,
     gen_store_create,
@@ -143,6 +144,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "machine_identity_python": gen_machine.generate_python,
     "log_keyring": gen_log_ring.generate,
     "store": gen_store.generate,
+    "store_schema_steps": gen_store_schema.generate,
+    "store_schema_posix": gen_store_schema.generate_posix,
     "membership_records_paths": gen_membership_records.generate,
     "membership_records_paths_python": gen_membership_records.generate_python,
     "membership_records_paths_platform": gen_membership_records.generate_platform,
@@ -601,12 +604,16 @@ PLATFORM_GATED = frozenset(
 #: folder, the last raising POSIX errno numbers (`gen_location_probe`);
 #: ``origin_gitfiles_facts_posix`` joins with the host's ``os.path``
 #: (``ntpath`` on Windows) and holds trees with links and a mode-000
-#: folder (`gen_origin_gitfiles_facts`).
+#: folder (`gen_origin_gitfiles_facts`);
+#: ``store_schema_posix`` runs the schema steps on a mode-0444 store file
+#: and spells a v8 folder's path as the host's ``Path`` does
+#: (`gen_store_schema`).
 POSIX_ONLY = frozenset(
     {
         "checkout_token_read",
         "checkout_token_read_posix",
         "store_restore_lock",
+        "store_schema_posix",
         "settings_paths",
         "settings_paths_python",
         "store_open",

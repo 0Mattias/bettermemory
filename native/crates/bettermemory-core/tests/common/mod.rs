@@ -22,6 +22,7 @@ pub mod parity;
 pub mod provenance;
 pub mod record_calls;
 pub mod rows;
+pub mod schema_steps;
 pub mod session;
 pub mod stores;
 pub mod txs;
