@@ -74,11 +74,12 @@
 //! - [`membership_rows`]: the membership table rows read into records and
 //!   written back, the object-key and stamp codecs, `_jsonable`,
 //!   `_signature`, `_unwritten` and `_Tally`;
-//! - [`membership`]: the membership model over its store trait, unit 1
-//!   (its state and plumbing, the projects with merges followed, the
-//!   members index, the witness, file-binding and checkout reads), and
-//!   unit 3 (the views and their liveness, continuity, the checkout of an
-//!   object store, the history readings);
+//! - [`membership`]: the membership model over its store trait, units 1
+//!   to 3 (its state and plumbing, the projects with merges followed, the
+//!   members index, the witness, file-binding and checkout reads; the
+//!   witness, remote, file-binding, boundary and checkout writes; the
+//!   views and their liveness, continuity, the checkout of an object
+//!   store, the history readings);
 //! - [`location_continuity`]: `location.continuity`, witness O where birth
 //!   time cannot decide;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;

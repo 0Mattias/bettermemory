@@ -60,6 +60,10 @@ _KINDS = {
     "project": ("projects", ("id",)),
     "checkout": ("checkouts", ("id",)),
     "project_file": ("project_files", ("file_id",)),
+    "project_witness": ("project_witnesses", ("project", "commit_id")),
+    "project_blob": ("project_blobs", ("project", "blob")),
+    "project_remote": ("project_remotes", ("project", "remote_key")),
+    "checkout_view": ("checkout_views", ("checkout", "machine", "path")),
 }
 
 

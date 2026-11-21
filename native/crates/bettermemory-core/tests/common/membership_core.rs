@@ -61,11 +61,15 @@ pub fn order(a: &PyValue, b: &PyValue) -> Ordering {
     }
 }
 
-fn kind_table(kind: &[u32]) -> (&'static str, &'static str) {
+fn kind_table(kind: &[u32]) -> (&'static str, &'static [&'static str]) {
     match txt(kind).as_str() {
-        "project" => ("projects", "id"),
-        "checkout" => ("checkouts", "id"),
-        "project_file" => ("project_files", "file_id"),
+        "project" => ("projects", &["id"]),
+        "checkout" => ("checkouts", &["id"]),
+        "project_file" => ("project_files", &["file_id"]),
+        "project_witness" => ("project_witnesses", &["project", "commit_id"]),
+        "project_blob" => ("project_blobs", &["project", "blob"]),
+        "project_remote" => ("project_remotes", &["project", "remote_key"]),
+        "checkout_view" => ("checkout_views", &["checkout", "machine", "path"]),
         other => panic!("no table for {other}"),
     }
 }
@@ -157,7 +161,10 @@ impl MembershipStore for Fake {
         {
             let mut st = self.0.borrow_mut();
             let rs = st.tables.entry(table.to_string()).or_default();
-            match rs.iter().position(|r| get(r, key) == get(row, key)) {
+            match rs
+                .iter()
+                .position(|r| key.iter().all(|c| get(r, c) == get(row, c)))
+            {
                 Some(i) => rs[i] = row.clone(),
                 None => rs.push(row.clone()),
             }
@@ -179,7 +186,7 @@ impl MembershipStore for Fake {
         {
             let mut st = self.0.borrow_mut();
             let rs = st.tables.entry(table.to_string()).or_default();
-            rs.retain(|r| get(r, col) != get(key, col));
+            rs.retain(|r| !col.iter().all(|c| get(r, c) == get(key, c)));
         }
         Ok(self.written())
     }

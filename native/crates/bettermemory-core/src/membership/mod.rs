@@ -1,7 +1,8 @@
 //! The membership model of one machine over one store (`membership.py`),
-//! unit membership-1: the state of `Membership`, its store plumbing, its
-//! projects with their merges followed, the members index, the witness
-//! and file-binding reads and the checkout reads.
+//! units membership-1 and membership-2: the state of `Membership`, its
+//! store plumbing, its projects with their merges followed, the members
+//! index, the witness and file-binding reads, the checkout reads, and
+//! (`writes`) the evidence, boundary and checkout writes.
 //!
 //! The model reaches the store only through [`MembershipStore`] and the
 //! files a view names only through a [`Liveness`] it is given, so every
@@ -14,6 +15,7 @@ pub mod projects;
 pub mod reads;
 pub mod views;
 pub mod vocab;
+pub mod writes;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
