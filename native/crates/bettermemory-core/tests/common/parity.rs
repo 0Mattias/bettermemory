@@ -193,6 +193,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "settings_paths_python.json"
         | "membership_lines_python.jsonl"
         | "claims_python.jsonl"
+        // The tokenizer and `literal_eval` of 3.13.13 (`gen_pysyntax`);
+        // `pysyntax.jsonl`, the values alone, is not gated.
+        | "pysyntax_python.jsonl"
         | "machine_identity_python.jsonl"
         | "capture_vocabulary_python.jsonl" => &[Python],
         // `str.isspace` and `str.isalnum` past ASCII (`gen_control_tokens`).

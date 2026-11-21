@@ -113,6 +113,9 @@
 //!   text, the reads over the file-system trait, and the write);
 //! - [`claims`]: what a memory claims, its first unit (the claim record,
 //!   the path spellings and the patterns a patch is read by);
+//! - [`pysyntax`]: Python source as CPython 3.13.13 reads it, its first
+//!   unit: the eval-mode tokenizer `ast.literal_eval` meets, with string
+//!   and number literals read;
 //! - [`gitfile_rule`]: the rule a `.git` entry is followed by, whole on
 //!   POSIX: from a `gitdir:` file's bytes to the judge of an entry and the
 //!   walk git's discovery makes.
@@ -162,6 +165,7 @@ pub mod origin_history;
 pub mod origin_remote;
 pub mod printable;
 pub mod pyre;
+pub mod pysyntax;
 pub mod pyvalue;
 pub mod records;
 pub mod search;

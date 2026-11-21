@@ -99,6 +99,7 @@ from . import (
     gen_mcp,
     gen_membership_lines,
     gen_claims,
+    gen_pysyntax,
     gen_models,
     gen_origin_history,
     gen_restore_lock,
@@ -296,6 +297,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "claims": gen_claims.generate,
     "claims_unicode": gen_claims.generate_unicode,
     "claims_python": gen_claims.generate_python,
+    "pysyntax": gen_pysyntax.generate_stable,
+    "pysyntax_python": gen_pysyntax.generate,
     "gitfile_leaves": gen_gitfile_leaves.generate,
     "gitfile_leaves_posix": gen_gitfile_leaves.generate_posix,
     "store_provenance": gen_store_provenance.generate,
@@ -418,6 +421,11 @@ PYTHON_VERSION = "3.13.13"
 #: the digests of the ``re`` sources the engine was read from (`gen_pyre`),
 #: and patterns with an empty negative lookaround, which `re._parser`
 #: parses to FAILURE from 3.13 (`gen_pyre_tree`).
+#: ``pysyntax_python`` holds the eval-mode tokenizer's and
+#: `ast.literal_eval`'s answers as 3.13.13 gives them, classed by the
+#: release's messages; under another interpreter the generator writes its
+#: header alone. Its sibling ``pysyntax`` holds the values alone, which
+#: 3.11 to 3.14 answer alike, and is not gated (`gen_pysyntax`).
 #: ``location_stamps_platform`` holds `os.major` and `os.minor` of NODEV
 #: (-1) and of numbers past ``dev_t``. 3.11 truncates a number macOS's
 #: 32-bit ``dev_t`` cannot hold, where 3.12.13 and 3.13 raise; 3.11 and
@@ -460,6 +468,7 @@ PYTHON_GATED = frozenset(
         "membership_rows_python",
         "origin_remote_python",
         "claims_python",
+        "pysyntax_python",
         "capture_vocabulary_python",
         "fs_realpath_python",
         "fs_realpath_strict_python",
