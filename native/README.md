@@ -26,7 +26,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
-| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
+| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH` | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
@@ -3182,7 +3182,7 @@ Leaves first. A unit's lines are Rust source outside tests.
 | pyre-2b | `pyre/atom.rs` | `_escape`, `_class_escape`, `_uniq`, sets, flat sequences (`parse_flat`), `re.escape` | `_parser.py` 311-449, 522-636, 705-706, 875-879; `__init__.py` 303-313 | pyre-2a | built, 377 lines |
 | pyre-3a | `pyre/parse.rs`, `pyre/tree.rs` | repeats with their errors, `getwidth` | `_parser.py` 177-227, 638-703 | pyre-2 | built, 210 lines |
 | pyre-3b | `pyre/parse.rs` | `_parse_sub` with its rewrites, groups, scoped and leading flags, lookarounds, `checkgroupname`, `_parse_flags`, `fix_flags`, `parse` | `_parser.py` 303-309, 451-509, 708-873, 884-995 | pyre-3a | built, 475 lines |
-| pyre-3c | `pyre/parse.rs` | the refusal predicate over the finished tree, the nesting bound of the matcher | none (the engine's subset) | pyre-3b | not built |
+| pyre-3c | `pyre/parse.rs` | the refusal predicate over the finished tree, the nesting bound of the matcher | none (the engine's subset) | pyre-3b | built, 103 lines |
 | pyre-4 | `pyre/lower.rs` | classes compiled as `_optimize_charset` does, nodes threaded by `next`, `_simple`, group repeats unrolled, the arena cap | `_compiler.py` 241-387, 401-408 | pyre-1, pyre-3 | not built |
 | pyre-5 | `pyre/exec.rs` | one loop, one stack, one trail; anchors, lookarounds, the three acceptance rules, the scan over starts, the step count | `_sre` (by differential) | pyre-4 | not built |
 | pyre-6 | `pyre/regex.rs` | `Regex`, `Match`, `finditer`, `findall`, `sub`, `subn`, `split`, `pos` and `endpos`, literal and function replacement | `_sre` (by differential) | pyre-5, pyre-2 | not built |
@@ -4129,14 +4129,112 @@ flags allowed anywhere, and a negated set folded with the others. Each
 fails both; the third failed neither until `[^ab]|c` and `a|[^bc]` were
 added (a negated set of one member is `NOT_LITERAL`, not a set).
 
+### Unit pyre-3c, built (`parse::refusal`)
+
+pyre-3c is the predicate that turns what `re` accepts and the matcher
+has no rule for into a failed build, 103 lines of Rust source outside
+tests (`parse.rs`; `Node::bodies` in `tree.rs` is now visible to
+`parse`). It ports no line of `re`: its rule is the engine's subset
+(decision `pyre-design-2026-11-19`, "What it accepts and refuses";
+`design-small-backtracker.md` section 1), written once in Rust and once
+in the generator over `re._parser`'s own tree.
+
+**`parse::refusal(tree, flags)`** reads a finished tree and the flags
+the state is left with, and names the first refusal:
+
+- The flags first: VERBOSE (`Verbose`), ASCII (`Ascii`), LOCALE
+  (`Locale`), in that order. IGNORECASE, MULTILINE, DOTALL and UNICODE
+  are built.
+- Then each item in the order a depth-first walk meets it, an item
+  before its bodies, a body before the next item:
+  - `AT_NON_BOUNDARY` (`\B`): `NotBoundary`.
+  - A set holding `CATEGORY_NOT_DIGIT` or `CATEGORY_NOT_WORD` (`\D` and
+    `\W`, alone or in a set): `NotDigit` or `NotWord`, the first such
+    member. `\S` is built.
+  - A capture inside a lookaround (`CaptureInLookaround`), or under a
+    repeat whose maximum is more than one (`CaptureInRepeat`); a capture
+    under `?` or `{1}` is built. Then a group's scoped flags, turned on
+    or off, by the same three names as the global ones.
+  - A repeat whose maximum is more than one over a body whose least
+    width (`getwidth`) is 0: `NullableLoop`.
+  - A branch inside a lookbehind, at any depth below it, a lookahead
+    included: `ChoiceInLookbehind`. Alternatives the parser folds into a
+    set (`(?<=a|b)`) are no branch.
+  - An item that holds a body at depth 32 (its body would be at 33):
+    `Nesting`. The top is depth 0 and every body is one deeper: a
+    capture, a group with flags, a repeat, a lookaround and a branch
+    each count; a plain group is unpacked by the parser and does not.
+    `MATCH_DEPTH` is 32.
+
+**`parse::parse`** now calls it last, after DEBUG, so every error and
+refusal of the parser comes first and the predicate sees only a tree
+`re` accepts. `parse_flat` does not call it, so the rows of pyre-2b keep
+their answers.
+
+Decisions:
+
+- **Refused at 0.** The tree holds no positions, so a refusal of the
+  predicate is placed at 0, as DEBUG is. Only the name says what was
+  refused; carrying positions into the tree would change every unit
+  that builds or compares one.
+- **The walk keeps its own stack** (a list of the item iterators
+  waiting, each with where it stands), as the tree's dump, copy and drop
+  do (pyre-2a, "Any depth"). A tree 200,000 levels deep is judged on a
+  thread of 64 KiB. `getwidth` is asked once per repeat of more than
+  one, over that repeat's body; since nesting stops at 33, the walk is
+  linear in the tree times at most 33.
+- **Which refusals are here.** The task's list: the anchor and the two
+  categories the parser keeps in the tree (pyre-2b), the nullable loop,
+  the two captures, the choice in a lookbehind, the flags, the nesting
+  bound. The refusals that depend on lowered classes or on the type of
+  the pattern (`ClassPastBmpIgnorecase`, `BytesCategory`,
+  `BytesBoundary`, `BytesIgnorecase`, `Nodes`) are pyre-4's, where the
+  classes are compiled. No `Feature` name was added.
+- **Scoped flags by the same rule as global ones**, turned on or off:
+  `(?-x:a)` is refused though it changes nothing once VERBOSE is
+  refused globally, which is over-refusal only. `(?u:...)` adds UNICODE,
+  which a str pattern carries already, and is built.
+- **The order is the walk's.** `(?:(a)?)+` is `NullableLoop`, not
+  `CaptureInRepeat`: the loop is met before the capture it holds.
+  `\B` before a deep part is `NotBoundary`; after it, `Nesting`.
+- **Patterns.** This unit reproduces no pattern of the reference; it is
+  part of the engine (decision rule 1).
+
+**What changed in earlier rows.** Every `parse.` answer is now the
+predicate's when the parse succeeds. Of `parse.group`, 26 rows became
+refusals: VERBOSE, ASCII and LOCALE under the flags argument, inline or
+scoped (`(?-x:a b)` included), `(a)*`, `(?<=(a))(b)`, `a(?=b)*` and
+`(?=a)+` (a repeated lookahead matches empty), `\w|\W`, and `(` and
+`(?=` nested to `MAX_DEPTH`. Of `parse.repeat`, `(a)*`. The digests of
+`parse.sweep` and `parse.fuzz` were regenerated and `parse.tree` lost the
+dumps of the patterns now refused. `parse.inventory` is unchanged: no
+chain of the reference's patterns meets a refusal of the predicate.
+`pyre_parse_kills` had five answers changed to the refusal.
+
+#### Fixtures and tests of pyre-3c
+
+`gen_pyre_parse._parsed` applies the same predicate (`_refusal`,
+`_flag_refusal`) to the tree `re._parser.parse` returns, raising the
+refusal at 0.
+
+| part | file | rows | holds |
+| --- | --- | --- | --- |
+| `parse.refuse` | `pyre.jsonl` | 112 | one row or more per refusal with its accepted near misses, two refusals in one pattern in the walk's order, nesting of captures, lookaheads, optional groups, scoped flags and branches at 31, 32 and 33 levels, plain groups past 33, and `MAX_DEPTH` |
+| `parse.tree` | `pyre_python.jsonl` | the accepted rows | `str(tree)` of each `parse.refuse` pattern that is built and is not already a `parse.group` row |
+
+| test file | tests | what it holds |
+| --- | --- | --- |
+| `golden_pyre_parse` | 2 | `parse.refuse` read as `parse.group` is; eight parts |
+| `pyre_parse_kills` | 24 | seven new: the negated categories and `\B` in and out of sets, the flags in order and scoped, nullable loops by their maximum, captures under loops and in lookarounds, a choice in a lookbehind at any depth, nesting at 32 and 33 for five kinds and the walk's order around it, the predicate over trees built by hand |
+| `pyre_parse_robustness` | 11 | two new: trees of five kinds 200,000 levels deep judged on a thread of 64 KiB, every parse at `MAX_DEPTH` refused at 0, and the predicate linear in a wide tree |
+
 ### Left for later units
 
-- pyre-3c: the refusal predicate over the finished tree (`\B`, `\D`,
-  `\W`, a nullable loop, a capture under a repeat or in a lookaround, a
-  choice in a lookbehind, VERBOSE, ASCII, LOCALE and the other flags the
-  engine has no rule for) and the matcher's nesting bound of 32. The
-  tree holds any depth (pyre-2a, "Any depth"); the parser's own bound,
-  `MAX_DEPTH`, is only for its stack.
+- pyre-4: the refusals that need the lowered classes or the pattern's
+  type: a class member past the BMP under IGNORECASE, a category, `\b`
+  or IGNORECASE on a bytes pattern, more than 4,096 nodes
+  (`ClassPastBmpIgnorecase`, `BytesCategory`, `BytesBoundary`,
+  `BytesIgnorecase`, `Nodes`).
 - pyre-7: the patterns the reference builds from parts at import, which
   the `ast` scan of `atom.inventory` does not find.
 
@@ -13438,9 +13536,8 @@ What the reference has and this build does not, by area:
   to `store::digest`.
 - The regular expression engine (`pyre`) past its case folding and the
   parser (its tree, state, tokenizer, atoms, repeats, widths, groups,
-  lookarounds, inline flags, alternatives and `parse`): the refusal
-  predicate over the finished tree and the matcher's nesting bound
-  (pyre-3c), the lowering, the matcher and the methods (pyre-4 to
+  lookarounds, inline flags, alternatives and `parse`, and the refusal
+  predicate over the finished tree with the matcher's nesting bound): the lowering, the matcher and the methods (pyre-4 to
   pyre-6), the inventory proof, the cross-check of the hand-written
   matchers and the memo (pyre-7 to pyre-9).
 - This machine's id past its record and clone rule: `machine.py`'s

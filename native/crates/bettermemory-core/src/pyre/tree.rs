@@ -123,7 +123,7 @@ impl Node {
 
     /// The sub-patterns this item holds, in order: a branch's
     /// alternatives, the body of a group, a repeat or a lookaround.
-    fn bodies(&self) -> &[SubPattern] {
+    pub(super) fn bodies(&self) -> &[SubPattern] {
         match self {
             Node::Branch(alternatives) => alternatives,
             Node::Subpattern { body, .. }

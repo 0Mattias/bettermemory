@@ -3,7 +3,8 @@
 //! (303 to 309), `_parse_sub` (451 to 509), the groups, lookarounds and
 //! inline flags of `_parse` (708 to 873), the unpacking of plain groups
 //! (884 to 892), `_parse_flags`, `fix_flags` and `parse` (894 to 995,
-//! unit pyre-3b).
+//! unit pyre-3b). [`refusal`] is no line of `re`: the matcher's subset
+//! over the finished tree, which `parse` asks last (unit pyre-3c).
 //!
 //! The repeats: `?`, `*`, `+` and `{m,n}` over the item before them, the
 //! lazy `?` after one, and the errors `re` raises there.
@@ -20,8 +21,8 @@
 use super::atom::{item_escape, set, uniq, verbose_skips};
 use super::token::{Built, Tok, Tokenizer};
 use super::tree::{
-    At, BuildError, Feature, Member, Node, State, SubPattern, Why, ASCII, DEBUG, LOCALE, MAXREPEAT,
-    UNICODE, VERBOSE,
+    At, BuildError, Category, Feature, Member, Node, State, SubPattern, Why, ASCII, DEBUG, LOCALE,
+    MAXREPEAT, UNICODE, VERBOSE,
 };
 
 /// `while source.next in DIGITS: lo += sourceget()`: the ASCII digits
@@ -205,8 +206,108 @@ pub fn fix_flags(istext: bool, mut flags: u32) -> Result<u32, Why> {
 /// given as its bytes. DEBUG, whose dump the reference prints, is refused
 /// at 0 after every check. A conditional is refused where it begins, so
 /// `grouprefpos` is never written and its check is left out.
+///
+/// What `re` accepts and the matcher has no rule for is then refused by
+/// [`refusal`], at 0: the finished tree holds no positions.
 pub fn parse(pattern: &[u32], istext: bool, flags: u32) -> Built<(SubPattern, State)> {
-    parsed(pattern, istext, flags, false)
+    let (tree, state) = parsed(pattern, istext, flags, false)?;
+    match refusal(&tree, state.flags) {
+        Some(what) => Err(BuildError::Unsupported { at: 0, what }),
+        None => Ok((tree, state)),
+    }
+}
+
+/// How deep sub-patterns may nest for the matcher: a body of an item at
+/// the top is at depth 1, and a body at depth 33 is refused
+/// (`Feature::Nesting`).
+pub const MATCH_DEPTH: usize = 32;
+
+/// Where the walk of [`refusal`] stands: how deep, under a repeat of more
+/// than one, inside a lookaround, inside a lookbehind.
+#[derive(Clone, Copy, Default)]
+struct Within {
+    depth: usize,
+    repeat: bool,
+    look: bool,
+    behind: bool,
+}
+
+/// What a flag set the matcher has no rule for is refused as: VERBOSE,
+/// ASCII, LOCALE, in that order.
+fn flag_refusal(flags: u32) -> Option<Feature> {
+    [
+        (VERBOSE, Feature::Verbose),
+        (ASCII, Feature::Ascii),
+        (LOCALE, Feature::Locale),
+    ]
+    .into_iter()
+    .find(|(flag, _)| flags & flag != 0)
+    .map(|(_, what)| what)
+}
+
+/// The refusal of one item, its bodies aside.
+fn item_refusal(node: &Node, within: Within) -> Option<Feature> {
+    match node {
+        Node::At(At::AT_NON_BOUNDARY) => Some(Feature::NotBoundary),
+        Node::In(members) => members.iter().find_map(|member| match member {
+            Member::Category(Category::CATEGORY_NOT_DIGIT) => Some(Feature::NotDigit),
+            Member::Category(Category::CATEGORY_NOT_WORD) => Some(Feature::NotWord),
+            _ => None,
+        }),
+        Node::Subpattern {
+            group,
+            add_flags,
+            del_flags,
+            ..
+        } => match group {
+            Some(_) if within.look => Some(Feature::CaptureInLookaround),
+            Some(_) if within.repeat => Some(Feature::CaptureInRepeat),
+            _ => flag_refusal(add_flags | del_flags),
+        },
+        Node::MaxRepeat(_, max, body) | Node::MinRepeat(_, max, body)
+            if *max > 1 && body.getwidth().0 == 0 =>
+        {
+            Some(Feature::NullableLoop)
+        }
+        Node::Branch(_) if within.behind => Some(Feature::ChoiceInLookbehind),
+        _ => None,
+    }
+}
+
+/// What the matcher refuses in a tree `parse` returns under `flags` (the
+/// state's, after `fix_flags`): first the flags, then each item in the
+/// order a depth-first walk meets it, an item before its bodies. A
+/// refusal belongs to no line of `re`: it is the engine's subset
+/// (decision `pyre-design-2026-11-19`). The walk keeps its own stack, so
+/// a tree of any depth is read without a call per level.
+pub fn refusal(tree: &SubPattern, flags: u32) -> Option<Feature> {
+    if let Some(what) = flag_refusal(flags) {
+        return Some(what);
+    }
+    let mut stack = vec![(tree.0.iter(), Within::default())];
+    while let Some((items, within)) = stack.last_mut() {
+        let within = *within;
+        let Some(node) = items.next() else {
+            stack.pop();
+            continue;
+        };
+        if let Some(what) = item_refusal(node, within) {
+            return Some(what);
+        }
+        let inner = Within {
+            depth: within.depth + 1,
+            repeat: within.repeat
+                || matches!(node, Node::MaxRepeat(_, max, _) | Node::MinRepeat(_, max, _) if *max > 1),
+            look: within.look || matches!(node, Node::Assert(..) | Node::AssertNot(..)),
+            behind: within.behind || matches!(node, Node::Assert(-1, _) | Node::AssertNot(-1, _)),
+        };
+        let bodies = node.bodies();
+        if !bodies.is_empty() && inner.depth > MATCH_DEPTH {
+            return Some(Feature::Nesting);
+        }
+        stack.extend(bodies.iter().rev().map(|body| (body.0.iter(), inner)));
+    }
+    None
 }
 
 /// [`parse`], or with `flat` the reader of `atom::parse_flat`.

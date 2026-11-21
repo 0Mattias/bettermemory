@@ -12,7 +12,8 @@
 //! - [`parse`]: the repeats `_parse` reads, with their errors (unit
 //!   pyre-3a); `SubPattern::getwidth` is in [`tree`]; `parse` itself, with
 //!   `_parse_sub`, the groups, lookarounds and inline flags, and
-//!   `fix_flags` (unit pyre-3b).
+//!   `fix_flags` (unit pyre-3b); `refusal`, the matcher's subset over the
+//!   finished tree, and its nesting bound (unit pyre-3c).
 
 pub mod atom;
 pub mod fold;

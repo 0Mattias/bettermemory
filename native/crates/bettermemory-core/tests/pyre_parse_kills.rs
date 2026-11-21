@@ -9,7 +9,7 @@
 //! `%Overflow`, or `%Why` for a ValueError of `fix_flags`.
 
 use bettermemory_core::pyre::atom::parse_flat;
-use bettermemory_core::pyre::parse::{parse, repeat, MAX_DEPTH};
+use bettermemory_core::pyre::parse::{parse, refusal, repeat, MATCH_DEPTH, MAX_DEPTH};
 use bettermemory_core::pyre::token::{Built, Tokenizer};
 use bettermemory_core::pyre::tree::{
     BuildError, Node, SubPattern, ASCII, DEBUG, LOCALE, MAXREPEAT, MAXWIDTH, UNICODE,
@@ -321,7 +321,8 @@ fn global_flags_stand_only_at_the_start() {
     assert_eq!(full("(?:(?i))", 0), "!GlobalFlagsNotAtStart@3");
     // VERBOSE from a leading `(?x)` holds from the next alternative on.
     assert_eq!(full("(?x)a|b c", 0), "?Verbose@7");
-    assert_eq!(counted("(?x)a|(?-x:b c)", true, 0), "=1,3 g1 f96");
+    // The parse takes it; the matcher refuses VERBOSE in the flags.
+    assert_eq!(counted("(?x)a|(?-x:b c)", true, 0), "?Verbose@0");
 }
 
 /// The errors of `_parse_flags` by name and position, `isalpha` deciding
@@ -331,7 +332,7 @@ fn inline_flags_fail_as_re_does() {
     assert_eq!(full("(?i-i:a)", 0), "!FlagOnAndOff@5");
     assert_eq!(full("(?-a:a)", 0), "!TurnOffTypeFlags@4");
     assert_eq!(full("(?au)a", 0), "!InlineIncompatible@4");
-    assert_eq!(counted("(?aa)a", true, 0), "=1,1 g1 f256");
+    assert_eq!(counted("(?aa)a", true, 0), "?Ascii@0");
     assert_eq!(full("(?iz)", 0), "!UnknownFlag@3");
     assert_eq!(full("(?i\u{e9})", 0), "!UnknownFlag@3");
     assert_eq!(full("(?i1)", 0), "!MissingFlagEnd@3");
@@ -340,7 +341,7 @@ fn inline_flags_fail_as_re_does() {
     assert_eq!(full("(?i-m)", 0), "!MissingColon@5");
     assert_eq!(full("(?L)a", 0), "!InlineLocaleStr@3");
     assert_eq!(counted("(?u)a", false, 0), "!InlineUnicodeBytes@3");
-    assert_eq!(counted("(?L)a", false, 0), "=1,1 g1 f4");
+    assert_eq!(counted("(?L)a", false, 0), "?Locale@0");
 }
 
 /// `fix_flags` runs after the parse and before "unbalanced parenthesis",
@@ -352,7 +353,7 @@ fn fix_flags_comes_between_the_parse_and_the_balance() {
     assert_eq!(full("(?a)a", UNICODE), "%AsciiUnicode");
     assert_eq!(counted("a", false, UNICODE), "%UnicodeBytes");
     assert_eq!(counted("(?L)a", false, ASCII), "%AsciiLocale");
-    assert_eq!(counted("a", true, ASCII), "=1,1 g1 f256");
+    assert_eq!(counted("a", true, ASCII), "?Ascii@0");
     assert_eq!(counted("a", false, 0), "=1,1 g1 f0");
 }
 
@@ -389,10 +390,8 @@ fn conditionals_atomic_groups_and_depth_are_refused() {
     assert_eq!(full("(?>a)", 0), "?AtomicGroup@0");
     assert_eq!(full("(a)++", 0), "?Possessive@4");
     let deep = |n: usize| format!("{}{}", "(".repeat(n), ")".repeat(n));
-    assert_eq!(
-        counted(&deep(MAX_DEPTH), true, 0),
-        format!("=0,0 g{} f32", MAX_DEPTH + 1)
-    );
+    // Past the matcher's bound, inside the parser's: refused at 0.
+    assert_eq!(counted(&deep(MAX_DEPTH), true, 0), "?Nesting@0");
     assert_eq!(
         full(&deep(MAX_DEPTH + 1), 0),
         format!("?Nesting@{}", MAX_DEPTH + 1)
@@ -410,4 +409,146 @@ fn unterminated_groups_fail_at_their_start() {
     assert_eq!(full("(?<x)", 0), "!UnknownExtension@1");
     assert_eq!(full("(?P\\x)", 0), "!UnknownExtension@1");
     assert_eq!(full("(a))", 0), "!UnbalancedParenthesis@3");
+}
+
+/// The categories and the anchor the matcher has no rule for are refused
+/// wherever they stand, in a set or not; their near misses are built.
+#[test]
+fn the_negated_categories_and_not_boundary_are_refused() {
+    assert_eq!(full("a\\Ba", 0), "?NotBoundary@0");
+    assert_eq!(full("[a\\D]", 0), "?NotDigit@0");
+    assert_eq!(full("[^\\W]", 0), "?NotWord@0");
+    assert_eq!(full("\\W", 0), "?NotWord@0");
+    assert_eq!(counted("\\S", true, 0), "=1,1 g1 f32");
+    assert_eq!(counted("\\b", true, 0), "=0,0 g1 f32");
+    // A set is read member by member: the first refused member names it.
+    assert_eq!(full("[\\W\\D]", 0), "?NotWord@0");
+    assert_eq!(full("\\D\\B", 0), "?NotDigit@0");
+}
+
+/// The flags: global VERBOSE, ASCII, LOCALE in that order, and the same
+/// letters in scoped flags, turned on or off; IGNORECASE, MULTILINE,
+/// DOTALL and UNICODE are built.
+#[test]
+fn flags_without_a_rule_are_refused() {
+    assert_eq!(counted("a", true, 64 | ASCII), "?Verbose@0");
+    assert_eq!(counted("a", false, 64 | LOCALE), "?Verbose@0");
+    assert_eq!(counted("a", false, ASCII), "?Ascii@0");
+    assert_eq!(counted("(?x:a)", true, 0), "?Verbose@0");
+    assert_eq!(counted("(?-x:a)", true, 0), "?Verbose@0");
+    assert_eq!(counted("(?L:a)", false, 0), "?Locale@0");
+    assert_eq!(counted("(?u:a)", true, 0), "=1,1 g1 f32");
+    assert_eq!(counted("(?ms-i:a)", true, 0), "=1,1 g1 f32");
+    assert_eq!(counted("a", true, 2 | 8 | 16 | UNICODE), "=1,1 g1 f58");
+}
+
+/// A loop over a body that can match empty is refused only when it may
+/// run more than once; a body of width one or more, or a repeat of at most
+/// one, is built.
+#[test]
+fn nullable_loops_are_refused_by_their_maximum() {
+    assert_eq!(full("(?:a?)*", 0), "?NullableLoop@0");
+    assert_eq!(full("(?:a?){2}", 0), "?NullableLoop@0");
+    assert_eq!(full("(?:a?)*?", 0), "?NullableLoop@0");
+    assert_eq!(full("(?:)*", 0), "?NullableLoop@0");
+    assert_eq!(full("(?:(?=a))+", 0), "?NullableLoop@0");
+    assert_eq!(full("(?:a|)*", 0), "?NullableLoop@0");
+    assert_eq!(full("(?:a{0,2})+", 0), "?NullableLoop@0");
+    assert_eq!(counted("(?:a?)?", true, 0), "=0,1 g1 f32");
+    assert_eq!(counted("(?:a?){1}", true, 0), "=0,1 g1 f32");
+    assert_eq!(
+        counted("(?:a?b)*", true, 0),
+        "=0,18446744073709551616 g1 f32"
+    );
+    assert_eq!(
+        counted("(?:a{1,2})+", true, 0),
+        "=1,18446744073709551616 g1 f32"
+    );
+}
+
+/// Captures: under a repeat of more than one at any depth, and inside a
+/// lookaround, refused; under `?` or `{1}`, and a lookaround inside a
+/// capture, built. In a lookaround the lookaround's name comes first.
+#[test]
+fn captures_under_loops_and_in_lookarounds_are_refused() {
+    assert_eq!(full("(a)*", 0), "?CaptureInRepeat@0");
+    assert_eq!(full("(a){2}", 0), "?CaptureInRepeat@0");
+    assert_eq!(full("(?:(a)b)*", 0), "?CaptureInRepeat@0");
+    // The loop is met before the capture it holds.
+    assert_eq!(full("(?:(a)?)+", 0), "?NullableLoop@0");
+    assert_eq!(counted("(a)?", true, 0), "=0,1 g2 f32");
+    assert_eq!(counted("((a)?)?", true, 0), "=0,1 g3 f32");
+    assert_eq!(counted("(a){1}", true, 0), "=1,1 g2 f32");
+    assert_eq!(full("(?=(a))", 0), "?CaptureInLookaround@0");
+    assert_eq!(full("(?<!(a))", 0), "?CaptureInLookaround@0");
+    assert_eq!(full("(?=a(?=(b)))", 0), "?CaptureInLookaround@0");
+    assert_eq!(counted("((?=a))", true, 0), "=0,0 g2 f32");
+    assert_eq!(counted("(?=(?i:a))", true, 0), "=0,0 g1 f32");
+    assert_eq!(full("(?<=(a|bc))", 0), "?CaptureInLookaround@0");
+}
+
+/// A choice in a lookbehind, at any depth below it, a lookahead included;
+/// alternatives that fold into a set are no choice; a lookahead may hold one.
+#[test]
+fn a_choice_in_a_lookbehind_is_refused() {
+    assert_eq!(full("(?<=ab|cd)", 0), "?ChoiceInLookbehind@0");
+    assert_eq!(full("(?<=(?=ab|cd)x)", 0), "?ChoiceInLookbehind@0");
+    assert_eq!(full("(?<=x(?:ab|cd))", 0), "?ChoiceInLookbehind@0");
+    assert_eq!(counted("(?<=a|b)", true, 0), "=0,0 g1 f32");
+    assert_eq!(counted("(?=ab|cd)", true, 0), "=0,0 g1 f32");
+    assert_eq!(counted("(?=(?<=ab|cd))", true, 0), "?ChoiceInLookbehind@0");
+}
+
+/// The matcher's bound: 32 levels of bodies are built, 33 refused, for
+/// captures, lookarounds and repeats alike; plain groups are unpacked and
+/// do not nest. The walk meets an item before what it holds.
+#[test]
+fn nesting_past_thirty_two_is_refused() {
+    let caps = |n: usize| format!("{}a{}", "(".repeat(n), ")".repeat(n));
+    assert_eq!(MATCH_DEPTH, 32);
+    assert_eq!(counted(&caps(32), true, 0), "=1,1 g33 f32");
+    assert_eq!(full(&caps(33), 0), "?Nesting@0");
+    let looks = |n: usize| format!("{}a{}", "(?=".repeat(n), ")".repeat(n));
+    assert_eq!(counted(&looks(32), true, 0), "=0,0 g1 f32");
+    assert_eq!(full(&looks(33), 0), "?Nesting@0");
+    let opts = |n: usize| format!("{}{}", "(?:a".repeat(n), ")?".repeat(n));
+    assert_eq!(counted(&opts(32), true, 0), "=0,32 g1 f32");
+    assert_eq!(full(&opts(33), 0), "?Nesting@0");
+    let plain = format!("{}a{}", "(?:".repeat(40), ")".repeat(40));
+    assert_eq!(counted(&plain, true, 0), "=1,1 g1 f32");
+    let scoped = |n: usize| format!("{}a{}", "(?i:".repeat(n), ")".repeat(n));
+    assert_eq!(counted(&scoped(32), true, 0), "=1,1 g1 f32");
+    assert_eq!(full(&scoped(33), 0), "?Nesting@0");
+    // What stands before the deep part is met first, what stands after it
+    // is not reached.
+    assert_eq!(full(&format!("\\B{}", caps(33)), 0), "?NotBoundary@0");
+    assert_eq!(full(&format!("{}\\B", caps(33)), 0), "?Nesting@0");
+    assert_eq!(
+        full(&format!("{}\\B){}", "(".repeat(33), ")".repeat(32)), 0),
+        "?Nesting@0"
+    );
+}
+
+/// `refusal` reads only the tree and the flags it is given: a tree built
+/// by hand is judged as a parsed one, and the flags come first.
+#[test]
+fn the_predicate_over_a_tree_built_by_hand() {
+    let capture = Node::Subpattern {
+        group: Some(1),
+        add_flags: 0,
+        del_flags: 0,
+        body: sub(vec![lit('a')]),
+    };
+    let tree = sub(vec![Node::MaxRepeat(0, 2, sub(vec![capture]))]);
+    assert_eq!(format!("{:?}", refusal(&tree, 0)), "Some(CaptureInRepeat)");
+    assert_eq!(format!("{:?}", refusal(&tree, LOCALE)), "Some(Locale)");
+    assert_eq!(format!("{:?}", refusal(&sub(vec![]), 0)), "None");
+    // A branch of no alternatives holds no body and does not nest.
+    let mut deep = sub(vec![Node::Branch(vec![])]);
+    for _ in 0..32 {
+        deep = sub(vec![Node::Assert(1, deep)]);
+    }
+    assert_eq!(format!("{:?}", refusal(&deep, 0)), "None");
+    let deeper = sub(vec![Node::Assert(1, deep)]);
+    assert_eq!(format!("{:?}", refusal(&deeper, 0)), "Some(Nesting)");
 }

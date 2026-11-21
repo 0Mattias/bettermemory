@@ -369,9 +369,99 @@ def _full() -> Iterator[None]:
             P.Tokenizer, P.State, P._parse_sub = TOKENIZER, STATE, PARSE_SUB
 
 
+#: How deep sub-patterns may nest for the matcher (``MATCH_DEPTH``).
+MATCH_DEPTH = 32
+
+#: The flags the matcher has no rule for, in the order they are refused.
+FLAG_REFUSALS = [
+    (C.SRE_FLAG_VERBOSE, "Verbose"),
+    (C.SRE_FLAG_ASCII, "Ascii"),
+    (C.SRE_FLAG_LOCALE, "Locale"),
+]
+
+
+def _flag_refusal(flags: int) -> str | None:
+    for flag, name in FLAG_REFUSALS:
+        if flags & flag:
+            return name
+    return None
+
+
+def _bodies(op: Any, av: Any) -> list[Any]:
+    if op is C.BRANCH:
+        return list(av[1])
+    if op is C.SUBPATTERN:
+        return [av[3]]
+    if op in (C.MAX_REPEAT, C.MIN_REPEAT):
+        return [av[2]]
+    if op in (C.ASSERT, C.ASSERT_NOT):
+        return [av[1]]
+    return []
+
+
+def _item_refusal(
+    op: Any, av: Any, repeat: bool, look: bool, behind: bool
+) -> str | None:
+    if op is C.AT and av is C.AT_NON_BOUNDARY:
+        return "NotBoundary"
+    if op is C.IN:
+        for kind, value in av:
+            if kind is C.CATEGORY and value is C.CATEGORY_NOT_DIGIT:
+                return "NotDigit"
+            if kind is C.CATEGORY and value is C.CATEGORY_NOT_WORD:
+                return "NotWord"
+    if op is C.SUBPATTERN:
+        if av[0] is not None and look:
+            return "CaptureInLookaround"
+        if av[0] is not None and repeat:
+            return "CaptureInRepeat"
+        return _flag_refusal(av[1] | av[2])
+    if op in (C.MAX_REPEAT, C.MIN_REPEAT) and av[1] > 1 and av[2].getwidth()[0] == 0:
+        return "NullableLoop"
+    if op is C.BRANCH and behind:
+        return "ChoiceInLookbehind"
+    return None
+
+
+def _refusal(
+    items: Any,
+    depth: int = 0,
+    repeat: bool = False,
+    look: bool = False,
+    behind: bool = False,
+) -> str | None:
+    """What the matcher refuses in a finished tree: each item before its
+    bodies, depth first. No line of `re` holds it: it is the engine's
+    subset, written here as the port writes it."""
+    for op, av in items:
+        what = _item_refusal(op, av, repeat, look, behind)
+        if what is not None:
+            return what
+        bodies = _bodies(op, av)
+        if bodies and depth + 1 > MATCH_DEPTH:
+            return "Nesting"
+        inner = (
+            depth + 1,
+            repeat or (op in (C.MAX_REPEAT, C.MIN_REPEAT) and av[1] > 1),
+            look or op in (C.ASSERT, C.ASSERT_NOT),
+            behind or (op in (C.ASSERT, C.ASSERT_NOT) and av[0] < 0),
+        )
+        for body in bodies:
+            what = _refusal(body, *inner)
+            if what is not None:
+                return what
+    return None
+
+
 def _parsed(pattern: str | bytes, flags: int) -> Any:
+    """`parse` as the port answers it: the reference's tree, or what the
+    matcher refuses in it, at 0."""
     with _full():
-        return P.parse(pattern, flags)
+        tree = P.parse(pattern, flags)
+    what = _flag_refusal(tree.state.flags) or _refusal(tree)
+    if what is not None:
+        raise Refused(what, 0)
+    return tree
 
 
 def _failed_full(exc: Exception) -> str:
@@ -697,6 +787,140 @@ GROUPS: list[str | bytes | tuple[str | bytes, int]] = [
 ]
 
 
+#: Written patterns of pyre-3c: one or more for each refusal of the
+#: matcher's subset, its near misses that are accepted, the order in which
+#: two refusals are met, and nesting on either side of ``MATCH_DEPTH``.
+REFUSALS: list[str | bytes | tuple[str | bytes, int]] = [
+    # The anchor and the categories the matcher has no rule for.
+    B + "B",
+    "a" + B + "Ba",
+    B + "b",
+    B + "D",
+    "[" + B + "D]",
+    "[a" + B + "D]",
+    B + "W",
+    "[a-z" + B + "W]",
+    "[^" + B + "W]",
+    B + "S",
+    B + "d" + B + "w" + B + "s",
+    b"\\B",
+    b"\\D",
+    b"\\W",
+    # Flags, global and scoped.
+    ("a", X),
+    "(?x)a",
+    ("a", A),
+    "(?a)a",
+    (b"a", L),
+    b"(?L)a",
+    (b"a", A),
+    ("a", X | A),
+    (b"a", X | L),
+    ("a", IC | M | S | U),
+    "(?x:a)",
+    "(?-x:a)",
+    "(?a:a)",
+    b"(?L:a)",
+    b"(?a:a)",
+    "(?u:a)",
+    "(?i:a)",
+    "(?-i:a)",
+    "(?ms-i:a)",
+    # A repeat of more than one over a body that can match empty.
+    "(?:a?)*",
+    "(?:a*)+",
+    "(?:a?){2}",
+    "(?:a?){2,}?",
+    "(?:a?)*?",
+    "(?:a?)?",
+    "(?:a?){1}",
+    "(?:a?){0,1}",
+    "(?:)*",
+    "(?:^)*",
+    "(?:$)+",
+    "(?:(?=a))+",
+    "(?:(?!a)){2}",
+    "(?:a|)*",
+    "(?:|a)+",
+    "(?:ab)*",
+    "(?:a?b)*",
+    "(?:a{0})*",
+    "(?:a{0,2})+",
+    "(?:a{1,2})+",
+    "(?i:a?)*",
+    # A capture under a repeat of more than one, or in a lookaround.
+    "(a)*",
+    "(a)+",
+    "(a){2}",
+    "(a){0,2}",
+    "(a)*?",
+    "(a)?",
+    "(a){1}",
+    "(a){0,1}",
+    "(?:(a)b)*",
+    "(?:(a)?)+",
+    "((a)?)?",
+    "(?:(?:(a))?)?",
+    "(?P<n>a)+",
+    "(?=(a))",
+    "(?!(a))",
+    "(?<=(a))",
+    "(?<!(a))",
+    "(?=(?:a))",
+    "(?=(?i:a))",
+    "(?=a(?=(b)))",
+    "((?=a))",
+    # The repeat marks every level below it, not only its own body.
+    "(?:x|(a))*",
+    "(?:(?i:(a))b)*",
+    # A capture in a lookaround in a repeat: the lookaround is named first.
+    "(?:b(?=(a)))+",
+    # The first alternative of a branch is judged first.
+    B + "B|" + B + "W",
+    B + "W|" + B + "B",
+    # A choice in a lookbehind.
+    "(?<=ab|cd)",
+    "(?<!ab|cd)",
+    "(?<=a|b)",
+    "(?<=[ab]|c)",
+    "(?<=ab|ab)",
+    "(?=ab|cd)",
+    "(?!ab|cd)",
+    "(?<=(?=ab|cd)x)",
+    "(?=(?<=ab|cd))",
+    "(?<=x(?:ab|cd))",
+    # Two refusals in one pattern: the first a depth-first walk meets.
+    B + "B" + B + "D",
+    B + "D" + B + "B",
+    "(a)*" + B + "B",
+    "(?:" + B + "B)*",
+    "(?:a?)*(a)*",
+    "(?:(a)?)*",
+    "(?<=(a|bc))",
+    ("(a)*", X),
+    ("(?:a?)*", A),
+    "(" + B + "W)*",
+    # Nesting: 31, 32 and 33 levels of captures, lookarounds, repeats.
+    "(" * (MATCH_DEPTH - 1) + "a" + ")" * (MATCH_DEPTH - 1),
+    "(" * MATCH_DEPTH + "a" + ")" * MATCH_DEPTH,
+    "(" * (MATCH_DEPTH + 1) + "a" + ")" * (MATCH_DEPTH + 1),
+    "(" * (MATCH_DEPTH + 1) + ")" * (MATCH_DEPTH + 1),
+    "(?=" * MATCH_DEPTH + "a" + ")" * MATCH_DEPTH,
+    "(?=" * (MATCH_DEPTH + 1) + "a" + ")" * (MATCH_DEPTH + 1),
+    "(?:a" * (MATCH_DEPTH + 1) + ")?" * (MATCH_DEPTH + 1),
+    "(?:a" * MATCH_DEPTH + ")?" * MATCH_DEPTH,
+    "(?:" * (MATCH_DEPTH + 8) + "a" + ")" * (MATCH_DEPTH + 8),
+    "(?i:" * MATCH_DEPTH + "a" + ")" * MATCH_DEPTH,
+    "(?i:" * (MATCH_DEPTH + 1) + "a" + ")" * (MATCH_DEPTH + 1),
+    "(" * (MATCH_DEPTH - 1) + "a|bc" + ")" * (MATCH_DEPTH - 1),
+    "(" * MATCH_DEPTH + "a|bc" + ")" * MATCH_DEPTH,
+    "(" * (MATCH_DEPTH + 1) + B + "B)" + ")" * MATCH_DEPTH,
+    B + "B" + "(" * (MATCH_DEPTH + 1) + ")" * (MATCH_DEPTH + 1),
+    "(" * (MATCH_DEPTH + 1) + ")" * (MATCH_DEPTH + 1) + B + "B",
+    "(" * MAX_DEPTH + ")" * MAX_DEPTH,
+]
+
+
 #: Patterns the release reads otherwise: a bytes group name past ASCII
 #: is an error from 3.12 and a DeprecationWarning in 3.11.
 GROUPS_PYTHON: list[str | bytes | tuple[str | bytes, int]] = [
@@ -811,12 +1035,14 @@ def rows() -> list[dict[str, Any]]:
         for pattern in REPEATS
     ]
     groups = [_row("parse.group", case, "answer", _counted) for case in GROUPS]
+    refusals = [_row("parse.refuse", case, "answer", _counted) for case in REFUSALS]
     return [
         *repeats,
         *_widths(),
         _sweep(_outcome),
         _width_sweep(),
         *groups,
+        *refusals,
         _fuzz(_counted),
         _inventory(_counted),
     ]
@@ -829,7 +1055,7 @@ def rows_python() -> list[dict[str, Any]]:
         line = _line(pattern)
         if line.startswith("["):
             trees.append({"part": "parse.tree", **_spelled(pattern), "dump": line})
-    for case in GROUPS:
+    for case in [*GROUPS, *(case for case in REFUSALS if case not in GROUPS)]:
         row = _row("parse.tree", case, "dump", _line)
         if row["dump"].startswith("["):
             trees.append(row)

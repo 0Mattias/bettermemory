@@ -412,7 +412,7 @@ fn pyre_parse_every_row() {
             "parse.width" => check_width(row),
             "parse.sweep" => check_sweep(row, outcome),
             "parse.width_sweep" => check_width_sweep(row),
-            "parse.group" => check_group(row),
+            "parse.group" | "parse.refuse" => check_group(row),
             "parse.fuzz" => check_fuzz(row, counted),
             "parse.inventory" => check_inventory(row, counted),
             other => panic!("a part this test does not know: {other}"),
@@ -420,7 +420,7 @@ fn pyre_parse_every_row() {
         parts.insert(part);
         checked += 1;
     }
-    assert_eq!(parts.len(), 7, "a part with no row: {parts:?}");
+    assert_eq!(parts.len(), 8, "a part with no row: {parts:?}");
     common::assert_count("pyre.jsonl parse parts", checked, rows.len());
 }
 

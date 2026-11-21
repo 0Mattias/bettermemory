@@ -12,7 +12,7 @@ mod timing;
 use std::thread;
 
 use bettermemory_core::pyre::atom::parse_flat;
-use bettermemory_core::pyre::parse::{parse, INT_MAX_STR_DIGITS};
+use bettermemory_core::pyre::parse::{parse, refusal, INT_MAX_STR_DIGITS, MAX_DEPTH};
 use bettermemory_core::pyre::tree::{
     BuildError, Feature, Node, SubPattern, Why, MAXREPEAT, MAXWIDTH, VERBOSE,
 };
@@ -289,4 +289,83 @@ fn every_short_group_pattern_answers_within_itself() {
             }
         }
     }
+}
+
+/// The refusal predicate over trees far deeper than any parse makes, on a
+/// thread of 64 KiB: 200,000 levels of each kind of item that holds a
+/// body, refused as `Nesting` at the 33rd level without a call per level;
+/// and every parse at the parser's own bound, on a thread of 1 MiB.
+#[test]
+fn the_predicate_reads_any_depth_on_a_small_stack() {
+    let handle = thread::Builder::new()
+        .stack_size(64 * 1024)
+        .spawn(|| {
+            let kinds: [fn(SubPattern) -> Node; 5] = [
+                |body| Node::Assert(1, body),
+                |body| Node::AssertNot(-1, body),
+                |body| Node::MaxRepeat(1, 1, body),
+                |body| Node::Branch(vec![SubPattern(vec![]), body]),
+                |body| Node::Subpattern {
+                    group: None,
+                    add_flags: 2,
+                    del_flags: 0,
+                    body,
+                },
+            ];
+            kinds
+                .iter()
+                .map(|wrap| {
+                    let mut tree = SubPattern(vec![Node::Literal(97)]);
+                    for _ in 0..200_000 {
+                        tree = SubPattern(vec![wrap(tree)]);
+                    }
+                    format!("{:?}", refusal(&tree, 0))
+                })
+                .collect::<Vec<_>>()
+        })
+        .expect("a thread");
+    let answers = handle.join().expect("no overflow of the stack");
+    assert_eq!(answers, vec!["Some(Nesting)"; 5]);
+    let handle = thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(|| {
+            ["(", "(?=", "(?<!", "(?i:", "(?:a"]
+                .iter()
+                .map(|open| {
+                    let close = if open.ends_with('a') { ")?" } else { ")" };
+                    let text = format!("{}{}", open.repeat(MAX_DEPTH), close.repeat(MAX_DEPTH));
+                    full(&cps(&text)).err()
+                })
+                .collect::<Vec<_>>()
+        })
+        .expect("a thread");
+    for answer in handle.join().expect("no overflow of the stack") {
+        assert_eq!(
+            answer,
+            Some(BuildError::Unsupported {
+                at: 0,
+                what: Feature::Nesting
+            })
+        );
+    }
+}
+
+/// The predicate reads a wide tree in time linear in it: many repeats,
+/// sets, captures and lookarounds side by side, each width taken once.
+#[test]
+fn the_predicate_is_linear_in_a_wide_tree() {
+    linear(
+        "accepted items",
+        |n| cps(&"(a)?(?:ab)*[\\d\\S](?=b)(?i:c)".repeat(n / 30)),
+        |p| full(p).map(|tree| tree.0.len()),
+    );
+    linear(
+        "a refusal at the end",
+        |n| {
+            let mut text = "(?:ab)+".repeat(n / 7);
+            text.push_str("\\B");
+            cps(&text)
+        },
+        |p| full(p).err(),
+    );
 }
