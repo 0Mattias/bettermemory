@@ -9,7 +9,10 @@ pyre-1 (the case folding) writes its rows in this module and marks each
 with its name under ``unit``. Unit pyre-2 (the parser's tree, state and
 tokenizer, and the atoms it reads) writes its rows in `gen_pyre_tree` and
 `gen_pyre_atom`, under parts prefixed ``tree.``, ``token.`` and ``atom.``,
-and spells their texts by `gen_pyre_tree.spell`. A file's first line is its
+and spells their texts by `gen_pyre_tree.spell`. Unit pyre-3 (the repeats
+and `getwidth`) writes its rows in `gen_pyre_parse`, under parts prefixed
+``parse.``: in ``pyre.jsonl`` the answers that hold no tree text, in
+``pyre_python.jsonl`` the tree texts. A file's first line is its
 header: the fixture's name and, under ``rows``, how many rows each unit
 wrote (the units of `_PARTS`). Three files, one JSON object per line, keys
 sorted, ASCII:
@@ -68,7 +71,7 @@ from array import array
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from . import gen_pyre_atom, gen_pyre_tree
+from . import gen_pyre_atom, gen_pyre_parse, gen_pyre_tree
 from ._common import jsonl
 
 #: The cap on ``pyre.jsonl`` for the whole engine (every unit's rows); the
@@ -489,18 +492,21 @@ def fold_python_rows() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 _PYRE_2 = "pyre-2"
+_PYRE_3 = "pyre-3"
 
 _PARTS: dict[str, tuple[tuple[str, Callable[[], list[dict[str, Any]]]], ...]] = {
     "pyre.jsonl": (
         (_FOLD, fold_rows),
         (_PYRE_2, gen_pyre_tree.rows),
         (_PYRE_2, gen_pyre_atom.rows),
+        (_PYRE_3, gen_pyre_parse.rows),
     ),
     "pyre_unicode.jsonl": ((_FOLD, fold_unicode_rows),),
     "pyre_python.jsonl": (
         (_FOLD, fold_python_rows),
         (_PYRE_2, gen_pyre_tree.rows_python),
         (_PYRE_2, gen_pyre_atom.rows_python),
+        (_PYRE_3, gen_pyre_parse.rows_python),
     ),
 }
 

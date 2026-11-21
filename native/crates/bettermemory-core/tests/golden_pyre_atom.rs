@@ -3,7 +3,8 @@
 //! the two escape readers, the sweep and the inventory regenerated here by
 //! the generator's rule and compared by digest, and `re.escape` of every
 //! code point. An answer is one line: the dump of the tree, `!Why@at` for
-//! an error of `re`, `?Feature@at` for a refusal. Rows of other parts
+//! an error of `re`, `?Feature@at` for a refusal, `%Overflow` for the
+//! OverflowError of a repeat's bound. Rows of other parts
 //! belong to other units' tests.
 
 mod common;
@@ -61,6 +62,8 @@ fn line<T>(answer: Built<T>, shown: impl FnOnce(T) -> String) -> String {
         Ok(value) => shown(value),
         Err(BuildError::Invalid { at, why }) => format!("!{why:?}@{at}"),
         Err(BuildError::Unsupported { at, what }) => format!("?{what:?}@{at}"),
+        Err(BuildError::Overflow) => "%Overflow".into(),
+        Err(BuildError::DigitLimit) => "%DigitLimit".into(),
     }
 }
 
@@ -166,6 +169,7 @@ fn chain(pattern: &[u32], istext: bool) -> Vec<String> {
         let at = match read {
             Ok(_) => None,
             Err(BuildError::Invalid { at, .. } | BuildError::Unsupported { at, .. }) => Some(at),
+            Err(BuildError::Overflow | BuildError::DigitLimit) => None,
         };
         lines.push(line(read, |tree| tree.dump()));
         let Some(at) = at else { return lines };

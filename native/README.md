@@ -26,7 +26,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d` | `unicode.jsonl`, `unicode_sequences.jsonl` |
-| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape` | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
+| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`, read by `parse_flat`) and `SubPattern.getwidth` (`SubPattern::getwidth`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
@@ -2529,7 +2529,8 @@ Leaves first. A unit's lines are Rust source outside tests.
 | pyre-1 | `pyre/fold.rs` | `sre_lower`, `sre_upper`, `sre_iscased`, `extra_cases`, `Lit` (one literal under the flags `_compile` reads; LOCALE and the ASCII fold refused); the module, the generator, the fixtures' headers | `_sre.unicode_tolower`, `sre_upper_unicode`, `_sre.unicode_iscased`; `_casefix.py` 5-106; `_compiler.py` 48-55, 57-84 | the Unicode tables (`unicode`) | built, 227 lines |
 | pyre-2a | `pyre/tree.rs`, `pyre/token.rs` | the tree, `State`, the dump that equals `str(tree)`, the refusal and error names, the `Tokenizer` | `_parser.py` 74-118, 161-176, 229-301 | nothing | built, 813 lines |
 | pyre-2b | `pyre/atom.rs` | `_escape`, `_class_escape`, `_uniq`, sets, flat sequences (`parse_flat`), `re.escape` | `_parser.py` 311-449, 522-636, 705-706, 875-879; `__init__.py` 303-313 | pyre-2a | built, 377 lines |
-| pyre-3 | `pyre/parse.rs` | repeats, `_parse_sub` with its rewrites, groups, scoped and leading flags, lookarounds, `getwidth`, `checkgroupname`, `parse`, the refusal predicate over the finished tree | `_parser.py` 177-227, 303-309, 451-509, 638-703, 708-873, 884-995 | pyre-2 | not built, 560 lines planned |
+| pyre-3a | `pyre/parse.rs`, `pyre/tree.rs` | repeats with their errors, `getwidth` | `_parser.py` 177-227, 638-703 | pyre-2 | built, 210 lines |
+| pyre-3b | `pyre/parse.rs` | `_parse_sub` with its rewrites, groups, scoped and leading flags, lookarounds, `checkgroupname`, `parse`, the refusal predicate over the finished tree, the nesting bound | `_parser.py` 303-309, 451-509, 708-873, 884-995 | pyre-3a | not built |
 | pyre-4 | `pyre/lower.rs` | classes compiled as `_optimize_charset` does, nodes threaded by `next`, `_simple`, group repeats unrolled, the arena cap | `_compiler.py` 241-387, 401-408 | pyre-1, pyre-3 | not built |
 | pyre-5 | `pyre/exec.rs` | one loop, one stack, one trail; anchors, lookarounds, the three acceptance rules, the scan over starts, the step count | `_sre` (by differential) | pyre-4 | not built |
 | pyre-6 | `pyre/regex.rs` | `Regex`, `Match`, `finditer`, `findall`, `sub`, `subn`, `split`, `pos` and `endpos`, literal and function replacement | `_sre` (by differential) | pyre-5, pyre-2 | not built |
@@ -2559,16 +2560,17 @@ patterns: the inventory, the generated patterns, `re.escape`.
 | `State` (`__init__`, `groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`) | 74-108 | nothing | pyre-2a, built |
 | `SubPattern` (`__init__`, `__repr__`, the list methods) | 110-118, 161-176 | nothing | pyre-2a, built (`SubPattern`, `dump`) |
 | `SubPattern.dump` | 119-160 | standard output | not ported: it is the print of `re.DEBUG`, a flag the engine refuses |
-| `SubPattern.getwidth` | 177-227 | nothing | pyre-3 |
+| `SubPattern.getwidth` | 177-227 | nothing | pyre-3a, built (`SubPattern::getwidth`) |
 | `Tokenizer` (`__init__`, `__next`, `match`, `get`, `getwhile`, `getuntil`, `pos`, `tell`, `seek`, `error`) | 229-301 | nothing | pyre-2a, built |
-| `Tokenizer.checkgroupname` | 303-309 | the Unicode data (`str.isidentifier`) | pyre-3 |
+| `Tokenizer.checkgroupname` | 303-309 | the Unicode data (`str.isidentifier`) | pyre-3b |
 | `_class_escape` | 311-369 | `unicodedata.lookup` for `\N{...}` | pyre-2b, built (`class_escape`) |
 | `_escape` | 371-446 | the same | pyre-2b, built (`item_escape`) |
 | `_uniq` | 448-449 | nothing | pyre-2b, built (in `set`) |
-| `_parse_sub` | 451-509 | nothing | pyre-3 |
+| `_parse_sub` | 451-509 | nothing | pyre-3b |
 | `_parse`: an escape, a literal, a set, the dot, `^`, `$` | 522-636, 705-706, 875-879 | `warnings.warn` (FutureWarning, three places in a set) | pyre-2b, built (`set`, `parse_flat`) |
-| `_parse`: repeats, groups, the unpacking of plain groups | 638-703, 708-873, 884-892 | `warnings.warn` (DeprecationWarning) | pyre-3 |
-| `_parse_flags`, `fix_flags`, `parse` | 894-995 | standard output under `re.DEBUG` | pyre-3 |
+| `_parse`: repeats | 638-703 | nothing | pyre-3a, built (`parse::repeat`) |
+| `_parse`: groups, the unpacking of plain groups | 708-873, 884-892 | `warnings.warn` (DeprecationWarning) | pyre-3b |
+| `_parse_flags`, `fix_flags`, `parse` | 894-995 | standard output under `re.DEBUG` | pyre-3b |
 | `parse_template` | 997-1081 | nothing | pyre-10, not scheduled |
 | `re.escape` (`re/__init__.py`) | 303-313 | nothing | pyre-2b, built (`escape`) |
 
@@ -2892,6 +2894,9 @@ tokenizer). `Why` names a message of `re.error`:
 | `UnbalancedParenthesis` | unbalanced parenthesis |
 | `TooManyGroups` | too many groups |
 | `Redefinition` | redefinition of group name %r as group %d; was group %d |
+| `NothingToRepeat` | nothing to repeat (pyre-3a) |
+| `MultipleRepeat` | multiple repeat (pyre-3a) |
+| `MinGreaterThanMax` | min repeat greater than max repeat (pyre-3a) |
 
 Only the name and the position are promised, not the text with its
 fields filled in. The generator checks every message against the string
@@ -2907,9 +2912,9 @@ the others, and pyre-3 adds the names of what it raises.
 `NotWord`, `NullableLoop`, `CaptureInRepeat`, `CaptureInLookaround`,
 `ChoiceInLookbehind`, `ClassPastBmpIgnorecase`, `BytesCategory`,
 `BytesBoundary`, `BytesIgnorecase`, `Nesting`, `Nodes`, `Template`, and
-for syntax not built yet `Repeat`, `Group`, `Alternation`. pyre-2b
+for syntax not built yet `Group`, `Alternation`. pyre-2b
 returns `Backreference`, `NamedCharacter`, `SetWarning`, `Verbose`,
-`Repeat`, `Group` and `Alternation`; the others are later units'. They
+`Group` and `Alternation`; the others are later units'. They
 are fixed here so that every later unit refuses by the same names; the
 fixture lists them in order and the test fails to compile when the enum
 gains a name the list lacks.
@@ -3027,8 +3032,7 @@ raises "unbalanced parenthesis" at a `)` as `parse` does.
     `&`, `~` or `|` after a member (the first of the two), a range that
     ends in `-` (the range's `-`). `re` emits a FutureWarning there and
     the port cannot, so it refuses.
-  - In `parse_flat`, what pyre-3 reads, at the token that begins it: a
-    repeat (`*`, `+`, `?`, `{`, also where `re` reads `{` as a literal),
+  - In `parse_flat`, what pyre-3 reads, at the token that begins it:
     a group (`(`), an alternative (its `|`, after the token past it is
     loaded, so `a|\` is "bad escape (end of pattern)" at 2). Under
     VERBOSE, a character of `WHITESPACE` (the space, `\t`, `\n`, `\r`,
@@ -3130,7 +3134,7 @@ surrogate is a list of code points.
 | `tree.state` | 12 | scripts of `State` calls, each call's answer, then `flags`, `groupdict` and `groupwidths`; a group closed twice; four scripts under a `MAXGROUPS` of 0 to 3 |
 | `token.script` | 26 | scripts of `Tokenizer` calls: each call's answer, `tell()` and the next token after it, errors and the state they leave included, offsets and an index at the ends of a 64-bit integer |
 | `token.sweep` | 1 | 20,000 random scripts over random texts of backslashes, digits, terminators and code points past the BMP, by SHA-256 |
-| `atom.parse` | 171 | patterns and their answers (`str(tree)`, `!Why@pos` or `?Feature@pos`): every branch of the two escape readers and of a set, every error and refusal of pyre-2b at its position, the near misses of the three warnings, a digit past ASCII after a backslash in and out of a set, bytes patterns, VERBOSE at each character of `WHITESPACE` and at spaces it does not hold |
+| `atom.parse` | 167 | patterns and their answers (`str(tree)`, `!Why@pos` or `?Feature@pos`): every branch of the two escape readers and of a set, every error and refusal of pyre-2b at its position, the near misses of the three warnings, a digit past ASCII after a backslash in and out of a set, bytes patterns, VERBOSE at each character of `WHITESPACE` and at spaces it does not hold |
 | `atom.escape` | 30 | `_escape` and `_class_escape` called on a tokenizer after its first token, with a `State` built by the ops of `tree.state`: references to a closed, an open and a missing group, inside and outside a lookbehind, and one ended by a digit past ASCII; `tell()` and the next token after |
 | `atom.sweep` | 1 | 20,000 patterns of up to seven of 58 fragments, each read as a str pattern, a bytes pattern or under VERBOSE, by SHA-256 |
 | `atom.inventory` | 1 | the 183 literals of the inventory, each one's chain by the first 16 hexadecimal digits of its SHA-256 |
@@ -3212,15 +3216,126 @@ fail the golden and kills files; the last two change no answer and
 fail the robustness file, where 200,000 levels on a thread of 64 KiB
 overflow its stack.
 
+### Unit pyre-3a, built (`pyre::parse`, `SubPattern::getwidth`)
+
+pyre-3 was planned as one unit of 560 lines and is built in two. pyre-3a
+is the half that needs no group: the repeat branch of `_parse`
+(`_parser.py` 638-703) and `SubPattern.getwidth` (177-227), 210 lines
+of Rust source. pyre-3b is the rest (below). The line ranges were
+confirmed against the 3.13.13 source whose digest `pyre_python.jsonl`
+records.
+
+**`parse::repeat`** is the repeat branch, called by `parse_flat` with
+the repeat character taken and the items read so far, as `_parse` holds
+`this` and `subpattern`:
+
+- `?`, `*`, `+` are (0, 1), (0, `MAXREPEAT`), (1, `MAXREPEAT`).
+- `{` is a literal before a `}` (`{}` is two literals) and where no `}`
+  closes the digits; then the tokenizer is sent back to after the `{`,
+  so its digits and comma are read again as literals. A digit is an
+  ASCII digit without a backslash: `a{\2}` reads `\2` after the literal
+  `{` (and fails as a group reference), and a digit past ASCII ends the
+  bound. `{,}` is (0, `MAXREPEAT`), `{m}` is (m, m).
+- A bound of more than 4,300 digits, leading zeros included, is the
+  ValueError `int` raises past `sys.get_int_max_str_digits()` at its
+  default (`parse::INT_MAX_STR_DIGITS`), `BuildError::DigitLimit`, with
+  no position. `int` reads the minimum before any check, so the limit
+  comes before the OverflowError and every error below: `{000...0}` of
+  4,301 zeros is ValueError, not "nothing to repeat". The limit is a
+  runtime setting of Python (`PYTHONINTMAXSTRDIGITS`); the port holds
+  the default, and the generator sets it while it asks `re`.
+- A bound at `MAXREPEAT` (4294967295) or past it is the OverflowError
+  "the repetition number is too large". It is not `re.error` and has no
+  position, so it is its own outcome, `BuildError::Overflow`, never an
+  `Invalid`. The minimum is checked first, then the maximum, then their
+  order ("min repeat greater than max repeat", at the position after the
+  `{`), and only then what the repeat goes over: `^{4294967295}` is the
+  OverflowError, `a{99999999999,5}` too.
+- "nothing to repeat" (no item before, or an `AT` item) and "multiple
+  repeat" (a repeat before) are placed at the repeat character.
+- A group without a number or flags is repeated as its body (an empty
+  one included: `(?:)*` repeats nothing and is no error). No flat
+  pattern holds a group; `pyre_parse_kills` calls `repeat` with one.
+- A `?` after makes a `MIN_REPEAT`. A `+` after makes the possessive
+  repeat `re` accepts and the engine refuses: `Feature::Possessive` at
+  the `+`, after the tokenizer has read past it, so `a{3,2}+` is still
+  "min repeat greater than max repeat" and `a*+\` is still "bad escape
+  (end of pattern)".
+
+**`SubPattern::getwidth`** sums as `re` does: one for a literal, a
+negated literal, the dot and a set; nothing for an `AT`, a lookaround
+or `FAILURE`; for a branch the least low and the most high of its
+alternatives, starting from (`MAXWIDTH`, 0), so a branch of no
+alternatives is (`MAXWIDTH`, 0); for a repeat `lo * min`, and `hi * max`
+unless the maximum is `MAXREPEAT` and the body can match something,
+where `hi` is set to `MAXWIDTH` (not added to). Each sub-pattern's sums
+are capped at `MAXWIDTH` (2**64) at its end. Python's integers have no
+bound; here the products are `u128` and the sums saturate at
+`u128::MAX`, which the cap makes the same answer. A bound written by
+hand below the minimum is kept ((3, 1) for a repeat of 3 to 1). The
+reference caches a width in the sub-pattern; no tree changes after it
+is measured here, so nothing is cached. The walk keeps its own stack,
+so a tree of any depth is measured on any thread.
+
+**Patterns.** This unit reproduces no pattern of the reference: it is
+part of the engine (decision `pyre-design-2026-11-19`, rule 1), and its
+answers are asked of `re._parser` itself, never of a hand-written
+matcher.
+
+**The pyre-2b rows that changed.** The hooks of `gen_pyre_atom._hooked`
+no longer refuse a repeat character; they refuse a possessive `+` (by
+wrapping the tokenizer's `match`, whose one call with `+` is that one),
+and `_line` writes the OverflowError as `%Overflow`. So `atom.sweep` and
+the chains of `atom.inventory` read repeats now, and their digests were
+regenerated; the four `atom.parse` rows of a repeat (`a*`, `a+`, `a?`,
+`a{2}`) moved to this unit's parts; `a{` and `{` are trees now (a
+literal `{`); `tree.names` holds the three new names.
+
+#### Fixtures and tests of pyre-3a
+
+`tests/contract/gen_pyre_parse.py`, listed in `gen_pyre.py`'s `_PARTS`
+under `pyre-3`, writes parts prefixed `parse.`. An answer without tree
+text is the same in every release and is in `pyre.jsonl`: `=lo,hi` for
+the width of the tree, `!Why@pos`, `?Feature@pos`, `%Overflow`, or
+`%DigitLimit`. The tree text names the opcodes of `re._constants` and is
+in `pyre_python.jsonl`, which is gated on the Python release and compared
+under 3.13.13 alone.
+
+| part | file | rows | holds |
+| --- | --- | --- | --- |
+| `parse.repeat` | `pyre.jsonl` | 126 | written patterns: each repeat, each literal `{`, the bounds at and past `MAXREPEAT`, leading zeros, bounds of 4,300 and 4,301 digits, every error with its position and in `re`'s order, lazy and possessive suffixes, what a repeat goes over, bytes patterns |
+| `parse.width` | `pyre.jsonl` | 26 | trees built by hand (branches, groups, lookarounds, nested repeats, the cap) and their widths |
+| `parse.sweep` | `pyre.jsonl` | 1 | 20,000 patterns of up to seven of 37 fragments, by SHA-256 of their answers |
+| `parse.width_sweep` | `pyre.jsonl` | 1 | 4,000 random trees of `gen_pyre_tree._sub`, by SHA-256 of their widths |
+| `parse.tree` | `pyre_python.jsonl` | 62 | `str(tree)` of each written pattern that parses |
+| `parse.sweep` | `pyre_python.jsonl` | 1 | the same 20,000 patterns, by SHA-256 of their tree texts |
+
+The rows of pyre-3a are 37.8 KB of `pyre.jsonl` (94.5 KB in all) and
+11.1 KB of `pyre_python.jsonl`; six bounds of more than 4,300 digits are
+most of it.
+
+| test file | tests | what it holds |
+| --- | --- | --- |
+| `golden_pyre_parse` | 2 | every `parse.` row of both files, the sweeps regenerated |
+| `pyre_parse_kills` | 6 | `{` as a literal and as a repeat, the overflow at `MAXREPEAT` and its order, each error's position, the suffixes in `re`'s order, the unpacking of a plain group, widths (a nullable body, an empty branch, a reversed bound, products past 64 bits) |
+| `pyre_parse_robustness` | 6 | 200,000 characters of repeats, bounds of a million digits and on either side of the 4,300-digit limit, unclosed braces read back, a tree 200,000 repeats deep measured on a thread of 64 KiB, every pattern of up to four of 12 characters, the bounds at the edges of `u32`; time held by `tests/timing` |
+
+Three mutants were run against the golden and kills files: the overflow
+at `MAXREPEAT` taken as a bound, an unbounded repeat of a body that
+matches nothing measured as `MAXWIDTH`, and the errors placed after the
+repeat character. Each fails both.
+
 ### Left for later units
 
-- pyre-3: `_parse_sub`, `_parse` and `parse` over the functions of
-  `pyre::atom`, which then replace `parse_flat`; `getwidth` (and with it
-  the width `closegroup` is given), `checkgroupname`, the use of `py_eq`
-  in `_parse_sub`, the names of the errors it raises, and the refusal of
-  `\B`, `\D` and `\W`, which the tree can hold. Its refusal of nesting
-  past 32 is for the matcher; the tree holds any depth (pyre-2a, "Any
-  depth").
+- pyre-3b: `_parse_sub`, `_parse` and `parse` over the functions of
+  `pyre::atom` and `pyre::parse`, which then replace `parse_flat`;
+  groups and the unpacking of plain groups, scoped and leading flags,
+  `_parse_flags`, `fix_flags`, lookarounds, `checkgroupname`, the use of
+  `py_eq` in `_parse_sub`, the width `closegroup` is given (from
+  `getwidth`), the names of the errors it raises, the refusal of `\B`,
+  `\D` and `\W`, which the tree can hold, and of a nullable loop and a
+  capture in a repeat. Its refusal of nesting past 32 is for the
+  matcher; the tree holds any depth (pyre-2a, "Any depth").
 - pyre-7: the patterns the reference builds from parts at import, which
   the `ast` scan of `atom.inventory` does not find.
 
@@ -11481,8 +11596,9 @@ What the reference has and this build does not, by area:
   the review. The dedup's store side reads through a trait not yet wired
   to `store::digest`.
 - The regular expression engine (`pyre`) past its case folding and the
-  parser's tree, state, tokenizer and atoms: the rest of the parser
-  (pyre-3), the lowering, the matcher and the methods (pyre-4 to
+  parser's tree, state, tokenizer, atoms, repeats and widths: the rest of
+  the parser (`_parse_sub`, groups, flags, lookarounds, `checkgroupname`,
+  `parse`, the refusal predicate and the nesting bound: pyre-3b), the lowering, the matcher and the methods (pyre-4 to
   pyre-6), the inventory proof, the cross-check of the hand-written
   matchers and the memo (pyre-7 to pyre-9).
 - This machine's id past its record and clone rule: `machine.py`'s

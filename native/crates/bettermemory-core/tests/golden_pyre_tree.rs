@@ -50,7 +50,7 @@ const CATEGORIES: [Category; 6] = [
     Category::CATEGORY_WORD,
     Category::CATEGORY_NOT_WORD,
 ];
-const WHYS: [Why; 16] = [
+const WHYS: [Why; 19] = [
     Why::BadEscapeEnd,
     Why::BadEscape,
     Why::IncompleteEscape,
@@ -67,8 +67,11 @@ const WHYS: [Why; 16] = [
     Why::UnbalancedParenthesis,
     Why::TooManyGroups,
     Why::Redefinition,
+    Why::NothingToRepeat,
+    Why::MultipleRepeat,
+    Why::MinGreaterThanMax,
 ];
-const FEATURES: [Feature; 27] = [
+const FEATURES: [Feature; 26] = [
     Feature::Backreference,
     Feature::NamedCharacter,
     Feature::SetWarning,
@@ -93,7 +96,6 @@ const FEATURES: [Feature; 27] = [
     Feature::Nesting,
     Feature::Nodes,
     Feature::Template,
-    Feature::Repeat,
     Feature::Group,
     Feature::Alternation,
 ];
@@ -119,6 +121,9 @@ fn why_index(why: Why) -> usize {
         Why::UnbalancedParenthesis => 13,
         Why::TooManyGroups => 14,
         Why::Redefinition => 15,
+        Why::NothingToRepeat => 16,
+        Why::MultipleRepeat => 17,
+        Why::MinGreaterThanMax => 18,
     }
 }
 
@@ -148,9 +153,8 @@ fn feature_index(feature: Feature) -> usize {
         Feature::Nesting => 21,
         Feature::Nodes => 22,
         Feature::Template => 23,
-        Feature::Repeat => 24,
-        Feature::Group => 25,
-        Feature::Alternation => 26,
+        Feature::Group => 24,
+        Feature::Alternation => 25,
     }
 }
 

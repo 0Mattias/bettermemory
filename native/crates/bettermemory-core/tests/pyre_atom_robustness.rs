@@ -193,6 +193,7 @@ fn every_short_pattern_answers_within_itself() {
             let at = match parse_flat(pattern, istext, verbose) {
                 Ok(_) => continue,
                 Err(BuildError::Invalid { at, .. } | BuildError::Unsupported { at, .. }) => at,
+                Err(BuildError::Overflow | BuildError::DigitLimit) => continue,
             };
             let len = pattern.len() as isize;
             assert!((0..=len).contains(&at), "{pattern:?}: {at}");

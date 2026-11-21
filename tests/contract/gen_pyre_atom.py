@@ -6,20 +6,25 @@ The native build reads them in
 `_escape`, `_uniq`, the sets and flat sequences `_parse` reads, and
 `re.escape`. The reference here is the interpreter's own ``re`` package.
 
-The port reads less than `re._parser.parse` does: a repeat, a group and
-an alternative wait for the parser's next unit, VERBOSE is refused at the
-first token it changes, and where `re` warns or looks a name up in its
-table the port refuses. `_hooked` states that edge without a second
-parser: it runs `re._parser.parse` itself with a refusal raised at each
-place the port refuses. ``SPECIAL_CHARS`` refuses ``(`` and the repeat
-characters when `_parse` asks it, `_parse` refuses when `_parse_sub` calls
-it for a second alternative, ``WHITESPACE`` refuses whitespace and ``#``
-when it is asked (only under VERBOSE), `unicodedata.lookup` finds no name,
-and FutureWarning is an error. The first event in the reference's own
-order is the expected answer, as one line (`_line`): the tree's
-``str(tree)``, ``!Name@pos`` for an error of ``re`` by the port's name of
-its message, or ``?Feature@pos`` for a refusal at the position the port
-gives it.
+The port reads less than `re._parser.parse` does: a group and an
+alternative wait for the parser's next unit, a possessive repeat is
+refused, VERBOSE is refused at the first token it changes, and where `re`
+warns or looks a name up in its table the port refuses. `_hooked` states
+that edge without a second parser: it runs `re._parser.parse` itself with
+a refusal raised at each place the port refuses. ``SPECIAL_CHARS``
+refuses ``(`` when `_parse` asks it, `_parse` refuses when `_parse_sub`
+calls it for a second alternative, the tokenizer's ``match`` refuses the
+``+`` it takes after a repeat (its one call with ``+``, `_possessive`),
+``WHITESPACE`` refuses whitespace and ``#`` when it is asked (only under
+VERBOSE), `unicodedata.lookup` finds no name, and FutureWarning is an
+error. The first event in the reference's own order is the expected
+answer, as one line (`_line`): the tree's ``str(tree)``, ``!Name@pos``
+for an error of ``re`` by the port's name of its message, ``?Feature@pos``
+for a refusal at the position the port gives it, ``%Overflow`` for the
+OverflowError of a repeat's bound, or ``%DigitLimit`` for the ValueError
+of ``int`` on a bound past its digit limit (`gen_pyre_parse`). Repeats were
+refused here until unit pyre-3a; the sweep and the inventory's chains
+read them since.
 
 Parts, by ``part``:
 
@@ -64,6 +69,7 @@ import contextlib
 import hashlib
 import importlib
 import re
+import sys
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
@@ -96,7 +102,6 @@ B = "\\"
 #: What `_parse` and the parser's tables are when nothing is hooked.
 PARSE = P._parse
 SPECIAL = P.SPECIAL_CHARS
-REPEAT = P.REPEAT_CHARS
 WHITESPACE = P.WHITESPACE
 
 
@@ -115,13 +120,11 @@ _SOURCE: list[Any] = [None]
 
 class _Special:
     """``SPECIAL_CHARS`` as the port reads it: `_parse` asks it of every
-    bare character, and a group or a repeat is refused there."""
+    bare character, and a group is refused there."""
 
     def __contains__(self, char: object) -> bool:
         if char == "(":
             raise Refused("Group", _SOURCE[0].tell() - 1)
-        if isinstance(char, str) and char in REPEAT:
-            raise Refused("Repeat", _SOURCE[0].tell() - 1)
         return isinstance(char, str) and char in SPECIAL
 
 
@@ -144,7 +147,28 @@ def _parse(
     _SOURCE[0] = source
     if not first:
         raise Refused("Alternation", source.tell() - 1)
+    if "match" not in vars(source):
+        source.match = _possessive(source)
     return PARSE(source, state, verbose, nested, first)
+
+
+def _possessive(source: Any) -> Any:
+    """``source.match`` as `_parse` binds it: `_parse` asks it for ``+``
+    only after a repeat, where ``+`` makes the repeat possessive, which
+    the port refuses at that ``+``."""
+    plain = type(source).match.__get__(source)
+
+    def match(char: str) -> bool:
+        taken: bool = plain(char)
+        if taken and char == "+":
+            raise Refused("Possessive", source.tell() - 1)
+        return taken
+
+    return match
+
+
+#: The default of ``sys.get_int_max_str_digits()``.
+INT_MAX_STR_DIGITS = 4300
 
 
 def _no_name(name: str) -> str:
@@ -158,18 +182,35 @@ def _hooked() -> Iterator[None]:
     P.WHITESPACE = _Whitespace()
     P._parse = _parse
     U.lookup = _no_name
+    # ``int``'s digit limit at its default, whatever PYTHONINTMAXSTRDIGITS
+    # says: the port holds the default.
+    digits = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(INT_MAX_STR_DIGITS)
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", FutureWarning)
             yield
     finally:
         P.SPECIAL_CHARS, P.WHITESPACE, P._parse, U.lookup = saved
+        sys.set_int_max_str_digits(digits)
 
 
 def _failed(exc: Exception) -> str:
     """The line of an exception the hooked reference raised."""
     if isinstance(exc, Refused):
         return f"?{exc.what}@{exc.at}"
+    if isinstance(exc, OverflowError):
+        # "the repetition number is too large": not ``re.error``, no
+        # position.
+        assert str(exc) == "the repetition number is too large", exc
+        return "%Overflow"
+    if isinstance(exc, ValueError):
+        # ``int`` of a bound past its digit limit: not ``re.error``, no
+        # position.
+        assert str(exc).startswith(
+            f"Exceeds the limit ({INT_MAX_STR_DIGITS} digits)"
+        ), exc
+        return "%DigitLimit"
     if isinstance(exc, FutureWarning):
         found = re.search(r"at position (\d+)$", str(exc))
         assert found, exc
@@ -188,7 +229,7 @@ def _line(pattern: str | bytes, verbose: bool = False) -> str:
     try:
         with _hooked():
             tree = P.parse(pattern, flags)
-    except (Refused, FutureWarning, C.error) as exc:
+    except (Refused, FutureWarning, C.error, OverflowError, ValueError) as exc:
         return _failed(exc)
     return str(tree)
 
@@ -350,11 +391,9 @@ PARSED: list[str | bytes] = [
     "[a&&]",
     "[a&" + B + "&]",
     "[" + B + "--]",
-    # What the parser's next unit reads, refused where it begins.
-    "a*",
-    "a+",
-    "a?",
-    "a{2}",
+    # What the parser's next unit reads, refused where it begins. The
+    # repeats are read since unit pyre-3a (`gen_pyre_parse`); a `{` that
+    # reads as a literal stays here.
     "a{",
     "{",
     "(a)",

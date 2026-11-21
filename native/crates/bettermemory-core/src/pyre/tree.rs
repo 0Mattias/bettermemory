@@ -444,6 +444,85 @@ impl fmt::Debug for Node {
 /// The `(lo, hi)` pair `getwidth` returns, each at most [`MAXWIDTH`].
 pub type Width = (u128, u128);
 
+impl SubPattern {
+    /// `getwidth`: the least and the most code points the sub-pattern can
+    /// match, each at most [`MAXWIDTH`] (`_parser.py` 177 to 227). The
+    /// sums are Python's unbounded integers until the cap at the end of
+    /// each sub-pattern; here they saturate at `u128::MAX`, which the cap
+    /// makes the same. An item that holds sub-patterns waits on a stack of
+    /// its own while their widths are taken, so any depth is measured
+    /// without a call per level. The reference caches the width in the
+    /// sub-pattern; nothing here changes a tree, so the cache is left out.
+    pub fn getwidth(&self) -> Width {
+        /// A sub-pattern being summed, and the bodies of its current item
+        /// with the least low and the most high of those measured.
+        struct Frame<'a> {
+            items: &'a [Node],
+            at: usize,
+            lo: u128,
+            hi: u128,
+            done: usize,
+            i: u128,
+            j: u128,
+        }
+        fn frame(items: &[Node]) -> Frame<'_> {
+            let (at, lo, hi, done, i, j) = (0, 0, 0, 0, MAXWIDTH, 0);
+            Frame {
+                items,
+                at,
+                lo,
+                hi,
+                done,
+                i,
+                j,
+            }
+        }
+        let mut stack = vec![frame(&self.0)];
+        while let Some(top) = stack.last_mut() {
+            let items = top.items;
+            let Some(node) = items.get(top.at) else {
+                let width = (top.lo.min(MAXWIDTH), top.hi.min(MAXWIDTH));
+                stack.pop();
+                match stack.last_mut() {
+                    Some(below) => {
+                        below.i = below.i.min(width.0);
+                        below.j = below.j.max(width.1);
+                        below.done += 1;
+                        continue;
+                    }
+                    None => return width,
+                }
+            };
+            if let Some(body) = node.bodies().get(top.done) {
+                stack.push(frame(&body.0));
+                continue;
+            }
+            let (i, j) = (top.i, top.j);
+            match node {
+                Node::Literal(_) | Node::NotLiteral(_) | Node::Any | Node::In(_) => {
+                    top.lo = top.lo.saturating_add(1);
+                    top.hi = top.hi.saturating_add(1);
+                }
+                Node::Branch(_) | Node::Subpattern { .. } => {
+                    top.lo = top.lo.saturating_add(i);
+                    top.hi = top.hi.saturating_add(j);
+                }
+                Node::MaxRepeat(min, max, _) | Node::MinRepeat(min, max, _) => {
+                    top.lo = top.lo.saturating_add(i.saturating_mul(u128::from(*min)));
+                    top.hi = if *max == MAXREPEAT && j > 0 {
+                        MAXWIDTH
+                    } else {
+                        top.hi.saturating_add(j.saturating_mul(u128::from(*max)))
+                    };
+                }
+                Node::At(_) | Node::Assert(..) | Node::AssertNot(..) | Node::Failure => {}
+            }
+            (top.at, top.done, top.i, top.j) = (top.at + 1, 0, MAXWIDTH, 0);
+        }
+        (0, 0)
+    }
+}
+
 /// `State`: what the parser keeps while it reads one pattern.
 /// `grouprefpos` is left out: only a conditional writes it, and a
 /// conditional is refused.
@@ -564,6 +643,12 @@ pub enum Why {
     TooManyGroups,
     /// "redefinition of group name %r as group %d; was group %d".
     Redefinition,
+    /// "nothing to repeat" (pyre-3).
+    NothingToRepeat,
+    /// "multiple repeat".
+    MultipleRepeat,
+    /// "min repeat greater than max repeat".
+    MinGreaterThanMax,
 }
 
 /// What the engine refuses of the patterns `re` accepts. The first block
@@ -610,8 +695,7 @@ pub enum Feature {
     Nodes,
     /// A replacement text that holds a backslash (pyre-6).
     Template,
-    /// Not built yet: `*`, `+`, `?`, `{`; `(`; `|`.
-    Repeat,
+    /// Not built yet: `(`; `|`.
     Group,
     Alternation,
 }
@@ -626,4 +710,12 @@ pub enum BuildError {
     /// feature begins (the backslash of an escape), or for a set `re`
     /// warns about, the position its warning names.
     Unsupported { at: isize, what: Feature },
+    /// `re` raises OverflowError, which is not `re.error` and has no
+    /// position: "the repetition number is too large", a bound of a
+    /// repeat at `MAXREPEAT` or past it.
+    Overflow,
+    /// `int` raises ValueError, which is not `re.error` and has no
+    /// position: a bound of a repeat of more than 4,300 digits, the
+    /// default of `sys.get_int_max_str_digits()`.
+    DigitLimit,
 }

@@ -9,9 +9,12 @@
 //!   (unit pyre-2a).
 //! - [`atom`]: the atoms the parser reads (escapes, sets, flat sequences)
 //!   with `re.escape` (unit pyre-2b).
+//! - [`parse`]: the repeats `_parse` reads, with their errors (unit
+//!   pyre-3a); `SubPattern::getwidth` is in [`tree`].
 
 pub mod atom;
 pub mod fold;
+pub mod parse;
 pub mod token;
 pub mod tree;
 

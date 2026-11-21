@@ -22,6 +22,8 @@ fn line(answer: Built<SubPattern>) -> String {
         Ok(tree) => tree.dump(),
         Err(BuildError::Invalid { at, why }) => format!("!{why:?}@{at}"),
         Err(BuildError::Unsupported { at, what }) => format!("?{what:?}@{at}"),
+        Err(BuildError::Overflow) => "%Overflow".into(),
+        Err(BuildError::DigitLimit) => "%DigitLimit".into(),
     }
 }
 
@@ -304,12 +306,10 @@ fn a_digit_past_ascii_is_never_a_digit() {
 
 /// What `_parse` reads beyond atoms refused late, early, or elsewhere;
 /// `)` refused rather than raised; the token after `|` loaded before the
-/// alternative is refused.
+/// alternative is refused. A repeat is read since unit pyre-3a.
 #[test]
 fn what_the_next_unit_reads_is_refused_where_it_begins() {
-    assert_eq!(read("a*"), "?Repeat@1");
-    assert_eq!(read("a{2}"), "?Repeat@1");
-    assert_eq!(read("{"), "?Repeat@0");
+    assert_eq!(read("{"), "[(LITERAL, 123)]");
     assert_eq!(read("(a)"), "?Group@0");
     assert_eq!(read("[a]("), "?Group@3");
     assert_eq!(read("a|b"), "?Alternation@1");

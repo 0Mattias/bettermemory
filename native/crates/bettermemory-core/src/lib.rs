@@ -18,7 +18,8 @@
 //! - [`pyre`]: Python's regular expressions as CPython 3.13.13's `re` runs
 //!   them, its first units: the case folding and the test of one literal;
 //!   the parser's tree and its dump, the parser's state and its tokenizer,
-//!   the escapes, sets and flat sequences it reads, and `re.escape`;
+//!   the escapes, sets and flat sequences it reads, and `re.escape`; the
+//!   repeats the parser reads and the width of a tree;
 //! - [`models_text`]: the text helpers of `models.py`: a memory's slug
 //!   and file name, its summary line, the truncation heuristic and the
 //!   search snippets;

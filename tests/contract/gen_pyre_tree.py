@@ -101,6 +101,9 @@ WHY = {
     "UnbalancedParenthesis": "unbalanced parenthesis",
     "TooManyGroups": "too many groups",
     "Redefinition": "redefinition of group name %r as group %d; was group %d",
+    "NothingToRepeat": "nothing to repeat",
+    "MultipleRepeat": "multiple repeat",
+    "MinGreaterThanMax": "min repeat greater than max repeat",
 }
 
 #: ``pyre::tree::Feature``, in its order.
@@ -129,7 +132,6 @@ FEATURE = [
     "Nesting",
     "Nodes",
     "Template",
-    "Repeat",
     "Group",
     "Alternation",
 ]

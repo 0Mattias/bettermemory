@@ -6,9 +6,9 @@
 //!
 //! [`parse_flat`] stands in for `parse` until the parser's next unit
 //! builds `_parse_sub`, `_parse` and `parse` over these functions. It reads
-//! what they read and refuses by name what it does not: a repeat, a group
-//! and an alternative where `_parse` would read one, and VERBOSE at the
-//! first token the flag changes.
+//! what they read, with repeats (`pyre::parse`), and refuses by name what
+//! it does not: a group and an alternative where `_parse` would read one,
+//! and VERBOSE at the first token the flag changes.
 //!
 //! Where `re` warns (FutureWarning, three places in a set) the engine
 //! refuses (`Feature::SetWarning`): it cannot warn, and a refusal is never
@@ -18,6 +18,7 @@
 
 use std::collections::HashSet;
 
+use super::parse::repeat;
 use super::token::{Built, Tok, Tokenizer};
 use super::tree::{At, BuildError, Category, Feature, Member, Node, State, SubPattern, Why};
 
@@ -319,11 +320,11 @@ fn verbose_skips(c: u32) -> bool {
 }
 
 /// `parse(pattern)` for a pattern of atoms: escapes, literals, sets, the
-/// dot, `^` and `$`, the tree `re._parser.parse` returns for them. What
-/// `_parse` would read next and this does not is refused at the token
-/// that begins it: a repeat (`*`, `+`, `?`, `{`), a group (`(`), an
-/// alternative (after its `|`); under `verbose`, whitespace or `#` outside
-/// a set. A `)` is "unbalanced parenthesis", as in `parse`. `istext` is
+/// dot, `^` and `$`, and the repeats over them ([`repeat`]), the tree
+/// `re._parser.parse` returns for them. What `_parse` would read next and
+/// this does not is refused at the token that begins it: a group (`(`),
+/// an alternative (after its `|`); under `verbose`, whitespace or `#`
+/// outside a set. A `)` is "unbalanced parenthesis", as in `parse`. `istext` is
 /// false for a bytes pattern, given as its bytes.
 pub fn parse_flat(pattern: &[u32], istext: bool, verbose: bool) -> Built<SubPattern> {
     let mut source = Tokenizer::new(pattern, istext)?;
@@ -343,7 +344,10 @@ pub fn parse_flat(pattern: &[u32], istext: bool, verbose: bool) -> Built<SubPatt
         }
         items.push(match char::from_u32(this.c) {
             Some('(') => return Err(source.refuse(Feature::Group, 1)),
-            Some('*' | '+' | '?' | '{') => return Err(source.refuse(Feature::Repeat, 1)),
+            Some('*' | '+' | '?' | '{') => {
+                repeat(&mut source, this, &mut items)?;
+                continue;
+            }
             Some('[') => set(&mut source)?,
             Some('.') => Node::Any,
             Some('^') => Node::At(At::AT_BEGINNING),
