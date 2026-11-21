@@ -38,12 +38,16 @@ is ASCII ``k`` under every Unicode release.
 from __future__ import annotations
 
 import hashlib
+import os
 import struct
+from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from bettermemory import verify_anchoring as va
 
 from ._common import jsonl
+from .gen_discovery import _clear_above
 
 
 def _d(data: bytes) -> list[Any]:
@@ -433,3 +437,421 @@ def generate() -> dict[str, bytes]:
         "hash_len": {k.decode(): v for k, v in va._INDEX_HASH_LEN.items()},
     }
     return {"verify_anchoring_sparse.jsonl": jsonl([header, *cases])}
+
+
+# --- unit 1b: the disk-reading half ------------------------------------------
+#
+# ``verify_anchoring_skip.jsonl`` (POSIX only: links on disk, paths spelled
+# by ``posixpath.realpath``) pins `_sparse_enabled`, `_parts_below`,
+# `_skip_index` with its memo and `_absent_by_sparsity` over small trees
+# written to a scratch directory, and `gitfile_rule.object_format` over
+# config texts with git read as 2.54. One JSON object per line: the
+# header, then ``{"k": "o", "t": hex, "o": name or null}`` rows and
+# ``{"k": "w", ...}`` worlds: ``f`` files (text, or ``{"hex"}``), ``d``
+# folders, ``l`` links (``<root>`` the case's folder), ``home`` the
+# folder ``~`` names, ``mv`` a file rewritten with ``{"hex"}`` just before
+# its first ``read_bytes``, and ``q`` the queries in order, each
+# ``{"p", "v"}`` over one memo:
+#
+# - ``S:<start>``: `_sparse_enabled(locate(start))`, null where nothing
+#   is located;
+# - ``B:<path>|<root>``: `_parts_below`, a list or null;
+# - ``K:<start>``: `_skip_index(locate(start))` as ``{"i": null or
+#   {"s", "k"}, "m": memo keys in order}``;
+# - ``A:<path>``: `_absent_by_sparsity(path)`.
+
+_REPO_FILES = {".git/HEAD": "ref: refs/heads/main\n"}
+_REPO_DIRS = (".git/objects", ".git/refs")
+
+
+def _skip_world(
+    queries: list[str],
+    *,
+    files: dict[str, Any],
+    dirs: tuple[str, ...] = (),
+    links: dict[str, str] | None = None,
+    mv: dict[str, bytes] | None = None,
+    home: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "k": "w",
+        "f": files,
+        "d": list(dirs),
+        "l": links or {},
+        "mv": {k: {"hex": v.hex()} for k, v in (mv or {}).items()},
+        "home": home,
+        "q": queries,
+    }
+
+
+def _repo_at(name: str, config: str | None, index: bytes | None) -> dict[str, Any]:
+    out: dict[str, Any] = {f"{name}/{k}": v for k, v in _REPO_FILES.items()}
+    if config is not None:
+        out[f"{name}/.git/config"] = config
+    if index is not None:
+        out[f"{name}/.git/index"] = {"hex": index.hex()}
+    return out
+
+
+def _repo_dirs(name: str) -> tuple[str, ...]:
+    return tuple(f"{name}/{d}" for d in _REPO_DIRS)
+
+
+def _bits(names: dict[bytes, bool], version: int = 2, h: int = 20) -> bytes:
+    entries: list[dict[str, Any]] = []
+    for name in sorted(names):
+        e: dict[str, Any] = {"name": name}
+        if names[name]:
+            e["ext"] = 0x4000
+        entries.append(e)
+    return _index(3 if version == 2 else version, entries, hash_len=h)
+
+
+_ON = "[core]\n\tsparseCheckout = true\n"
+_OFF = "[core]\n\tsparseCheckout = false\n"
+_BASE = _bits({b"a/x": True, b"a/y": True, b"b/z": False, b"m/k": False, b"m/s": True})
+
+
+def _skip_worlds() -> list[dict[str, Any]]:
+    worlds = []
+    absent = [
+        "A:<root>/r/a/x",
+        "A:<root>/r/a",
+        "A:<root>/r/a/x/deeper",
+        "A:<root>/r/b/z",
+        "A:<root>/r/m",
+        "A:<root>/r/m/s",
+        "A:<root>/r/c",
+        "A:<root>/r",
+        "A:<root>/r/b",
+        "A:<root>/plain/q",
+        "A:<root>/r//a/./x/",
+        "A:~/r/a/x",
+        "A:",
+        "A:r/a/x",
+    ]
+    files = _repo_at("r", _ON, _BASE) | {"r/b/keep": "", "plain/f": ""}
+    dirs = _repo_dirs("r")
+    worlds.append(
+        _skip_world(
+            ["S:<root>/r", "K:<root>/r", "K:<root>/r/b", *absent],
+            files=files,
+            dirs=dirs,
+            home="<root>",
+        )
+    )
+    # The switch: every place and spelling.
+    for config, worktree in [
+        (_OFF, None),
+        (None, None),
+        (_ON, _OFF),
+        (_OFF, _ON),
+        (None, _ON),
+        ("[core]\n\tsparseCheckout = true\n\tsparseCheckout = false\n", None),
+        ("[core]\n\tsparseCheckout = false\n[core]\n\tsparsecheckout\n", None),
+        ("[core]\r\n\tsparseCheckout = yes\r\n", None),
+        ("[core]\r\tsparseCheckout = on\r", None),
+        ("[core]\n\tsparseCheckout = false\r\tsparseCheckout = true\n", None),
+        ("[core]\n\tsparseCheckout = maybe\n", None),
+        (_ON, "[core]\n\tsparseCheckout = maybe\n"),
+        (_ON, "[core\n"),
+        ("[core\n", _ON),
+        ("[core]\n\tsparseCheckout = 1\n\xff\n", None),
+        ("[Core]\n\tSPARSECHECKOUT = true\n", None),
+        ('[core "x"]\n\tsparseCheckout = true\n', None),
+    ]:
+        f = _repo_at("r", config, _BASE) | {"r/b/keep": ""}
+        if worktree is not None:
+            f["r/.git/config.worktree"] = worktree
+        worlds.append(_skip_world(["S:<root>/r", "A:<root>/r/a/x"], files=f, dirs=dirs))
+    # A config that is a folder; a config.worktree that is a folder.
+    worlds.append(
+        _skip_world(
+            ["S:<root>/r", "K:<root>/r", "A:<root>/r/a/x"],
+            files=_repo_at("r", None, _BASE) | {"r/.git/config.worktree": _ON},
+            dirs=(*dirs, "r/.git/config"),
+        )
+    )
+    # Parts below, through a symlinked root and in both directions.
+    worlds.append(
+        _skip_world(
+            [
+                "B:<root>/lr/a|<root>/r",
+                "B:<root>/r/a/b|<root>/lr",
+                "B:<root>/r|<root>/r",
+                "B:<root>/plain|<root>/r",
+                "B:<root>/rr|<root>/r",
+                "B:<root>|<root>/r",
+                "B:<root>/r/../r/b|<root>/r",
+                "B:<root>/loop/x|<root>",
+                "B:r/a|<root>/r",
+                "A:<root>/lr/a/x",
+                "A:<root>/lr/b/z",
+                "A:<root>/lb/z",
+                "S:<root>/lr",
+            ],
+            files=_repo_at("r", _ON, _BASE)
+            | {"r/b/keep": "", "rr/f": "", "plain/f": ""},
+            dirs=dirs,
+            links={"lr": "<root>/r", "lb": "<root>/r/b", "loop": "<root>/loop"},
+        )
+    )
+    # A sparse directory entry; a version-4 index; SHA-256.
+    sparse_dir = _index(
+        3,
+        [
+            {"name": b"d/", "ext": 0x4000},
+            {"name": b"e/f", "ext": 0x4000},
+            {"name": b"top"},
+        ],
+    )
+    v4 = _bits({b"a/x": True, b"a/y": False}, version=4)
+    s256 = _bits({b"a/x": True}, h=32)
+    for config, index in [
+        (_ON, sparse_dir),
+        (_ON, v4),
+        (_ON, s256),
+        (_ON + "[extensions]\n\tobjectFormat = sha256\n", s256),
+        (
+            "[core]\n\trepositoryformatversion = 1\n\tsparseCheckout = true\n"
+            "[extensions]\n\tobjectFormat = sha256\n",
+            s256,
+        ),
+        (
+            "[core]\n\trepositoryformatversion = 1\n\tsparseCheckout = true\n"
+            "[extensions]\n\tobjectFormat = sha256\n",
+            _BASE,
+        ),
+        (
+            "[core]\n\trepositoryformatversion = 1\n\tsparseCheckout = true\n"
+            "[extensions]\n\tobjectFormat = md5\n",
+            _BASE,
+        ),
+        (_ON, None),
+        (_ON, b"DIRC\0\0\0\x09"),
+        (_ON, b""),
+        (_ON, _index(2, [{"name": b"a/x"}], ext=b"link" + bytes(4))),
+    ]:
+        worlds.append(
+            _skip_world(
+                [
+                    "K:<root>/r",
+                    "A:<root>/r/d/e/f",
+                    "A:<root>/r/e",
+                    "A:<root>/r/a/x",
+                    "A:<root>/r/a/y",
+                    "A:<root>/r/top",
+                ],
+                files=_repo_at("r", config, index) | {"r/keep": ""},
+                dirs=dirs,
+            )
+        )
+    # An index that is a folder.
+    worlds.append(
+        _skip_world(
+            ["K:<root>/r", "A:<root>/r/a/x"],
+            files=_repo_at("r", _ON, None),
+            dirs=(*dirs, "r/.git/index"),
+        )
+    )
+    # Stamps that move during the read: the index, then the config.
+    moved = _bits({b"a/x": False, b"a/q": True})
+    for rel in ("r/.git/index", "r/.git/config"):
+        new = moved if rel.endswith("index") else (_ON + "#moved\n").encode()
+        worlds.append(
+            _skip_world(
+                ["K:<root>/r", "K:<root>/r", "K:<root>/r", "A:<root>/r/a/x"],
+                files=_repo_at("r", _ON, _BASE),
+                dirs=dirs,
+                mv={rel: new},
+            )
+        )
+    # A file moved during the read inside an A query: the switch is read
+    # before the move (``read_text``), the index and the config after it.
+    for rel in ("r/.git/index", "r/.git/config"):
+        new = moved if rel.endswith("index") else b"[core]\n\tsparseCheckout = false\n"
+        worlds.append(
+            _skip_world(
+                ["A:<root>/r/a/q", "K:<root>/r", "A:<root>/r/a/x", "K:<root>/r"],
+                files=_repo_at("r", _ON, _BASE),
+                dirs=dirs,
+                mv={rel: new},
+            )
+        )
+    # An index with no config in the common directory: the format reads
+    # as sha1 and the index is parsed; the switch reads off.
+    worlds.append(
+        _skip_world(
+            ["K:<root>/r", "A:<root>/r/a/x", "S:<root>/r"],
+            files=_repo_at("r", None, _BASE),
+            dirs=dirs,
+        )
+    )
+    # The memo's bound and order: six repositories, one asked again.
+    many: dict[str, Any] = {}
+    d: tuple[str, ...] = ()
+    for i in range(6):
+        many |= _repo_at(f"r{i}", _ON, _bits({b"x": i % 2 == 0}))
+        d += _repo_dirs(f"r{i}")
+    worlds.append(
+        _skip_world(
+            [
+                *(f"K:<root>/r{i}" for i in range(4)),
+                "K:<root>/r0",
+                "K:<root>/r4",
+                "K:<root>/r5",
+                "K:<root>/r0",
+                "A:<root>/r1/x",
+            ],
+            files=many,
+            dirs=d,
+        )
+    )
+    # A linked worktree reads its own index and config.worktree, and the
+    # common directory's config.
+    wt = _repo_at("r", _ON, _BASE) | {
+        "r/.git/worktrees/w/HEAD": "ref: refs/heads/w\n",
+        "r/.git/worktrees/w/commondir": "../..\n",
+        "r/.git/worktrees/w/gitdir": "<root>/w/.git\n",
+        "r/.git/worktrees/w/config.worktree": _OFF,
+        "r/.git/worktrees/w/index": {"hex": _bits({b"a/x": False}).hex()},
+        "w/.git": "gitdir: <root>/r/.git/worktrees/w\n",
+    }
+    worlds.append(
+        _skip_world(
+            [
+                "S:<root>/w",
+                "S:<root>/r",
+                "K:<root>/w",
+                "A:<root>/w/a/x",
+                "A:<root>/r/a/x",
+            ],
+            files=wt,
+            dirs=dirs,
+        )
+    )
+    return worlds
+
+
+_FORMATS = [
+    "",
+    "[core]\n\trepositoryformatversion = 0\n",
+    "[extensions]\n\tobjectFormat = sha256\n",
+    "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectFormat = sha256\n",
+    "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectFormat = SHA256\n",
+    "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectFormat = sha1\n",
+    "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectFormat = blake\n",
+    "[core]\n\trepositoryformatversion = 2\n",
+    "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectFormat\n",
+    "[core\n",
+]
+
+
+def _spell_path(path: str, real: str) -> str:
+    return path.replace(real, "<root>")
+
+
+def _skip_answer(world: dict[str, Any], base: Path) -> list[dict[str, Any]]:
+    from bettermemory import githead
+    from bettermemory import gitfile_rule as g
+
+    base.mkdir(parents=True)
+    saved = os.getcwd()
+    os.chdir(base)
+    try:
+        real = os.getcwd()
+        _clear_above(real)
+        root = Path(real)
+        for d in world["d"]:
+            (root / d).mkdir(parents=True, exist_ok=True)
+        for rel, value in world["f"].items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = (
+                bytes.fromhex(value["hex"])
+                if isinstance(value, dict)
+                else value.replace("<root>", real).encode("utf-8", "surrogateescape")
+            )
+            path.write_bytes(data)
+        for rel, target in world["l"].items():
+            os.symlink(target.replace("<root>", real), root / rel)
+        moves = {
+            os.path.join(real, rel): bytes.fromhex(v["hex"])
+            for rel, v in world["mv"].items()
+        }
+        original = Path.read_bytes
+
+        def read_bytes(self: Path) -> bytes:
+            new = moves.pop(os.fspath(self), None)
+            if new is not None:
+                original_write(self, new)
+            return original(self)
+
+        original_write = Path.write_bytes
+        env = {"HOME": world["home"].replace("<root>", real)} if world["home"] else {}
+        out = []
+        va._clear_skip_memo()
+        with (
+            patch.dict(os.environ, env),
+            patch.object(g, "_git_is_at_least", lambda want: (2, 54) >= want),
+            patch.object(g, "_reads_compat", lambda: True),
+            patch.object(Path, "read_bytes", read_bytes),
+        ):
+            for name in (
+                "GIT_DIR",
+                "GIT_WORK_TREE",
+                "GIT_COMMON_DIR",
+                "GIT_CEILING_DIRECTORIES",
+                "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            ):
+                os.environ.pop(name, None)
+            for q in world["q"]:
+                op, _, raw = q.partition(":")
+                args = [a.replace("<root>", real) for a in raw.split("|")]
+                v: Any
+                if op == "S":
+                    found = githead.locate(Path(args[0]))
+                    v = None if found is None else va._sparse_enabled(found)
+                elif op == "B":
+                    got = va._parts_below(args[0], args[1])
+                    v = None if got is None else [_spell_path(p, real) for p in got]
+                elif op == "K":
+                    found = githead.locate(Path(args[0]))
+                    index = None if found is None else va._skip_index(found)
+                    v = {
+                        "i": None if index is None else _spell_index(index),
+                        "m": [_spell_path(k, real) for k in va._SKIP_MEMO],
+                    }
+                else:
+                    v = va._absent_by_sparsity(args[0])
+                out.append({"p": q, "v": v})
+        va._clear_skip_memo()
+        return out
+    finally:
+        os.chdir(saved)
+
+
+def generate_skip() -> dict[str, bytes]:
+    """``verify_anchoring_skip.jsonl``: POSIX only."""
+    from bettermemory import gitfile_rule as g
+
+    from . import _sandbox
+    from .gen_fs_realpath import refuse_root
+
+    refuse_root()
+    lines: list[dict[str, Any]] = []
+    with patch.object(g, "_git_is_at_least", lambda want: (2, 54) >= want):
+        for text in _FORMATS:
+            got = g.object_format(text.encode())
+            lines.append(
+                {
+                    "k": "o",
+                    "t": text.encode().hex(),
+                    "o": None if got is None else got.decode(),
+                }
+            )
+    with _sandbox.world() as world:
+        for i, w in enumerate(_skip_worlds()):
+            lines.append({**w, "q": _skip_answer(w, world.root / "skip" / str(i))})
+    header = {"k": "header", "count": len(lines), "cap": va._SKIP_MEMO_CAP}
+    return {"verify_anchoring_skip.jsonl": jsonl([header, *lines])}

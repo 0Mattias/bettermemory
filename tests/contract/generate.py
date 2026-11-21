@@ -347,6 +347,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "verify_anchoring_sparse": gen_verify_anchoring_sparse.generate,
     "verify_anchoring_anchor": gen_verify_anchoring_anchor.generate,
     "response_leaf": gen_response_leaf.generate,
+    "verify_anchoring_skip": gen_verify_anchoring_sparse.generate_skip,
     "githead": gen_githead.generate,
     "githead_discovery": gen_githead_discovery.generate,
     "githead_signature": gen_githead_signature.generate,
@@ -828,6 +829,8 @@ PLATFORM_GATED = frozenset(
 #: repositories with links and a mode-000 folder (`gen_location_view`);
 #: ``gitobjects_reader_posix`` reads objects over FIFOs, modes and an
 #: alternates file (`gen_gitobjects_reader`);
+#: ``verify_anchoring_skip`` resolves working trees through links on disk
+#: and spells paths by ``posixpath`` (`gen_verify_anchoring_sparse`);
 #: ``location_discovery`` walks trees with links and spells paths with
 #: ``/`` (`gen_location_discovery`); ``location_cache_posix`` stamps real
 #: trees and reads a mode-000 HEAD (`gen_location_cache`);
@@ -935,6 +938,7 @@ POSIX_ONLY = frozenset(
         "gitsystem_sources_python",
         "gitfile_leaves_posix",
         "store_provenance",
+        "verify_anchoring_skip",
         "fs_realpath",
         "fs_realpath_python",
         "store_bulk",

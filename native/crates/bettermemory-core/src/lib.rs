@@ -202,8 +202,9 @@
 //!   its Windows retry, `bounded_stream_read`, `flock_excl` and its
 //!   Windows branch `_flock_windows`);
 //! - [`verify_anchoring`]: whether cited paths are anchored, its first
-//!   unit (the sparse-checkout switch, git's varint, the index's
-//!   skip-worktree reader; the drift report and the claim anchors);
+//!   two units and unit 2a (the sparse-checkout switch, git's varint, the
+//!   index's skip-worktree reader, and the probe that reads them from disk
+//!   with its memo; the drift report and the claim anchors);
 //! - [`verify_status`] and [`attribution`]: a memory's verification
 //!   staleness, and phrase-match attribution of memories to a reply;
 //! - [`response_links`], [`response_memo`] and [`verdict_signals`]: the

@@ -42,7 +42,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record` | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
-| `verify_anchoring` | unit 1a of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_anchor.jsonl` |
+| `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
@@ -800,7 +800,7 @@ Left for later units: everything in the map not marked hook-1a.
 a record's cited paths are anchored in the working tree it names. It is
 cut into units. Unit verify_anchoring-1a (`verify_anchoring/sparse.rs`)
 holds the leaves of the sparse-checkout reading; the rest of that reading
-is unit verify_anchoring-1b. Unit verify_anchoring-2a
+is unit verify_anchoring-1b (`verify_anchoring/skip.rs`). Unit verify_anchoring-2a
 (`verify_anchoring/report.rs`, `verify_anchoring/anchor.rs`) holds the
 report and the claim anchors; the drift readers are verify_anchoring-2.
 
@@ -813,10 +813,10 @@ report and the claim anchors; the drift readers are verify_anchoring-2.
 | `_SkipIndex`, `_SkipIndex.skips`, `_holds`, `_any_below` | 665-698 | nothing | built (1a) |
 | `_index_varint` | 700-715 | nothing | built (1a) |
 | `_parse_skip_index` | 718-788 | nothing | built (1a) |
-| `_sparse_enabled` | 609-621 | files (the config and `config.worktree`) | 1b |
-| `_parts_below` | 624-651 | `realpath`, `normcase` (the flavour) | 1b |
-| `_SKIP_MEMO`, `_skip_index` | 790-844 | files, `githead.stamp`, `gitfile_rule.object_format` | 1b (a `SkipMemo` the caller owns, no lock) |
-| `_absent_by_sparsity` | 847-890 | discovery (`githead.locate`), `expanduser`, `isdir` | 1b |
+| `_sparse_enabled` | 609-621 | files (the config and `config.worktree`) | built (1b) |
+| `_parts_below` | 624-651 | `realpath`, `normcase` (the flavour) | built (1b) |
+| `_SKIP_MEMO_CAP`, `_SKIP_MEMO`, `_clear_skip_memo`, `_skip_index` | 790-844 | files, `githead.stamp`, `gitfile_rule.object_format` | built (1b: a `SkipMemo` the caller owns, no lock) |
+| `_absent_by_sparsity` | 847-890 | discovery (`githead.locate`), `expanduser`, `isdir` | built (1b) |
 | `PathDriftReport` (`has_drift`, `has_claim_anchored_drift`, `should_report`, `to_dict`) | 68-296 | nothing | built (2a) |
 | `CONVICTING_ANCHORS`, `UNANCHORED`, `SPARSE_CHECKOUT`, `UNCONFIRMED_COMMIT`, `GLOBAL_RECORD` | 298-317 | nothing | built (2a) |
 | `ClaimAnchor` (`convicting`, `declared_root`, `absolute`, `commit_root`) | 319-410 | `expected_home`, `relative_under` (a trait), `holds_commit` (a closure) | built (2a) |
@@ -876,6 +876,75 @@ Rows from indexes a real git wrote (cone, non-cone, split) and rows of
 Tests: `golden_verify_anchoring_sparse`, `verify_anchoring_sparse_kills`,
 `verify_anchoring_sparse_robustness` (no panic at the integer bounds,
 linear time in the number of entries).
+
+### What 1b reproduces
+
+`verify_anchoring/skip.rs`, its line ranges confirmed against the
+reference at 65aea201. Every function takes the membership rule's `Rule`
+(the file system, its flavour, the working directory and the git facts
+`object_format` reads), discovery's `Env` where it locates, and
+`os.path.expanduser` as a closure.
+
+- `sparse_enabled(ctx, found)` reads the common directory's `config`,
+  then the git directory's `config.worktree`, each as
+  `Path.read_text(encoding="utf-8", errors="replace")` reads it: decoded
+  with one U+FFFD per maximal invalid subsequence, then universal
+  newlines (`\r\n` and a lone `\r` read as `\n`). That translation
+  changes answers: `[core]` with `sparseCheckout = false`, a lone CR and
+  `sparseCheckout = true` reads True, where the raw text makes git's
+  parser die. A file that cannot be read is passed over; a value git dies
+  on leaves the previous file's answer.
+- `parts_below(ctx, path, root)` compares `Path(realpath(...)).parts`
+  of both sides. Under POSIX `normcase` is the name itself, so the
+  comparison is of bytes; the Windows flavour declines at `realpath`
+  (`Failure::NotPorted`, ENG-124).
+- `skip_index(rule, found, memo)` stamps the index and the config with
+  `githead::discovery::stamp`, answers from the memo when both stamps
+  match (moving the key to the most recent end), reads the config only
+  where its stamp answered, reads the index, stamps again, and parses
+  with the hash length `object_format` names. A stamp that moved during
+  the read answers what was read and leaves the memo alone. The memo is
+  a `SkipMemo` the caller owns: at most `SKIP_MEMO_CAP` (4) index paths,
+  least recently used evicted first, keyed by `Path(gitdir) / "index"`
+  as `pathlib` spells it. There is no lock and no registration with
+  `_caches`: the owner clears it (`SkipMemo::clear`). Any failed stamp
+  or read answers None, as the reference's `except (OSError,
+  ValueError)` does; a stamp the Windows flavour cannot take declines.
+- `absent_by_sparsity(rule, env, expanduser, memo, path)` walks up with
+  `os.path.isdir` and `posixpath.split` to the nearest folder, locates
+  with `githead::discovery::locate` (walking, not as git), and asks the
+  index for the joined components. The Windows flavour declines before
+  any read: the reference answers there through `locate`, which this
+  build does not resolve on Windows.
+
+No pattern of `re` is used by 1b.
+
+Decisions. `Path.read_bytes` is a loop of `read_once` over one open
+file. The memo holds each `SkipIndex` behind an `Arc`, so a hit hands
+out the parsed index without a copy, as the reference shares the object.
+
+Fixtures: `generate_skip` in `tests/contract/gen_verify_anchoring_sparse.py`
+writes `verify_anchoring_skip.jsonl` (POSIX only: links on disk, paths
+spelled by `posixpath.realpath`): `object_format` over ten config texts
+with git read as 2.54, and worlds written to a scratch directory, the
+switch in `config` and `config.worktree` (last assignment winning, CRLF,
+a lone CR, a value git dies on, a text git refuses, a folder in the
+file's place), parts below through symbolic links, skip bits, a sparse
+directory entry, version 4, SHA-256 formats crossed with index hash
+lengths, no index, a declined index, a split index, a folder for an
+index, stamps of the index and of the config that move during the read,
+the memo's bound and order over six repositories, a linked worktree, `~`
+and a relative path. The native test rebuilds each world in a `MemFs`
+and moves a file by rewriting it just before its first open once the
+probe reads; the reference moves it in a patched `Path.read_bytes`.
+Indexes a real git wrote are not pinned: no gate on the git version
+exists, and the hand-built indexes of 1a cover the same layouts.
+
+Tests: `golden_verify_anchoring_skip` (POSIX; the gap recorded by
+`verify_anchoring_skip_not_posix`), `verify_anchoring_skip_kills`,
+`verify_anchoring_skip_robustness` (a path thousands of components deep,
+NUL and non-UTF-8 bytes, a config of 100,000 assignments, an index read in
+time linear in its entries).
 
 ### What 2a reproduces
 
