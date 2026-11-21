@@ -45,6 +45,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `git_read_budget`, `git_calls` | `git_read_budget.py` whole (`ReadBudget`, the scopes as a `Scope` value, `_progress` as `Progresses`, `call_scope`, `call`, `health_call`, `async_call`, `reading`, `expired`, `wait_for`, `unread`, `hit`, `allowance`, `exhausted`, `for_resume`); `_git.py`'s tallies, `run_git`'s counts around one call, `printed_path`, `subcommand`, the `log_nonzero_exit` message | `git_read_budget.jsonl` |
 | `location_stamps` | `location_stamps.py` whole: `in_ticks`, `kept_in_ticks`, `stat_each`, `capture_ticks`, `_device_name` (macOS's `os.major`/`os.minor`, and Linux's under a CPython built against glibc or musl), `_drvfs` (the mount table read through `Fs`), `_init_stamps`, `filetime_ns`, `basic_info_ns` (FILE_BASIC_INFO through `Fs::basic_info`, declined by `StdFs`) | `location_stamps.jsonl`, `location_stamps_python.jsonl`, `location_stamps_platform.jsonl` |
 | `location_git` | the readers of `location_git.py` that need neither discovery nor the object reader: `_Git`, `_resolve_head` (the peel a callback), `_ref_tips`, `_manifest`, `Reach`, `reachable_among`, `walk` | `location_git_readers.jsonl`, `location_git_readers_posix.jsonl` |
+| `location_reads` | `location_reads.py` whole as a timed runtime: `READ_HANDOFF`, `READ_LANES`, `READ_SLOTS`, `_Flight`, `_Slots`, the board (`_FLIGHTS`, `_LANDED`, `_SLOTS`, `UNANSWERED`, `NOT_READ`) as a `Board` the caller holds, `_stalled`, `_board`, `_give_up`, `_fly`, `bounded_read`, `bounded_reads`, `_Lanes` | `location_reads.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
@@ -4500,6 +4501,87 @@ bounds.
 
 Nothing of the module is left for a later unit; `StdFs::basic_info` on
 Windows waits for a safe wrapper in `bettermemory-sys`.
+
+## The bounded reads of recorded paths as a runtime (`location_reads.py`)
+
+`location_reads.py` (383 lines, read at a0b86dc3) is built whole in
+`location_reads`: each read runs on a worker thread and is waited on for
+its budget, as the reference does. `gitfile_rule::bounded` keeps the same
+reads with the time bound as data.
+
+| Lines | Function | Needs from the machine | Status |
+|---|---|---|---|
+| 45-71 | `READ_HANDOFF`, `READ_LANES`, `READ_SLOTS` | none | built (constants; `Board::with_limits` stands for a patched module) |
+| 75-121 | `_Flight`, `_Slots` (`add`, `land`, `taken`) | none | built |
+| 124-136 | `_FLIGHTS_LOCK`, `_LANDED`, `_FLIGHTS`, `_SLOTS`, `UNANSWERED`, `NOT_READ` | a lock and a condition | built: `Board`, `Read::Unanswered`, `Read::NotRead` |
+| 139-198 | `_stalled`, `_board`, `_give_up`, `_fly` | the clock, timed waits | built |
+| 201-228 | `bounded_read` | a thread, the clock | built |
+| 231-272 | `bounded_reads` | threads, the clock | built |
+| 275-383 | `_Lanes` (`land`, `read`, `_lane`) | threads, the clock, timed waits | built |
+
+The board is a value: `Board<W, T, E>` holds the flights by path and
+`what`, the slot queue with its count of landed reads, and the condition
+notified as each read lands, behind an `Arc` that clones share. The
+reference has one board for the process; a caller that wants that holds
+one `Board` and passes clones of it. A board serves one kind of answer
+(`T`, `E`); reads of other kinds on separate boards do not share
+`READ_SLOTS`. The clock is a `Clock` (`Arc<dyn Fn() -> f64 + Send +
+Sync>`, `store::create::system_monotonic` in use), read where the
+reference reads `time.monotonic()`: in `_board` after each slot wait, at
+the start of `bounded_read`, for each slow flight in `bounded_reads`, on
+each pass of `_Lanes.read` and for each job in `_lane`. The waits wait the
+durations computed from it on real time.
+
+- `_Slots.taken` drops landed and stalled reads from the front only, with
+  the count of landed reads behind it, as the reference does; a read
+  stalled behind a live one stays counted until it reaches the front.
+- `_give_up` marks `overdue` under the board's lock; `_stalled` reads it
+  before the clock, so a path whose read a waiter waited out answers
+  `UNANSWERED` at once whatever the clock says.
+- `_fly` keeps the outcome, lands the flight, takes it off the board if it
+  is still the path's and `what`'s, and wakes every waiter. Every waiter
+  gets a clone of the value or error. A hung read keeps its detached
+  thread and is never joined.
+- A read that panics lands as one that raised: `bounded_read` panics in
+  the caller, `bounded_reads` answers `Read::NotRead`, or with `raises`
+  panics where that job is the first in job order to fail.
+- `bounded_reads` keeps the first failure by job order (`min(errors)`),
+  not the first to land; a job whose path has a read in flight is read
+  after the wait on that read, in the next pass of `_Lanes`.
+- `_Lanes._reading` is ordered by lane number, which is the reference's
+  insertion order; the reads handed off and found in flight (`slow`) are
+  waited on in the order they were found.
+- A thread that cannot be started panics, where the reference raises
+  `RuntimeError`.
+
+Stated differences. A wait longer than `threading.TIMEOUT_MAX` (about
+9.2e9 s on macOS) raises `OverflowError` in the reference (a
+`bounded_read` with an infinite or huge budget); the port waits about
+2^32 s instead. `READ_SLOTS` below one makes the reference's slot wait
+read an empty queue; `Board::with_limits` refuses it.
+
+`tests/contract/gen_location_reads.py` writes `location_reads.jsonl`
+(ungated): scripted calls over one board, with `READ_SLOTS` and
+`READ_HANDOFF` patched, reads that answer at once, raise, or block on an
+event set only after the call returns; each call's answer and the reads
+it started, never a time. Budgets sit far from what a read takes, so the
+answers hold on a loaded machine and on Windows' timer.
+`golden_location_reads` checks every case. `location_reads_kills` holds a
+frozen clock (only `_give_up` stalls a path), hung paths at one budget per
+`READ_SLOTS` of them (the fastest of three runs, between 2.9 and 7
+budgets for twelve paths over four slots), healthy reads on one thread,
+the first error by job order, a waiter sharing a read in flight, and a
+panicking read. `location_reads_robustness` holds a batch's growth
+(1,000 against 10,000 healthy jobs, wall clock), 20,000 jobs on one path,
+and budgets of zero, negative, NaN, infinite and huge.
+
+No pattern is matched. Not built: the wiring of `location` and
+`gitfile_rule` to this runtime; until then `gitfile_rule::follow` calls
+`gitfile_rule::bounded`, and nothing calls `location_reads`. Both answer
+alike where the time bound decides alike: a path that answers gives the
+read's value or error, a path that does not answer gives `Unanswered`
+for every read of it, and a batch's first error by job order is raised
+with `raises`.
 
 ## git's wildmatch
 

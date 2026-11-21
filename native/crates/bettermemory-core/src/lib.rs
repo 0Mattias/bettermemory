@@ -61,6 +61,8 @@
 //! - [`location_git`]: a repository's head, ref tips, content manifest
 //!   and bounded history walks, the readers of `location_git.py` that need
 //!   neither discovery nor the object reader;
+//! - [`location_reads`]: the bounded reads of recorded paths as a timed
+//!   runtime on worker threads (the whole module);
 //! - [`githead`]: HEAD and refs read from a git directory's files, and
 //!   discovery (unit githead-1: the walk git's `setup.c` makes, `stamp`);
 //! - [`location_probe`]: the hook client's namespace probe (the cwd's
@@ -122,6 +124,7 @@ pub mod json;
 pub mod lexicon;
 pub mod location_git;
 pub mod location_probe;
+pub mod location_reads;
 pub mod location_stamps;
 pub mod log;
 pub mod machine;
