@@ -50,6 +50,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `location_witness` | the history half of `location_witness.py` (unit location_witness-1): `NeedWitnesses` with `joined`, `AnsweredHistory`, `AnsweredGit`, `answered_history`, `_independent_answers`, `independent_answer`, and the exchange keeping (`_NONCE`, `EXCHANGE_SECONDS`, `_EXCHANGES_CAP`, `_Kept`, `_EXCHANGES` as `Exchanges`, `_drop`, `ExchangeReads` with `carried`) | `location_witness.jsonl` |
 | `location_reads` | `location_reads.py` whole as a timed runtime: `READ_HANDOFF`, `READ_LANES`, `READ_SLOTS`, `_Flight`, `_Slots`, the board (`_FLIGHTS`, `_LANDED`, `_SLOTS`, `UNANSWERED`, `NOT_READ`) as a `Board` the caller holds, `_stalled`, `_board`, `_give_up`, `_fly`, `bounded_read`, `bounded_reads`, `_Lanes` | `location_reads.jsonl` |
 | `witness_questions` | `location_witness.py`'s question half: `AnsweredToken` (`__call__`, `located`), `remint_answer`, `remint_refused`, `AnsweredLiveness`, `asked_views`, `_asked_head`, `_asked_stamps` (and `location_git._key` reimplemented); the re-mint and the model's `checkouts` are closures | `witness_questions.jsonl` |
+| `location_discovery` | `location_git.py`'s repository discovery: `_DISCOVERY_ENV`, `GitDies` and `DiscoveryDies` (`Dies`), `_from_env`, `_discover` (`githead.across_filesystems()` and `githead.probed` as arguments), `_at_dotgit` | `location_discovery.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
@@ -7580,7 +7581,7 @@ kinds (103-110) in `capture` (section "A location capture's vocabulary").
 | `_manifest` | 1505-1537 | the working tree (`fsdata::Fs`), the working directory (`Process`) | built |
 | `Reach`, `reachable_among` | 1820-1970 | the history (closures) | built |
 | `walk` | 1973-1989 | the history (closures) | built |
-| `GitDies`, `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit` | | git's discovery, the environment | location_git-6 (reads ghdisc's `probed`) |
+| `_DISCOVERY_ENV`, `GitDies`, `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit` | 241, 1015-1180 | the file system (`fsdata::Fs`), `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, githead's across value and walk | built (`location_discovery`; below) |
 | `_git`, `RepositoryHistory`, `_clear_above` | | the object reader, git, a lock | later units |
 
 ### What each function reproduces
@@ -7666,6 +7667,93 @@ kinds (103-110) in `capture` (section "A location capture's vocabulary").
 - `golden_location_git_readers`, `golden_location_git_readers_posix`
   (in memory and on disk), `location_git_readers_not_posix`,
   `location_git_readers_kills`, `location_git_readers_robustness`.
+
+### Repository discovery (`location_discovery.rs`)
+
+`location_discovery.rs` (read at wt/integ: `_DISCOVERY_ENV` 241, `GitDies`
+1015-1020, `DiscoveryDies` 1023-1028, `_from_env` 1031-1067, `_discover`
+1070-1143, `_at_dotgit` 1146-1180) answers with `location_git::Git` and
+`capture::Kind`, and stands on the gitfile rule: `discovery::judge`,
+`trust::{tree_format, inside_reading, common_of, foreign_commondir,
+not_registered, is_git_directory}` and `gitdir::git_reads`, all through
+the rule's `Rule` (file system, flavour, working directory,
+`GIT_COMMON_DIR`, the git on PATH, the pin records).
+
+- `Dies`: `GitDies` with its text (`Dies::Git`) and `DiscoveryDies`
+  (`Dies::Discovery`, its fixed text `DISCOVERY_DIES`). `Raised` holds a
+  death or a failure of the readers passed through as the reference lets
+  it rise (`gitdir::Failure`). `FormatUnknown` is the `format_unknown`
+  flag of the rule's `Refusal`; `GitDies` is raised where it is set,
+  carrying the refusal's text.
+- `from_env(rule, env, start, refused)`: None where `GIT_DIR` is unset or
+  empty. The git directory is `normpath(join(start, GIT_DIR))`; its
+  common directory `common_of`; its format `tree_format`. A format git
+  dies on, or an empty `core.worktree` with no `GIT_WORK_TREE` and no
+  `core.bare`, is refused with the text `<git_dir>'s config cannot be
+  read as git reads it: <why>` or `<git_dir>'s config names no working
+  tree (an empty core.worktree)` (plain, not `FormatUnknown`, as the
+  reference appends a `str`) and dies. The root is
+  `normpath(join(start, GIT_WORK_TREE))`, else none where `core.bare`,
+  else `normpath(join(git_dir, core.worktree))`, else `start` as given,
+  not normalized (row "GIT_DIR with a start spelled with dots").
+- `discover(rule, env, start, across, probed, refused, read_head)`:
+  `GIT_DIR` set goes to `from_env` before `across` is read, so a value of
+  `GIT_DISCOVERY_ACROSS_FILESYSTEM` git dies on does not die there.
+  `across` None dies (`DiscoveryDies`) before `normpath` and any stat.
+  Otherwise the start is normalized, its `stat` taken where `across` is
+  false (an error rises), and `probed(here, device)` is walked lazily:
+  at each directory the `.git` entry's `lstat` (an error, a NUL
+  included, reads as no entry) goes to `at_dotgit`; then git's own test
+  (`git_reads` true and `is_git_directory`) and `inside_reading`, whose
+  refusal is appended and dies where `FormatUnknown`, else ends the walk
+  with None; a git directory named `.git` that membership roots is
+  answered with itself as `dotgit`. Only where `refused` is given does
+  the walk test `HEAD` (`isfile`) and append a foreign `commondir`'s
+  refusal.
+- `at_dotgit(rule, directory, dotgit, st, refused, read_head)`: `judge`
+  with `fetch` false; a refusal is appended and dies where
+  `FormatUnknown`; a folder's own `.git` is primary with itself as git and
+  common directory; a followed entry takes `common_of` of the git
+  directory it names, linked where a `commondir` named it.
+
+Decisions: `GIT_DIR` and `GIT_WORK_TREE` come in `Env`, `GIT_COMMON_DIR`
+is the rule's `env` (the one value the gitfile rule already reads), so the
+two cannot disagree. `githead.across_filesystems()` and `githead.probed`
+are arguments (`across`, a closure returning an iterator of
+`Result<Vec<u8>, Failure>`), so this unit does not wait for githead's
+discovery port; the closure is called once and the iterator taken only as
+far as the walk goes. The Windows flavour declines with
+`Failure::NotPorted` after the `GIT_DIR` test, and in `discover` after
+`DiscoveryDies`: fsdata's Windows flavour does not port `realpath`, which
+the rule stands on (the crate's stated Windows gap, ENG-124). No regular
+expression is used.
+
+Left for later units: `_sources_once`, `_SYMBOLIC_HEAD`, `_ABOVE` and
+`_clear_above` (the capture unit); `_git` and `RepositoryHistory` (lane
+lochist); the binding of `probed` to githead's discovery port.
+
+Fixtures and tests: `tests/contract/gen_location_discovery.py` writes
+`location_discovery.jsonl` (POSIX only: links, and paths spelled with
+`/`): trees built in scratch (a `.git` directory, a `.git` file to a
+linked worktree and to a git directory kept apart, files naming nothing,
+junk and an empty file, a `.git` link and a dangling one, bare
+repositories, the inside of git directories, `core.worktree` elsewhere,
+unknown formats and unparsable configs, a `commondir` that is a folder, a
+foreign `commondir`, a `HEAD` git does not read under both `read_head`,
+`refused` None, the across values, a start that is missing, and `GIT_DIR`
+with `GIT_WORK_TREE` (a relative one from a start elsewhere included),
+`GIT_COMMON_DIR`, `core.bare`, relative and empty `core.worktree`), each
+with the across value, the call `probed` received, the directories it
+yields and how many the walk took, the answer and the refusals, relative
+to the case's folder. `golden_location_discovery` (unix; in memory and on
+disk; a failure compares by the class name the reference records),
+`location_discovery_not_posix` (the gap, class os),
+`location_discovery_kills` (in memory: a directory git dies on passed by
+the walk, a placeholder `HEAD` `at_dotgit` does not fetch, the
+`commondir` opened only with a list), `location_discovery_robustness`
+(the times printed beside the reference's). How
+`GIT_DISCOVERY_ACROSS_FILESYSTEM` reads as a boolean is githead's
+(`across_filesystems`); these tests take the reference's answer.
 
 ## The witness exchange's history half (`location_witness.py`)
 
@@ -13977,8 +14065,8 @@ What the reference has and this build does not, by area:
   (`origin.py`), `location.py` past its view continuity (`continuity`,
   `view_state` and their helpers are built; `path_liveness`,
   `path_liveness_many` and `_liveness_read` are not), and of
-  `location_git.py` the discovery (`GitDies`,
-  `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit`), `_git`,
+  `location_git.py` the binding of `probed` to githead's discovery,
+  `_sources_once`, `_SYMBOLIC_HEAD`, `_ABOVE`, `_git`,
   `RepositoryHistory` and `_clear_above`.
 - `membership_records.py` past its path helpers and legacy ask rule
   (the portable identity and the remaining frozen records: unit 4).

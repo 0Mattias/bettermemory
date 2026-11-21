@@ -8,8 +8,9 @@
 //! remotes, their spellings and the stamps) in `gitconfig::{remotes,
 //! spellings, stamped}`, `_inside` in `gitconfig::stamped::inside`, the
 //! capture's vocabulary (1188-1451) and the kinds (103-110) in
-//! [`crate::capture`]. Discovery (`_discover`, `_at_dotgit`, `_from_env`),
-//! `_git`, `RepositoryHistory` and `_clear_above` are not ported yet.
+//! [`crate::capture`], discovery (`_discover`, `_at_dotgit`, `_from_env`)
+//! in [`crate::location_discovery`]. `_git`, `RepositoryHistory` and
+//! `_clear_above` are not ported yet.
 //!
 //! Effects are arguments: the head goes through githead's [`RefFs`], the
 //! walks through [`Fs`], the working directory through [`Process`], a

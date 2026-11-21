@@ -87,6 +87,8 @@
 //!   neither discovery nor the object reader;
 //! - [`location_reads`]: the bounded reads of recorded paths as a timed
 //!   runtime on worker threads (the whole module);
+//! - [`location_discovery`]: the repository git finds from a directory
+//!   (`GitDies`, `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit`);
 //! - [`githead`]: HEAD and refs read from a git directory's files, and
 //!   discovery (unit githead-1: the walk git's `setup.c` makes, `stamp`;
 //!   unit githead-2: `entry_above` and the change signature);
@@ -158,6 +160,7 @@ pub mod identity;
 pub mod in_force;
 pub mod json;
 pub mod lexicon;
+pub mod location_discovery;
 pub mod location_git;
 pub mod location_probe;
 pub mod location_reads;
