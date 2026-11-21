@@ -97,8 +97,8 @@
 //!   machine: a file's prefix, a path relative to the root, the root as
 //!   the kernel spells it; and what git dies on in a config, what a config
 //!   text says, and the directories a check holds);
-//! - [`checkout_token`]: the checkout token, its first two units (the
-//!   text, and the reads over the file-system trait);
+//! - [`checkout_token`]: the checkout token, its first three units (the
+//!   text, the reads over the file-system trait, and the write);
 //! - [`claims`]: what a memory claims, its first unit (the claim record,
 //!   the path spellings and the patterns a patch is read by);
 //! - [`gitfile_rule`]: the rule a `.git` entry is followed by, whole on

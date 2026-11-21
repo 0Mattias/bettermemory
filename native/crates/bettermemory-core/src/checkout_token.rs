@@ -1,7 +1,8 @@
 //! The checkout token, as `checkout_token.py` writes and reads it. Here
 //! its text: the leaves of the module (its first unit). A token is 26
 //! Crockford base-32 characters; its file is the header line and the
-//! token line. [`read`] holds the reads (the second unit).
+//! token line. [`read`] holds the reads (the second unit), [`write`] the
+//! write (the third).
 //!
 //! Randomness is an argument: each function that draws from `secrets`
 //! takes the bytes `os.urandom` would have returned to
@@ -11,11 +12,11 @@
 //! `fullmatch` are written out by hand (an exact count of ASCII members,
 //! and an optional minus then one or more ASCII digits).
 //!
-//! `write`, `remint` and the claim are later units over the file-system
-//! trait.
+//! `remint` and the claim are a later unit over the file-system trait.
 
 pub mod blake2b;
 pub mod read;
+pub mod write;
 
 use crate::config::{self, pure_path};
 use crate::fsdata::Flavour;

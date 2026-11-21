@@ -1,0 +1,9 @@
+{"count":8,"fixture":"checkout_token_write_posix"}
+{"n":"fresh","r":{"detail":"","info":["bettermemory"],"placed":true,"status":"written"}}
+{"n":"no info","r":{"detail":"","info":["bettermemory"],"placed":true,"status":"written"}}
+{"n":"existing token","r":{"detail":"","info":["bettermemory"],"status":"exists","token":"0123456789ABCDEFGHJKMNPQRS"}}
+{"n":"existing malformed","r":{"detail":"not a bettermemory checkout token v1 file","info":["bettermemory"],"status":"malformed","token":null}}
+{"n":"token name a folder","r":{"detail":"not a regular file","info":["bettermemory"],"status":"malformed","token":null}}
+{"n":"stale temps","r":{"detail":"","info":["bettermemory","bettermemory.tmp-NEW","other.tmp-OLD"],"placed":true,"status":"written"}}
+{"n":"missing git dir","r":{"detail":"No such file or directory (ENOENT)","info":null,"status":"failed:io","token":null}}
+{"n":"read-only info","r":{"detail":"Permission denied (EACCES)","info":[],"status":"failed:readonly","token":null}}

@@ -36,6 +36,7 @@ from . import (
     gen_capture_vocabulary,
     gen_checkout_token,
     gen_checkout_token_read,
+    gen_checkout_token_write,
     gen_cli,
     gen_config,
     gen_credentials_prefixed,
@@ -251,6 +252,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "checkout_token": gen_checkout_token.generate,
     "checkout_token_read": gen_checkout_token_read.generate,
     "checkout_token_read_posix": gen_checkout_token_read.generate_posix,
+    "checkout_token_write": gen_checkout_token_write.generate,
+    "checkout_token_write_posix": gen_checkout_token_write.generate_posix,
     "gitconfig_file": gen_gitconfig_file.generate,
     "gitconfig_tree": gen_gitconfig_tree.generate,
     "gitconfig_tree_rules": gen_gitconfig_tree.generate_rules,
@@ -604,6 +607,9 @@ PLATFORM_GATED = frozenset(
 #: the host's ``Path`` does (backslashes on Windows) and whose errno names
 #: are the host's ``errno`` module's (``WSAELOOP`` for ELOOP on Windows),
 #: so its bytes follow the OS family (`gen_checkout_token_read`);
+#: ``checkout_token_write`` runs `write` over the same scripted OS and
+#: ``checkout_token_write_posix`` writes real trees with modes and real
+#: errno texts (`gen_checkout_token_write`);
 #: ``location_stamps`` and
 #: ``location_stamps_python`` name devices by ``os.major``, which Windows'
 #: ``os`` lacks (`gen_location_stamps`); ``location_probe``, ``location_probe_python``
@@ -621,6 +627,8 @@ POSIX_ONLY = frozenset(
     {
         "checkout_token_read",
         "checkout_token_read_posix",
+        "checkout_token_write",
+        "checkout_token_write_posix",
         "store_restore_lock",
         "store_schema_posix",
         "settings_paths",

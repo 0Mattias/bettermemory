@@ -55,7 +55,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `fsutil` | unit 1 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads | `fsutil.jsonl`, `fsutil_python.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`) | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl` |
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
-| `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only) |
+| `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text`; its write (`checkout_token::write`): `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_fs_now`, `_sweep`, `_place`, `_after_race`, `_failed`, `_unlink_quietly`, `TokenWrite` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only), `checkout_token_write.jsonl`, `checkout_token_write_posix.jsonl` (POSIX only) |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
@@ -2930,6 +2930,9 @@ that Unicode too.
 | `golden_search_store`: `every_query_every_caller_pool_and_hits`, `every_store_line`, `offline_runs_equal_the_in_memory_ranking` (and three class (i) checks: the clamp, the digest's fingerprint, awkward queries) | `search_store.jsonl`, `search.jsonl` | iii |
 | `golden_store_files`: `every_case_every_answer` | `store_files.jsonl` | iii |
 | `golden_checkout_token_read`: `every_scripted_read_answers_and_calls_as_the_reference` (unix); `checkout_token_read_kills` (unix) | `checkout_token_read.jsonl` | i; os elsewhere (`checkout_token_read_not_posix`) |
+| `golden_checkout_token_write`: `every_scripted_write_answers_and_calls_as_the_reference` (unix); `checkout_token_write_kills` (unix) | `checkout_token_write.jsonl` | i; os elsewhere (`checkout_token_write_not_posix`) |
+| `golden_checkout_token_write_posix`: `every_real_write_answers_as_the_reference` (unix) | `checkout_token_write_posix.jsonl` | i; os elsewhere (`checkout_token_write_not_posix`) |
+| `checkout_token_write_robustness` (8; the child-process and mode 0o200 tests unix only) | none | i |
 | `golden_location_stamps_posix`: `every_case_answers_as_the_reference` (unix) | `location_stamps.jsonl` | i; os elsewhere (`location_stamps_not_posix`) |
 | `golden_location_stamps_posix`: `every_release_bound_case_answers_as_the_reference` (unix) | `location_stamps_python.jsonl` | ii (Python); os elsewhere (`location_stamps_not_posix`) |
 | `golden_location_stamps`: `device_names_answer_as_each_platform_that_made_them` | `location_stamps_platform.jsonl` | ii (Python, platform) |
@@ -9132,8 +9135,8 @@ the file system, so it is cut into units, leaves first.
 | `token_path`, `render`, `parse` | 328-350 | nothing (the path flavour is data) | built |
 | `_cut_short`, `_malformed_detail` | 851-871 | nothing | built |
 | `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock` | 353-363, 753-848 | open, stat, fstat, read, close, fcntl and a pause | built (unit 2) |
-| `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_sweep`, `_place`, `_after_race`, `_failed`, `_os_text`, `_unlink_quietly` | 366-400, 466-486, 874-1015 | mkdir, exclusive create, fsync, hard link, unlink, owner, the file system's clock | unit 3 |
-| `remint`, `_replace_named`, `_claim`, `_wait_for`, `_take`, `_blocked`, `_holder`, `_claim_read`, `_break`, `_break_marks`, `_fs_now`, `_release`, `_remove_holding` | 401-465, 487-750 | rename, exclusive create, unlink, a clock and a pause | unit 4 |
+| `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_fs_now`, `_sweep`, `_place`, `_after_race`, `_failed`, `_unlink_quietly` | 366-398, 466-484, 690-701, 874-1015 | mkdir, exclusive create, fsync, hard link, unlink, owner, the file system's clock, a monotonic clock and a pause | built (unit 3) |
+| `remint`, `_replace_named`, `_claim`, `_wait_for`, `_take`, `_blocked`, `_holder`, `_claim_read`, `_break`, `_break_marks`, `_release`, `_remove_holding` | 401-465, 487-750 | rename, exclusive create, unlink, a clock and a pause | unit 4 |
 
 ### Unit 1, built (`checkout_token`)
 
@@ -9348,7 +9351,166 @@ error text, `MemFs`'s texts against the C library's, one `read_once`
 answering its whole count up to the 1 MiB cap, and an open with every
 descriptor taken, read in a child capped at 64).
 
-Left for later units: `write` (unit 3), `remint` and the claim (unit 4).
+Left for later units: `write` (unit 3, built below), `remint` and the
+claim (unit 4).
+
+### Unit 3, built (`checkout_token::write`)
+
+Line ranges confirmed against the source as it is now: the constants
+76-159 (`_RACE_READ_SECONDS` 111, `_RACE_PAUSE_MAX_SECONDS` 112,
+`_TEMP_SUFFIX_LENGTH` 117, `_TEMP_PREFIX` 119, `_STALE_TEMP_SECONDS` 148,
+`_FILE_MODE` 149, `_READONLY_ERRNOS` 150, `_OPEN_CREATE` 159),
+`WriteStatus` 161-171, `TokenWrite` 200-231, `write` 366-398, `_guard`
+466-484, `_fs_now` 690-701 (mapped under unit 4; built here, unit 4
+reuses it), `_existing` 874-886, `_info_dir` 889-896, `_create` 899-913,
+`_write_temp` 916-920, `_sweep` 923-940, `_place` 943-961, `_after_race`
+964-992, `_failed` 995-999 and `_unlink_quietly` 1009-1015 (`still`
+None; unit 4 passes one).
+
+Effects are arguments. `TokenFs` (in `write.rs`, over `fsdata::Fs`, so
+`fsdata.rs` is not touched) carries the write-side calls: `mkdir`,
+`create_excl` (the exclusive open, mode 0o644), `write_once`,
+`fsync_file`, `close_created`, `link`, `fsync_dir`, `scandir_names`,
+`lstat_mtime`, `unlink`, `utime_now`, `stat_mtime` and `owner_uid`;
+`StdFs` implements it. `Machine` carries `os.geteuid`, `sys.platform ==
+"win32"`, the random bytes (17 for `mint`, then 8 for the 12-character
+temporary suffix, in that order), `time.monotonic` and `time.sleep`.
+The reads are unit 2's `read_at`, its pause the machine's sleep.
+
+What each function reproduces:
+
+- `_guard`: policy off, then bare, then (off Windows) `os.stat(git_dir)`
+  and `os.geteuid()`, in that order; a failing stat is `_failed`.
+- `_existing`: absent is None, present is `exists`, malformed keeps its
+  detail, unreadable is `failed:io` with `the existing token cannot be
+  read: ` and the read's detail.
+- `_info_dir`: `<git_dir>/info` spelled as `Path` spells it; only a
+  FileExistsError of `os.mkdir` is suppressed.
+- `_create`: the exclusive open; then writes until the body is out (a
+  count past the rest ends the loop, as slicing a `memoryview` does);
+  `fsync_file` swallows its error; the `finally` close, whose error
+  replaces the write's. The path is unlinked only after this call's own
+  open succeeded and a write or the close failed: an open that fails
+  (EEXIST above all, where the path is the token name in the fallback)
+  unlinks nothing.
+- `_write_temp`, `_fs_now`, `_sweep`: the name is drawn after the
+  `mkdir`; the clock is `os.utime` then `os.stat(...).st_mtime` (any
+  OSError is None, which sweeps nothing); `st_mtime` is CPython's
+  `fill_time` (seconds plus `nsec * 1e-9` in doubles). Only names starting
+  `bettermemory.tmp-` whose `lstat` time is strictly below `now - 3600`
+  are unlinked, by a plain `os.unlink` (no Windows retry); every error is
+  ignored, and an error of the listing's iteration ends it there.
+- `_place`: the link; EEXIST reads the winner's token; any other link
+  error falls to the exclusive create of the token name, whose EEXIST
+  also reads the winner's token and whose other errors are `_failed`;
+  `fsync_dir` of `info` (skipped on Windows) only after success.
+- `_after_race`: deadline `monotonic() + 1.5`; a found file is
+  unfinished when absent, `failed:io`, or malformed with detail exactly
+  `empty` or `cut short`; `left <= 0` or a finished file ends the loop;
+  the pause is `min(pause, left)` as Python's `min` picks, starting at
+  0.01 and doubling to at most 0.2. Absent at the end is `failed:io`
+  `the token another writer placed was removed`.
+- `_failed`: EACCES, EPERM and EROFS are `failed:readonly`, any other
+  errno `failed:io`, the detail `_os_text`; an error whose errno has no
+  name or no text is declined (`Fault::NotPorted`), never guessed.
+- `write`: the guard, the existing file, the token, the info folder, the
+  temporary file, the placing; the `finally` unlinks the temporary path
+  alone (through `fsutil::unlink_retrying_by`, retried on Windows),
+  whatever `_place` answered, and never the token name.
+- A ValueError (a NUL in the git directory) raises out of `write`
+  (`Fault::Raised`), as the reference's does: no `except OSError` there
+  catches it.
+
+Decisions:
+
+- `StdFs::fsync_dir` has no `O_DIRECTORY` (the crate has no libc and
+  forbids `unsafe`): it stats the path and opens and fsyncs it only where
+  the stat says a directory, so a FIFO put at `info` is not opened;
+  every error is swallowed, as the reference's is. A directory replaced
+  between the stat and the open is the race this leaves.
+- `StdFs::utime_now` on POSIX is `bettermemory_sys::utime_now`,
+  `utimensat(AT_FDCWD, path, NULL, 0)`, the call `os.utime(path)` makes:
+  the file system's own clock (the server's on NFS, so every age is read
+  in one clock) and no open, so no read access is needed. An explicit
+  time from this machine's clock would let a client running ahead of an
+  NFS server sweep another writer's young temporary file. On Windows
+  `os.utime` reads this machine's clock and calls `SetFileTime` on a
+  handle opened with FILE_WRITE_ATTRIBUTES, and so does the port
+  (`File::set_times`). Links are followed in both.
+  `checkout_token_write_robustness` pins a temporary file of mode 0o200.
+- `StdFs::link` is `std::fs::hard_link`; the source is always the
+  regular temporary file, so whether a link is followed at the source
+  does not arise.
+- `StdFs::scandir_names` on Windows spells a name as WTF-8: a lone
+  surrogate becomes its own three-byte form, as `os.scandir` gives it as a
+  `str` holding the surrogate, so `bettermemory.tmp-` followed by one
+  still matches the prefix and is swept when stale. `host` turns those
+  bytes back into the same UTF-16 (a lib test in `write.rs` pins both).
+- `StdFs::owner_uid` declines off POSIX (`None`, then `Fault::NotPorted`);
+  the reference asks it only off Windows.
+- No regular expression is involved.
+
+Findings about the reference (reproduced):
+
+- `_create`'s loop never ends where `os.write` returns 0 for a non-empty
+  buffer (`view = view[0:]`). Not pinned (a loop); the port's loop is the
+  same.
+- `write` says it never raises for an OS error, but a NUL in the git
+  directory raises ValueError (from `os.stat` in `_guard`, or from the
+  read on `win32`). Repro: rows `nul in the git dir` and `nul in the git
+  dir, win32` of `checkout_token_write.jsonl`.
+- A temporary name already taken (EEXIST of the exclusive create in
+  `_write_temp`) fails the write as `failed:io` with no second draw.
+  Repro: row `temp open exists`.
+- Under a clock whose step is below the double's resolution at its
+  value (a `monotonic` that a pause of 0.01 does not move), `_after_race`
+  reads for ever while nothing is found. A real monotonic clock always
+  moves; not pinned.
+
+Fixtures (`tests/contract/gen_checkout_token_write.py`):
+`checkout_token_write.jsonl` (72 rows, POSIX only, as the read file is
+and for the same reasons: logged paths spelled by the host's `Path`,
+errno names the host's) runs `write` over the read file's scripted OS,
+extended with the write-side calls, the random bytes, the platform, the
+monotonic clock (starting at 100.0, moved only by the pauses) and the
+pause, over relative git directories (`r/.git`: no disk is touched, and
+the test session's guard on `write` asks for a git directory under its
+scratch working directory), and pins each answer with every call made, in order: policy off,
+bare, a foreign owner, each stat error, an existing token, malformed,
+empty, cut short and unreadable file, each `mkdir` error and EEXIST,
+the temporary file's open, short and overlong writes, write, fsync and
+close errors and both together, the unlink retried on `win32`, `utime`
+and stat failing, the sweep with old, young, equal, nearly equal,
+erroring and non-matching entries, a negative clock, a failing listing
+and a failing iteration, the link's EEXIST and other errors, the
+create fallback's every outcome, and the race's reads absent, empty,
+cut short, unreadable then present and to the deadline.
+`checkout_token_write_posix.jsonl` (8 rows, POSIX only) writes real git
+directories in a scratch folder: fresh, without `info`, an existing
+token, a malformed file, a folder at the token name, stale and young
+temporary files, a missing git directory and a read-only `info` (where
+the process is not the superuser); the token written is random, so a row
+holds that the file then reads as it, and the names left in `info`.
+
+Tests: `golden_checkout_token_write` (unix; every row with the call log,
+over `tests/ct_write_script`, which wraps `tests/ct_read_script`),
+`golden_checkout_token_write_posix` (unix; every row through `StdFs`),
+both recorded as having no case on Windows by
+`checkout_token_write_not_posix`; `checkout_token_write_kills` (unix:
+the fallback's EEXIST unlinking the token name, a failed fallback create
+not unlinking it, the temporary file kept after success, every `mkdir`
+error suppressed, the readonly set, a nameless errno guessed, `<=` in the
+sweep, a sweep without a clock, the pause sequence, a malformed file
+read as unfinished, `fsync_dir` or the owner check on `win32`, bare
+before policy, the write error kept over the close's, a NUL caught);
+`checkout_token_write_robustness` (git directories of up to 200,000
+bytes linear in time, sweeps of 2,000 and 20,000 entries linear in
+time, NaN and infinite clocks in the sweep, clocks at the top of the
+doubles, every scripted failure point, and two processes writing one
+fresh git directory over eight rounds: one token, reported by both, no
+temporary file left; seen on macOS).
+
+Left for later units: `remint` and the claim (unit 4).
 
 ## The plain record writers
 
@@ -12486,8 +12648,8 @@ What the reference has and this build does not, by area:
   (`entry_above`, `_stops_at`, `_would_be_git_directory`, `_Undetermined`,
   `_ref_stamps` and `signature`: githead-2), `gitobjects.py` past its byte parsers, zlib streams and object
   files (the reader: unit 4), `origin_gitfiles.py` past its decoders, machine leaves
-  and config facts (`_config_facts` and its memo, units 4, 6 and 7), `checkout_token.py` past its text and its reads (the
-  write, the remint and the claim: units 3 and 4), the origin's settling
+  and config facts (`_config_facts` and its memo, units 4, 6 and 7), `checkout_token.py` past its text, reads and write (the
+  remint and the claim: unit 4), the origin's settling
   (`origin.py`), `location.py` and of `location_git.py` the discovery (`GitDies`,
   `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit`), `_git`,
   `RepositoryHistory` and `_clear_above`.

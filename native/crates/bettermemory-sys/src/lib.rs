@@ -169,6 +169,29 @@ pub fn access(path: &std::ffi::CStr, mode: AccessMode) -> Option<bool> {
     Some(status == 0)
 }
 
+/// `os.utime(path)` with no times on POSIX: `utimensat(AT_FDCWD, path,
+/// NULL, 0)`, which sets both times to the file system's own "now"
+/// (`UTIME_NOW`: on NFS the server's clock, not this machine's). It
+/// opens nothing, so it needs no read access, only ownership or write
+/// access, as the reference does. A signal interruption is retried.
+#[cfg(unix)]
+pub fn utime_now(path: &std::ffi::CStr) -> io::Result<()> {
+    loop {
+        // SAFETY: `path` is a borrowed `CStr`, valid and NUL-terminated
+        // for the call; a null `times` pointer is the documented request
+        // for the current time, and the call writes no memory of this
+        // process.
+        let status = unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0) };
+        if status == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
 /// Not POSIX: no `access(2)` here (see the unix version).
 #[cfg(not(unix))]
 pub fn access(_path: &std::ffi::CStr, _mode: AccessMode) -> Option<bool> {
