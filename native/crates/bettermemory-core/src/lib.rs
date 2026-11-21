@@ -20,8 +20,9 @@
 //!   the supersession head, the newest extender, the held slot;
 //! - [`float_repr`]: Python's `float.__repr__`;
 //! - [`datetime`]: the datetime spellings and readings;
-//! - [`origin_history`]: how `origin` reads a repository's history, its
-//!   first unit (the leaves and the memo of author dates);
+//! - [`origin_history`]: how `origin` reads a repository's history: the
+//!   leaves and the memo of author dates, and (`origin_history::located`)
+//!   the repository's key, the history guard and the shallow cuts;
 //! - [`origin_dates`]: the author dates a drift count is read off, its
 //!   git-asking leaves (the log reads, why `git log HEAD` was refused,
 //!   the extension of a remembered history);

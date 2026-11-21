@@ -119,6 +119,7 @@ from . import (
     gen_models,
     gen_origin_history,
     gen_origin_dates_reads,
+    gen_origin_history_located,
     gen_restore_lock,
     gen_state,
     gen_search_ranker,
@@ -219,6 +220,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "datetime": gen_time.generate,
     "origin_history": gen_origin_history.generate,
     "origin_dates_reads": gen_origin_dates_reads.generate,
+    "origin_history_located": gen_origin_history_located.generate,
     "unicode": gen_unicode.generate,
     "models_text": gen_models_text.generate,
     "models_text_unicode": gen_models_text.generate_unicode,
@@ -726,7 +728,10 @@ PLATFORM_GATED = frozenset(
 #: otherwise (`gen_githead`); ``githead_discovery`` walks trees with links,
 #: FIFOs and modes and reads owners and devices through ``os.lstat`` and
 #: ``os.stat`` (`gen_githead_discovery`); ``githead_signature`` stamps and
-#: rewrites such trees between reads (`gen_githead_signature`); ``gitconfig_file`` reads links, FIFOs and
+#: rewrites such trees between reads (`gen_githead_signature`);
+#: ``origin_history_located`` reads
+#: repositories through that discovery, and ``origin_history_located_modes``
+#: through mode-000 files and folders (`gen_origin_history_located`); ``gitconfig_file`` reads links, FIFOs and
 #: mode-000 files and opens directories (`gen_gitconfig_file`);
 #: ``fs_realpath`` and ``fs_realpath_python`` resolve links and FIFOs by
 #: ``posixpath`` (`gen_fs_realpath`); ``fs_stat`` states and lists links,
@@ -826,6 +831,8 @@ POSIX_ONLY = frozenset(
         "githead_discovery",
         "gitobjects_reader_posix",
         "githead_signature",
+        "origin_history_located",
+        "origin_history_located_modes",
         "location_probe",
         "location_probe_python",
         "location_probe_errno",

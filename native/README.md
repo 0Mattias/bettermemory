@@ -25,7 +25,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `native_text`, `caches`, `daemon_client`, `install_hints` | `native_text.py` 15-40 (`has_surrogates`, `utf8_text`, `encoded_json`, `origin_projection`), `_caches.py` whole (`register` under a key, `clear_all`), `_daemon_client.py` 149-172 (`STORE_FILENAME` re-exported, `START_TIMEOUT_SECONDS`, `HOOK_TIMEOUT_SECONDS`, `HOOK_HARNESS_TIMEOUT_SECONDS`, `HOOK_MARGIN_SECONDS`, `hook_budget_seconds`), `_install_hints.py` 41-130 (every spelling) | `native_text.jsonl`, `daemon_client.jsonl`, `install_hints.jsonl` |
-| `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
+| `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks; its second unit (`src/origin_history/located.rs`): `located_key`, `history_guard`, `cuts`, `shallow_file`, `cuts_in` | `origin_history.jsonl`, `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` |
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves | `origin_dates_reads.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth; lookarounds refused (`supports`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl` |
@@ -4309,6 +4309,7 @@ that Unicode too.
 | `golden_datetime`: `datetime_every_case` | `datetime.jsonl` | i |
 | `golden_origin_history`: `origin_history_every_case`; `origin_history_kills` (12), `origin_history_robustness` (5) | `origin_history.jsonl` (the last two none) | i |
 | `golden_origin_dates_reads`: `every_row`; `origin_dates_kills` (7), `origin_dates_robustness` (3) | `origin_dates_reads.jsonl` (the last two none) | i |
+| `golden_origin_history_located`: `origin_history_located_every_query`, `origin_history_located_modes_every_query` (unix; `golden_origin_history_located_not_posix` records the gap off it as class os); `origin_history_located_kills` (15), `origin_history_located_robustness` (7) | `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` (the last two none) | i |
 | `golden_history_rows`: `every_history_rows_answer_is_the_reference_s`; `history_rows_kills` (13), `history_rows_robustness` (5) | `history_rows.jsonl` (the last two none) | i |
 | `golden_history_rows`: `every_nested_history_rows_answer_is_the_reference_s` | `history_rows_python.jsonl` | ii |
 | `golden_history_mac`: `every_history_mac_answer_is_the_reference_s`; `history_mac_kills` (7), `history_mac_robustness` (4) | `history_rows_mac.jsonl` (the last two none) | i |
@@ -11007,7 +11008,8 @@ long runs at 200,000 and 400,000 code points (the fastest of three runs at
 ## How origin reads a repository's history (`origin_history.py`)
 
 `origin_history.py` (733 lines) is ported in two units, leaves first.
-The first is built (`src/origin_history.rs`, 487 lines); the module's
+Both are built: the first in `src/origin_history.rs` (487 lines), the
+second in its child file `src/origin_history/located.rs`; the module's
 `instant` and `seconds` were already in `datetime` (`git_instant`,
 `git_seconds`) and are reused, not copied.
 
@@ -11022,9 +11024,9 @@ The first is built (`src/origin_history.rs`, 487 lines); the module's
 | `seconds`, `instant` | 378-401 | nothing | already in `datetime` |
 | `read_lines` | 407-422 | nothing | unit 1, built |
 | `author_dates`, `author_instant` | 425-437 | nothing | unit 1, built |
-| `located_key` | 440-454 | the environment, `githead.locate`, `head_sha` | unit 2 |
-| `history_guard` | 471-504 | `gitdir_at`, `locate`, `stamp`, the environment | unit 2 |
-| `cuts`, `shallow_file`, `cuts_in` | 511-562 | the file system, `object_format_at` | unit 2 |
+| `located_key` | 440-454 | the environment, `githead.locate`, `head_sha` | unit 2, built |
+| `history_guard` | 471-504 | `gitdir_at`, `locate`, `stamp`, the environment | unit 2, built |
+| `cuts`, `shallow_file`, `cuts_in` | 511-562 | the file system, `object_format_at` | unit 2, built |
 | `log_stdin` | 565-590 | nothing | unit 1, built |
 | `ReachableWalk`, `shas_touching` | 593-652 | nothing | unit 1, built |
 | `_Unwalked`, `unwalked`, `given_up_since`, `note_unwalked` | 662-698 | a per-thread tally, as a value | unit 1, built |
@@ -11083,10 +11085,68 @@ element is cut at the NUL: `log_stdin(["HEAD\x00x"], ["p\x00"])` returns
 `b"HEAD\x00x\n--\np\x00\n"`, which git reads as revision `HEAD` and
 pathspec `p`. The port reproduces it.
 
-Left for unit 2: `git_counts` (with the runner's counters),
-`located_key`, `history_guard`, `cuts`, `shallow_file` and `cuts_in`, over
-the `fsdata` file system trait and the `githead` and `gitfile_rule`
-readers already ported.
+Left after unit 1: `git_counts`, which stays with the runner (its
+counters are `git_calls::Tally`).
+
+What unit 2 reproduces (`src/origin_history/located.rs`):
+
+- `located_key(rule, env, refs, cwd)`: None under a variable of
+  `_DISCOVERY_ENV` (`discovery_moved`), else `locate(cwd)` (walking, not
+  as git) and `head_sha` of what it found, read through a `RefFs`. The
+  root is `str(worktree_root)`: the bytes decoded with
+  `surrogateescape`, as `os.fsdecode` decodes them on POSIX.
+- `shallow_file` and `history_guard` find the repository as
+  `gitdir_at(root) or locate(root, walk=walk)`, in Python's order:
+  `locate` is asked only where `gitdir_at` declines. `history_guard`
+  never walks.
+- `history_guard(rule, host, env, history, root)`: the five stamps
+  (`stamp`, following links) of `shallow`, `info/grafts`,
+  `refs/replace`, `packed-refs` and `config` in the common directory,
+  then the four variables of `_HISTORY_ENV`. The variables are an
+  argument (`HistoryEnv`, in the tuple's order); githead's `Env` holds
+  only the discovery variables. Any failure of a stamp (an OSError but
+  absence, a ValueError, a stat the flavour does not port) is None, as
+  the reference's `except (OSError, ValueError)` is. The guard is a
+  value compared with `==`, as the tuples are.
+- `cuts_in(rule, path)`: `open(path, "rb")` waits as Python's does (a
+  FIFO blocks, the reference's behaviour), and opens the path as `Path`
+  spells it (`pure`: no trailing slash, no empty or `.` part).
+  FileNotFoundError is the empty set; NotADirectoryError and every other
+  OSError are None; a directory is None (CPython refuses it at the open,
+  the port at the read). It reads `_CUTS_MAX + 1` bytes; an empty file is
+  empty before the format is read; the width (64 for `sha256`, else 40)
+  comes from `object_format_at(Path(path).parent)`, and a failure there
+  is None. The file splits on LF, one final empty record is dropped, and
+  each record's first `width` bytes, ASCII-lowercased, must be lowercase
+  hex. A NUL in the path is the reference's ValueError, which it does not
+  catch: the port returns `Err(ValueError)`. `cuts` composes the two.
+
+No regular expression is involved.
+
+Pinned by `origin_history_located.jsonl` and
+`origin_history_located_modes.jsonl` (both POSIX only: the reference's
+discovery reads POSIX paths and owners; the modes file reads mode-000
+files and folders). The generator lays each case's tree under a scratch
+directory and asks its queries in order, with steps that write a file or
+set a variable between them. A guard is written as the index of the
+first equal guard of its case, never its stamps (inodes and times follow
+the file system). The cases: a plain repository whose guard files move
+one by one (HEAD moved keeps the guard, every variable of
+`_HISTORY_ENV` set, empty and unset), every discovery variable, a linked
+worktree, a bare repository, an unborn branch, an uppercase and a
+detached HEAD, a separate git directory, relative starts, and 37 shallow
+files (sha1 and sha256, suffixes, uppercase, CRLF, short records, blank
+records, a NUL, non-ASCII, unknown and missing configs, the bound and one
+byte over, a directory, a file on the way, a trailing slash). The golden
+test lays the same trees on disk and runs `StdFs`. Off unix
+`golden_origin_history_located_not_posix` records the gap (class os):
+the Windows flavour does not port `realpath`, so discovery declines
+where the reference on Windows answers (the crate's stated Windows gap,
+ENG-124). `cuts_in` declines under the Windows flavour for every path
+but one holding a NUL (which raises ValueError, as `open` does there):
+`Path` and `open` on Windows read drives and backslashes, and the port
+reads neither, so it neither raises nor reads a config from the wrong
+folder.
 
 ## The author dates a drift count is read off (`origin_dates.py`)
 
@@ -16599,8 +16659,7 @@ What the reference has and this build does not, by area:
   three extraction patterns (`_BACKTICK_RE`, `_BARE_RE`,
   `_DOMAIN_ROUTE_RE`) and the candidate scan (`_normalize_for_compare`
   on POSIX, `_scan_candidates`, `_extract_candidates` without its body
-  parse memo), and `verify.py`. The history readers of `origin_history.py` (its leaves
-  and memo are built).
+  parse memo), and `verify.py`.
 - The write gates past the control tokens and the dedup: `credentials.py`
   after its vendor-prefixed detectors and its value gate (the generic and
   URI patterns, spans and markers: units 3 and 4), `durability.py` past
