@@ -517,7 +517,11 @@ pub fn create_with(
     io_step("make the store's directory", owner_only_dir(&dir))?;
     hook(Boundary::DirMade);
     let orphans = orphans_beside(&file);
-    let held = restore_lock::admit(&file, restore_lock::OPEN_WAIT, |_| false)?;
+    let held = restore_lock::admit(
+        &file,
+        restore_lock::OPEN_WAIT,
+        restore_lock::this_thread_holds,
+    )?;
     sweep_temps(&dir);
     let temp = io_step("create the temporary store", take_temp(&dir))?;
     hook(Boundary::TempLocked);

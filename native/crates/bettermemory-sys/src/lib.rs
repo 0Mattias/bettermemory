@@ -501,6 +501,49 @@ pub fn hostname() -> io::Result<Vec<u8>> {
     Err(io::Error::from(io::ErrorKind::Unsupported))
 }
 
+/// `BY_HANDLE_FILE_INFORMATION`, as `fileapi.h` lays it out.
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Default)]
+struct ByHandleFileInformation {
+    attributes: u32,
+    /// Creation, last access and last write: three FILETIMEs.
+    times: [u32; 6],
+    volume_serial: u32,
+    size_high: u32,
+    size_low: u32,
+    links: u32,
+    index_high: u32,
+    index_low: u32,
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetFileInformationByHandle(
+        file: *mut core::ffi::c_void,
+        info: *mut ByHandleFileInformation,
+    ) -> i32;
+}
+
+/// `os.fstat(fd)`'s `(st_dev, st_ino)` on Windows: the volume serial
+/// number and the 64-bit file index `GetFileInformationByHandle` answers
+/// for an open file, which name the file while it stays open.
+#[cfg(windows)]
+pub fn file_index(file: &File) -> io::Result<(u64, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    let mut info = ByHandleFileInformation::default();
+    // SAFETY: `file` is borrowed, so its handle is open for the length of
+    // the call; `info` is a live, writable struct of the layout the call
+    // fills, which this frame owns, and the call touches no other memory.
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), &mut info) };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let index = (u64::from(info.index_high) << 32) | u64::from(info.index_low);
+    Ok((u64::from(info.volume_serial), index))
+}
+
 #[cfg(test)]
 mod tests {
     use super::fsync;

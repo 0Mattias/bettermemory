@@ -487,7 +487,11 @@ pub fn open_for_writing_with(
     // `restore_lock.admit`, held from before SQLite opens the file until
     // the connection is made (`_connect`'s `held.close()`), and dropped
     // on every return before that.
-    let held = restore_lock::admit(&file, restore_lock::OPEN_WAIT, |_| false)?;
+    let held = restore_lock::admit(
+        &file,
+        restore_lock::OPEN_WAIT,
+        restore_lock::this_thread_holds,
+    )?;
     // A `-wal` with frames beside the file (a writer has it open, or died
     // with it open): until the open decides to write, its close must not
     // checkpoint those frames into the file and remove the `-wal`, so a

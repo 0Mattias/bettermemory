@@ -484,3 +484,381 @@ def generate() -> dict[str, bytes]:
             json.dumps(document, indent=1, sort_keys=True) + "\n"
         ).encode("utf-8")
     }
+
+
+# ---------------------------------------------------------------------------
+# A restore's own hold (`acquire`, `RestoreLock.mark` and `release`,
+# `held_here`), `probe`, `unlock` and `state_finding`.
+# ---------------------------------------------------------------------------
+
+_HOLD_WAIT = 0.2
+
+#: A restore that was killed left this marker (a pid no test runs as).
+_KILLED = {
+    "bundle": "old\nbundle.tar",
+    "format": restore_lock.MARKER_FORMAT,
+    "pid": 1,
+    "stage": "swap",
+    "started_at": "2026-01-01T00:00:00Z",
+}
+
+
+class _Scrub:
+    """Spells the case's paths, this process's pid and the clock's time as
+    placeholders: ``<lock>``, ``<store>``, ``<pid>``, ``<started_at>``."""
+
+    def __init__(self, store: Path) -> None:
+        self.store = str(store)
+        self.lock = str(restore_lock.lock_path(store))
+        self.pid = os.getpid()
+        self.started: str | None = None
+
+    def text(self, value: str) -> str:
+        out = value.replace(self.lock, "<lock>").replace(self.store, "<store>")
+        out = out.replace(f'"pid": {self.pid}', '"pid": "<pid>"')
+        out = out.replace(f"by process {self.pid}", "by process <pid>")
+        if self.started is not None:
+            out = out.replace(self.started, "<started_at>")
+        return out
+
+    def value(self, value: Any) -> Any:
+        if isinstance(value, str):
+            return self.text(value)
+        if isinstance(value, dict):
+            return self.marker(value)
+        return value
+
+    def marker(self, marker: dict[str, Any] | None) -> Any:
+        if marker is None:
+            return None
+        out: dict[str, Any] = {}
+        for key, value in marker.items():
+            if key == "unreadable":
+                out[key] = "<unreadable>"
+            elif key == "pid" and value == self.pid and type(value) is int:
+                out[key] = "<pid>"
+            else:
+                out[key] = self.value(value)
+        return out
+
+
+def _error(exc: BaseException) -> dict[str, Any]:
+    return {"error": type(exc).__name__}
+
+
+def _in_thread(call: Any) -> Any:
+    import threading
+
+    box: list[Any] = []
+    thread = threading.Thread(target=lambda: box.append(call()))
+    thread.start()
+    thread.join()
+    return box[0]
+
+
+def _finding(store: Path, scrub: _Scrub) -> Any:
+    try:
+        state, summary, remedy, details = restore_lock.state_finding(store)
+    except RecursionError as exc:
+        return _error(exc)
+    return [state, scrub.text(summary), remedy, scrub.marker(details)]
+
+
+def _held_here(store: Path) -> Any:
+    try:
+        return restore_lock.held_here(store)
+    except OSError as exc:
+        return _error(exc)
+
+
+def _hold_op(op: list[Any], store: Path, scrub: _Scrub, box: dict[str, Any]) -> Any:
+    kind = op[0]
+    lock = restore_lock.lock_path(store)
+    if kind in ("acquire", "acquire_again"):
+        try:
+            held = restore_lock.acquire(store, wait=_HOLD_WAIT)
+        except (OSError, RecursionError) as exc:
+            return _error(exc)
+        if held is None:
+            return {"held": False}
+        if kind == "acquire_again":
+            held.release(clear=False)
+            return {"held": True}
+        box["lock"] = held
+        return {
+            "held": True,
+            "previous": scrub.marker(held.previous),
+            "record": held.record,
+            "mode": oct(os.stat(lock).st_mode & 0o777),
+        }
+    if kind == "mark":
+        box["lock"].mark(**op[1])
+        data = lock.read_bytes().decode("ascii")
+        scrub.started = json.loads(data)["started_at"]
+        return scrub.text(data)
+    if kind == "release":
+        if "lock" not in box:
+            return None
+        box.pop("lock").release(clear=op[1])
+        return sorted(p.name for p in store.parent.iterdir())
+    if kind == "held_here":
+        return _held_here(store)
+    if kind == "held_here_thread":
+        return _in_thread(lambda: _held_here(store))
+    if kind == "state_finding":
+        return _finding(store, scrub)
+    if kind == "state_finding_thread":
+        return _in_thread(lambda: _finding(store, scrub))
+    if kind == "unlock":
+        try:
+            report = restore_lock.unlock(store, apply=op[1])
+        except (OSError, RecursionError) as exc:
+            return _error(exc)
+        return {k: scrub.value(v) for k, v in report.items()}
+    if kind == "close_helper":
+        box.pop("helper").close()
+        return None
+    assert kind == "names", kind
+    if not store.parent.exists():
+        return None
+    return sorted(p.name for p in store.parent.iterdir())
+
+
+_LIFE: list[list[Any]] = [
+    ["acquire"],
+    ["held_here"],
+    ["held_here_thread"],
+    ["state_finding"],
+    ["state_finding_thread"],
+    ["acquire_again"],
+    ["unlock", True],
+    ["mark", {"stage": "swap", "bundle": "b.tar"}],
+    ["mark", {"stage": "verify", "note": "é ", "count": 3}],
+    ["state_finding_thread"],
+    ["release", False],
+    ["state_finding"],
+    ["held_here"],
+    ["unlock", False],
+    ["unlock", True],
+    ["names"],
+    ["unlock", True],
+]
+
+
+def _hold_case(
+    root: Path,
+    name: str,
+    ops: list[list[Any]],
+    *,
+    marker: list[list[Any]] | None = None,
+    helper: str | None = None,
+    record_mode: bool = False,
+    lock_dir: bool = False,
+    missing_dir: bool = False,
+    dotted: bool = False,
+) -> dict[str, Any]:
+    case = root / name
+    store_dir = case / "store"
+    store = store_dir / "memory.sqlite"
+    lock = restore_lock.lock_path(store)
+    case.mkdir(parents=True)
+    if not missing_dir:
+        store_dir.mkdir()
+        store.write_bytes(b"")
+    if marker is not None:
+        lock.write_bytes(_marker_bytes(marker))
+    if lock_dir:
+        lock.mkdir()
+    key = None
+    if record_mode:
+        found = os.stat(store_dir)
+        key = (found.st_dev, found.st_ino)
+        restore_lock._RECORD_MODE_DIRS.add(key)
+    box: dict[str, Any] = {}
+    if helper is not None:
+        box["helper"] = _Helper(lock if record_mode else store_dir, helper)
+    given = Path(f"{store_dir}/./{store.name}") if dotted else store
+    scrub = _Scrub(store)
+    saved = restore_lock.OPEN_WAIT_SECONDS
+    restore_lock.OPEN_WAIT_SECONDS = _HOLD_WAIT
+    results: list[Any] = []
+    try:
+        for op in ops:
+            results.append(_hold_op(op, given, scrub, box))
+    finally:
+        restore_lock.OPEN_WAIT_SECONDS = saved
+        if "lock" in box:
+            box["lock"].release(clear=False)
+        if "helper" in box:
+            box["helper"].close()
+        if key is not None:
+            restore_lock._RECORD_MODE_DIRS.discard(key)
+    return {
+        "name": name,
+        "marker": marker,
+        "helper": helper,
+        "record_mode": record_mode,
+        "lock_dir": lock_dir,
+        "missing_dir": missing_dir,
+        "dotted": dotted,
+        "ops": ops,
+        "results": results,
+    }
+
+
+def _full(*extra: str) -> list[list[Any]]:
+    ops: list[list[Any]] = [["state_finding"], ["held_here"], ["acquire"]]
+    ops += [["release", False]]
+    for e in extra:
+        ops += [[e], ["release", False]] if e == "acquire" else [[e]]
+    return ops + [["unlock", False], ["unlock", True], ["names"]]
+
+
+def _hold_cases(root: Path) -> list[dict[str, Any]]:
+    killed = _j(_KILLED)
+    bundle_list = _j(dict(_KILLED, bundle=["x"]))
+    return [
+        _hold_case(root, "life", _LIFE),
+        _hold_case(root, "life_record", _LIFE, record_mode=True),
+        _hold_case(root, "life_dotted", _LIFE, dotted=True),
+        _hold_case(root, "killed", _full("state_finding_thread"), marker=killed),
+        _hold_case(
+            root,
+            "killed_take_over",
+            [
+                ["acquire"],
+                ["mark", {"stage": "again"}],
+                ["release", True],
+                ["names"],
+                ["state_finding"],
+            ],
+            marker=killed,
+        ),
+        _hold_case(root, "killed_record", _full(), marker=killed, record_mode=True),
+        _hold_case(root, "bundle_not_text", [["state_finding"]], marker=bundle_list),
+        _hold_case(root, "marker_not_json", _full(), marker=[[b"{cut".hex(), 1]]),
+        _hold_case(root, "marker_blank", _full(), marker=[["200a", 1]]),
+        _hold_case(root, "marker_deep", _full(), marker=[["5b", 70000]]),
+        _hold_case(
+            root, "held_shared", _full("close_helper", "acquire"), helper="shared"
+        ),
+        _hold_case(
+            root,
+            "held_shared_unlock",
+            [["unlock", True], ["state_finding"], ["close_helper"], ["unlock", True]],
+            marker=[["", 1]],
+            helper="shared",
+        ),
+        _hold_case(
+            root,
+            "held_exclusive",
+            _full(),
+            marker=killed,
+            helper="exclusive",
+        ),
+        _hold_case(
+            root,
+            "record_held_exclusive",
+            _full(),
+            marker=[["", 1]],
+            helper="exclusive",
+            record_mode=True,
+        ),
+        _hold_case(
+            root,
+            "record_held_shared",
+            _full(),
+            marker=[["", 1]],
+            helper="shared",
+            record_mode=True,
+        ),
+        _hold_case(root, "record_free_no_file", _full(), record_mode=True),
+        _hold_case(root, "lock_dir", _full(), lock_dir=True),
+        _hold_case(root, "lock_dir_record", _full(), lock_dir=True, record_mode=True),
+        _hold_case(root, "missing_dir", _full(), missing_dir=True),
+    ]
+
+
+def _probe_case(root: Path, name: str, setup: str) -> dict[str, Any]:
+    import sqlite3
+
+    case = root / name
+    case.mkdir(parents=True)
+    store = case / "memory.sqlite"
+    given = store
+    other = None
+    if setup == "dir":
+        store.mkdir()
+    elif setup == "empty":
+        store.write_bytes(b"")
+    elif setup == "text":
+        store.write_bytes(b"not a database, and longer than a header could be" * 4)
+    elif setup != "missing":
+        conn = sqlite3.connect(store, isolation_level=None)
+        if setup.startswith("wal"):
+            conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("CREATE TABLE t (x)")
+        conn.execute("INSERT INTO t VALUES (1)")
+        if setup in ("rollback_closed", "wal_closed"):
+            conn.close()
+        else:
+            other = conn
+            if setup == "rollback_reading":
+                conn.execute("BEGIN")
+                conn.execute("SELECT x FROM t").fetchall()
+            else:
+                conn.execute("SELECT x FROM t").fetchall()
+            if setup == "wal_open_dotted":
+                given = Path(f"{case}/./{store.name}")
+            if setup == "wal_open_link":
+                given = case / "link.sqlite"
+                given.symlink_to(store)
+    try:
+        found = restore_lock.probe(given)
+    finally:
+        if other is not None:
+            other.close()
+    return {
+        "name": name,
+        "setup": setup,
+        "probe": (
+            None
+            if found is None
+            else found.replace(str(given), "<given>").replace(str(store), "<store>")
+        ),
+        "names_after": sorted(p.name for p in case.iterdir()),
+    }
+
+
+_PROBES = (
+    "missing",
+    "dir",
+    "empty",
+    "text",
+    "rollback_closed",
+    "rollback_idle",
+    "rollback_reading",
+    "wal_closed",
+    "wal_open",
+    "wal_open_dotted",
+    "wal_open_link",
+)
+
+
+def generate_hold() -> dict[str, bytes]:
+    with world() as w:
+        holds = _hold_cases(w.root / "hold")
+        probes = [_probe_case(w.root / "probe", n, n) for n in _PROBES]
+    document = {
+        "marker_format": restore_lock.MARKER_FORMAT,
+        "restore_wait_seconds": restore_lock.RESTORE_WAIT_SECONDS,
+        "unlock_exit": restore_lock.UNLOCK_EXIT,
+        "holders": [restore_lock.HOLDER_RESTORE, restore_lock.HOLDER_READER],
+        "holds": holds,
+        "probes": probes,
+    }
+    return {
+        "store_restore_lock_hold.json": (
+            json.dumps(document, indent=1, sort_keys=True) + "\n"
+        ).encode("utf-8")
+    }

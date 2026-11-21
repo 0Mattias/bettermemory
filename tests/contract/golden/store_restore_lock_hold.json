@@ -1,0 +1,1883 @@
+{
+ "holders": [
+  "restore",
+  "reader"
+ ],
+ "holds": [
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": false,
+   "marker": null,
+   "missing_dir": false,
+   "name": "life",
+   "ops": [
+    [
+     "acquire"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "held_here_thread"
+    ],
+    [
+     "state_finding"
+    ],
+    [
+     "state_finding_thread"
+    ],
+    [
+     "acquire_again"
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "mark",
+     {
+      "bundle": "b.tar",
+      "stage": "swap"
+     }
+    ],
+    [
+     "mark",
+     {
+      "count": 3,
+      "note": "\u00e9\u2028",
+      "stage": "verify"
+     }
+    ],
+    [
+     "state_finding_thread"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ],
+    [
+     "unlock",
+     true
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    {
+     "held": true,
+     "mode": "0o600",
+     "previous": null,
+     "record": false
+    },
+    true,
+    false,
+    [
+     "clear",
+     "no restore is running or left unfinished",
+     null,
+     {
+      "record": "<lock>",
+      "state": "clear"
+     }
+    ],
+    [
+     "running",
+     "writes are refused while a restore runs",
+     "run `bettermemory doctor` again when the restore has finished",
+     {
+      "record": "<lock>",
+      "restore": null,
+      "state": "running"
+     }
+    ],
+    {
+     "held": false
+    },
+    {
+     "holder": "restore",
+     "lock": "<lock>",
+     "marker": null,
+     "status": "held"
+    },
+    "{\"bundle\": \"b.tar\", \"format\": \"bettermemory.restore_lock\", \"pid\": \"<pid>\", \"stage\": \"swap\", \"started_at\": \"<started_at>\", \"store\": \"<store>\"}\n",
+    "{\"bundle\": \"b.tar\", \"count\": 3, \"format\": \"bettermemory.restore_lock\", \"note\": \"\\u00e9\\u2028\", \"pid\": \"<pid>\", \"stage\": \"verify\", \"started_at\": \"<started_at>\", \"store\": \"<store>\"}\n",
+    [
+     "running",
+     "writes are refused while a restore runs",
+     "run `bettermemory doctor` again when the restore has finished",
+     {
+      "record": "<lock>",
+      "restore": {
+       "bundle": "b.tar",
+       "count": 3,
+       "format": "bettermemory.restore_lock",
+       "note": "\u00e9\u2028",
+       "pid": "<pid>",
+       "stage": "verify",
+       "started_at": "<started_at>",
+       "store": "<store>"
+      },
+      "state": "running"
+     }
+    ],
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ],
+    [
+     "unfinished",
+     "writes are refused: a restore did not finish (started <started_at>, by process <pid>, from b.tar, stopped at verify)",
+     "run `bettermemory backup unlock --yes` after checking the store, or re-run the restore (`bettermemory backup restore b.tar --yes`)",
+     {
+      "record": "<lock>",
+      "restore": {
+       "bundle": "b.tar",
+       "count": 3,
+       "format": "bettermemory.restore_lock",
+       "note": "\u00e9\u2028",
+       "pid": "<pid>",
+       "stage": "verify",
+       "started_at": "<started_at>",
+       "store": "<store>"
+      },
+      "state": "unfinished"
+     }
+    ],
+    false,
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": {
+      "bundle": "b.tar",
+      "count": 3,
+      "format": "bettermemory.restore_lock",
+      "note": "\u00e9\u2028",
+      "pid": "<pid>",
+      "stage": "verify",
+      "started_at": "<started_at>",
+      "store": "<store>"
+     },
+     "status": "planned"
+    },
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": {
+      "bundle": "b.tar",
+      "count": 3,
+      "format": "bettermemory.restore_lock",
+      "note": "\u00e9\u2028",
+      "pid": "<pid>",
+      "stage": "verify",
+      "started_at": "<started_at>",
+      "store": "<store>"
+     },
+     "status": "cleared"
+    },
+    [
+     "memory.sqlite"
+    ],
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": null,
+     "status": "clear"
+    }
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": false,
+   "marker": null,
+   "missing_dir": false,
+   "name": "life_record",
+   "ops": [
+    [
+     "acquire"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "held_here_thread"
+    ],
+    [
+     "state_finding"
+    ],
+    [
+     "state_finding_thread"
+    ],
+    [
+     "acquire_again"
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "mark",
+     {
+      "bundle": "b.tar",
+      "stage": "swap"
+     }
+    ],
+    [
+     "mark",
+     {
+      "count": 3,
+      "note": "\u00e9\u2028",
+      "stage": "verify"
+     }
+    ],
+    [
+     "state_finding_thread"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ],
+    [
+     "unlock",
+     true
+    ]
+   ],
+   "record_mode": true,
+   "results": [
+    {
+     "held": true,
+     "mode": "0o600",
+     "previous": null,
+     "record": true
+    },
+    true,
+    false,
+    [
+     "clear",
+     "no restore is running or left unfinished",
+     null,
+     {
+      "record": "<lock>",
+      "state": "clear"
+     }
+    ],
+    [
+     "running",
+     "writes are refused while a restore runs",
+     "run `bettermemory doctor` again when the restore has finished",
+     {
+      "record": "<lock>",
+      "restore": null,
+      "state": "running"
+     }
+    ],
+    {
+     "held": false
+    },
+    {
+     "holder": "restore",
+     "lock": "<lock>",
+     "marker": null,
+     "status": "held"
+    },
+    "{\"bundle\": \"b.tar\", \"format\": \"bettermemory.restore_lock\", \"pid\": \"<pid>\", \"stage\": \"swap\", \"started_at\": \"<started_at>\", \"store\": \"<store>\"}\n",
+    "{\"bundle\": \"b.tar\", \"count\": 3, \"format\": \"bettermemory.restore_lock\", \"note\": \"\\u00e9\\u2028\", \"pid\": \"<pid>\", \"stage\": \"verify\", \"started_at\": \"<started_at>\", \"store\": \"<store>\"}\n",
+    [
+     "running",
+     "writes are refused while a restore runs",
+     "run `bettermemory doctor` again when the restore has finished",
+     {
+      "record": "<lock>",
+      "restore": {
+       "bundle": "b.tar",
+       "count": 3,
+       "format": "bettermemory.restore_lock",
+       "note": "\u00e9\u2028",
+       "pid": "<pid>",
+       "stage": "verify",
+       "started_at": "<started_at>",
+       "store": "<store>"
+      },
+      "state": "running"
+     }
+    ],
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ],
+    [
+     "unfinished",
+     "writes are refused: a restore did not finish (started <started_at>, by process <pid>, from b.tar, stopped at verify)",
+     "run `bettermemory backup unlock --yes` after checking the store, or re-run the restore (`bettermemory backup restore b.tar --yes`)",
+     {
+      "record": "<lock>",
+      "restore": {
+       "bundle": "b.tar",
+       "count": 3,
+       "format": "bettermemory.restore_lock",
+       "note": "\u00e9\u2028",
+       "pid": "<pid>",
+       "stage": "verify",
+       "started_at": "<started_at>",
+       "store": "<store>"
+      },
+      "state": "unfinished"
+     }
+    ],
+    false,
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": {
+      "bundle": "b.tar",
+      "count": 3,
+      "format": "bettermemory.restore_lock",
+      "note": "\u00e9\u2028",
+      "pid": "<pid>",
+      "stage": "verify",
+      "started_at": "<started_at>",
+      "store": "<store>"
+     },
+     "status": "planned"
+    },
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": {
+      "bundle": "b.tar",
+      "count": 3,
+      "format": "bettermemory.restore_lock",
+      "note": "\u00e9\u2028",
+      "pid": "<pid>",
+      "stage": "verify",
+      "started_at": "<started_at>",
+      "store": "<store>"
+     },
+     "status": "cleared"
+    },
+    [
+     "memory.sqlite"
+    ],
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": null,
+     "status": "clear"
+    }
+   ]
+  },
+  {
+   "dotted": true,
+   "helper": null,
+   "lock_dir": false,
+   "marker": null,
+   "missing_dir": false,
+   "name": "life_dotted",
+   "ops": [
+    [
+     "acquire"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "held_here_thread"
+    ],
+    [
+     "state_finding"
+    ],
+    [
+     "state_finding_thread"
+    ],
+    [
+     "acquire_again"
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "mark",
+     {
+      "bundle": "b.tar",
+      "stage": "swap"
+     }
+    ],
+    [
+     "mark",
+     {
+      "count": 3,
+      "note": "\u00e9\u2028",
+      "stage": "verify"
+     }
+    ],
+    [
+     "state_finding_thread"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ],
+    [
+     "unlock",
+     true
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    {
+     "held": true,
+     "mode": "0o600",
+     "previous": null,
+     "record": false
+    },
+    true,
+    false,
+    [
+     "clear",
+     "no restore is running or left unfinished",
+     null,
+     {
+      "record": "<lock>",
+      "state": "clear"
+     }
+    ],
+    [
+     "running",
+     "writes are refused while a restore runs",
+     "run `bettermemory doctor` again when the restore has finished",
+     {
+      "record": "<lock>",
+      "restore": null,
+      "state": "running"
+     }
+    ],
+    {
+     "held": false
+    },
+    {
+     "holder": "restore",
+     "lock": "<lock>",
+     "marker": null,
+     "status": "held"
+    },
+    "{\"bundle\": \"b.tar\", \"format\": \"bettermemory.restore_lock\", \"pid\": \"<pid>\", \"stage\": \"swap\", \"started_at\": \"<started_at>\", \"store\": \"<store>\"}\n",
+    "{\"bundle\": \"b.tar\", \"count\": 3, \"format\": \"bettermemory.restore_lock\", \"note\": \"\\u00e9\\u2028\", \"pid\": \"<pid>\", \"stage\": \"verify\", \"started_at\": \"<started_at>\", \"store\": \"<store>\"}\n",
+    [
+     "running",
+     "writes are refused while a restore runs",
+     "run `bettermemory doctor` again when the restore has finished",
+     {
+      "record": "<lock>",
+      "restore": {
+       "bundle": "b.tar",
+       "count": 3,
+       "format": "bettermemory.restore_lock",
+       "note": "\u00e9\u2028",
+       "pid": "<pid>",
+       "stage": "verify",
+       "started_at": "<started_at>",
+       "store": "<store>"
+      },
+      "state": "running"
+     }
+    ],
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ],
+    [
+     "unfinished",
+     "writes are refused: a restore did not finish (started <started_at>, by process <pid>, from b.tar, stopped at verify)",
+     "run `bettermemory backup unlock --yes` after checking the store, or re-run the restore (`bettermemory backup restore b.tar --yes`)",
+     {
+      "record": "<lock>",
+      "restore": {
+       "bundle": "b.tar",
+       "count": 3,
+       "format": "bettermemory.restore_lock",
+       "note": "\u00e9\u2028",
+       "pid": "<pid>",
+       "stage": "verify",
+       "started_at": "<started_at>",
+       "store": "<store>"
+      },
+      "state": "unfinished"
+     }
+    ],
+    false,
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": {
+      "bundle": "b.tar",
+      "count": 3,
+      "format": "bettermemory.restore_lock",
+      "note": "\u00e9\u2028",
+      "pid": "<pid>",
+      "stage": "verify",
+      "started_at": "<started_at>",
+      "store": "<store>"
+     },
+     "status": "planned"
+    },
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": {
+      "bundle": "b.tar",
+      "count": 3,
+      "format": "bettermemory.restore_lock",
+      "note": "\u00e9\u2028",
+      "pid": "<pid>",
+      "stage": "verify",
+      "started_at": "<started_at>",
+      "store": "<store>"
+     },
+     "status": "cleared"
+    },
+    [
+     "memory.sqlite"
+    ],
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": null,
+     "status": "clear"
+    }
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b2262756e646c65223a20226f6c645c6e62756e646c652e746172222c2022666f726d6174223a20226265747465726d656d6f72792e726573746f72655f6c6f636b222c2022706964223a20312c20227374616765223a202273776170222c2022737461727465645f6174223a2022323032362d30312d30315430303a30303a30305a227d",
+     1
+    ]
+   ],
+   "missing_dir": false,
+   "name": "killed",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "state_finding_thread"
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    [
+     "unfinished",
+     "writes are refused: a restore did not finish (started 2026-01-01T00:00:00Z, by process 1, from old\\nbundle.tar, stopped at swap)",
+     "run `bettermemory backup unlock --yes` after checking the store, or re-run the restore (`bettermemory backup restore old\\nbundle.tar --yes`)",
+     {
+      "record": "<lock>",
+      "restore": {
+       "bundle": "old\nbundle.tar",
+       "format": "bettermemory.restore_lock",
+       "pid": 1,
+       "stage": "swap",
+       "started_at": "2026-01-01T00:00:00Z"
+      },
+      "state": "unfinished"
+     }
+    ],
+    false,
+    {
+     "held": true,
+     "mode": "0o644",
+     "previous": {
+      "bundle": "old\nbundle.tar",
+      "format": "bettermemory.restore_lock",
+      "pid": 1,
+      "stage": "swap",
+      "started_at": "2026-01-01T00:00:00Z"
+     },
+     "record": false
+    },
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ],
+    [
+     "unfinished",
+     "writes are refused: a restore did not finish (started 2026-01-01T00:00:00Z, by process 1, from old\\nbundle.tar, stopped at swap)",
+     "run `bettermemory backup unlock --yes` after checking the store, or re-run the restore (`bettermemory backup restore old\\nbundle.tar --yes`)",
+     {
+      "record": "<lock>",
+      "restore": {
+       "bundle": "old\nbundle.tar",
+       "format": "bettermemory.restore_lock",
+       "pid": 1,
+       "stage": "swap",
+       "started_at": "2026-01-01T00:00:00Z"
+      },
+      "state": "unfinished"
+     }
+    ],
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": {
+      "bundle": "old\nbundle.tar",
+      "format": "bettermemory.restore_lock",
+      "pid": 1,
+      "stage": "swap",
+      "started_at": "2026-01-01T00:00:00Z"
+     },
+     "status": "planned"
+    },
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": {
+      "bundle": "old\nbundle.tar",
+      "format": "bettermemory.restore_lock",
+      "pid": 1,
+      "stage": "swap",
+      "started_at": "2026-01-01T00:00:00Z"
+     },
+     "status": "cleared"
+    },
+    [
+     "memory.sqlite"
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b2262756e646c65223a20226f6c645c6e62756e646c652e746172222c2022666f726d6174223a20226265747465726d656d6f72792e726573746f72655f6c6f636b222c2022706964223a20312c20227374616765223a202273776170222c2022737461727465645f6174223a2022323032362d30312d30315430303a30303a30305a227d",
+     1
+    ]
+   ],
+   "missing_dir": false,
+   "name": "killed_take_over",
+   "ops": [
+    [
+     "acquire"
+    ],
+    [
+     "mark",
+     {
+      "stage": "again"
+     }
+    ],
+    [
+     "release",
+     true
+    ],
+    [
+     "names"
+    ],
+    [
+     "state_finding"
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    {
+     "held": true,
+     "mode": "0o644",
+     "previous": {
+      "bundle": "old\nbundle.tar",
+      "format": "bettermemory.restore_lock",
+      "pid": 1,
+      "stage": "swap",
+      "started_at": "2026-01-01T00:00:00Z"
+     },
+     "record": false
+    },
+    "{\"format\": \"bettermemory.restore_lock\", \"pid\": \"<pid>\", \"stage\": \"again\", \"started_at\": \"<started_at>\", \"store\": \"<store>\"}\n",
+    [
+     "memory.sqlite"
+    ],
+    [
+     "memory.sqlite"
+    ],
+    [
+     "clear",
+     "no restore is running or left unfinished",
+     null,
+     {
+      "record": "<lock>",
+      "state": "clear"
+     }
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b2262756e646c65223a20226f6c645c6e62756e646c652e746172222c2022666f726d6174223a20226265747465726d656d6f72792e726573746f72655f6c6f636b222c2022706964223a20312c20227374616765223a202273776170222c2022737461727465645f6174223a2022323032362d30312d30315430303a30303a30305a227d",
+     1
+    ]
+   ],
+   "missing_dir": false,
+   "name": "killed_record",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": true,
+   "results": [
+    [
+     "unfinished",
+     "writes are refused: a restore did not finish (started 2026-01-01T00:00:00Z, by process 1, from old\\nbundle.tar, stopped at swap)",
+     "run `bettermemory backup unlock --yes` after checking the store, or re-run the restore (`bettermemory backup restore old\\nbundle.tar --yes`)",
+     {
+      "record": "<lock>",
+      "restore": {
+       "bundle": "old\nbundle.tar",
+       "format": "bettermemory.restore_lock",
+       "pid": 1,
+       "stage": "swap",
+       "started_at": "2026-01-01T00:00:00Z"
+      },
+      "state": "unfinished"
+     }
+    ],
+    false,
+    {
+     "held": true,
+     "mode": "0o644",
+     "previous": {
+      "bundle": "old\nbundle.tar",
+      "format": "bettermemory.restore_lock",
+      "pid": 1,
+      "stage": "swap",
+      "started_at": "2026-01-01T00:00:00Z"
+     },
+     "record": true
+    },
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ],
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": {
+      "bundle": "old\nbundle.tar",
+      "format": "bettermemory.restore_lock",
+      "pid": 1,
+      "stage": "swap",
+      "started_at": "2026-01-01T00:00:00Z"
+     },
+     "status": "planned"
+    },
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": {
+      "bundle": "old\nbundle.tar",
+      "format": "bettermemory.restore_lock",
+      "pid": 1,
+      "stage": "swap",
+      "started_at": "2026-01-01T00:00:00Z"
+     },
+     "status": "cleared"
+    },
+    [
+     "memory.sqlite"
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b2262756e646c65223a205b2278225d2c2022666f726d6174223a20226265747465726d656d6f72792e726573746f72655f6c6f636b222c2022706964223a20312c20227374616765223a202273776170222c2022737461727465645f6174223a2022323032362d30312d30315430303a30303a30305a227d",
+     1
+    ]
+   ],
+   "missing_dir": false,
+   "name": "bundle_not_text",
+   "ops": [
+    [
+     "state_finding"
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    [
+     "unfinished",
+     "writes are refused: a restore did not finish (started 2026-01-01T00:00:00Z, by process 1, stopped at swap)",
+     "run `bettermemory backup unlock --yes` after checking the store, or re-run the restore (`bettermemory backup restore BUNDLE --yes`)",
+     {
+      "record": "<lock>",
+      "restore": {
+       "bundle": [
+        "x"
+       ],
+       "format": "bettermemory.restore_lock",
+       "pid": 1,
+       "stage": "swap",
+       "started_at": "2026-01-01T00:00:00Z"
+      },
+      "state": "unfinished"
+     }
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b637574",
+     1
+    ]
+   ],
+   "missing_dir": false,
+   "name": "marker_not_json",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    [
+     "unfinished",
+     "writes are refused: a restore did not finish (no record of it reads)",
+     "run `bettermemory backup unlock --yes` after checking the store, or re-run the restore (`bettermemory backup restore BUNDLE --yes`)",
+     {
+      "record": "<lock>",
+      "restore": {},
+      "state": "unfinished"
+     }
+    ],
+    false,
+    {
+     "held": true,
+     "mode": "0o644",
+     "previous": {},
+     "record": false
+    },
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ],
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": {},
+     "status": "planned"
+    },
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": {},
+     "status": "cleared"
+    },
+    [
+     "memory.sqlite"
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "200a",
+     1
+    ]
+   ],
+   "missing_dir": false,
+   "name": "marker_blank",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    [
+     "clear",
+     "no restore is running or left unfinished",
+     null,
+     {
+      "record": "<lock>",
+      "state": "clear"
+     }
+    ],
+    false,
+    {
+     "held": true,
+     "mode": "0o644",
+     "previous": null,
+     "record": false
+    },
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ],
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": null,
+     "status": "clear"
+    },
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": null,
+     "status": "clear"
+    },
+    [
+     "memory.sqlite"
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "5b",
+     70000
+    ]
+   ],
+   "missing_dir": false,
+   "name": "marker_deep",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    {
+     "error": "RecursionError"
+    },
+    false,
+    {
+     "error": "RecursionError"
+    },
+    null,
+    {
+     "error": "RecursionError"
+    },
+    {
+     "error": "RecursionError"
+    },
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": "shared",
+   "lock_dir": false,
+   "marker": null,
+   "missing_dir": false,
+   "name": "held_shared",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "close_helper"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    [
+     "clear",
+     "no restore is running or left unfinished",
+     null,
+     {
+      "record": "<lock>",
+      "state": "clear"
+     }
+    ],
+    false,
+    {
+     "held": false
+    },
+    null,
+    null,
+    {
+     "held": true,
+     "mode": "0o600",
+     "previous": null,
+     "record": false
+    },
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ],
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": null,
+     "status": "clear"
+    },
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": null,
+     "status": "clear"
+    },
+    [
+     "memory.sqlite"
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": "shared",
+   "lock_dir": false,
+   "marker": [
+    [
+     "",
+     1
+    ]
+   ],
+   "missing_dir": false,
+   "name": "held_shared_unlock",
+   "ops": [
+    [
+     "unlock",
+     true
+    ],
+    [
+     "state_finding"
+    ],
+    [
+     "close_helper"
+    ],
+    [
+     "unlock",
+     true
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    {
+     "holder": "reader",
+     "lock": "<lock>",
+     "marker": null,
+     "status": "held"
+    },
+    [
+     "clear",
+     "no restore is running or left unfinished",
+     null,
+     {
+      "record": "<lock>",
+      "state": "clear"
+     }
+    ],
+    null,
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": null,
+     "status": "clear"
+    }
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": "exclusive",
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b2262756e646c65223a20226f6c645c6e62756e646c652e746172222c2022666f726d6174223a20226265747465726d656d6f72792e726573746f72655f6c6f636b222c2022706964223a20312c20227374616765223a202273776170222c2022737461727465645f6174223a2022323032362d30312d30315430303a30303a30305a227d",
+     1
+    ]
+   ],
+   "missing_dir": false,
+   "name": "held_exclusive",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    [
+     "running",
+     "writes are refused while a restore runs",
+     "run `bettermemory doctor` again when the restore has finished",
+     {
+      "record": "<lock>",
+      "restore": {
+       "bundle": "old\nbundle.tar",
+       "format": "bettermemory.restore_lock",
+       "pid": 1,
+       "stage": "swap",
+       "started_at": "2026-01-01T00:00:00Z"
+      },
+      "state": "running"
+     }
+    ],
+    false,
+    {
+     "held": false
+    },
+    null,
+    {
+     "holder": "restore",
+     "lock": "<lock>",
+     "marker": {
+      "bundle": "old\nbundle.tar",
+      "format": "bettermemory.restore_lock",
+      "pid": 1,
+      "stage": "swap",
+      "started_at": "2026-01-01T00:00:00Z"
+     },
+     "status": "held"
+    },
+    {
+     "holder": "restore",
+     "lock": "<lock>",
+     "marker": {
+      "bundle": "old\nbundle.tar",
+      "format": "bettermemory.restore_lock",
+      "pid": 1,
+      "stage": "swap",
+      "started_at": "2026-01-01T00:00:00Z"
+     },
+     "status": "held"
+    },
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": "exclusive",
+   "lock_dir": false,
+   "marker": [
+    [
+     "",
+     1
+    ]
+   ],
+   "missing_dir": false,
+   "name": "record_held_exclusive",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": true,
+   "results": [
+    [
+     "running",
+     "writes are refused while a restore runs",
+     "run `bettermemory doctor` again when the restore has finished",
+     {
+      "record": "<lock>",
+      "restore": null,
+      "state": "running"
+     }
+    ],
+    false,
+    {
+     "held": false
+    },
+    null,
+    {
+     "holder": "restore",
+     "lock": "<lock>",
+     "marker": null,
+     "status": "held"
+    },
+    {
+     "holder": "restore",
+     "lock": "<lock>",
+     "marker": null,
+     "status": "held"
+    },
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": "shared",
+   "lock_dir": false,
+   "marker": [
+    [
+     "",
+     1
+    ]
+   ],
+   "missing_dir": false,
+   "name": "record_held_shared",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": true,
+   "results": [
+    [
+     "clear",
+     "no restore is running or left unfinished",
+     null,
+     {
+      "record": "<lock>",
+      "state": "clear"
+     }
+    ],
+    false,
+    {
+     "held": false
+    },
+    null,
+    {
+     "holder": "restore",
+     "lock": "<lock>",
+     "marker": null,
+     "status": "held"
+    },
+    {
+     "holder": "restore",
+     "lock": "<lock>",
+     "marker": null,
+     "status": "held"
+    },
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": false,
+   "marker": null,
+   "missing_dir": false,
+   "name": "record_free_no_file",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": true,
+   "results": [
+    [
+     "clear",
+     "no restore is running or left unfinished",
+     null,
+     {
+      "record": "<lock>",
+      "state": "clear"
+     }
+    ],
+    false,
+    {
+     "held": true,
+     "mode": "0o600",
+     "previous": null,
+     "record": true
+    },
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ],
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": null,
+     "status": "clear"
+    },
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": null,
+     "status": "clear"
+    },
+    [
+     "memory.sqlite"
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": true,
+   "marker": null,
+   "missing_dir": false,
+   "name": "lock_dir",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    [
+     "unfinished",
+     "writes are refused: a restore did not finish (no record of it reads)",
+     "run `bettermemory backup unlock --yes` after checking the store, or re-run the restore (`bettermemory backup restore BUNDLE --yes`)",
+     {
+      "record": "<lock>",
+      "restore": {
+       "unreadable": "<unreadable>"
+      },
+      "state": "unfinished"
+     }
+    ],
+    false,
+    {
+     "error": "IsADirectoryError"
+    },
+    null,
+    {
+     "error": "IsADirectoryError"
+    },
+    {
+     "error": "IsADirectoryError"
+    },
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": true,
+   "marker": null,
+   "missing_dir": false,
+   "name": "lock_dir_record",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": true,
+   "results": [
+    [
+     "clear",
+     "no restore is running or left unfinished",
+     null,
+     {
+      "record": "<lock>",
+      "state": "clear"
+     }
+    ],
+    {
+     "error": "IsADirectoryError"
+    },
+    {
+     "error": "IsADirectoryError"
+    },
+    null,
+    {
+     "error": "IsADirectoryError"
+    },
+    {
+     "error": "IsADirectoryError"
+    },
+    [
+     "memory.sqlite",
+     "memory.sqlite.restore-lock"
+    ]
+   ]
+  },
+  {
+   "dotted": false,
+   "helper": null,
+   "lock_dir": false,
+   "marker": null,
+   "missing_dir": true,
+   "name": "missing_dir",
+   "ops": [
+    [
+     "state_finding"
+    ],
+    [
+     "held_here"
+    ],
+    [
+     "acquire"
+    ],
+    [
+     "release",
+     false
+    ],
+    [
+     "unlock",
+     false
+    ],
+    [
+     "unlock",
+     true
+    ],
+    [
+     "names"
+    ]
+   ],
+   "record_mode": false,
+   "results": [
+    [
+     "clear",
+     "no restore is running or left unfinished",
+     null,
+     {
+      "record": "<lock>",
+      "state": "clear"
+     }
+    ],
+    {
+     "error": "FileNotFoundError"
+    },
+    {
+     "error": "FileNotFoundError"
+    },
+    null,
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": null,
+     "status": "clear"
+    },
+    {
+     "holder": null,
+     "lock": "<lock>",
+     "marker": null,
+     "status": "clear"
+    },
+    null
+   ]
+  }
+ ],
+ "marker_format": "bettermemory.restore_lock",
+ "probes": [
+  {
+   "name": "missing",
+   "names_after": [],
+   "probe": null,
+   "setup": "missing"
+  },
+  {
+   "name": "dir",
+   "names_after": [
+    "memory.sqlite"
+   ],
+   "probe": null,
+   "setup": "dir"
+  },
+  {
+   "name": "empty",
+   "names_after": [
+    "memory.sqlite"
+   ],
+   "probe": null,
+   "setup": "empty"
+  },
+  {
+   "name": "text",
+   "names_after": [
+    "memory.sqlite"
+   ],
+   "probe": null,
+   "setup": "text"
+  },
+  {
+   "name": "rollback_closed",
+   "names_after": [
+    "memory.sqlite"
+   ],
+   "probe": null,
+   "setup": "rollback_closed"
+  },
+  {
+   "name": "rollback_idle",
+   "names_after": [
+    "memory.sqlite"
+   ],
+   "probe": null,
+   "setup": "rollback_idle"
+  },
+  {
+   "name": "rollback_reading",
+   "names_after": [
+    "memory.sqlite"
+   ],
+   "probe": null,
+   "setup": "rollback_reading"
+  },
+  {
+   "name": "wal_closed",
+   "names_after": [
+    "memory.sqlite"
+   ],
+   "probe": null,
+   "setup": "wal_closed"
+  },
+  {
+   "name": "wal_open",
+   "names_after": [
+    "memory.sqlite"
+   ],
+   "probe": "a process has <given> open (`bettermemory serve`, the shim's in-process server, a hook, a CLI command, `backup create`, or a daemon this state directory does not name); close every session using bettermemory and run the restore again",
+   "setup": "wal_open"
+  },
+  {
+   "name": "wal_open_dotted",
+   "names_after": [
+    "memory.sqlite"
+   ],
+   "probe": "a process has <given> open (`bettermemory serve`, the shim's in-process server, a hook, a CLI command, `backup create`, or a daemon this state directory does not name); close every session using bettermemory and run the restore again",
+   "setup": "wal_open_dotted"
+  },
+  {
+   "name": "wal_open_link",
+   "names_after": [
+    "link.sqlite",
+    "memory.sqlite"
+   ],
+   "probe": "a process has <given> open (`bettermemory serve`, the shim's in-process server, a hook, a CLI command, `backup create`, or a daemon this state directory does not name); close every session using bettermemory and run the restore again",
+   "setup": "wal_open_link"
+  }
+ ],
+ "restore_wait_seconds": 10.0,
+ "unlock_exit": {
+  "clear": 0,
+  "cleared": 0,
+  "held": 1,
+  "planned": 3
+ }
+}

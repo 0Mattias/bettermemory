@@ -82,7 +82,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `claims` | units 1 and 2 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`) | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl` |
 | `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`) | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
-| `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested) | `store_restore_lock.json` (POSIX only) |
+| `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json` (POSIX only) |
 | `durability` | unit 1 of `durability.py`: `canonical_marker`, `quoted_spans`, `in_quoted_span`, `TransientMatch`, `_snippet_around`, `_at_sentence_start`, `_is_titlecase_name` with `str.istitle`, `sentence_around` | `durability.jsonl`, `durability_unicode.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
@@ -1683,7 +1683,8 @@ OpenSSL's), and walking the rows costs about 29 ms of the native time.
 ## The restore lock, the writing open's side (`restore_lock.py`)
 
 The module map (`src/bettermemory/restore_lock.py` as it is now) and its
-cut. Status: built (reader), built (this unit, restore_lock-1), left.
+cut. Status: built (reader), built (restore_lock-1), built (restore_lock-2,
+the hold). The whole module is now ported.
 
 | function | lines | needs from the machine | status |
 | --- | --- | --- | --- |
@@ -1694,7 +1695,12 @@ cut. Status: built (reader), built (this unit, restore_lock-1), left.
 | `_SharedHold`, `_RecordCheck`, `_identity`, `_refuse_restored`, `_record_admission`, `admit` | 556-582, 640-734, 774-852 | `stat`, `flock` | restore_lock-1 |
 | `_holds_by_handle`, `_open_store_handle`, `_behind_handle`, `_pause` | 605-637, 737-771 | a Windows handle, the clock | restore_lock-1, `cfg(windows)`, untested |
 | `restore_state` | 1189-1222 | `flock` | restore_lock-1 |
-| `_this_thread_holds`, `_HELD`, `RestoreLock`, `mark`, `release`, `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding`, create mode of `_open_record` | the rest | `flock`, the record file written | restore_lock-2 |
+| `_this_thread_holds`, `_HELD`, create mode of `_open_record` | 225-227, 330-344, 421-425 | a process-wide registry | restore_lock-2, built |
+| `RestoreLock`, `mark`, `release` | 924-985 | the record file written, the clock, the pid | restore_lock-2, built |
+| `held_here`, `acquire` | 987-1045 | `flock`, `fstat` | restore_lock-2, built |
+| `probe` | 1053-1115 | SQLite (rusqlite) | restore_lock-2, built |
+| `_holder`, `unlock` | 1118-1186 | `flock` | restore_lock-2, built |
+| `state_finding` | 1225-1256 | `flock`, one read of the record file | restore_lock-2, built |
 
 What restore_lock-1 reproduces (`store::restore_lock`):
 
@@ -1737,9 +1743,10 @@ What restore_lock-1 reproduces (`store::restore_lock`):
 - `_this_thread_holds` is the `mine` argument (a `fn(FileKey) -> bool`, so
   a `RecordCheck` keeps it for `confirm`): no native restore exists, so
   `store::open` and `store::create` pass one that names nothing;
-  restore_lock-2 supplies the registry. On Windows stable std gives no
-  file index, so no key is read and `mine` is never asked there.
-  For the same reason `_identity` answers None there, so when the store
+  restore_lock-2 supplies the registry. On Windows the key is the
+  volume serial number and file index of `GetFileInformationByHandle`
+  (`bettermemory_sys::file_index`), as `os.fstat` fills them.
+  `_identity` still answers None there, so when the store
   file exists but no handle opens on it, a file replaced between `admit`
   and `confirm` is admitted where the reference raises the replaced
   wording of `RestoreLockedError` (part of the Windows gap).
@@ -1773,6 +1780,98 @@ recorded. Tests: `golden_restore_lock_admit` (the rows),
 `restore_lock_admit_kills` and `restore_lock_admit_robustness`. POSIX
 only, as the fixture; on Windows `restore_lock_not_posix.rs` records the
 gap, and under `fsdata`'s Windows flavour nothing here resolves a path.
+
+
+## The restore lock, a restore's own hold (`restore_lock.py`, restore_lock-2)
+
+What restore_lock-2 reproduces (`store::restore_lock`), with the
+reference's lines as they are now:
+
+- `_HELD` and `_this_thread_holds` (225-227, 421-425): a process-wide
+  `Mutex<HashMap<FileKey, ThreadId>>` behind a `OnceLock`, keyed by the
+  locked file's device and inode. `this_thread_holds` is the `mine` that
+  `store::open` and `store::create` now pass to `admit` (they passed one
+  naming nothing); `acquire` passes `key in _HELD` by any thread. A
+  poisoned mutex is used as it stands. On Windows the key is the volume
+  serial number and file index (`bettermemory_sys::file_index`, the
+  `GetFileInformationByHandle` call), as `os.fstat` gives `st_dev` and
+  `st_ino` there, so the restore's own writing opens are admitted and
+  `held_here` answers true for the holding thread; that branch is
+  compiled and checked by clippy only.
+- `RestoreLock` (924-985): `acquire` returns it; `mark(fields, now)`
+  writes `format`, `pid` (`std::process::id`), `started_at` and `store`
+  on the first mark only, updates the fields over them (a key already
+  there keeps its place, as `dict.update`), and writes `json.dumps(...,
+  sort_keys=True)` and a newline after `set_len(0)` and a seek to 0, then
+  `fsync` with errors swallowed. The clock is an argument (`now`, the
+  UTC time; `strftime("%Y-%m-%dT%H:%M:%SZ")`). `store` is `str(Path)`:
+  `config::pure_path` of the path as given, so `./` segments and doubled
+  separators go as `pathlib` drops them; on POSIX a byte that is no UTF-8
+  is the lone surrogate `os.fsdecode` makes of it (written `\udcXX` in
+  the marker), as it is in `unlock`'s `lock`, the probe's message and
+  `state_finding`'s `record`. The write is `write_all` where
+  the reference makes one `os.write`; they differ only on a short write.
+  A field JSON cannot spell (a datetime) is `HoldError::Type`, the
+  reference's TypeError; one nested past `json.dumps`'s depth is
+  `HoldError::Recursion`. `release(clear)` empties and removes the marker
+  under the lock when `clear` (after the close on Windows), drops the
+  registry entry, unlocks and closes. A `RestoreLock` dropped without
+  `release` (a panic) stays held: its files are left open and its
+  registry entry kept until the process ends, as the reference's file
+  descriptors and `_HELD` entry outlive its object.
+- `held_here` (987-997): `_take` shared with no wait; an OSError (no
+  directory, a directory at the record path in record mode) is raised,
+  as the reference raises it.
+- `acquire` (1000-1045): `_take(create=True)` exclusively within `wait`
+  (`RESTORE_WAIT`, 10 s, is the caller's default); None when held past
+  the wait or by this process; the marker file opened read-write and made
+  owner-only (`0o600`) when missing, read once as `previous`. A marker
+  nested past the decoder's depth is `HoldError::Recursion`, as the
+  reference's RecursionError, and the lock is let go. The unreachable
+  "could not be made" FileNotFoundError is kept.
+- `probe` (1053-1115): None unless the path is a regular file (following
+  links); then `canonicalize` (the reference's `Path.resolve`) and the
+  crate's `store::file_uri` (the reference's `sqlite_file_uri`, already
+  in the crate, so none was written here) with `?mode=rw`, opened
+  read-write without create, `busy_timeout(0)` (rusqlite's open sets five
+  seconds; the reference's `timeout=0` none), then `PRAGMA trusted_schema
+  = OFF`, `PRAGMA locking_mode = EXCLUSIVE` and `PRAGMA schema_version`,
+  each stepped once as `Connection.execute` does. An error whose primary
+  code is SQLITE_BUSY or SQLITE_LOCKED gives the message with the path as
+  given (`str(Path)`); any other error, or an open that fails, is None.
+  A rollback-journal connection inside a read transaction does not make
+  the probe busy (it reads under SHARED); an open WAL connection does.
+- `_holder` and `unlock` (1118-1186): `unlock(store, apply, wait)` with
+  `wait` for `OPEN_WAIT_SECONDS`; the report is `UnlockReport` (status,
+  `str(lock)`, marker, holder) and `UnlockStatus::exit` is `UNLOCK_EXIT`.
+  `lock.exists()` follows links, as `Path.exists`.
+- `state_finding` (1225-1256): `restore_state` with no wait and
+  `this_thread_holds`; summary, remedy and details (`state`, `record`,
+  then `restore` for running and unfinished) as `PyStr` and a dict in the
+  reference's order; `describe` and the "again" command through
+  `printable`.
+
+Record mode is a parameter as in restore_lock-1: each public function
+has a hidden `*_in_record_mode` twin for tests. No pattern of `re` is
+involved.
+
+Pinned by `store_restore_lock_hold.json` (19 hold rows, 11 probe rows):
+each hold row is a list of steps on one store (`acquire`, `mark`,
+`release`, `held_here` from the holding thread and from another,
+`state_finding` likewise, `unlock`, the names in the directory), over a
+free store in directory mode, in record mode and spelled with a `./`
+segment, a killed holder's marker taken over and cleared, markers that
+are not JSON, blank or nested too deep, a helper holding the directory
+or record file shared or exclusively, a directory at the lock path, and a
+missing directory. The probe rows: no file, a directory, an empty file, a
+file that is not a database, rollback-journal and WAL stores closed, idle,
+reading and held open, the last also through a `./` segment and a link.
+The pid, the clock's time, the paths and an unreadable marker's C library
+text are spelled as placeholders. Tests: `golden_restore_lock_hold`,
+`restore_lock_hold_kills` and `restore_lock_hold_robustness`; POSIX only
+as the fixture, with `restore_lock_hold_not_posix.rs` recording the gap
+(class os). Under `fsdata`'s Windows flavour nothing here resolves a path
+(ENG-124).
 
 ## The additive schema steps (`store_schema.py`, unit store_schema-1)
 

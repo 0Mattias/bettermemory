@@ -359,7 +359,7 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "origin_gitfiles_darwin.jsonl" => &[Platform],
         // The restore lock is a directory `flock` on POSIX, a record file
         // and a handle on Windows; the generator runs on POSIX only.
-        "store_restore_lock.json" => &[Platform],
+        "store_restore_lock.json" | "store_restore_lock_hold.json" => &[Platform],
         // The rows hold the tokenizer's spelling; the records are built
         // through the models.
         "store_provenance.jsonl" => &[Unicode, Pydantic],
