@@ -34,6 +34,11 @@ use std::collections::HashMap;
 use rusqlite::types::{Value, ValueRef};
 use rusqlite::Connection;
 
+pub use super::rows::is_mutation;
+use super::rows::{
+    columns_of, get, item, membership_key, membership_values, sync_links, text, upsert, Fail,
+    SPECS, VERIFICATION_LISTS,
+};
 use super::{
     bytes_repr, log_row, KeyLoader, StoreError, StoreFile, LOAD_TRIES, LOG_SELECT, VERIFY_BATCH,
 };
@@ -97,198 +102,6 @@ pub fn table_keys(table: &str) -> &'static [&'static str] {
         _ => &[],
     }
 }
-
-/// One `_MembershipTable`.
-struct Spec {
-    table: &'static str,
-    kind: &'static str,
-    key: &'static [&'static str],
-    columns: &'static [&'static str],
-    optional: &'static [&'static str],
-    floats: &'static [&'static str],
-}
-
-const SPECS: [Spec; 14] = [
-    Spec {
-        table: "native_membership_rows",
-        kind: "native_member",
-        key: &["member_kind", "key_text"],
-        columns: &["member_kind", "key_text", "row_text"],
-        optional: &[],
-        floats: &[],
-    },
-    Spec {
-        table: "machines",
-        kind: "machine",
-        key: &["id"],
-        columns: &["id", "facts_json", "predecessor", "minted"],
-        optional: &[],
-        floats: &[],
-    },
-    Spec {
-        table: "projects",
-        kind: "project",
-        key: &["id"],
-        columns: &[
-            "id",
-            "name",
-            "merged_into",
-            "provisional",
-            "parent",
-            "tenant",
-            "folder",
-            "boundary",
-            "minted",
-        ],
-        optional: &[],
-        floats: &[],
-    },
-    Spec {
-        table: "project_witnesses",
-        kind: "project_witness",
-        key: &["project", "commit_id"],
-        columns: &["project", "commit_id", "arrival", "source", "fingerprint"],
-        optional: &[],
-        floats: &[],
-    },
-    Spec {
-        table: "project_blobs",
-        kind: "project_blob",
-        key: &["project", "blob"],
-        columns: &["project", "blob", "witness"],
-        optional: &[],
-        floats: &[],
-    },
-    Spec {
-        table: "project_remotes",
-        kind: "project_remote",
-        key: &["project", "remote_key"],
-        columns: &["project", "remote_key"],
-        optional: &[],
-        floats: &[],
-    },
-    Spec {
-        table: "project_files",
-        kind: "project_file",
-        key: &["file_id"],
-        columns: &["file_id", "project", "evidence"],
-        optional: &[],
-        floats: &[],
-    },
-    Spec {
-        table: "declared_remotes",
-        kind: "declared_remote",
-        key: &["remote_key"],
-        columns: &["remote_key", "project", "principal"],
-        optional: &[],
-        floats: &[],
-    },
-    Spec {
-        table: "checkouts",
-        kind: "checkout",
-        key: &["id"],
-        columns: &[
-            "id",
-            "project",
-            "machine",
-            "kind",
-            "object_device",
-            "object_inode",
-            "object_birth",
-            "common_device",
-            "common_inode",
-            "common_birth",
-            "git_dir",
-            "token",
-            "token_status",
-            "stamps_json",
-            "last_head",
-            "branch",
-            "remotes_json",
-            "manifest_json",
-            "legacy",
-            "retired",
-            "registered",
-            "unresolved_json",
-        ],
-        optional: &["unresolved_json"],
-        floats: &[],
-    },
-    Spec {
-        table: "checkout_views",
-        kind: "checkout_view",
-        key: &["checkout", "machine", "path"],
-        columns: &[
-            "checkout",
-            "machine",
-            "path",
-            "first_seen",
-            "last_seen",
-            "seen_order",
-        ],
-        optional: &[],
-        floats: &[],
-    },
-    Spec {
-        table: "homes",
-        kind: "home",
-        key: &["record_id"],
-        columns: &[
-            "record_id",
-            "kind",
-            "project",
-            "checkout",
-            "rule",
-            "decided",
-        ],
-        optional: &[],
-        floats: &[],
-    },
-    Spec {
-        table: "proposals",
-        kind: "proposal",
-        key: &["id"],
-        columns: &[
-            "id",
-            "checkout",
-            "kind",
-            "candidates_json",
-            "evidence_json",
-            "reason",
-            "line",
-            "state",
-            "answer",
-            "answered_by",
-            "signature_json",
-            "opened",
-        ],
-        optional: &[],
-        floats: &[],
-    },
-    Spec {
-        table: "standing",
-        kind: "standing",
-        key: &["record_id"],
-        columns: &[
-            "record_id",
-            "probability",
-            "body_sha256",
-            "source",
-            "answered_by",
-            "answered",
-        ],
-        optional: &[],
-        floats: &["probability"],
-    },
-    Spec {
-        table: "returned",
-        kind: "returned",
-        key: &["record_id"],
-        columns: &["record_id", "via", "returned"],
-        optional: &[],
-        floats: &[],
-    },
-];
 
 const MEMORY_COLUMNS: [&str; 30] = [
     "id",
@@ -372,27 +185,6 @@ const CONFLICT_COLUMNS: [&str; 14] = [
     "verdict_hash_a",
     "verdict_hash_b",
 ];
-
-const VERIFICATION_LISTS: [&str; 4] = [
-    "verified_paths",
-    "verified_commits",
-    "verified_versions",
-    "verified_absent_paths",
-];
-
-fn upsert(table: &str, columns: &[&str], key: &str) -> String {
-    let updates: Vec<String> = columns
-        .iter()
-        .filter(|c| **c != key)
-        .map(|c| format!("{c} = excluded.{c}"))
-        .collect();
-    format!(
-        "INSERT INTO {table}({}) VALUES ({}) ON CONFLICT({key}) DO UPDATE SET {}",
-        columns.join(", "),
-        vec!["?"; columns.len()].join(", "),
-        updates.join(", ")
-    )
-}
 
 const EPISODE_UPSERT: &str = "INSERT INTO episodes(id, session_id, created, body, scopes_json, \
      takeaway, origin_json, is_floor, swarm_id, log_mac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
@@ -590,37 +382,10 @@ fn sqlite_class(e: &rusqlite::Error) -> &'static str {
 // Applying one row
 // ---------------------------------------------------------------------------
 
-/// What applying a row raised: an exception `refold` catches, with
-/// `str(exc)`, or one it lets out.
-enum Fail {
-    Caught(&'static str, String),
-    Raised(&'static str),
-}
-
 type Applied = Result<(), Fail>;
-
-fn key_error(name: &str) -> Fail {
-    Fail::Caught(
-        "KeyError",
-        unicode::to_string(&repr_str(&unicode::cps(name))).unwrap_or_default(),
-    )
-}
 
 fn py_fail(e: PyError) -> Fail {
     Fail::Raised(e.name())
-}
-
-fn text(s: PyStr) -> String {
-    unicode::to_string(&s).unwrap_or_default()
-}
-
-fn item<'a>(payload: &'a PyValue, name: &str) -> Result<&'a PyValue, Fail> {
-    payload.get(name).ok_or_else(|| key_error(name))
-}
-
-fn get<'a>(payload: &'a PyValue, name: &str) -> &'a PyValue {
-    static NONE: PyValue = PyValue::None;
-    payload.get(name).unwrap_or(&NONE)
 }
 
 fn py_str(v: &PyValue) -> Result<PyValue, Fail> {
@@ -726,7 +491,7 @@ fn record_fail(e: RecordError) -> Fail {
     }
 }
 
-fn json_text(v: &PyValue) -> Result<PyValue, Fail> {
+pub(crate) fn json_text(v: &PyValue) -> Result<PyValue, Fail> {
     records::json_text(v).map(PyValue::Str).map_err(py_fail)
 }
 
@@ -1235,31 +1000,17 @@ impl<'c> Applier<'c> {
                 map.insert("log_mac".into(), mac);
                 self.exec(&self.memory_upsert, &ordered(&MEMORY_COLUMNS, map))?;
                 let id = PyValue::Str(memory.fields.id.clone());
-                self.exec(
-                    "DELETE FROM memory_links WHERE source_id = ?",
-                    std::slice::from_ref(&id),
-                )?;
-                let mut seen: Vec<[PyValue; 4]> = Vec::new();
-                for link in &memory.links {
-                    let key = [
-                        id.clone(),
-                        PyValue::str(link.link_type.value()),
-                        PyValue::Str(link.target_id.clone()),
-                        link.note.clone().map_or(PyValue::None, PyValue::Str),
-                    ];
-                    if seen.contains(&key) {
-                        continue;
-                    }
-                    seen.push(key);
-                }
-                for key in &seen {
-                    self.exec(
-                        "INSERT OR IGNORE INTO memory_links(source_id, type, target_id, note) \
-                         VALUES (?, ?, ?, ?)",
-                        key,
-                    )?;
-                }
-                Ok(())
+                sync_links(
+                    &id,
+                    memory.links.iter().map(|link| {
+                        [
+                            PyValue::str(link.link_type.value()),
+                            PyValue::Str(link.target_id.clone()),
+                            link.note.clone().map_or(PyValue::None, PyValue::Str),
+                        ]
+                    }),
+                    |sql, values| self.exec(sql, values),
+                )
             }
             "memory_delete" | "tombstone_delete" | "episode_delete" | "conflict_delete" => {
                 let id = py_str(item(payload, "id")?)?;
@@ -1455,79 +1206,6 @@ impl<'c> Applier<'c> {
     }
 }
 
-/// `_membership_values`.
-fn membership_values(spec: &Spec, row: &PyValue) -> Result<Vec<PyValue>, Fail> {
-    let PyValue::Dict(items) = row else {
-        return Err(Fail::Caught(
-            "TypeError",
-            format!("a {} row must be an object", spec.kind),
-        ));
-    };
-    let mut unknown: Vec<PyStr> = Vec::new();
-    for (k, _) in items {
-        let PyValue::Str(k) = k else {
-            return Err(Fail::Raised("TypeError"));
-        };
-        let known = unicode::to_string(k).is_some_and(|k| spec.columns.contains(&k.as_str()));
-        if !known && !unknown.contains(k) {
-            unknown.push(k.clone());
-        }
-    }
-    if !unknown.is_empty() {
-        unknown.sort();
-        let shown: Vec<String> = unknown.iter().map(|k| text(repr_str(k))).collect();
-        return Err(Fail::Caught(
-            "ValueError",
-            format!("unknown {} columns [{}]", spec.kind, shown.join(", ")),
-        ));
-    }
-    let mut values = Vec::with_capacity(spec.columns.len());
-    for column in spec.columns {
-        let value = if spec.optional.contains(column) {
-            get(row, column)
-        } else {
-            item(row, column)?
-        };
-        values.push(if column.ends_with("_json") {
-            match value {
-                PyValue::None => PyValue::None,
-                other => json_text(other)?,
-            }
-        } else {
-            match value {
-                PyValue::Bool(b) => PyValue::int(i128::from(*b)),
-                PyValue::None | PyValue::Str(_) | PyValue::Int(_) => value.clone(),
-                PyValue::Float(f) if spec.floats.contains(column) && f.is_finite() => value.clone(),
-                _ => {
-                    return Err(Fail::Caught(
-                        "TypeError",
-                        format!("{}.{column} must be text, an integer or null", spec.kind),
-                    ))
-                }
-            }
-        });
-    }
-    membership_key(spec, row)?;
-    Ok(values)
-}
-
-/// `_membership_key`.
-fn membership_key(spec: &Spec, payload: &PyValue) -> Result<Vec<PyValue>, Fail> {
-    let mut key = Vec::new();
-    for column in spec.key {
-        match item(payload, column)? {
-            PyValue::Str(s) if !s.is_empty() => key.push(PyValue::Str(s.clone())),
-            _ => {
-                return Err(Fail::Caught(
-                    "ValueError",
-                    format!("{}.{column} must be non-empty text", spec.kind),
-                ))
-            }
-        }
-    }
-    Ok(key)
-}
-
 /// The first line of `text` as `str.splitlines` cuts it, at most 200
 /// characters.
 fn first_line(text: &str) -> String {
@@ -1588,18 +1266,6 @@ fn scratch() -> Result<Scratch, FoldError> {
         memory_upsert: upsert("memories", &MEMORY_COLUMNS, "id"),
         tombstone_upsert: upsert("tombstones", &TOMBSTONE_COLUMNS, "id"),
     })
-}
-
-fn columns_of(conn: &Connection, table: &str) -> Result<Vec<String>, FoldError> {
-    let mut statement = conn
-        .prepare(&format!("PRAGMA table_info({table})"))
-        .map_err(StoreError::from)?;
-    let names = statement
-        .query_map([], |r| r.get::<_, String>(1))
-        .map_err(StoreError::from)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(StoreError::from)?;
-    Ok(names)
 }
 
 fn cell(v: ValueRef<'_>) -> Result<Cell, FoldError> {
@@ -2665,26 +2331,6 @@ fn apply_batch(
         }
     }
     Ok(())
-}
-
-/// Whether `kind` is in `MUTATION_KINDS`.
-pub fn is_mutation(kind: &str) -> bool {
-    const RECORD: [&str; 7] = [
-        "memory",
-        "tombstone",
-        "episode",
-        "verification",
-        "conflict",
-        "import",
-        "quarantine",
-    ];
-    let Some(table) = kind
-        .strip_suffix("_put")
-        .or_else(|| kind.strip_suffix("_delete"))
-    else {
-        return false;
-    };
-    RECORD.contains(&table) || SPECS.iter().any(|s| s.kind == table)
 }
 
 /// One problem of the merged report.

@@ -52,9 +52,11 @@
 //! - [`store`]: a store file read without writing to it: the version
 //!   contract, the tables, the key ring from a keys directory, the chain
 //!   verified on disk, the FTS5 prefilter, the additive schema steps
-//!   with their leaves (`store::schema`), and the restore lock as a read
+//!   with their leaves (`store::schema`), the restore lock as a read
 //!   and a writing open meet it (`store::restore_lock`: `reading`,
-//!   `admit`, `restore_state`);
+//!   `admit`, `restore_state`), and `store_rows`' shared leaves (the
+//!   membership specs, the row sort, the schema's columns, the
+//!   verification row, a log row as a telemetry event and the kind sets);
 //! - [`membership_records`]: the vocabulary and records of the membership
 //!   model, units 1 to 3 (the legacy ask rule and the helpers that
 //!   compare, join and rebase recorded paths in either spelling; the

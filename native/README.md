@@ -65,7 +65,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
@@ -2031,6 +2031,116 @@ shape. The reviewer's measurements on other stores gave ratios of 0.42 and
 and spells the index text on every core; replaying them is one transaction
 on prepared statements, in seq order.
 
+## The store_rows leaves (`store::rows`)
+
+`store::rows` holds the leaves of `store_rows.py` that the fold and the
+readers share. The fold's private copies moved here unchanged; the rest
+is new. Reference lines are `store_rows.py` unless named.
+
+| Function | Reference | Needs from the machine | Status |
+| --- | --- | --- | --- |
+| `iso_opt` | `_iso_opt` 66-67 | nothing | built |
+| `upsert` | `_upsert_sql` 233-243 | nothing | moved from `fold` |
+| `sync_links` | `_sync_links` 246-264 | a statement runner (argument) | moved out of `Applier::apply` |
+| `Spec`, `SPECS` | `store_schema._MEMBERSHIP_SPECS` | nothing | moved from `fold` |
+| `membership_values`, `membership_key` | `_membership_values` 687-716, `_membership_key` 745-756 | nothing | moved from `fold` |
+| `columns_of` | `PRAGMA table_info` of `_table_rows` | a connection (argument) | moved from `fold` |
+| `membership_spec` | `_membership_spec` 719-723 | nothing | built |
+| `membership_spec_by_table` | `store_schema._MEMBERSHIP_BY_TABLE` | nothing | built |
+| `membership_column` | `_membership_column` 726-728 | nothing | built |
+| `sort_rows` | `_sort_rows` 731-742 | nothing | built |
+| `known_columns` | `_known_columns` 759-777 | the linked SQLite | built |
+| `verification_row` | `_verification_row` 475-483 | nothing | built |
+| `event_from_columns` | `_event_from_columns` 816-838 (`_ROW_COLUMNS` 813) | nothing | built |
+| `event_from_raw` | `store.py` `Store._event_from_raw` 2004-2010 | nothing | built |
+| `is_mutation`, `is_membership_mutation`, `MUTATION_TABLES` | `store_schema.MUTATION_KINDS` 206-208, `MEMBERSHIP_MUTATION_KINDS` 248-250 | nothing | `is_mutation` moved from `fold` (re-exported there) |
+| `CONTROL_KINDS` | `log.py` 172, 179, 208, 218 (the union of the four assignments) | nothing | built |
+| `MEMBERSHIP_EVENT_KINDS`, `not_telemetry` | `store_schema.py` 214-247, `_NOT_TELEMETRY` 255 | nothing | built |
+
+Not moved: `fold`'s private `schema_texts` reads the first two pinned
+schema texts and `admission::schema_texts` all five, so they do not
+concatenate the same texts and `fold` keeps its own. `sqlite_class` stays
+in `fold`. `fold`'s refusal type `Fail` and its `item`, `get`, `text` and
+`key_error` helpers moved with the membership checks that use them;
+`fold::json_text` is `pub(crate)` for `membership_values`.
+`records::rows::load_json` is `pub(crate)` for `verification_row`.
+`records::rows::path_targets` is not reused: it serves the record
+readers, whose rows always name an `id`, so it reads `row["id"]`
+unconditionally (IndexError on a verification row, which names none,
+where the reference skips the check), and it keeps only the first level
+of each target map, which is all the model reads. `verification_row`
+has its own whole `_path_targets`, with Python's `==` between the
+record's id and the column.
+
+Decisions:
+
+- `sort_rows` reproduces `list.sort` with `key` and `reverse`, not a
+  sort with an inverted comparator: the keys are made for every row
+  first (a row without the column is KeyError, `str(exc)` the column's
+  `repr`, before any comparison), the list is reversed for a leading
+  `-`, sorted ascending and reversed back, which keeps equal rows in
+  their order. Keys compare as Python compares the tuples `(value is not
+  None, value or 0)`: the flags first, then `==` (never raising across
+  types) and `<`, which across types (int or float against str or bytes,
+  str against bytes) is the TypeError `'<' not supported between
+  instances of 'A' and 'B'`, returned and never a panic. An int and a
+  float compare exactly, as CPython does. The comparisons are CPython
+  3.13's own at every length: `count_run`, binary insertion up to the
+  minimum run, powersort's merge order (`powerloop`, `found_new_run`,
+  `merge_force_collapse`) and the galloping merges (`merge_at`,
+  `gallop_left`, `gallop_right`, `merge_lo`, `merge_hi`, `min_gallop`
+  carried from merge to merge), each merge in place over the list with
+  the shorter run copied aside. So a TypeError names its two types in
+  the order CPython's first failing comparison does, and a NaN (which
+  SQLite never returns) leaves the rows in the order CPython leaves them.
+  The keys sort with each row's index; the rows are moved once per name.
+  Rows are `records::rows::Row` values, as sqlite3 gives them.
+- `known_columns` builds an in-memory database from `SCHEMA` and then
+  `MEMBERSHIP_SCHEMA` (the first two pinned texts of
+  `admission::schema_texts`), FTS5's table and shadow tables included,
+  once per process. Its fixture names the reference SQLite and is gated
+  on it on the Python side (`SQLITE_GATED`); the Rust test compares it
+  strictly (class i), since the native build links its own SQLite and
+  `gates_of` gates no file on SQLite but `models_stores.jsonl`.
+- `event_from_columns` takes the payload as the column value: null and
+  numbers are `json.loads`' TypeError, which propagates; a
+  JSONDecodeError, a UnicodeDecodeError of bytes and the too-many-digits
+  ValueError are None; RecursionError propagates. A non-telemetry kind
+  is None before the payload is read.
+- `verification_row` answers a list of name and field pairs: a column as
+  sqlite3 gives it, or a decoded value; a refusal is the class.
+- `verification_row` and `event_from_raw` read a column as `sqlite3.Row`
+  does (`Row::item`): the first column whose name is equal, or equal
+  ignoring ASCII case when both names are ASCII. `name in row.keys()`
+  (`Row::has_key`) is exact. `Row::get`, which the record readers use,
+  is unchanged.
+- No regular expression is involved.
+
+Fixtures (`tests/contract/gen_store_rows.py`): `store_rows_leaves.jsonl`
+(upsert statements for the memory and tombstone columns, link rows,
+`membership_spec` and `membership_column` over every kind, table and
+column and bad names, sorts with nulls, ties under a descending name,
+several names, int and float boundaries and mixed types, a sweep of
+4,000 seeded lists of up to 63 rows of numbers or text as a digest, verification rows read
+from a reference-built table (names repeated or in another case among
+them), events over every kind of
+`_NOT_TELEMETRY` and over payloads that are not JSON or not objects,
+log rows through `Store._event_from_raw` (names repeated or in another
+case among them), the five kind sets, and `_iso_opt`),
+`store_rows_leaves_python.jsonl` (payloads nested around the recursion
+budget, an attestation payload past it, the same sweep with mixed-type
+lists, whose TypeError names the pair the release's sort compares first
+(3.12 and 3.11 compare in another order than 3.13), lists of 32 to 63
+rows that one run and two runs fail on differently, and 600 seeded
+lists of 64 to 400 rows each over numbers with NaN and over mixed types;
+gated on the Python release) and
+`store_rows_columns.jsonl`
+(gated on SQLite on the Python side only).
+
+Left for later units: the rest of `store_rows.py` (the record writers and
+readers that are not yet ported, `_table_rows` as a whole and the
+mutation dispatcher outside the fold).
+
 ## The search pool, by caller
 
 `store::pool::PoolReader` draws the pool a caller's request ranks from a
@@ -3014,6 +3124,10 @@ that Unicode too.
 | `golden_fold`: `fold_every_case` | `fold.jsonl` | ii (Unicode, pydantic-core) |
 | `golden_fold`: `hostile_inputs_never_panic` | `fold.jsonl` as input only | i |
 | `fold_writer` | `fold.jsonl`'s `populated` prelude as input only | i |
+| `golden_store_rows`: `store_rows_leaves_every_case` | `store_rows_leaves.jsonl` | i |
+| `golden_store_rows`: `store_rows_leaves_python_every_case` | `store_rows_leaves_python.jsonl` | ii (Python) |
+| `golden_store_rows`: `store_rows_columns_every_table` | `store_rows_columns.jsonl` | i |
+| `store_rows_kills` (14), `store_rows_robustness` (5) | none | i |
 | `golden_store_create`: `a_native_create_equals_the_references`, `every_refusal_is_the_references`, `stale_sidecars_end_as_the_references` | `store_create.json` | ii (Unicode); modes: os on Windows |
 | `golden_store_create`: `the_pinned_digest_fingerprint_is_the_committed_fixtures` | `store_create.json` as committed | i |
 | `store_create_cross`, `store_create_kills` | `store_create.json` as input; the reference Python (set aside, class i, when `BM_REFERENCE_PYTHON` cannot import `bettermemory`) | i |

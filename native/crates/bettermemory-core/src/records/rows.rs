@@ -30,6 +30,22 @@ impl Row {
             .map(|(_, v)| v)
     }
 
+    /// `sqlite3.Row`'s own lookup by name: the first column whose name is
+    /// equal, or, when both names are ASCII, equal ignoring ASCII case.
+    pub fn item(&self, name: &str) -> Option<&SqlValue> {
+        self.columns
+            .iter()
+            .find(|(k, _)| {
+                k == name || (k.is_ascii() && name.is_ascii() && k.eq_ignore_ascii_case(name))
+            })
+            .map(|(_, v)| v)
+    }
+
+    /// `name in row.keys()`: exact, as a list of names compares.
+    pub fn has_key(&self, name: &str) -> bool {
+        self.columns.iter().any(|(k, _)| k == name)
+    }
+
     /// `row[name]`: a column the row lacks is IndexError, as
     /// `sqlite3.Row` raises it (a table missing a column).
     fn at(&self, name: &str) -> Result<&SqlValue, RecordError> {
@@ -222,7 +238,7 @@ fn json_loads(v: &SqlValue) -> Result<PyValue, RecordError> {
 }
 
 /// `store_rows._load_json(value, default)`.
-fn load_json(v: &SqlValue, default: PyValue) -> Result<PyValue, RecordError> {
+pub(crate) fn load_json(v: &SqlValue, default: PyValue) -> Result<PyValue, RecordError> {
     match v {
         SqlValue::Null => Ok(default),
         SqlValue::Text(t) if t == "[]" => Ok(PyValue::List(Vec::new())),

@@ -276,6 +276,10 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // Payloads nested near `json.loads`'s recursion budget
         // (`gen_history_rows`).
         "history_rows_python.jsonl" => &[Python],
+        // The same budget, and sorts whose answer follows the release's
+        // `list.sort`: the pair a TypeError names, the order a NaN leaves
+        // (`gen_store_rows`).
+        "store_rows_leaves_python.jsonl" => &[Python],
         "models_rows.jsonl" => &[Python, Pydantic],
         // 3.11's realpath walks a link loop otherwise (`gen_fs_realpath`).
         "fs_realpath_python.jsonl" => &[Python],

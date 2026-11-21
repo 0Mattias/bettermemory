@@ -1,0 +1,635 @@
+{"cases":634}
+{"columns":["id","created","updated","last_verified_at","confidence","category","body","body_fts","scopes_text","scopes_fts","scopes_json","filename","origin_repo","origin_worktree","provenance","verified_head","actor_client","actor_model","source","origin_json","actor_json","verified_paths_json","verified_commits_json","verified_versions_json","verified_absent_paths_json","claims_json","links_json","corroborations","last_corroborated","log_mac"],"key":"id","op":"upsert","out":"INSERT INTO memories(id, created, updated, last_verified_at, confidence, category, body, body_fts, scopes_text, scopes_fts, scopes_json, filename, origin_repo, origin_worktree, provenance, verified_head, actor_client, actor_model, source, origin_json, actor_json, verified_paths_json, verified_commits_json, verified_versions_json, verified_absent_paths_json, claims_json, links_json, corroborations, last_corroborated, log_mac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET created = excluded.created, updated = excluded.updated, last_verified_at = excluded.last_verified_at, confidence = excluded.confidence, category = excluded.category, body = excluded.body, body_fts = excluded.body_fts, scopes_text = excluded.scopes_text, scopes_fts = excluded.scopes_fts, scopes_json = excluded.scopes_json, filename = excluded.filename, origin_repo = excluded.origin_repo, origin_worktree = excluded.origin_worktree, provenance = excluded.provenance, verified_head = excluded.verified_head, actor_client = excluded.actor_client, actor_model = excluded.actor_model, source = excluded.source, origin_json = excluded.origin_json, actor_json = excluded.actor_json, verified_paths_json = excluded.verified_paths_json, verified_commits_json = excluded.verified_commits_json, verified_versions_json = excluded.verified_versions_json, verified_absent_paths_json = excluded.verified_absent_paths_json, claims_json = excluded.claims_json, links_json = excluded.links_json, corroborations = excluded.corroborations, last_corroborated = excluded.last_corroborated, log_mac = excluded.log_mac","table":"memories"}
+{"columns":["id","created","updated","last_verified_at","confidence","category","body","scopes_json","filename","origin_repo","origin_worktree","provenance","verified_head","actor_client","actor_model","source","origin_json","actor_json","verified_paths_json","verified_commits_json","verified_versions_json","verified_absent_paths_json","claims_json","links_json","corroborations","last_corroborated","removed","removed_reason","removed_session","log_mac"],"key":"id","op":"upsert","out":"INSERT INTO tombstones(id, created, updated, last_verified_at, confidence, category, body, scopes_json, filename, origin_repo, origin_worktree, provenance, verified_head, actor_client, actor_model, source, origin_json, actor_json, verified_paths_json, verified_commits_json, verified_versions_json, verified_absent_paths_json, claims_json, links_json, corroborations, last_corroborated, removed, removed_reason, removed_session, log_mac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET created = excluded.created, updated = excluded.updated, last_verified_at = excluded.last_verified_at, confidence = excluded.confidence, category = excluded.category, body = excluded.body, scopes_json = excluded.scopes_json, filename = excluded.filename, origin_repo = excluded.origin_repo, origin_worktree = excluded.origin_worktree, provenance = excluded.provenance, verified_head = excluded.verified_head, actor_client = excluded.actor_client, actor_model = excluded.actor_model, source = excluded.source, origin_json = excluded.origin_json, actor_json = excluded.actor_json, verified_paths_json = excluded.verified_paths_json, verified_commits_json = excluded.verified_commits_json, verified_versions_json = excluded.verified_versions_json, verified_absent_paths_json = excluded.verified_absent_paths_json, claims_json = excluded.claims_json, links_json = excluded.links_json, corroborations = excluded.corroborations, last_corroborated = excluded.last_corroborated, removed = excluded.removed, removed_reason = excluded.removed_reason, removed_session = excluded.removed_session, log_mac = excluded.log_mac","table":"tombstones"}
+{"columns":["a"],"key":"a","op":"upsert","out":"INSERT INTO t(a) VALUES (?) ON CONFLICT(a) DO UPDATE SET ","table":"t"}
+{"columns":["a","k","b"],"key":"k","op":"upsert","out":"INSERT INTO t(a, k, b) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET a = excluded.a, b = excluded.b","table":"t"}
+{"columns":["a","b"],"key":"k","op":"upsert","out":"INSERT INTO t(a, b) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET a = excluded.a, b = excluded.b","table":"t"}
+{"id":"A","links":[],"op":"links","out":[["DELETE FROM memory_links WHERE source_id = ?",[["s","A"]]]]}
+{"id":"A","links":[["supersedes","B",null]],"op":"links","out":[["DELETE FROM memory_links WHERE source_id = ?",[["s","A"]]],["INSERT OR IGNORE INTO memory_links(source_id, type, target_id, note) VALUES (?, ?, ?, ?)",[["s","A"],["s","supersedes"],["s","B"],null]]]}
+{"id":"A","links":[["related","B",null],["related","B",null],["related","B","n"]],"op":"links","out":[["DELETE FROM memory_links WHERE source_id = ?",[["s","A"]]],["INSERT OR IGNORE INTO memory_links(source_id, type, target_id, note) VALUES (?, ?, ?, ?)",[["s","A"],["s","related"],["s","B"],null]],["INSERT OR IGNORE INTO memory_links(source_id, type, target_id, note) VALUES (?, ?, ?, ?)",[["s","A"],["s","related"],["s","B"],["s","n"]]]]}
+{"id":"A","links":[["a","C","x"],["b","C","x"],["a","C","x"],["a","D",null]],"op":"links","out":[["DELETE FROM memory_links WHERE source_id = ?",[["s","A"]]],["INSERT OR IGNORE INTO memory_links(source_id, type, target_id, note) VALUES (?, ?, ?, ?)",[["s","A"],["s","a"],["s","C"],["s","x"]]],["INSERT OR IGNORE INTO memory_links(source_id, type, target_id, note) VALUES (?, ?, ?, ?)",[["s","A"],["s","b"],["s","C"],["s","x"]]],["INSERT OR IGNORE INTO memory_links(source_id, type, target_id, note) VALUES (?, ?, ?, ?)",[["s","A"],["s","a"],["s","D"],null]]]}
+{"id":"A","links":[["t","B",""],["t","B",null],["t","B",""]],"op":"links","out":[["DELETE FROM memory_links WHERE source_id = ?",[["s","A"]]],["INSERT OR IGNORE INTO memory_links(source_id, type, target_id, note) VALUES (?, ?, ?, ?)",[["s","A"],["s","t"],["s","B"],["s",""]]],["INSERT OR IGNORE INTO memory_links(source_id, type, target_id, note) VALUES (?, ?, ?, ?)",[["s","A"],["s","t"],["s","B"],null]]]}
+{"k":"native_member","op":"spec","out":{"kind":"native_member","table":"native_membership_rows"}}
+{"k":"machine","op":"spec","out":{"kind":"machine","table":"machines"}}
+{"k":"project","op":"spec","out":{"kind":"project","table":"projects"}}
+{"k":"project_witness","op":"spec","out":{"kind":"project_witness","table":"project_witnesses"}}
+{"k":"project_blob","op":"spec","out":{"kind":"project_blob","table":"project_blobs"}}
+{"k":"project_remote","op":"spec","out":{"kind":"project_remote","table":"project_remotes"}}
+{"k":"project_file","op":"spec","out":{"kind":"project_file","table":"project_files"}}
+{"k":"declared_remote","op":"spec","out":{"kind":"declared_remote","table":"declared_remotes"}}
+{"k":"checkout","op":"spec","out":{"kind":"checkout","table":"checkouts"}}
+{"k":"checkout_view","op":"spec","out":{"kind":"checkout_view","table":"checkout_views"}}
+{"k":"home","op":"spec","out":{"kind":"home","table":"homes"}}
+{"k":"proposal","op":"spec","out":{"kind":"proposal","table":"proposals"}}
+{"k":"standing","op":"spec","out":{"kind":"standing","table":"standing"}}
+{"k":"returned","op":"spec","out":{"kind":"returned","table":"returned"}}
+{"k":"","op":"spec","out":{"raise":["ValueError","'' is not a membership row kind"]}}
+{"k":"memory","op":"spec","out":{"raise":["ValueError","'memory' is not a membership row kind"]}}
+{"k":"Project","op":"spec","out":{"raise":["ValueError","'Project' is not a membership row kind"]}}
+{"k":"machine_put","op":"spec","out":{"raise":["ValueError","'machine_put' is not a membership row kind"]}}
+{"k":" machine","op":"spec","out":{"raise":["ValueError","' machine' is not a membership row kind"]}}
+{"k":"x'y","op":"spec","out":{"raise":["ValueError","\"x'y\" is not a membership row kind"]}}
+{"k":"x\"y","op":"spec","out":{"raise":["ValueError","'x\"y' is not a membership row kind"]}}
+{"k":[233],"op":"spec","out":{"raise":["ValueError","'\u00e9' is not a membership row kind"]}}
+{"k":[56448],"op":"spec","out":{"raise":["ValueError","'\\udc80' is not a membership row kind"]}}
+{"k":"\u0000","op":"spec","out":{"raise":["ValueError","'\\x00' is not a membership row kind"]}}
+{"k":"machines","op":"spec","out":{"raise":["ValueError","'machines' is not a membership row kind"]}}
+{"k":"native_membership_rows","op":"by_table","out":"native_member"}
+{"k":"machines","op":"by_table","out":"machine"}
+{"k":"projects","op":"by_table","out":"project"}
+{"k":"project_witnesses","op":"by_table","out":"project_witness"}
+{"k":"project_blobs","op":"by_table","out":"project_blob"}
+{"k":"project_remotes","op":"by_table","out":"project_remote"}
+{"k":"project_files","op":"by_table","out":"project_file"}
+{"k":"declared_remotes","op":"by_table","out":"declared_remote"}
+{"k":"checkouts","op":"by_table","out":"checkout"}
+{"k":"checkout_views","op":"by_table","out":"checkout_view"}
+{"k":"homes","op":"by_table","out":"home"}
+{"k":"proposals","op":"by_table","out":"proposal"}
+{"k":"standing","op":"by_table","out":"standing"}
+{"k":"returned","op":"by_table","out":"returned"}
+{"k":"memories","op":"by_table","out":null}
+{"k":"machine","op":"by_table","out":null}
+{"k":"","op":"by_table","out":null}
+{"k":"Projects","op":"by_table","out":null}
+{"k":"member_kind","kind":"native_member","op":"column","out":null}
+{"k":"key_text","kind":"native_member","op":"column","out":null}
+{"k":"row_text","kind":"native_member","op":"column","out":null}
+{"k":"","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column ''"]}}
+{"k":"memory","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column 'memory'"]}}
+{"k":"Project","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column 'Project'"]}}
+{"k":"machine_put","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column 'machine_put'"]}}
+{"k":" machine","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column ' machine'"]}}
+{"k":"x'y","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column \"x'y\""]}}
+{"k":"x\"y","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column 'x\"y'"]}}
+{"k":[233],"kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column '\u00e9'"]}}
+{"k":[56448],"kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column '\\x00'"]}}
+{"k":"machines","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column 'machines'"]}}
+{"k":"rowid","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column 'rowid'"]}}
+{"k":"member_kind ","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column 'member_kind '"]}}
+{"k":"id","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column 'id'"]}}
+{"k":"facts_json","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column 'facts_json'"]}}
+{"k":"predecessor","kind":"native_member","op":"column","out":{"raise":["ValueError","native_membership_rows has no column 'predecessor'"]}}
+{"k":"id","kind":"machine","op":"column","out":null}
+{"k":"facts_json","kind":"machine","op":"column","out":null}
+{"k":"predecessor","kind":"machine","op":"column","out":null}
+{"k":"minted","kind":"machine","op":"column","out":null}
+{"k":"","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column ''"]}}
+{"k":"memory","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column 'memory'"]}}
+{"k":"Project","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column 'Project'"]}}
+{"k":"machine_put","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column 'machine_put'"]}}
+{"k":" machine","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column ' machine'"]}}
+{"k":"x'y","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column \"x'y\""]}}
+{"k":"x\"y","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column 'x\"y'"]}}
+{"k":[233],"kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column '\u00e9'"]}}
+{"k":[56448],"kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column '\\x00'"]}}
+{"k":"machines","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column 'machines'"]}}
+{"k":"rowid","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column 'rowid'"]}}
+{"k":"id ","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column 'id '"]}}
+{"k":"member_kind","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column 'member_kind'"]}}
+{"k":"key_text","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column 'key_text'"]}}
+{"k":"row_text","kind":"machine","op":"column","out":{"raise":["ValueError","machines has no column 'row_text'"]}}
+{"k":"id","kind":"project","op":"column","out":null}
+{"k":"name","kind":"project","op":"column","out":null}
+{"k":"merged_into","kind":"project","op":"column","out":null}
+{"k":"provisional","kind":"project","op":"column","out":null}
+{"k":"parent","kind":"project","op":"column","out":null}
+{"k":"tenant","kind":"project","op":"column","out":null}
+{"k":"folder","kind":"project","op":"column","out":null}
+{"k":"boundary","kind":"project","op":"column","out":null}
+{"k":"minted","kind":"project","op":"column","out":null}
+{"k":"","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column ''"]}}
+{"k":"memory","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column 'memory'"]}}
+{"k":"Project","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column 'Project'"]}}
+{"k":"machine_put","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column 'machine_put'"]}}
+{"k":" machine","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column ' machine'"]}}
+{"k":"x'y","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column \"x'y\""]}}
+{"k":"x\"y","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column 'x\"y'"]}}
+{"k":[233],"kind":"project","op":"column","out":{"raise":["ValueError","projects has no column '\u00e9'"]}}
+{"k":[56448],"kind":"project","op":"column","out":{"raise":["ValueError","projects has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column '\\x00'"]}}
+{"k":"machines","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column 'machines'"]}}
+{"k":"rowid","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column 'rowid'"]}}
+{"k":"id ","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column 'id '"]}}
+{"k":"member_kind","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column 'member_kind'"]}}
+{"k":"key_text","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column 'key_text'"]}}
+{"k":"row_text","kind":"project","op":"column","out":{"raise":["ValueError","projects has no column 'row_text'"]}}
+{"k":"project","kind":"project_witness","op":"column","out":null}
+{"k":"commit_id","kind":"project_witness","op":"column","out":null}
+{"k":"arrival","kind":"project_witness","op":"column","out":null}
+{"k":"source","kind":"project_witness","op":"column","out":null}
+{"k":"fingerprint","kind":"project_witness","op":"column","out":null}
+{"k":"","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column ''"]}}
+{"k":"memory","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column 'memory'"]}}
+{"k":"Project","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column 'Project'"]}}
+{"k":"machine_put","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column 'machine_put'"]}}
+{"k":" machine","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column ' machine'"]}}
+{"k":"x'y","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column \"x'y\""]}}
+{"k":"x\"y","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column 'x\"y'"]}}
+{"k":[233],"kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column '\u00e9'"]}}
+{"k":[56448],"kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column '\\x00'"]}}
+{"k":"machines","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column 'machines'"]}}
+{"k":"rowid","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column 'rowid'"]}}
+{"k":"project ","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column 'project '"]}}
+{"k":"member_kind","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column 'member_kind'"]}}
+{"k":"key_text","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column 'key_text'"]}}
+{"k":"row_text","kind":"project_witness","op":"column","out":{"raise":["ValueError","project_witnesses has no column 'row_text'"]}}
+{"k":"project","kind":"project_blob","op":"column","out":null}
+{"k":"blob","kind":"project_blob","op":"column","out":null}
+{"k":"witness","kind":"project_blob","op":"column","out":null}
+{"k":"","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column ''"]}}
+{"k":"memory","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column 'memory'"]}}
+{"k":"Project","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column 'Project'"]}}
+{"k":"machine_put","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column 'machine_put'"]}}
+{"k":" machine","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column ' machine'"]}}
+{"k":"x'y","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column \"x'y\""]}}
+{"k":"x\"y","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column 'x\"y'"]}}
+{"k":[233],"kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column '\u00e9'"]}}
+{"k":[56448],"kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column '\\x00'"]}}
+{"k":"machines","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column 'machines'"]}}
+{"k":"rowid","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column 'rowid'"]}}
+{"k":"project ","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column 'project '"]}}
+{"k":"member_kind","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column 'member_kind'"]}}
+{"k":"key_text","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column 'key_text'"]}}
+{"k":"row_text","kind":"project_blob","op":"column","out":{"raise":["ValueError","project_blobs has no column 'row_text'"]}}
+{"k":"project","kind":"project_remote","op":"column","out":null}
+{"k":"remote_key","kind":"project_remote","op":"column","out":null}
+{"k":"","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column ''"]}}
+{"k":"memory","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column 'memory'"]}}
+{"k":"Project","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column 'Project'"]}}
+{"k":"machine_put","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column 'machine_put'"]}}
+{"k":" machine","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column ' machine'"]}}
+{"k":"x'y","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column \"x'y\""]}}
+{"k":"x\"y","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column 'x\"y'"]}}
+{"k":[233],"kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column '\u00e9'"]}}
+{"k":[56448],"kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column '\\x00'"]}}
+{"k":"machines","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column 'machines'"]}}
+{"k":"rowid","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column 'rowid'"]}}
+{"k":"project ","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column 'project '"]}}
+{"k":"member_kind","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column 'member_kind'"]}}
+{"k":"key_text","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column 'key_text'"]}}
+{"k":"row_text","kind":"project_remote","op":"column","out":{"raise":["ValueError","project_remotes has no column 'row_text'"]}}
+{"k":"file_id","kind":"project_file","op":"column","out":null}
+{"k":"project","kind":"project_file","op":"column","out":null}
+{"k":"evidence","kind":"project_file","op":"column","out":null}
+{"k":"","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column ''"]}}
+{"k":"memory","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column 'memory'"]}}
+{"k":"Project","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column 'Project'"]}}
+{"k":"machine_put","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column 'machine_put'"]}}
+{"k":" machine","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column ' machine'"]}}
+{"k":"x'y","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column \"x'y\""]}}
+{"k":"x\"y","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column 'x\"y'"]}}
+{"k":[233],"kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column '\u00e9'"]}}
+{"k":[56448],"kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column '\\x00'"]}}
+{"k":"machines","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column 'machines'"]}}
+{"k":"rowid","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column 'rowid'"]}}
+{"k":"file_id ","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column 'file_id '"]}}
+{"k":"member_kind","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column 'member_kind'"]}}
+{"k":"key_text","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column 'key_text'"]}}
+{"k":"row_text","kind":"project_file","op":"column","out":{"raise":["ValueError","project_files has no column 'row_text'"]}}
+{"k":"remote_key","kind":"declared_remote","op":"column","out":null}
+{"k":"project","kind":"declared_remote","op":"column","out":null}
+{"k":"principal","kind":"declared_remote","op":"column","out":null}
+{"k":"","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column ''"]}}
+{"k":"memory","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column 'memory'"]}}
+{"k":"Project","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column 'Project'"]}}
+{"k":"machine_put","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column 'machine_put'"]}}
+{"k":" machine","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column ' machine'"]}}
+{"k":"x'y","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column \"x'y\""]}}
+{"k":"x\"y","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column 'x\"y'"]}}
+{"k":[233],"kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column '\u00e9'"]}}
+{"k":[56448],"kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column '\\x00'"]}}
+{"k":"machines","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column 'machines'"]}}
+{"k":"rowid","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column 'rowid'"]}}
+{"k":"remote_key ","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column 'remote_key '"]}}
+{"k":"member_kind","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column 'member_kind'"]}}
+{"k":"key_text","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column 'key_text'"]}}
+{"k":"row_text","kind":"declared_remote","op":"column","out":{"raise":["ValueError","declared_remotes has no column 'row_text'"]}}
+{"k":"id","kind":"checkout","op":"column","out":null}
+{"k":"project","kind":"checkout","op":"column","out":null}
+{"k":"machine","kind":"checkout","op":"column","out":null}
+{"k":"kind","kind":"checkout","op":"column","out":null}
+{"k":"object_device","kind":"checkout","op":"column","out":null}
+{"k":"object_inode","kind":"checkout","op":"column","out":null}
+{"k":"object_birth","kind":"checkout","op":"column","out":null}
+{"k":"common_device","kind":"checkout","op":"column","out":null}
+{"k":"common_inode","kind":"checkout","op":"column","out":null}
+{"k":"common_birth","kind":"checkout","op":"column","out":null}
+{"k":"git_dir","kind":"checkout","op":"column","out":null}
+{"k":"token","kind":"checkout","op":"column","out":null}
+{"k":"token_status","kind":"checkout","op":"column","out":null}
+{"k":"stamps_json","kind":"checkout","op":"column","out":null}
+{"k":"last_head","kind":"checkout","op":"column","out":null}
+{"k":"branch","kind":"checkout","op":"column","out":null}
+{"k":"remotes_json","kind":"checkout","op":"column","out":null}
+{"k":"manifest_json","kind":"checkout","op":"column","out":null}
+{"k":"legacy","kind":"checkout","op":"column","out":null}
+{"k":"retired","kind":"checkout","op":"column","out":null}
+{"k":"registered","kind":"checkout","op":"column","out":null}
+{"k":"unresolved_json","kind":"checkout","op":"column","out":null}
+{"k":"","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column ''"]}}
+{"k":"memory","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column 'memory'"]}}
+{"k":"Project","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column 'Project'"]}}
+{"k":"machine_put","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column 'machine_put'"]}}
+{"k":" machine","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column ' machine'"]}}
+{"k":"x'y","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column \"x'y\""]}}
+{"k":"x\"y","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column 'x\"y'"]}}
+{"k":[233],"kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column '\u00e9'"]}}
+{"k":[56448],"kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column '\\x00'"]}}
+{"k":"machines","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column 'machines'"]}}
+{"k":"rowid","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column 'rowid'"]}}
+{"k":"id ","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column 'id '"]}}
+{"k":"member_kind","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column 'member_kind'"]}}
+{"k":"key_text","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column 'key_text'"]}}
+{"k":"row_text","kind":"checkout","op":"column","out":{"raise":["ValueError","checkouts has no column 'row_text'"]}}
+{"k":"checkout","kind":"checkout_view","op":"column","out":null}
+{"k":"machine","kind":"checkout_view","op":"column","out":null}
+{"k":"path","kind":"checkout_view","op":"column","out":null}
+{"k":"first_seen","kind":"checkout_view","op":"column","out":null}
+{"k":"last_seen","kind":"checkout_view","op":"column","out":null}
+{"k":"seen_order","kind":"checkout_view","op":"column","out":null}
+{"k":"","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column ''"]}}
+{"k":"memory","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column 'memory'"]}}
+{"k":"Project","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column 'Project'"]}}
+{"k":"machine_put","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column 'machine_put'"]}}
+{"k":" machine","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column ' machine'"]}}
+{"k":"x'y","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column \"x'y\""]}}
+{"k":"x\"y","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column 'x\"y'"]}}
+{"k":[233],"kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column '\u00e9'"]}}
+{"k":[56448],"kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column '\\x00'"]}}
+{"k":"machines","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column 'machines'"]}}
+{"k":"rowid","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column 'rowid'"]}}
+{"k":"checkout ","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column 'checkout '"]}}
+{"k":"member_kind","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column 'member_kind'"]}}
+{"k":"key_text","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column 'key_text'"]}}
+{"k":"row_text","kind":"checkout_view","op":"column","out":{"raise":["ValueError","checkout_views has no column 'row_text'"]}}
+{"k":"record_id","kind":"home","op":"column","out":null}
+{"k":"kind","kind":"home","op":"column","out":null}
+{"k":"project","kind":"home","op":"column","out":null}
+{"k":"checkout","kind":"home","op":"column","out":null}
+{"k":"rule","kind":"home","op":"column","out":null}
+{"k":"decided","kind":"home","op":"column","out":null}
+{"k":"","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column ''"]}}
+{"k":"memory","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column 'memory'"]}}
+{"k":"Project","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column 'Project'"]}}
+{"k":"machine_put","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column 'machine_put'"]}}
+{"k":" machine","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column ' machine'"]}}
+{"k":"x'y","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column \"x'y\""]}}
+{"k":"x\"y","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column 'x\"y'"]}}
+{"k":[233],"kind":"home","op":"column","out":{"raise":["ValueError","homes has no column '\u00e9'"]}}
+{"k":[56448],"kind":"home","op":"column","out":{"raise":["ValueError","homes has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column '\\x00'"]}}
+{"k":"machines","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column 'machines'"]}}
+{"k":"rowid","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column 'rowid'"]}}
+{"k":"record_id ","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column 'record_id '"]}}
+{"k":"member_kind","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column 'member_kind'"]}}
+{"k":"key_text","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column 'key_text'"]}}
+{"k":"row_text","kind":"home","op":"column","out":{"raise":["ValueError","homes has no column 'row_text'"]}}
+{"k":"id","kind":"proposal","op":"column","out":null}
+{"k":"checkout","kind":"proposal","op":"column","out":null}
+{"k":"kind","kind":"proposal","op":"column","out":null}
+{"k":"candidates_json","kind":"proposal","op":"column","out":null}
+{"k":"evidence_json","kind":"proposal","op":"column","out":null}
+{"k":"reason","kind":"proposal","op":"column","out":null}
+{"k":"line","kind":"proposal","op":"column","out":null}
+{"k":"state","kind":"proposal","op":"column","out":null}
+{"k":"answer","kind":"proposal","op":"column","out":null}
+{"k":"answered_by","kind":"proposal","op":"column","out":null}
+{"k":"signature_json","kind":"proposal","op":"column","out":null}
+{"k":"opened","kind":"proposal","op":"column","out":null}
+{"k":"","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column ''"]}}
+{"k":"memory","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column 'memory'"]}}
+{"k":"Project","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column 'Project'"]}}
+{"k":"machine_put","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column 'machine_put'"]}}
+{"k":" machine","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column ' machine'"]}}
+{"k":"x'y","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column \"x'y\""]}}
+{"k":"x\"y","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column 'x\"y'"]}}
+{"k":[233],"kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column '\u00e9'"]}}
+{"k":[56448],"kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column '\\x00'"]}}
+{"k":"machines","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column 'machines'"]}}
+{"k":"rowid","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column 'rowid'"]}}
+{"k":"id ","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column 'id '"]}}
+{"k":"member_kind","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column 'member_kind'"]}}
+{"k":"key_text","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column 'key_text'"]}}
+{"k":"row_text","kind":"proposal","op":"column","out":{"raise":["ValueError","proposals has no column 'row_text'"]}}
+{"k":"record_id","kind":"standing","op":"column","out":null}
+{"k":"probability","kind":"standing","op":"column","out":null}
+{"k":"body_sha256","kind":"standing","op":"column","out":null}
+{"k":"source","kind":"standing","op":"column","out":null}
+{"k":"answered_by","kind":"standing","op":"column","out":null}
+{"k":"answered","kind":"standing","op":"column","out":null}
+{"k":"","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column ''"]}}
+{"k":"memory","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column 'memory'"]}}
+{"k":"Project","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column 'Project'"]}}
+{"k":"machine_put","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column 'machine_put'"]}}
+{"k":" machine","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column ' machine'"]}}
+{"k":"x'y","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column \"x'y\""]}}
+{"k":"x\"y","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column 'x\"y'"]}}
+{"k":[233],"kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column '\u00e9'"]}}
+{"k":[56448],"kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column '\\x00'"]}}
+{"k":"machines","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column 'machines'"]}}
+{"k":"rowid","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column 'rowid'"]}}
+{"k":"record_id ","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column 'record_id '"]}}
+{"k":"member_kind","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column 'member_kind'"]}}
+{"k":"key_text","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column 'key_text'"]}}
+{"k":"row_text","kind":"standing","op":"column","out":{"raise":["ValueError","standing has no column 'row_text'"]}}
+{"k":"record_id","kind":"returned","op":"column","out":null}
+{"k":"via","kind":"returned","op":"column","out":null}
+{"k":"returned","kind":"returned","op":"column","out":null}
+{"k":"","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column ''"]}}
+{"k":"memory","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column 'memory'"]}}
+{"k":"Project","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column 'Project'"]}}
+{"k":"machine_put","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column 'machine_put'"]}}
+{"k":" machine","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column ' machine'"]}}
+{"k":"x'y","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column \"x'y\""]}}
+{"k":"x\"y","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column 'x\"y'"]}}
+{"k":[233],"kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column '\u00e9'"]}}
+{"k":[56448],"kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column '\\udc80'"]}}
+{"k":"\u0000","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column '\\x00'"]}}
+{"k":"machines","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column 'machines'"]}}
+{"k":"rowid","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column 'rowid'"]}}
+{"k":"record_id ","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column 'record_id '"]}}
+{"k":"member_kind","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column 'member_kind'"]}}
+{"k":"key_text","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column 'key_text'"]}}
+{"k":"row_text","kind":"returned","op":"column","out":{"raise":["ValueError","returned has no column 'row_text'"]}}
+{"by":["a"],"op":"sort","out":[],"rows":[]}
+{"by":["a"],"op":"sort","out":[0],"rows":[{"a":["i",1]}]}
+{"by":["b"],"op":"sort","out":{"raise":["KeyError","'b'"]},"rows":[{"a":["i",1]}]}
+{"by":["b"],"op":"sort","out":[],"rows":[]}
+{"by":["a"],"op":"sort","out":{"raise":["KeyError","'a'"]},"rows":[{"a":["i",1]},{"b":["i",2]}]}
+{"by":["a"],"op":"sort","out":[1,3,4,2,0],"rows":[{"a":["i",2]},{"a":null},{"a":["i",1]},{"a":null},{"a":["i",0]}]}
+{"by":["-a"],"op":"sort","out":[0,2,4,1,3],"rows":[{"a":["i",2]},{"a":null},{"a":["i",1]},{"a":null},{"a":["i",0]}]}
+{"by":["--a"],"op":"sort","out":[0,2,4,1,3],"rows":[{"a":["i",2]},{"a":null},{"a":["i",1]},{"a":null},{"a":["i",0]}]}
+{"by":["a"],"op":"sort","out":[1,3,0,2],"rows":[{"a":["i",0]},{"a":null},{"a":["i",0]},{"a":null}]}
+{"by":["-a"],"op":"sort","out":[0,2,1,3],"rows":[{"a":["i",0]},{"a":null},{"a":["i",0]},{"a":null}]}
+{"by":["-a"],"op":"sort","out":[0,1,2],"rows":[{"a":["i",1],"b":["i",1]},{"a":["i",1],"b":["i",2]},{"a":["i",1],"b":["i",3]}]}
+{"by":["-a"],"op":"sort","out":[0,2,5,3,1,4],"rows":[{"a":["i",3]},{"a":["i",1]},{"a":["i",3]},{"a":["i",2]},{"a":["i",1]},{"a":["i",3]}]}
+{"by":["a"],"op":"sort","out":[1,4,3,0,2,5],"rows":[{"a":["i",3]},{"a":["i",1]},{"a":["i",3]},{"a":["i",2]},{"a":["i",1]},{"a":["i",3]}]}
+{"by":["a","-b"],"op":"sort","out":[1,0,2],"rows":[{"a":["s","b"],"b":["i",1]},{"a":["s","a"],"b":["i",2]},{"a":["s","b"],"b":["i",0]}]}
+{"by":["-b","a"],"op":"sort","out":[1,0,2],"rows":[{"a":["s","b"],"b":["i",1]},{"a":["s","a"],"b":["i",2]},{"a":["s","b"],"b":["i",0]}]}
+{"by":["a","b"],"op":"sort","out":[2,0,1],"rows":[{"a":["i",1],"b":null},{"a":["i",1],"b":["s","x"]},{"a":["i",0],"b":null}]}
+{"by":["a"],"op":"sort","out":[4,5,1,3,0,2],"rows":[{"a":["f","1.5"]},{"a":["i",1]},{"a":["i",2]},{"a":["f","1.0"]},{"a":["f","-0.0"]},{"a":["i",0]}]}
+{"by":["a"],"op":"sort","out":[3,2,0,1],"rows":[{"a":["i",9223372036854775807]},{"a":["f","9.223372036854776e+18"]},{"a":["i",9223372036854775806]},{"a":["i",-9223372036854775808]}]}
+{"by":["-a"],"op":"sort","out":[0,2,1,3],"rows":[{"a":["f","inf"]},{"a":["f","-inf"]},{"a":["i",0]},{"a":null}]}
+{"by":["a"],"op":"sort","out":[1,2,0],"rows":[{"a":["i",9007199254740993]},{"a":["f","9007199254740992.0"]},{"a":["i",9007199254740992]}]}
+{"by":["a"],"op":"sort","out":[1,0],"rows":[{"a":["f","9.223372036854776e+18"]},{"a":["i",9223372036854775807]}]}
+{"by":["-a"],"op":"sort","out":[1,0],"rows":[{"a":["i",9223372036854775807]},{"a":["f","9.223372036854776e+18"]}]}
+{"by":["a"],"op":"sort","out":[0,1],"rows":[{"a":["f","-9.223372036854776e+18"]},{"a":["i",-9223372036854775808]}]}
+{"by":["a"],"op":"sort","out":[1,0,3,2],"rows":[{"a":["s","\u00e9"]},{"a":["s","z"]},{"a":["s","\ud83d\ude00"]},{"a":["s","\uffff"]}]}
+{"by":["a"],"op":"sort","out":[3,1,2,0],"rows":[{"a":["b","01"]},{"a":["b",""]},{"a":["b","00ff"]},{"a":null}]}
+{"by":["a"],"op":"sort","out":{"raise":["TypeError","'<' not supported between instances of 'str' and 'int'"]},"rows":[{"a":["i",1]},{"a":["s","x"]}]}
+{"by":["a"],"op":"sort","out":{"raise":["TypeError","'<' not supported between instances of 'int' and 'str'"]},"rows":[{"a":["s","x"]},{"a":["i",1]}]}
+{"by":["-a"],"op":"sort","out":{"raise":["TypeError","'<' not supported between instances of 'int' and 'str'"]},"rows":[{"a":["i",1]},{"a":["s","x"]}]}
+{"by":["a"],"op":"sort","out":{"raise":["TypeError","'<' not supported between instances of 'bytes' and 'str'"]},"rows":[{"a":["s","x"]},{"a":["b","78"]}]}
+{"by":["a"],"op":"sort","out":{"raise":["TypeError","'<' not supported between instances of 'bytes' and 'float'"]},"rows":[{"a":["f","1.5"]},{"a":["b","78"]}]}
+{"by":["a"],"op":"sort","out":{"raise":["TypeError","'<' not supported between instances of 'str' and 'int'"]},"rows":[{"a":["i",1]},{"a":null},{"a":["s","x"]},{"a":["i",2]}]}
+{"by":["a"],"op":"sort","out":{"raise":["TypeError","'<' not supported between instances of 'str' and 'int'"]},"rows":[{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["s","x"]}]}
+{"by":["a"],"op":"sort","out":{"raise":["TypeError","'<' not supported between instances of 'str' and 'int'"]},"rows":[{"a":["i",3]},{"a":["i",2]},{"a":["i",1]},{"a":["s","x"]}]}
+{"by":["b","a"],"op":"sort","out":{"raise":["TypeError","'<' not supported between instances of 'int' and 'str'"]},"rows":[{"a":["i",1],"b":["s","x"]},{"a":["i",2],"b":["i",1]}]}
+{"by":["a","b"],"op":"sort","out":{"raise":["TypeError","'<' not supported between instances of 'int' and 'str'"]},"rows":[{"a":["i",1],"b":["s","x"]},{"a":["i",2],"b":["i",1]}]}
+{"by":["a","c"],"op":"sort","out":{"raise":["KeyError","'c'"]},"rows":[{"a":["i",1],"b":["s","x"]},{"a":["i",1],"b":["i",1]}]}
+{"by":["-a"],"op":"sort","out":{"raise":["TypeError","'<' not supported between instances of 'int' and 'str'"]},"rows":[{"a":["i",1]},{"a":["i",1]},{"a":["s","x"]}]}
+{"by":["a"],"op":"sort","out":[2,3,0,1,4],"rows":[{"a":["i",2]},{"a":["i",2]},{"a":["i",1]},{"a":["i",1]},{"a":["i",3]}]}
+{"by":["a"],"op":"sort","out":[0,1,3,2],"rows":[{"a":["i",1]},{"a":["i",1]},{"a":["i",2]},{"a":["i",1]}]}
+{"by":["-a"],"op":"sort","out":[4,9,14,19,24,29,34,39,44,49,54,59,64,69,3,8,13,18,23,28,33,38,43,48,53,58,63,68,2,7,12,17,22,27,32,37,42,47,52,57,62,67,1,6,11,16,21,26,31,36,41,46,51,56,61,66,0,5,10,15,20,25,30,35,40,45,50,55,60,65],"rows":[{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]},{"a":["i",0]},{"a":["i",1]},{"a":["i",2]},{"a":["i",3]},{"a":["i",4]}]}
+{"by":["b","-a"],"op":"sort","out":[30,60,90,120,150,180,27,57,87,117,147,177,24,54,84,114,144,174,21,51,81,111,141,171,18,48,78,108,138,168,198,15,45,75,105,135,165,195,12,42,72,102,132,162,192,9,39,69,99,129,159,189,6,36,66,96,126,156,186,3,33,63,93,123,153,183,0,19,49,79,109,139,169,199,16,46,76,106,136,166,196,13,43,73,103,133,163,193,10,40,70,100,130,160,190,7,37,67,97,127,157,187,4,34,64,94,124,154,184,1,31,61,91,121,151,181,28,58,88,118,148,178,25,55,85,115,145,175,22,52,82,112,142,172,131,161,191,8,38,68,98,128,158,188,5,35,65,95,125,155,185,2,32,62,92,122,152,182,29,59,89,119,149,179,26,56,86,116,146,176,23,53,83,113,143,173,20,50,80,110,140,170,17,47,77,107,137,167,197,14,44,74,104,134,164,194,11,41,71,101],"rows":[{"a":["i",0],"b":["i",0]},{"a":["i",37],"b":["i",1]},{"a":["i",74],"b":["i",2]},{"a":["i",10],"b":["i",0]},{"a":["i",47],"b":["i",1]},{"a":["i",84],"b":["i",2]},{"a":["i",20],"b":["i",0]},{"a":["i",57],"b":["i",1]},{"a":["i",94],"b":["i",2]},{"a":["i",30],"b":["i",0]},{"a":["i",67],"b":["i",1]},{"a":["i",3],"b":["i",2]},{"a":["i",40],"b":["i",0]},{"a":["i",77],"b":["i",1]},{"a":["i",13],"b":["i",2]},{"a":["i",50],"b":["i",0]},{"a":["i",87],"b":["i",1]},{"a":["i",23],"b":["i",2]},{"a":["i",60],"b":["i",0]},{"a":["i",97],"b":["i",1]},{"a":["i",33],"b":["i",2]},{"a":["i",70],"b":["i",0]},{"a":["i",6],"b":["i",1]},{"a":["i",43],"b":["i",2]},{"a":["i",80],"b":["i",0]},{"a":["i",16],"b":["i",1]},{"a":["i",53],"b":["i",2]},{"a":["i",90],"b":["i",0]},{"a":["i",26],"b":["i",1]},{"a":["i",63],"b":["i",2]},{"a":["i",100],"b":["i",0]},{"a":["i",36],"b":["i",1]},{"a":["i",73],"b":["i",2]},{"a":["i",9],"b":["i",0]},{"a":["i",46],"b":["i",1]},{"a":["i",83],"b":["i",2]},{"a":["i",19],"b":["i",0]},{"a":["i",56],"b":["i",1]},{"a":["i",93],"b":["i",2]},{"a":["i",29],"b":["i",0]},{"a":["i",66],"b":["i",1]},{"a":["i",2],"b":["i",2]},{"a":["i",39],"b":["i",0]},{"a":["i",76],"b":["i",1]},{"a":["i",12],"b":["i",2]},{"a":["i",49],"b":["i",0]},{"a":["i",86],"b":["i",1]},{"a":["i",22],"b":["i",2]},{"a":["i",59],"b":["i",0]},{"a":["i",96],"b":["i",1]},{"a":["i",32],"b":["i",2]},{"a":["i",69],"b":["i",0]},{"a":["i",5],"b":["i",1]},{"a":["i",42],"b":["i",2]},{"a":["i",79],"b":["i",0]},{"a":["i",15],"b":["i",1]},{"a":["i",52],"b":["i",2]},{"a":["i",89],"b":["i",0]},{"a":["i",25],"b":["i",1]},{"a":["i",62],"b":["i",2]},{"a":["i",99],"b":["i",0]},{"a":["i",35],"b":["i",1]},{"a":["i",72],"b":["i",2]},{"a":["i",8],"b":["i",0]},{"a":["i",45],"b":["i",1]},{"a":["i",82],"b":["i",2]},{"a":["i",18],"b":["i",0]},{"a":["i",55],"b":["i",1]},{"a":["i",92],"b":["i",2]},{"a":["i",28],"b":["i",0]},{"a":["i",65],"b":["i",1]},{"a":["i",1],"b":["i",2]},{"a":["i",38],"b":["i",0]},{"a":["i",75],"b":["i",1]},{"a":["i",11],"b":["i",2]},{"a":["i",48],"b":["i",0]},{"a":["i",85],"b":["i",1]},{"a":["i",21],"b":["i",2]},{"a":["i",58],"b":["i",0]},{"a":["i",95],"b":["i",1]},{"a":["i",31],"b":["i",2]},{"a":["i",68],"b":["i",0]},{"a":["i",4],"b":["i",1]},{"a":["i",41],"b":["i",2]},{"a":["i",78],"b":["i",0]},{"a":["i",14],"b":["i",1]},{"a":["i",51],"b":["i",2]},{"a":["i",88],"b":["i",0]},{"a":["i",24],"b":["i",1]},{"a":["i",61],"b":["i",2]},{"a":["i",98],"b":["i",0]},{"a":["i",34],"b":["i",1]},{"a":["i",71],"b":["i",2]},{"a":["i",7],"b":["i",0]},{"a":["i",44],"b":["i",1]},{"a":["i",81],"b":["i",2]},{"a":["i",17],"b":["i",0]},{"a":["i",54],"b":["i",1]},{"a":["i",91],"b":["i",2]},{"a":["i",27],"b":["i",0]},{"a":["i",64],"b":["i",1]},{"a":["i",0],"b":["i",2]},{"a":["i",37],"b":["i",0]},{"a":["i",74],"b":["i",1]},{"a":["i",10],"b":["i",2]},{"a":["i",47],"b":["i",0]},{"a":["i",84],"b":["i",1]},{"a":["i",20],"b":["i",2]},{"a":["i",57],"b":["i",0]},{"a":["i",94],"b":["i",1]},{"a":["i",30],"b":["i",2]},{"a":["i",67],"b":["i",0]},{"a":["i",3],"b":["i",1]},{"a":["i",40],"b":["i",2]},{"a":["i",77],"b":["i",0]},{"a":["i",13],"b":["i",1]},{"a":["i",50],"b":["i",2]},{"a":["i",87],"b":["i",0]},{"a":["i",23],"b":["i",1]},{"a":["i",60],"b":["i",2]},{"a":["i",97],"b":["i",0]},{"a":["i",33],"b":["i",1]},{"a":["i",70],"b":["i",2]},{"a":["i",6],"b":["i",0]},{"a":["i",43],"b":["i",1]},{"a":["i",80],"b":["i",2]},{"a":["i",16],"b":["i",0]},{"a":["i",53],"b":["i",1]},{"a":["i",90],"b":["i",2]},{"a":["i",26],"b":["i",0]},{"a":["i",63],"b":["i",1]},{"a":["i",100],"b":["i",2]},{"a":["i",36],"b":["i",0]},{"a":["i",73],"b":["i",1]},{"a":["i",9],"b":["i",2]},{"a":["i",46],"b":["i",0]},{"a":["i",83],"b":["i",1]},{"a":["i",19],"b":["i",2]},{"a":["i",56],"b":["i",0]},{"a":["i",93],"b":["i",1]},{"a":["i",29],"b":["i",2]},{"a":["i",66],"b":["i",0]},{"a":["i",2],"b":["i",1]},{"a":["i",39],"b":["i",2]},{"a":["i",76],"b":["i",0]},{"a":["i",12],"b":["i",1]},{"a":["i",49],"b":["i",2]},{"a":["i",86],"b":["i",0]},{"a":["i",22],"b":["i",1]},{"a":["i",59],"b":["i",2]},{"a":["i",96],"b":["i",0]},{"a":["i",32],"b":["i",1]},{"a":["i",69],"b":["i",2]},{"a":["i",5],"b":["i",0]},{"a":["i",42],"b":["i",1]},{"a":["i",79],"b":["i",2]},{"a":["i",15],"b":["i",0]},{"a":["i",52],"b":["i",1]},{"a":["i",89],"b":["i",2]},{"a":["i",25],"b":["i",0]},{"a":["i",62],"b":["i",1]},{"a":["i",99],"b":["i",2]},{"a":["i",35],"b":["i",0]},{"a":["i",72],"b":["i",1]},{"a":["i",8],"b":["i",2]},{"a":["i",45],"b":["i",0]},{"a":["i",82],"b":["i",1]},{"a":["i",18],"b":["i",2]},{"a":["i",55],"b":["i",0]},{"a":["i",92],"b":["i",1]},{"a":["i",28],"b":["i",2]},{"a":["i",65],"b":["i",0]},{"a":["i",1],"b":["i",1]},{"a":["i",38],"b":["i",2]},{"a":["i",75],"b":["i",0]},{"a":["i",11],"b":["i",1]},{"a":["i",48],"b":["i",2]},{"a":["i",85],"b":["i",0]},{"a":["i",21],"b":["i",1]},{"a":["i",58],"b":["i",2]},{"a":["i",95],"b":["i",0]},{"a":["i",31],"b":["i",1]},{"a":["i",68],"b":["i",2]},{"a":["i",4],"b":["i",0]},{"a":["i",41],"b":["i",1]},{"a":["i",78],"b":["i",2]},{"a":["i",14],"b":["i",0]},{"a":["i",51],"b":["i",1]},{"a":["i",88],"b":["i",2]},{"a":["i",24],"b":["i",0]},{"a":["i",61],"b":["i",1]},{"a":["i",98],"b":["i",2]},{"a":["i",34],"b":["i",0]},{"a":["i",71],"b":["i",1]},{"a":["i",7],"b":["i",2]},{"a":["i",44],"b":["i",0]},{"a":["i",81],"b":["i",1]},{"a":["i",17],"b":["i",2]},{"a":["i",54],"b":["i",0]},{"a":["i",91],"b":["i",1]}]}
+{"by":["a"],"op":"sort","out":[0,4,8,12,16,20,24,28,32,36,40,44,48,52,56,60,9,18,27,45,54,63,1,10,19,37,46,55,2,11,29,38,47,3,21,30,39,57,13,22,31,49,58,5,14,23,41,50,59,6,15,33,42,51,7,25,34,43,61,17,26,35,53,62],"rows":[{"a":null},{"a":["s","1"]},{"a":["s","2"]},{"a":["s","3"]},{"a":null},{"a":["s","5"]},{"a":["s","6"]},{"a":["s","7"]},{"a":null},{"a":["s","0"]},{"a":["s","1"]},{"a":["s","2"]},{"a":null},{"a":["s","4"]},{"a":["s","5"]},{"a":["s","6"]},{"a":null},{"a":["s","8"]},{"a":["s","0"]},{"a":["s","1"]},{"a":null},{"a":["s","3"]},{"a":["s","4"]},{"a":["s","5"]},{"a":null},{"a":["s","7"]},{"a":["s","8"]},{"a":["s","0"]},{"a":null},{"a":["s","2"]},{"a":["s","3"]},{"a":["s","4"]},{"a":null},{"a":["s","6"]},{"a":["s","7"]},{"a":["s","8"]},{"a":null},{"a":["s","1"]},{"a":["s","2"]},{"a":["s","3"]},{"a":null},{"a":["s","5"]},{"a":["s","6"]},{"a":["s","7"]},{"a":null},{"a":["s","0"]},{"a":["s","1"]},{"a":["s","2"]},{"a":null},{"a":["s","4"]},{"a":["s","5"]},{"a":["s","6"]},{"a":null},{"a":["s","8"]},{"a":["s","0"]},{"a":["s","1"]},{"a":null},{"a":["s","3"]},{"a":["s","4"]},{"a":["s","5"]},{"a":null},{"a":["s","7"]},{"a":["s","8"]},{"a":["s","0"]}]}
+{"lists":4000,"op":"sort_sweep","palettes":2,"seed":20261121,"sha256":"0df47b2ca7ed9e0fc31b5faee12b996c5313b2d770061f3713101bcdb461f169","values":[null,["i",0],["i",1],["i",2],["i",-1],["f","1.0"],["f","1.5"],["s",""],["s","a"],["s","b"],["b",""],["b","61"]]}
+{"label":"defaults","op":"verification","out":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"full","op":"verification","out":[["memory_id",["s","M1"]],["machine_id",["s","X"]],["verified_at",["s","T"]],["verified_head",["s","H"]],["verified_paths","[\"a\", \"b\"]"],["verified_commits","[\"c\"]"],["verified_versions","[{\"v\": 1.5}]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M1"]],["machine_id",["s","X"]],["verified_at",["s","T"]],["verified_head",["s","H"]],["verified_paths_json",["s","[\"a\", \"b\"]"]],["verified_commits_json",["s","[\"c\"]"]],["verified_versions_json",["s","[{\"v\": 1.5}]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"bytes","op":"verification","out":[["memory_id",["s","M2"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[\"x\"]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M2"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["b","5b2278225d"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"object","op":"verification","out":[["memory_id",["s","M3"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","{\"k\": 1}"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M3"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","{\"k\": 1}"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"bad json","op":"verification","out":{"raise":["JSONDecodeError",null]},"row":[["memory_id",["s","M4"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[1,"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"number","op":"verification","out":[["memory_id",["s","M5"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","5"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M5"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","5"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"null list","op":"verification","out":[["memory_id",["s","M6"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","null"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M6"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","null"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"int columns","op":"verification","out":[["memory_id",["s","7"]],["machine_id",["b","00"]],["verified_at",["s","1.5"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","7"]],["machine_id",["b","00"]],["verified_at",["s","1.5"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"targets","op":"verification","out":[["memory_id",["s","M8"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M8"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"targets","op":"verification","out":[["memory_id",["s","M8"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"],["verified_path_targets","{\"a\": \"f\"}"],["verified_absent_path_targets","{}"]],"row":[["memory_id",["s","M8"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"memory\": {\"verified_path_targets\": {\"a\": \"f\"}, \"verified_absent_path_targets\": {}}}"]]]}
+{"label":"targets plain","op":"verification","out":[["memory_id",["s","M9"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M9"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"targets plain","op":"verification","out":[["memory_id",["s","M9"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"],["verified_path_targets","{\"a\": \"f\"}"]],"row":[["memory_id",["s","M9"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"verified_path_targets\": {\"a\": \"f\"}}"]]]}
+{"label":"targets tombstone","op":"verification","out":[["memory_id",["s","M10"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M10"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"targets tombstone","op":"verification","out":[["memory_id",["s","M10"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"],["verified_path_targets","{\"a\": \"f\"}"]],"row":[["memory_id",["s","M10"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"tombstone\": {\"verified_path_targets\": {\"a\": \"f\"}}}"]]]}
+{"label":"targets null","op":"verification","out":[["memory_id",["s","M11"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M11"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"targets null","op":"verification","out":[["memory_id",["s","M11"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M11"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","null"]]]}
+{"label":"targets bad","op":"verification","out":[["memory_id",["s","M12"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M12"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"targets bad","op":"verification","out":[["memory_id",["s","M12"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M12"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{"]]]}
+{"label":"targets list","op":"verification","out":[["memory_id",["s","M13"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M13"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"targets list","op":"verification","out":[["memory_id",["s","M13"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M13"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","[1]"]]]}
+{"label":"targets memory list","op":"verification","out":[["memory_id",["s","M14"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M14"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"targets memory list","op":"verification","out":[["memory_id",["s","M14"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M14"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"memory\": [], \"verified_path_targets\": 1}"]]]}
+{"label":"targets number","op":"verification","out":[["memory_id",["s","M15"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M15"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"targets number","op":"verification","out":{"raise":["TypeError",null]},"row":[["memory_id",["s","M15"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["i",3]]]}
+{"label":"targets empty","op":"verification","out":[["memory_id",["s","M16"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M16"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"targets empty","op":"verification","out":[["memory_id",["s","M16"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M16"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s",""]]]}
+{"label":"targets deep","op":"verification","out":[["memory_id",["s","M17"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M17"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"targets deep","op":"verification","out":[["memory_id",["s","M17"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"],["verified_path_targets","{\"a\": {\"x\": [1]}, \"b\": null}"],["verified_absent_path_targets","[1, {\"b\": 2}]"]],"row":[["memory_id",["s","M17"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"verified_path_targets\": {\"a\": {\"x\": [1]}, \"b\": null}, \"verified_absent_path_targets\": [1, {\"b\": 2}]}"]]]}
+{"label":"targets memory null","op":"verification","out":[["memory_id",["s","M18"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M18"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]]]}
+{"label":"targets memory null","op":"verification","out":[["memory_id",["s","M18"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","M18"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"memory\": null, \"verified_path_targets\": 1}"]]]}
+{"label":"missing column","op":"verification","out":{"raise":["IndexError",null]},"row":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]]]}
+{"label":"id same","op":"verification","out":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"],["verified_path_targets","{\"a\": \"f\"}"]],"row":[["id",["s","M1"]],["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"id\": \"M1\", \"verified_path_targets\": {\"a\": \"f\"}}"]]]}
+{"label":"id other","op":"verification","out":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["id",["s","M1"]],["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"id\": \"M2\", \"verified_path_targets\": {\"a\": \"f\"}}"]]]}
+{"label":"id absent","op":"verification","out":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["id",["s","M1"]],["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"verified_path_targets\": {\"a\": \"f\"}}"]]]}
+{"label":"id null both","op":"verification","out":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"],["verified_path_targets","{\"a\": \"f\"}"]],"row":[["id",null],["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"id\": null, \"verified_path_targets\": {\"a\": \"f\"}}"]]]}
+{"label":"id null record","op":"verification","out":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"],["verified_path_targets","{\"a\": \"f\"}"]],"row":[["id",null],["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"verified_path_targets\": {\"a\": \"f\"}}"]]]}
+{"label":"id int float","op":"verification","out":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"],["verified_path_targets","{\"a\": \"f\"}"]],"row":[["id",["i",7]],["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"id\": 7.0, \"verified_path_targets\": {\"a\": \"f\"}}"]]]}
+{"label":"id int true","op":"verification","out":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"],["verified_path_targets","{\"a\": \"f\"}"]],"row":[["id",["i",1]],["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"id\": true, \"verified_path_targets\": {\"a\": \"f\"}}"]]]}
+{"label":"id int text","op":"verification","out":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["id",["i",7]],["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"id\": \"7\", \"verified_path_targets\": {\"a\": \"f\"}}"]]]}
+{"label":"id real","op":"verification","out":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"],["verified_path_targets","{\"a\": \"f\"}"]],"row":[["id",["f","1.5"]],["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"id\": 1.5, \"verified_path_targets\": {\"a\": \"f\"}}"]]]}
+{"label":"id blob","op":"verification","out":[["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["id",["b","4d31"]],["memory_id",["s","M0"]],["machine_id",null],["verified_at",["s","T"]],["verified_head",null],["verified_paths_json",["s","[]"]],["verified_commits_json",["s","[]"]],["verified_versions_json",["s","[]"]],["verified_absent_paths_json",["s","[]"]],["attestation_payload",["s","{\"id\": \"M1\", \"verified_path_targets\": {\"a\": \"f\"}}"]]]}
+{"label":"repeated memory_id","op":"verification","out":[["memory_id",["s","m1"]],["machine_id",["s","x"]],["verified_at",["s","t"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","m1"]],["memory_id",["s","m2"]],["machine_id",["s","x"]],["verified_at",["s","t"]],["verified_head",null],["verified_paths_json",null],["verified_commits_json",null],["verified_versions_json",null],["verified_absent_paths_json",null]]}
+{"label":"upper machine_id","op":"verification","out":[["memory_id",["s","m1"]],["machine_id",["s","X"]],["verified_at",["s","t"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","m1"]],["MACHINE_ID",["s","X"]],["machine_id",["s","x"]],["verified_at",["s","t"]],["verified_head",null],["verified_paths_json",null],["verified_commits_json",null],["verified_versions_json",null],["verified_absent_paths_json",null]]}
+{"label":"upper payload","op":"verification","out":[["memory_id",["s","m1"]],["machine_id",["s","x"]],["verified_at",["s","t"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","m1"]],["ATTESTATION_PAYLOAD",["s","{\"verified_path_targets\": {\"a\": \"f\"}}"]],["machine_id",["s","x"]],["verified_at",["s","t"]],["verified_head",null],["verified_paths_json",null],["verified_commits_json",null],["verified_versions_json",null],["verified_absent_paths_json",null]]}
+{"label":"upper payload first","op":"verification","out":[["memory_id",["s","m1"]],["machine_id",["s","x"]],["verified_at",["s","t"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"],["verified_path_targets","{\"a\": \"f\"}"]],"row":[["memory_id",["s","m1"]],["ATTESTATION_PAYLOAD",["s","{\"verified_path_targets\": {\"a\": \"f\"}}"]],["attestation_payload",["s","[1]"]],["machine_id",["s","x"]],["verified_at",["s","t"]],["verified_head",null],["verified_paths_json",null],["verified_commits_json",null],["verified_versions_json",null],["verified_absent_paths_json",null]]}
+{"label":"upper id","op":"verification","out":[["memory_id",["s","m1"]],["machine_id",["s","x"]],["verified_at",["s","t"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"],["verified_path_targets","{\"a\": \"f\"}"]],"row":[["memory_id",["s","m1"]],["attestation_payload",["s","{\"verified_path_targets\": {\"a\": \"f\"}}"]],["ID",["s","M9"]],["machine_id",["s","x"]],["verified_at",["s","t"]],["verified_head",null],["verified_paths_json",null],["verified_commits_json",null],["verified_versions_json",null],["verified_absent_paths_json",null]]}
+{"label":"upper id first","op":"verification","out":[["memory_id",["s","m1"]],["machine_id",["s","x"]],["verified_at",["s","t"]],["verified_head",null],["verified_paths","[]"],["verified_commits","[]"],["verified_versions","[]"],["verified_absent_paths","[]"]],"row":[["memory_id",["s","m1"]],["ID",["s","M9"]],["id",["s","M1"]],["attestation_payload",["s","{\"id\": \"M1\", \"verified_path_targets\": {\"a\": \"f\"}}"]],["machine_id",["s","x"]],["verified_at",["s","t"]],["verified_head",null],["verified_paths_json",null],["verified_commits_json",null],["verified_versions_json",null],["verified_absent_paths_json",null]]}
+{"kind":"capture_close","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"capture_member","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"capture_open","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"capture_relations","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"capture_undo","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"checkout_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"checkout_moved","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"checkout_object_refreshed","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"checkout_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"checkout_registered","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"checkout_rekeyed","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"checkout_retired","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"checkout_view_added","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"checkout_view_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"checkout_view_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"conflict_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"conflict_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"declared_remote_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"declared_remote_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"episode_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"episode_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"history_accepted","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"home_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"home_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"import_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"import_homed","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"import_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"index_rebuilt","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"key_adopted","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"key_imported","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"machine_cloned","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"machine_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"machine_facts_updated","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"machine_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"membership_migrated","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"memory_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"memory_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"migrate_v8","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"native_member_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"native_member_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_absorbed","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_blob_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_blob_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_file_bound","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_file_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_file_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_merged","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_minted","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_remote_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_remote_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_reparented","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_unmerged","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_witness_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"project_witness_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"proposal_answered","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"proposal_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"proposal_opened","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"proposal_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"quarantine_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"quarantine_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"recall_suppressed","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"rekey","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"remote_declared","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"resolution_deferred","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"resolution_indeterminate","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"resolution_joined","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"resolution_new","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"resolution_session","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"returned_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"returned_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"standing_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"standing_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"store_created","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"store_forked","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"store_restored","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"token_reminted","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"token_superseded","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"tombstone_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"tombstone_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"verification_delete","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"verification_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"witness_put","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"witness_released","op":"event","out":null,"payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"T"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"recall\", \"q\": \"x\", \"n\": 1}","payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"kind\": \"recall\", \"q\": \"x\", \"n\": 1}","payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"recall\", \"q\": 1}","payload":["s","{\"ts\": \"other\", \"session\": \"s2\", \"kind\": \"k2\", \"q\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"kind\": \"recall\", \"q\": 1}","payload":["s","{\"ts\": \"other\", \"session\": \"s2\", \"kind\": \"k2\", \"q\": 1}"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"recall\", \"z\": 1, \"a\": [1, 2.5, null, true], \"m\": {\"x\": \"\\u00e9\"}}","payload":["s","{\"z\": 1, \"a\": [1, 2.5, null, true], \"m\": {\"x\": \"\\u00e9\"}}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"kind\": \"recall\", \"z\": 1, \"a\": [1, 2.5, null, true], \"m\": {\"x\": \"\\u00e9\"}}","payload":["s","{\"z\": 1, \"a\": [1, 2.5, null, true], \"m\": {\"x\": \"\\u00e9\"}}"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"recall\", \"a\": 2, \"b\": 3}","payload":["s","{\"a\": 1, \"a\": 2, \"b\": 3}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"kind\": \"recall\", \"a\": 2, \"b\": 3}","payload":["s","{\"a\": 1, \"a\": 2, \"b\": 3}"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"recall\", \"s\": \"\\ud800\"}","payload":["s","{\"s\": \"\\ud800\"}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"kind\": \"recall\", \"s\": \"\\ud800\"}","payload":["s","{\"s\": \"\\ud800\"}"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"recall\"}","payload":["s","{}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"kind\": \"recall\"}","payload":["s","{}"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","[]"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","[]"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","[1]"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","[1]"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","1"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","1"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","\"text\""],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","\"text\""],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","null"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","null"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","true"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","true"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s",""],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s",""],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","{"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","{"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","{} x"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","{} x"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","NaN"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","NaN"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"recall\", \"x\": NaN, \"y\": -Infinity, \"z\": Infinity}","payload":["s","{\"x\": NaN, \"y\": -Infinity, \"z\": 1e400}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"kind\": \"recall\", \"x\": NaN, \"y\": -Infinity, \"z\": Infinity}","payload":["s","{\"x\": NaN, \"y\": -Infinity, \"z\": 1e400}"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"recall\", \"big\": 999999999999999999999999999999}","payload":["s","{\"big\": 999999999999999999999999999999}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"kind\": \"recall\", \"big\": 999999999999999999999999999999}","payload":["s","{\"big\": 999999999999999999999999999999}"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","{\"big\": 99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["s","{\"big\": 99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999}"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"recall\", \"b\": 1}","payload":["b","7b2262223a20317d"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"kind\": \"recall\", \"b\": 1}","payload":["b","7b2262223a20317d"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"recall\", \"b\": 2}","payload":["b","efbbbf7b2262223a20327d"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"kind\": \"recall\", \"b\": 2}","payload":["b","efbbbf7b2262223a20327d"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"recall\"}","payload":["b","fffe7b007d00"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"kind\": \"recall\"}","payload":["b","fffe7b007d00"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["b","ffff"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["b","ffff"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["b","7b2262223a2022c3227d"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":null,"payload":["b","7b2262223a2022c3227d"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":{"raise":["TypeError",null]},"payload":["i",5],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":{"raise":["TypeError",null]},"payload":["i",5],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":{"raise":["TypeError",null]},"payload":["f","2.5"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":{"raise":["TypeError",null]},"payload":["f","2.5"],"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":{"raise":["TypeError",null]},"payload":null,"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"recall","op":"event","out":{"raise":["TypeError",null]},"payload":null,"session":null,"ts":"2004-01-02T03:04:05"}
+{"kind":"search","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"search\", \"q\": \"x\", \"n\": 1}","payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"search","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"search\", \"q\": 1}","payload":["s","{\"ts\": \"other\", \"session\": \"s2\", \"kind\": \"k2\", \"q\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"\", \"q\": \"x\", \"n\": 1}","payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"\", \"q\": 1}","payload":["s","{\"ts\": \"other\", \"session\": \"s2\", \"kind\": \"k2\", \"q\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"memory_put_x","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"memory_put_x\", \"q\": \"x\", \"n\": 1}","payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"memory_put_x","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"memory_put_x\", \"q\": 1}","payload":["s","{\"ts\": \"other\", \"session\": \"s2\", \"kind\": \"k2\", \"q\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"Memory_put","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"Memory_put\", \"q\": \"x\", \"n\": 1}","payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"Memory_put","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"Memory_put\", \"q\": 1}","payload":["s","{\"ts\": \"other\", \"session\": \"s2\", \"kind\": \"k2\", \"q\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"put","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"put\", \"q\": \"x\", \"n\": 1}","payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":"put","op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"put\", \"q\": 1}","payload":["s","{\"ts\": \"other\", \"session\": \"s2\", \"kind\": \"k2\", \"q\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":[120,233],"op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"x\\u00e9\", \"q\": \"x\", \"n\": 1}","payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":[120,233],"op":"event","out":"{\"ts\": \"2004-01-02T03:04:05\", \"session\": \"S\", \"kind\": \"x\\u00e9\", \"q\": 1}","payload":["s","{\"ts\": \"other\", \"session\": \"s2\", \"kind\": \"k2\", \"q\": 1}"],"session":"S","ts":"2004-01-02T03:04:05"}
+{"kind":[56448],"op":"event","out":"{\"ts\": \"\", \"session\": \"\", \"kind\": \"\\udc80\", \"q\": \"x\", \"n\": 1}","payload":["s","{\"q\": \"x\", \"n\": 1}"],"session":"","ts":""}
+{"op":"raw","out":"{\"ts\": \"T\", \"session\": \"S\", \"kind\": \"recall\", \"a\": 1}","row":[["ts",["s","T"]],["session",["s","S"]],["kind",["s","recall"]],["payload",["s","{\"a\": 1}"]]]}
+{"op":"raw","out":"{\"ts\": \"T\", \"kind\": \"recall\", \"a\": 1}","row":[["ts",["s","T"]],["session",null],["kind",["s","recall"]],["payload",["s","{\"a\": 1}"]]]}
+{"op":"raw","out":"{\"ts\": \"5\", \"session\": \"6\", \"kind\": \"recall\", \"a\": 1}","row":[["ts",["i",5]],["session",["i",6]],["kind",["s","recall"]],["payload",["s","{\"a\": 1}"]]]}
+{"op":"raw","out":"{\"ts\": \"1.5\", \"session\": \"b\\\"s'\\\"\", \"kind\": \"recall\", \"a\": 1}","row":[["ts",["f","1.5"]],["session",["b","7327"]],["kind",["s","recall"]],["payload",["b","7b2261223a20317d"]]]}
+{"op":"raw","out":"{\"ts\": \"T\", \"session\": \"S\", \"kind\": \"b'recall'\"}","row":[["ts",["s","T"]],["session",["s","S"]],["kind",["b","726563616c6c"]],["payload",["s","{}"]]]}
+{"op":"raw","out":null,"row":[["ts",null],["session",["s","S"]],["kind",["s","memory_put"]],["payload",["s","{"]]]}
+{"op":"raw","out":"{\"ts\": \"T\", \"session\": \"S\", \"kind\": \"None\"}","row":[["ts",["s","T"]],["session",["s","S"]],["kind",null],["payload",["s","{}"]]]}
+{"op":"raw","out":{"raise":["TypeError",null]},"row":[["ts",["s","T"]],["session",["s","S"]],["kind",["s","recall"]],["payload",null]]}
+{"op":"raw","out":{"raise":["IndexError",null]},"row":[["ts",["s","T"]],["session",["s","S"]],["kind",["s","rekey"]]]}
+{"op":"raw","out":{"raise":["IndexError",null]},"row":[["ts",["s","T"]],["kind",["s","recall"]],["payload",["s","{}"]]]}
+{"op":"raw","out":{"raise":["IndexError",null]},"row":[["session",["s","S"]],["kind",["s","recall"]],["payload",["s","{}"]]]}
+{"op":"raw","out":"{\"ts\": \"T\", \"session\": \"S\", \"kind\": \"recall\"}","row":[["TS",["s","T"]],["session",["s","S"]],["kind",["s","recall"]],["payload",["s","{}"]]]}
+{"op":"raw","out":"{\"ts\": \"T\", \"session\": \"S\", \"kind\": \"recall\", \"a\": 1}","row":[["ts",["s","T"]],["Session",["s","S"]],["KIND",["s","recall"]],["Payload",["s","{\"a\": 1}"]]]}
+{"op":"raw","out":"{\"ts\": \"A\", \"session\": \"S\", \"kind\": \"recall\"}","row":[["ts",["s","A"]],["ts",["s","B"]],["session",["s","S"]],["kind",["s","recall"]],["payload",["s","{}"]]]}
+{"op":"raw","out":null,"row":[["ts",["s","T"]],["session",["s","S"]],["kind",["s","memory_put"]],["kind",["s","recall"]],["payload",["s","{\"a\": 1}"]]]}
+{"op":"raw","out":null,"row":[["ts",["s","T"]],["session",["s","S"]],["kind",["s","recall"]],["payload",["s","{"]]]}
+{"kinds":["checkout_delete","checkout_put","checkout_view_delete","checkout_view_put","conflict_delete","conflict_put","declared_remote_delete","declared_remote_put","episode_delete","episode_put","home_delete","home_put","import_delete","import_put","machine_delete","machine_put","memory_delete","memory_put","native_member_delete","native_member_put","project_blob_delete","project_blob_put","project_delete","project_file_delete","project_file_put","project_put","project_remote_delete","project_remote_put","project_witness_delete","project_witness_put","proposal_delete","proposal_put","quarantine_delete","quarantine_put","returned_delete","returned_put","standing_delete","standing_put","tombstone_delete","tombstone_put","verification_delete","verification_put"],"name":"MUTATION_KINDS","op":"kinds"}
+{"kinds":["checkout_delete","checkout_put","checkout_view_delete","checkout_view_put","declared_remote_delete","declared_remote_put","home_delete","home_put","machine_delete","machine_put","native_member_delete","native_member_put","project_blob_delete","project_blob_put","project_delete","project_file_delete","project_file_put","project_put","project_remote_delete","project_remote_put","project_witness_delete","project_witness_put","proposal_delete","proposal_put","returned_delete","returned_put","standing_delete","standing_put"],"name":"MEMBERSHIP_MUTATION_KINDS","op":"kinds"}
+{"kinds":["capture_close","capture_member","capture_open","capture_relations","capture_undo","history_accepted","index_rebuilt","key_adopted","key_imported","migrate_v8","rekey","store_created","store_restored"],"name":"CONTROL_KINDS","op":"kinds"}
+{"kinds":["checkout_moved","checkout_object_refreshed","checkout_registered","checkout_rekeyed","checkout_retired","checkout_view_added","import_homed","machine_cloned","machine_facts_updated","membership_migrated","project_absorbed","project_file_bound","project_merged","project_minted","project_reparented","project_unmerged","proposal_answered","proposal_opened","recall_suppressed","remote_declared","resolution_deferred","resolution_indeterminate","resolution_joined","resolution_new","resolution_session","store_forked","token_reminted","token_superseded","witness_put","witness_released"],"name":"MEMBERSHIP_EVENT_KINDS","op":"kinds"}
+{"kinds":["capture_close","capture_member","capture_open","capture_relations","capture_undo","checkout_delete","checkout_moved","checkout_object_refreshed","checkout_put","checkout_registered","checkout_rekeyed","checkout_retired","checkout_view_added","checkout_view_delete","checkout_view_put","conflict_delete","conflict_put","declared_remote_delete","declared_remote_put","episode_delete","episode_put","history_accepted","home_delete","home_put","import_delete","import_homed","import_put","index_rebuilt","key_adopted","key_imported","machine_cloned","machine_delete","machine_facts_updated","machine_put","membership_migrated","memory_delete","memory_put","migrate_v8","native_member_delete","native_member_put","project_absorbed","project_blob_delete","project_blob_put","project_delete","project_file_bound","project_file_delete","project_file_put","project_merged","project_minted","project_put","project_remote_delete","project_remote_put","project_reparented","project_unmerged","project_witness_delete","project_witness_put","proposal_answered","proposal_delete","proposal_opened","proposal_put","quarantine_delete","quarantine_put","recall_suppressed","rekey","remote_declared","resolution_deferred","resolution_indeterminate","resolution_joined","resolution_new","resolution_session","returned_delete","returned_put","standing_delete","standing_put","store_created","store_forked","store_restored","token_reminted","token_superseded","tombstone_delete","tombstone_put","verification_delete","verification_put","witness_put","witness_released"],"name":"_NOT_TELEMETRY","op":"kinds"}
+{"in":null,"op":"iso_opt","out":null}
+{"in":"2024-01-02T03:04:05","op":"iso_opt","out":"2024-01-02T03:04:05"}
+{"in":"2024-01-02T03:04:05.000001","op":"iso_opt","out":"2024-01-02T03:04:05.000001"}
+{"in":"2024-01-02T03:04:05.120000+00:00","op":"iso_opt","out":"2024-01-02T03:04:05.120000+00:00"}
+{"in":"2024-01-02T03:04:05-05:30","op":"iso_opt","out":"2024-01-02T03:04:05-05:30"}
+{"in":"0001-01-01T00:00:00+14:00","op":"iso_opt","out":"0001-01-01T00:00:00+14:00"}
+{"in":"9999-12-31T23:59:59.999999-00:00:01","op":"iso_opt","out":"9999-12-31T23:59:59.999999-00:00:01"}
