@@ -61,6 +61,8 @@
 //!   first two units (the byte parsers; the zlib streams and the delta
 //!   chain over a file handle);
 //! - [`fsdata`]: the file system as the config readers ask it, as data;
+//! - [`fsutil`]: `_fsutil.py`, its first unit (`unlink_retrying` with
+//!   its Windows retry, `bounded_stream_read`);
 //! - [`verify_status`] and [`attribution`]: a memory's verification
 //!   staleness, and phrase-match attribution of memories to a reply;
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
@@ -95,6 +97,7 @@ pub mod durability;
 pub mod events;
 pub mod float_repr;
 pub mod fsdata;
+pub mod fsutil;
 pub mod gitconfig;
 pub mod gitfile_rule;
 pub mod githead;

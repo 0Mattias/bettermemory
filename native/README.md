@@ -49,6 +49,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_gitfiles` | units 1 and 2 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`) and the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
+| `fsutil` | unit 1 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads | `fsutil.jsonl`, `fsutil_python.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl` |
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only) |
@@ -10988,6 +10989,87 @@ constants, not a walk.
     `fs_access_every_case_in_memory`, `fs_stat_every_case_in_memory`;
   - R and X swapped (`MemFs` and the sys mapping): both `fs_access`
     golden tests.
+
+## Removal with retry and the capped stream read (`_fsutil.py`, unit 1)
+
+`src/fsutil.rs` holds the first unit of `_fsutil.py`. The rest of that
+module already lives in `store`: `ensure_owner_only_dir`, `fsync`,
+`atomic_write_bytes` and `replace_atomic` in `store/create.rs`,
+`store/open.rs` and `store/write.rs`, and `flock_excl`'s POSIX lock in
+`store/write.rs` (`open_lock` and its callers). This unit moves none of
+them.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_REPLACE_ATTEMPTS`, `_REPLACE_BACKOFF_S` | 329-330 | nothing | built (`REPLACE_ATTEMPTS`, `REPLACE_BACKOFF_S`) |
+| `unlink_retrying` | 386-417 | `os.unlink`, `time.sleep`, `sys.platform` | built |
+| `bounded_stream_read` | 673-688 | a binary stream | built |
+| `_flock_windows`, a native `flock_excl` | | `msvcrt.locking` | unit `_fsutil-2` |
+| `ensure_owner_only_dir`, `fsync`, `atomic_write_bytes`, `replace_atomic` | | | in `store` |
+
+`unlink_retrying_by(remover, windows, still)` is the reference's loop
+over a `Remover` (the unlink, whether its error is `PermissionError`,
+and the pause), with `sys.platform == "win32"` an argument, so the
+Windows branch runs in every test. Off Windows it unlinks once and
+passes the error through. On Windows it makes up to five attempts; only
+a permission error is tried again, after a pause of 0.01 s that doubles
+(0.01, 0.02, 0.04, 0.08, as `repr` writes them); `still` is asked after
+each pause and a false answer returns success without another attempt;
+`still` is never asked after the fifth failure, whose error propagates.
+`unlink_retrying(path, still)` is the machine's: `std::fs::remove_file`
+and `std::thread::sleep`, its error the `fsdata::OsError` that
+`Numbered::of_io` gives, except that on Windows the class is
+`PermissionError` exactly where `winerror_is_eacces` holds of the raw
+code. That table is CPython's `winerror_to_errno` (`PC/errmap.h`) for
+EACCES, read and not run here: an HRESULT of `FACILITY_WIN32`
+unwrapped, then ERROR_ACCESS_DENIED (5), ERROR_CURRENT_DIRECTORY (16),
+19 to 36 (ERROR_SHARING_VIOLATION 32 and ERROR_LOCK_VIOLATION 33 among
+them), 65, 82, 83, 108, 132, 158, 167 and WSAEACCES (10013). `fsdata`'s
+own Windows mapping goes by `io::ErrorKind`, which does not give
+ERROR_LOCK_VIOLATION as a permission error, so it is not used for the
+decision. On Windows the unlink is `Py_DeleteFileW`'s, not
+`std::fs::remove_file`'s, which since Rust 1.86 deletes a read-only file
+and does not remove a directory link: `windows_unlink` reads the path's
+own attributes, refuses a read-only entry or a plain directory with
+ERROR_ACCESS_DENIED (a `PermissionError`, retried as the reference
+retries it), removes a directory symbolic link or junction with
+`remove_dir` and anything else with `remove_file`. The attributes are
+read before the removal, so a change between the two is not seen.
+
+`bounded_stream_read(stream, max_bytes)` reads as
+`io.BufferedReader.read(max_bytes + 1)` does (the reference's caller
+passes `sys.stdin.buffer`): repeated reads until that many bytes or end
+of file, an interrupted read tried again, nothing allocated up front.
+`BufferedReader.read(n)` allocates its n-byte result before reading, so
+under a cap past what the allocator grants (2**60 under CPython 3.13 on
+macOS, 2**40 not) the reference raises `MemoryError` where the port
+returns the bytes; the threshold is the host's, so no fixture row pins
+it.
+The cap is an `i64`, and the odd caps answer as the reference does: -1
+reads nothing (`read(0)`) and raises `ValueError` with the cap -1; -2
+reads to end of file (`read(-1)`) and raises; below -2 is
+`BufferedReader`'s `ValueError` before any read (`io.BytesIO` would read
+everything instead; the port follows `BufferedReader`, and the fixture
+pins `BytesIO` only where the two agree; at `i64::MAX` both raise the
+same `OverflowError`); `i64::MAX` is the
+`OverflowError` of `max_bytes + 1`. An error of the stream passes
+through.
+
+Fixtures (`gen_fsutil.py`): `fsutil.jsonl` (not gated, 176 rows) drives
+`unlink_retrying` with `sys.platform` patched to `win32` or `linux`,
+`os.unlink` scripted to raise `PermissionError` zero to six times or
+another class after some, `time.sleep` recorded and `still` scripted,
+and records the pauses, the questions asked, the unlinks tried and the
+class and attempt of the error that propagated; and
+`bounded_stream_read` over `io.BytesIO` and a pipe read through
+`os.fdopen` at caps 0 to 70000, sizes on each side of the cap, and the
+caps -1 and -2. `fsutil_python.jsonl` (gated on the Python release)
+holds the rows whose message is the interpreter's: a length below -1 and
+the overflow. Tests: `golden_fsutil.rs`, `fsutil_kills.rs` (the order of
+unlinks, pauses and questions; the Windows code table; short reads; the
+machine's unlink of a missing file), `fsutil_robustness.rs` (the integer
+bounds, an endless stream, linear growth, a remover that always fails).
+No regular expression is involved.
 
 ## Chunked runs
 

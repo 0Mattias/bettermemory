@@ -274,6 +274,10 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // 3.11's strict walk asks the OS where 3.13's raises ENOTDIR at a
         // non-directory followed by `.`, `..` or a separator.
         "fs_realpath_strict_python.jsonl" => &[Python],
+        // `BufferedReader.read`'s refusal of a length below -1 and the
+        // overflow of `max_bytes + 1`, in the interpreter's words
+        // (`gen_fsutil`).
+        "fsutil_python.jsonl" => &[Python],
         // The probe of a link loop (`gen_location_probe`), as above.
         "location_probe_python.jsonl" => &[Python],
         // Every errno number and the C library's text for it, both the

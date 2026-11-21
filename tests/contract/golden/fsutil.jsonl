@@ -1,0 +1,177 @@
+{"cases":176,"k":"header"}
+{"f":[],"k":"u","o":{"asked":0,"r":"ok","sl":[],"tries":1},"s":null,"win":false}
+{"f":[],"k":"u","o":{"asked":0,"r":"ok","sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":null,"win":false}
+{"f":["PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":null,"win":false}
+{"f":["PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":null,"win":false}
+{"f":["PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":null,"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":null,"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":null,"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["FileNotFoundError"],"k":"u","o":{"asked":0,"r":["FileNotFoundError",0],"sl":[],"tries":1},"s":null,"win":false}
+{"f":["PermissionError","FileNotFoundError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","FileNotFoundError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","FileNotFoundError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","FileNotFoundError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","FileNotFoundError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["IsADirectoryError"],"k":"u","o":{"asked":0,"r":["IsADirectoryError",0],"sl":[],"tries":1},"s":null,"win":false}
+{"f":["PermissionError","IsADirectoryError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","IsADirectoryError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","IsADirectoryError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","IsADirectoryError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","IsADirectoryError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["OSError"],"k":"u","o":{"asked":0,"r":["OSError",0],"sl":[],"tries":1},"s":null,"win":false}
+{"f":["PermissionError","OSError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","OSError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","OSError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","OSError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","OSError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[false,true,true,true,true,true],"win":false}
+{"f":["PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[false,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,false,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,false,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,false,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,false,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,false,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,false,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,false,true,true,true,true,true],"win":false}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",0],"sl":[],"tries":1},"s":[true,true,true,true,false,true,true,true,true,true],"win":false}
+{"f":[null,"PermissionError"],"k":"u","o":{"asked":0,"r":"ok","sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":false}
+{"f":[],"k":"u","o":{"asked":0,"r":"ok","sl":[],"tries":1},"s":null,"win":true}
+{"f":[],"k":"u","o":{"asked":0,"r":"ok","sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError"],"k":"u","o":{"asked":0,"r":"ok","sl":["0.01"],"tries":2},"s":null,"win":true}
+{"f":["PermissionError"],"k":"u","o":{"asked":1,"r":"ok","sl":["0.01"],"tries":2},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":"ok","sl":["0.01","0.02"],"tries":3},"s":null,"win":true}
+{"f":["PermissionError","PermissionError"],"k":"u","o":{"asked":2,"r":"ok","sl":["0.01","0.02"],"tries":3},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":"ok","sl":["0.01","0.02","0.04"],"tries":4},"s":null,"win":true}
+{"f":["PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":3,"r":"ok","sl":["0.01","0.02","0.04"],"tries":4},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":"ok","sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":null,"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":4,"r":"ok","sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",4],"sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":null,"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":4,"r":["PermissionError",4],"sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":0,"r":["PermissionError",4],"sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":null,"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":4,"r":["PermissionError",4],"sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":[true,true,true,true,true,true],"win":true}
+{"f":["FileNotFoundError"],"k":"u","o":{"asked":0,"r":["FileNotFoundError",0],"sl":[],"tries":1},"s":null,"win":true}
+{"f":["PermissionError","FileNotFoundError"],"k":"u","o":{"asked":1,"r":["FileNotFoundError",1],"sl":["0.01"],"tries":2},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","FileNotFoundError"],"k":"u","o":{"asked":2,"r":["FileNotFoundError",2],"sl":["0.01","0.02"],"tries":3},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","FileNotFoundError"],"k":"u","o":{"asked":3,"r":["FileNotFoundError",3],"sl":["0.01","0.02","0.04"],"tries":4},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","FileNotFoundError"],"k":"u","o":{"asked":4,"r":["FileNotFoundError",4],"sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","FileNotFoundError"],"k":"u","o":{"asked":4,"r":["PermissionError",4],"sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":[true,true,true,true,true,true],"win":true}
+{"f":["IsADirectoryError"],"k":"u","o":{"asked":0,"r":["IsADirectoryError",0],"sl":[],"tries":1},"s":null,"win":true}
+{"f":["PermissionError","IsADirectoryError"],"k":"u","o":{"asked":1,"r":["IsADirectoryError",1],"sl":["0.01"],"tries":2},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","IsADirectoryError"],"k":"u","o":{"asked":2,"r":["IsADirectoryError",2],"sl":["0.01","0.02"],"tries":3},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","IsADirectoryError"],"k":"u","o":{"asked":3,"r":["IsADirectoryError",3],"sl":["0.01","0.02","0.04"],"tries":4},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","IsADirectoryError"],"k":"u","o":{"asked":4,"r":["IsADirectoryError",4],"sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","IsADirectoryError"],"k":"u","o":{"asked":4,"r":["PermissionError",4],"sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":[true,true,true,true,true,true],"win":true}
+{"f":["OSError"],"k":"u","o":{"asked":0,"r":["OSError",0],"sl":[],"tries":1},"s":null,"win":true}
+{"f":["PermissionError","OSError"],"k":"u","o":{"asked":1,"r":["OSError",1],"sl":["0.01"],"tries":2},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","OSError"],"k":"u","o":{"asked":2,"r":["OSError",2],"sl":["0.01","0.02"],"tries":3},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","OSError"],"k":"u","o":{"asked":3,"r":["OSError",3],"sl":["0.01","0.02","0.04"],"tries":4},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","OSError"],"k":"u","o":{"asked":4,"r":["OSError",4],"sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","OSError"],"k":"u","o":{"asked":4,"r":["PermissionError",4],"sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":[true,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":1,"r":"ok","sl":["0.01"],"tries":1},"s":[false,true,true,true,true,true],"win":true}
+{"f":["PermissionError"],"k":"u","o":{"asked":1,"r":"ok","sl":["0.01"],"tries":1},"s":[false,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":2,"r":"ok","sl":["0.01","0.02"],"tries":2},"s":[true,false,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError"],"k":"u","o":{"asked":2,"r":"ok","sl":["0.01","0.02"],"tries":2},"s":[true,false,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":3,"r":"ok","sl":["0.01","0.02","0.04"],"tries":3},"s":[true,true,false,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":3,"r":"ok","sl":["0.01","0.02","0.04"],"tries":3},"s":[true,true,false,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":4,"r":"ok","sl":["0.01","0.02","0.04","0.08"],"tries":4},"s":[true,true,true,false,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":4,"r":"ok","sl":["0.01","0.02","0.04","0.08"],"tries":4},"s":[true,true,true,false,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":4,"r":["PermissionError",4],"sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":[true,true,true,true,false,true,true,true,true,true],"win":true}
+{"f":["PermissionError","PermissionError","PermissionError","PermissionError","PermissionError"],"k":"u","o":{"asked":4,"r":["PermissionError",4],"sl":["0.01","0.02","0.04","0.08"],"tries":5},"s":[true,true,true,true,false,true,true,true,true,true],"win":true}
+{"f":[null,"PermissionError"],"k":"u","o":{"asked":0,"r":"ok","sl":[],"tries":1},"s":[true,true,true,true,true,true],"win":true}
+{"k":"b","max":0,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"bytesio"}
+{"k":"b","max":0,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"pipe"}
+{"k":"b","max":0,"n":1,"o":["ValueError","stream input exceeds cap 0 bytes"],"src":"bytesio"}
+{"k":"b","max":0,"n":1,"o":["ValueError","stream input exceeds cap 0 bytes"],"src":"pipe"}
+{"k":"b","max":0,"n":2,"o":["ValueError","stream input exceeds cap 0 bytes"],"src":"bytesio"}
+{"k":"b","max":0,"n":2,"o":["ValueError","stream input exceeds cap 0 bytes"],"src":"pipe"}
+{"k":"b","max":0,"n":9,"o":["ValueError","stream input exceeds cap 0 bytes"],"src":"bytesio"}
+{"k":"b","max":0,"n":9,"o":["ValueError","stream input exceeds cap 0 bytes"],"src":"pipe"}
+{"k":"b","max":1,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"bytesio"}
+{"k":"b","max":1,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"pipe"}
+{"k":"b","max":1,"n":1,"o":{"len":1,"sha":"084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5"},"src":"bytesio"}
+{"k":"b","max":1,"n":1,"o":{"len":1,"sha":"084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5"},"src":"pipe"}
+{"k":"b","max":1,"n":2,"o":["ValueError","stream input exceeds cap 1 bytes"],"src":"bytesio"}
+{"k":"b","max":1,"n":2,"o":["ValueError","stream input exceeds cap 1 bytes"],"src":"pipe"}
+{"k":"b","max":1,"n":3,"o":["ValueError","stream input exceeds cap 1 bytes"],"src":"bytesio"}
+{"k":"b","max":1,"n":3,"o":["ValueError","stream input exceeds cap 1 bytes"],"src":"pipe"}
+{"k":"b","max":1,"n":11,"o":["ValueError","stream input exceeds cap 1 bytes"],"src":"bytesio"}
+{"k":"b","max":1,"n":11,"o":["ValueError","stream input exceeds cap 1 bytes"],"src":"pipe"}
+{"k":"b","max":5,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"bytesio"}
+{"k":"b","max":5,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"pipe"}
+{"k":"b","max":5,"n":4,"o":{"len":4,"sha":"42a146d9caf95c0d29b3ea8e3574f3c47758bec2cdcb99e6f10381de77ab6d54"},"src":"bytesio"}
+{"k":"b","max":5,"n":4,"o":{"len":4,"sha":"42a146d9caf95c0d29b3ea8e3574f3c47758bec2cdcb99e6f10381de77ab6d54"},"src":"pipe"}
+{"k":"b","max":5,"n":5,"o":{"len":5,"sha":"c0a7188b4e87d64b5ff6dbedc69629b41ded38b08f0f79b85c5b63ed4a6b4646"},"src":"bytesio"}
+{"k":"b","max":5,"n":5,"o":{"len":5,"sha":"c0a7188b4e87d64b5ff6dbedc69629b41ded38b08f0f79b85c5b63ed4a6b4646"},"src":"pipe"}
+{"k":"b","max":5,"n":6,"o":["ValueError","stream input exceeds cap 5 bytes"],"src":"bytesio"}
+{"k":"b","max":5,"n":6,"o":["ValueError","stream input exceeds cap 5 bytes"],"src":"pipe"}
+{"k":"b","max":5,"n":7,"o":["ValueError","stream input exceeds cap 5 bytes"],"src":"bytesio"}
+{"k":"b","max":5,"n":7,"o":["ValueError","stream input exceeds cap 5 bytes"],"src":"pipe"}
+{"k":"b","max":5,"n":19,"o":["ValueError","stream input exceeds cap 5 bytes"],"src":"bytesio"}
+{"k":"b","max":5,"n":19,"o":["ValueError","stream input exceeds cap 5 bytes"],"src":"pipe"}
+{"k":"b","max":64,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"bytesio"}
+{"k":"b","max":64,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"pipe"}
+{"k":"b","max":64,"n":63,"o":{"len":63,"sha":"81c80242132f230c3bd41b3e63bbcff16107339549214a99614ff26664625055"},"src":"bytesio"}
+{"k":"b","max":64,"n":63,"o":{"len":63,"sha":"81c80242132f230c3bd41b3e63bbcff16107339549214a99614ff26664625055"},"src":"pipe"}
+{"k":"b","max":64,"n":64,"o":{"len":64,"sha":"39e3d7b6b5d075d37d053ad89b24b41bef4f3c29760c84447cab3f3be1882241"},"src":"bytesio"}
+{"k":"b","max":64,"n":64,"o":{"len":64,"sha":"39e3d7b6b5d075d37d053ad89b24b41bef4f3c29760c84447cab3f3be1882241"},"src":"pipe"}
+{"k":"b","max":64,"n":65,"o":["ValueError","stream input exceeds cap 64 bytes"],"src":"bytesio"}
+{"k":"b","max":64,"n":65,"o":["ValueError","stream input exceeds cap 64 bytes"],"src":"pipe"}
+{"k":"b","max":64,"n":66,"o":["ValueError","stream input exceeds cap 64 bytes"],"src":"bytesio"}
+{"k":"b","max":64,"n":66,"o":["ValueError","stream input exceeds cap 64 bytes"],"src":"pipe"}
+{"k":"b","max":64,"n":137,"o":["ValueError","stream input exceeds cap 64 bytes"],"src":"bytesio"}
+{"k":"b","max":64,"n":137,"o":["ValueError","stream input exceeds cap 64 bytes"],"src":"pipe"}
+{"k":"b","max":8191,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"bytesio"}
+{"k":"b","max":8191,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"pipe"}
+{"k":"b","max":8191,"n":8190,"o":{"len":8190,"sha":"870b4167bdb922c933aaaa96eecfd2120cb9b2b55051cf7c908e19e712c58e56"},"src":"bytesio"}
+{"k":"b","max":8191,"n":8190,"o":{"len":8190,"sha":"870b4167bdb922c933aaaa96eecfd2120cb9b2b55051cf7c908e19e712c58e56"},"src":"pipe"}
+{"k":"b","max":8191,"n":8191,"o":{"len":8191,"sha":"90065d4ee0ee3acc6678a3c87b42616aaf45fde2b893f24c884a5742e3dac8b7"},"src":"bytesio"}
+{"k":"b","max":8191,"n":8191,"o":{"len":8191,"sha":"90065d4ee0ee3acc6678a3c87b42616aaf45fde2b893f24c884a5742e3dac8b7"},"src":"pipe"}
+{"k":"b","max":8191,"n":8192,"o":["ValueError","stream input exceeds cap 8191 bytes"],"src":"bytesio"}
+{"k":"b","max":8191,"n":8192,"o":["ValueError","stream input exceeds cap 8191 bytes"],"src":"pipe"}
+{"k":"b","max":8191,"n":8193,"o":["ValueError","stream input exceeds cap 8191 bytes"],"src":"bytesio"}
+{"k":"b","max":8191,"n":8193,"o":["ValueError","stream input exceeds cap 8191 bytes"],"src":"pipe"}
+{"k":"b","max":8191,"n":16391,"o":["ValueError","stream input exceeds cap 8191 bytes"],"src":"bytesio"}
+{"k":"b","max":8191,"n":16391,"o":["ValueError","stream input exceeds cap 8191 bytes"],"src":"pipe"}
+{"k":"b","max":8192,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"bytesio"}
+{"k":"b","max":8192,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"pipe"}
+{"k":"b","max":8192,"n":8191,"o":{"len":8191,"sha":"90065d4ee0ee3acc6678a3c87b42616aaf45fde2b893f24c884a5742e3dac8b7"},"src":"bytesio"}
+{"k":"b","max":8192,"n":8191,"o":{"len":8191,"sha":"90065d4ee0ee3acc6678a3c87b42616aaf45fde2b893f24c884a5742e3dac8b7"},"src":"pipe"}
+{"k":"b","max":8192,"n":8192,"o":{"len":8192,"sha":"79a68194a5a1dc354264d70a556ff0a6acf1478d589a98cbb22bbb81fe55b5e5"},"src":"bytesio"}
+{"k":"b","max":8192,"n":8192,"o":{"len":8192,"sha":"79a68194a5a1dc354264d70a556ff0a6acf1478d589a98cbb22bbb81fe55b5e5"},"src":"pipe"}
+{"k":"b","max":8192,"n":8193,"o":["ValueError","stream input exceeds cap 8192 bytes"],"src":"bytesio"}
+{"k":"b","max":8192,"n":8193,"o":["ValueError","stream input exceeds cap 8192 bytes"],"src":"pipe"}
+{"k":"b","max":8192,"n":8194,"o":["ValueError","stream input exceeds cap 8192 bytes"],"src":"bytesio"}
+{"k":"b","max":8192,"n":8194,"o":["ValueError","stream input exceeds cap 8192 bytes"],"src":"pipe"}
+{"k":"b","max":8192,"n":16393,"o":["ValueError","stream input exceeds cap 8192 bytes"],"src":"bytesio"}
+{"k":"b","max":8192,"n":16393,"o":["ValueError","stream input exceeds cap 8192 bytes"],"src":"pipe"}
+{"k":"b","max":70000,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"bytesio"}
+{"k":"b","max":70000,"n":0,"o":{"len":0,"sha":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"src":"pipe"}
+{"k":"b","max":70000,"n":69999,"o":{"len":69999,"sha":"f82136efe6076d0713c98edc45dbe086caa617680cf00a943507a9a7674787a4"},"src":"bytesio"}
+{"k":"b","max":70000,"n":69999,"o":{"len":69999,"sha":"f82136efe6076d0713c98edc45dbe086caa617680cf00a943507a9a7674787a4"},"src":"pipe"}
+{"k":"b","max":70000,"n":70000,"o":{"len":70000,"sha":"9f6d8bb550591a5410aa72b997e7d49e3eed1ce025e83628addaf4382d2295bd"},"src":"bytesio"}
+{"k":"b","max":70000,"n":70000,"o":{"len":70000,"sha":"9f6d8bb550591a5410aa72b997e7d49e3eed1ce025e83628addaf4382d2295bd"},"src":"pipe"}
+{"k":"b","max":70000,"n":70001,"o":["ValueError","stream input exceeds cap 70000 bytes"],"src":"bytesio"}
+{"k":"b","max":70000,"n":70001,"o":["ValueError","stream input exceeds cap 70000 bytes"],"src":"pipe"}
+{"k":"b","max":70000,"n":70002,"o":["ValueError","stream input exceeds cap 70000 bytes"],"src":"bytesio"}
+{"k":"b","max":70000,"n":70002,"o":["ValueError","stream input exceeds cap 70000 bytes"],"src":"pipe"}
+{"k":"b","max":70000,"n":140009,"o":["ValueError","stream input exceeds cap 70000 bytes"],"src":"bytesio"}
+{"k":"b","max":70000,"n":140009,"o":["ValueError","stream input exceeds cap 70000 bytes"],"src":"pipe"}
+{"k":"b","max":-1,"n":0,"o":["ValueError","stream input exceeds cap -1 bytes"],"src":"bytesio"}
+{"k":"b","max":-1,"n":0,"o":["ValueError","stream input exceeds cap -1 bytes"],"src":"pipe"}
+{"k":"b","max":-1,"n":1,"o":["ValueError","stream input exceeds cap -1 bytes"],"src":"bytesio"}
+{"k":"b","max":-1,"n":1,"o":["ValueError","stream input exceeds cap -1 bytes"],"src":"pipe"}
+{"k":"b","max":-1,"n":9,"o":["ValueError","stream input exceeds cap -1 bytes"],"src":"bytesio"}
+{"k":"b","max":-1,"n":9,"o":["ValueError","stream input exceeds cap -1 bytes"],"src":"pipe"}
+{"k":"b","max":-2,"n":0,"o":["ValueError","stream input exceeds cap -2 bytes"],"src":"bytesio"}
+{"k":"b","max":-2,"n":0,"o":["ValueError","stream input exceeds cap -2 bytes"],"src":"pipe"}
+{"k":"b","max":-2,"n":1,"o":["ValueError","stream input exceeds cap -2 bytes"],"src":"bytesio"}
+{"k":"b","max":-2,"n":1,"o":["ValueError","stream input exceeds cap -2 bytes"],"src":"pipe"}
+{"k":"b","max":-2,"n":9,"o":["ValueError","stream input exceeds cap -2 bytes"],"src":"bytesio"}
+{"k":"b","max":-2,"n":9,"o":["ValueError","stream input exceeds cap -2 bytes"],"src":"pipe"}

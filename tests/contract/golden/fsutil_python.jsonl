@@ -1,0 +1,6 @@
+{"cases":5,"k":"header"}
+{"k":"b","max":-3,"n":0,"o":["ValueError","read length must be non-negative or -1"],"src":"pipe"}
+{"k":"b","max":-3,"n":5,"o":["ValueError","read length must be non-negative or -1"],"src":"pipe"}
+{"k":"b","max":-100,"n":5,"o":["ValueError","read length must be non-negative or -1"],"src":"pipe"}
+{"k":"b","max":9223372036854775807,"n":0,"o":["OverflowError","cannot fit 'int' into an index-sized integer"],"src":"pipe"}
+{"k":"b","max":9223372036854775807,"n":3,"o":["OverflowError","cannot fit 'int' into an index-sized integer"],"src":"bytesio"}
