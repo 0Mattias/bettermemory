@@ -132,6 +132,7 @@ from . import (
     gen_pyre,
     gen_models_text,
     gen_verify_status,
+    gen_witness_questions,
     gen_store_provenance,
     gen_store_bulk,
 )
@@ -239,6 +240,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "durability": gen_durability.generate,
     "durability_unicode": gen_durability.generate_unicode,
     "verify_status": gen_verify_status.generate,
+    "witness_questions": gen_witness_questions.generate,
     "githead": gen_githead.generate,
     "githead_discovery": gen_githead_discovery.generate,
     "location_probe": gen_location_probe.generate,

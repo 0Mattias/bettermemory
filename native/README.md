@@ -49,6 +49,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `location_git` | the readers of `location_git.py` that need neither discovery nor the object reader: `_Git`, `_resolve_head` (the peel a callback), `_ref_tips`, `_manifest`, `Reach`, `reachable_among`, `walk` | `location_git_readers.jsonl`, `location_git_readers_posix.jsonl` |
 | `location_witness` | the history half of `location_witness.py` (unit location_witness-1): `NeedWitnesses` with `joined`, `AnsweredHistory`, `AnsweredGit`, `answered_history`, `_independent_answers`, `independent_answer`, and the exchange keeping (`_NONCE`, `EXCHANGE_SECONDS`, `_EXCHANGES_CAP`, `_Kept`, `_EXCHANGES` as `Exchanges`, `_drop`, `ExchangeReads` with `carried`) | `location_witness.jsonl` |
 | `location_reads` | `location_reads.py` whole as a timed runtime: `READ_HANDOFF`, `READ_LANES`, `READ_SLOTS`, `_Flight`, `_Slots`, the board (`_FLIGHTS`, `_LANDED`, `_SLOTS`, `UNANSWERED`, `NOT_READ`) as a `Board` the caller holds, `_stalled`, `_board`, `_give_up`, `_fly`, `bounded_read`, `bounded_reads`, `_Lanes` | `location_reads.jsonl` |
+| `witness_questions` | `location_witness.py`'s question half: `AnsweredToken` (`__call__`, `located`), `remint_answer`, `remint_refused`, `AnsweredLiveness`, `asked_views`, `_asked_head`, `_asked_stamps` (and `location_git._key` reimplemented); the re-mint and the model's `checkouts` are closures | `witness_questions.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
@@ -2943,6 +2944,8 @@ that Unicode too.
 | `golden_location_stamps`: `device_names_answer_as_each_platform_that_made_them` | `location_stamps_platform.jsonl` | ii (Python, platform) |
 | `golden_location_view`: `location_view_every_case` | `location_view.jsonl` | i |
 | `golden_location_view_posix`: `location_view_posix_every_case` (unix) | `location_view_posix.jsonl` | i; os elsewhere (`location_view_not_posix`) |
+| `golden_witness_questions`: `witness_questions_every_case` | `witness_questions.jsonl` | i |
+| `witness_questions_kills`, `witness_questions_robustness` | none | i |
 | `golden_membership_records`: `every_case_of_the_ungated_file` | `membership_records_paths.jsonl` | i |
 | `golden_membership_records`: `every_case_of_the_python_gated_file` | `membership_records_paths_python.jsonl` | ii (Python) |
 | `golden_membership_records`: `every_case_of_the_platform_file` | `membership_records_paths_platform.jsonl` | iii (Python, platform); os on a set made on Windows |
@@ -5180,6 +5183,80 @@ alike where the time bound decides alike: a path that answers gives the
 read's value or error, a path that does not answer gives `Unanswered`
 for every read of it, and a batch's first error by job order is raised
 with `raises`.
+
+## The witness exchange's questions (`location_witness.py`, question half)
+
+`src/witness_questions.rs` reproduces the readers that answer the
+membership model from what a hook client sent, and the client's side of
+the two questions they raise. The exchange store (`ExchangeReads`),
+`NeedWitnesses`, `AnsweredHistory`, `AnsweredGit`, `answered_history` and
+`independent_answer` are the other half (lane lwhist), in their own file.
+
+| Function | Reference lines | Needs from the machine | Status |
+|---|---|---|---|
+| `AnsweredToken.__call__` | 308-330 | nothing | built (`AnsweredToken::call`) |
+| `AnsweredToken.located` | 332-359 | the model's `checkouts(token=)` (a closure) | built |
+| `remint_answer` | 465-489 | `checkout_token.remint` (a closure) | built |
+| `remint_refused` | 492-504 | nothing | built |
+| `AnsweredLiveness` | 507-552 | nothing | built |
+| `asked_views` | 555-579 | nothing | built |
+| `_asked_head` | 582-586 | nothing | built (`asked_head`) |
+| `_asked_stamps` | 589-600 | nothing | built (`asked_stamps`) |
+| `location_git._key` | location_git.py 1425-1431 | nothing | reimplemented here (`capture`'s copy is private) |
+
+**Raising calls.** Where the reference raises `NeedWitnesses(question)`,
+the port answers `Err` with the question mapping as a `PyValue` dict, its
+keys in the order the reference writes the literal; the caller wraps it
+where the exchange's two halves meet (`location.answer` and the hook
+resolution, later units). `asked_views` and `AnsweredLiveness::new`
+answer `Err(PyError)` for what `str()`, `int()` or `_key` raise:
+ValueError for a malformed object key, TypeError for a truthy ``views``
+that is not iterable (an int, a float, `True`), OverflowError for an
+infinite stamp field (`_asked_stamps` catches only TypeError and
+ValueError, so a NaN field leaves the stamp out and an infinite one
+raises), RecursionError past the port's `str()` depth
+(`capture::STR_DEPTH_TOP`, the port's own limit as `capture` states it).
+
+**Effects.** `checkout_token.remint` (unit checkout_token-4, not built)
+is `&mut dyn FnMut(&[u8], bool, bool, Option<Lineage>) -> (Option<String>,
+String)` over (git directory, policy, bare, replacing). The git directory
+reaches it as the capture's text, unencoded, as the reference hands its
+`str` on: `checkout_token.remint` skips (policy off, bare) before it
+spells the path, so a text `os.fsencode` cannot spell still answers
+``skipped:policy``, and the spelling on each platform is the re-mint's. `located`'s
+`model.checkouts(token=)` is a closure giving each match's machine and
+object key; it is called only past the five early returns, as the
+reference calls it.
+
+**Readings kept.** `asked_head` lowers only ASCII: no code point past
+ASCII lowers to text that is all ASCII hex digits (U+0130 lowers to
+`i` and a combining dot, U+212A to `k`), so a text holding one is no
+hash under `_FULL_HASH`, and the pattern is reproduced by
+`githead::full_hash`, the matcher already built for it (the regex
+decision's rule 3, first case: a matcher already built stays and gains
+pyre-8's cross-check; the engine's `api` module is not in the crate
+yet). `_FULL_HASH` is already in the engine's inventory, which
+`atom.inventory` gathers by an `ast` scan of the reference; it is the
+only pattern this half reads (the module's `_NONCE` belongs to the
+exchange half). `asked_views` iterates a `str` or a dict ``views`` without a
+mapping in it (characters, keys), so they read as no views.
+`AnsweredLiveness` keeps the last value of a key, as a dict built from
+pairs does.
+
+**Fixtures.** `tests/contract/gen_witness_questions.py` drives the
+reference with `checkout_token.remint` and the model stubbed and every
+JSON input written as text the reference loads, so key order and
+non-finite numbers reach both alike. `witness_questions.jsonl` (157
+rows) is not gated, its six rows whose answer is `str()` of a float
+included: `float.__repr__` is the shortest round trip on every release
+from 3.11 to 3.14 and on every platform.
+`witness_questions_kills` and `witness_questions_robustness` (seeded
+arbitrary values to every reader, 100,000-deep nesting, 4,300-digit
+fields, a growth claim over 500 and 5,000 views) need no fixture.
+
+**Windows.** Nothing here reads the file system or spells a path: the
+git directory reaches the re-mint closure as text, so its spelling
+under each platform belongs to the re-mint unit.
 
 ## git's wildmatch
 
@@ -12930,8 +13007,7 @@ What the reference has and this build does not, by area:
   remint and the claim: unit 4), the origin's settling
   (`origin.py`), `location.py` past its view continuity (`continuity`,
   `view_state` and their helpers are built; `path_liveness`,
-  `path_liveness_many` and `_liveness_read` are not), `location_witness.py`
-  past its history half (the question half: location_witness-2), and of
+  `path_liveness_many` and `_liveness_read` are not), and of
   `location_git.py` the discovery (`GitDies`,
   `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit`), `_git`,
   `RepositoryHistory` and `_clear_above`.

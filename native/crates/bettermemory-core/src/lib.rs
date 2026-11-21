@@ -86,6 +86,9 @@
 //!   question raised (`NeedWitnesses`), the readers over the client's
 //!   answers, git's reading of tied witnesses and the keeping of one
 //!   exchange's reads between rounds (unit location_witness-1);
+//! - [`witness_questions`]: the question half of `location_witness.py`:
+//!   the answered token and liveness readers, the client's re-mint answer
+//!   and its refusal, and the client's reading of a view question;
 //! - [`gitobjects`]: git objects read from a repository's files, its
 //!   first three units (the byte parsers; the zlib streams and the delta
 //!   chain over a file handle; the file reads, the object format and the
@@ -169,3 +172,4 @@ pub mod toml;
 pub mod unicode;
 pub mod verify_candidates;
 pub mod verify_status;
+pub mod witness_questions;
