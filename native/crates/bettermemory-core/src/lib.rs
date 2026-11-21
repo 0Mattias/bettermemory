@@ -209,6 +209,9 @@
 //!   attribution settlement);
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
 //!   the lines shown about which project a folder belongs to;
+//! - [`entry`] and [`cli`]: the process entry's hook-word routing, and
+//!   the CLI's shared leaves (`cli::common`: the refusals, the
+//!   key-unreadable line, the migration line, the ISO cutoff parser);
 //! - [`origin_remote`]: a remote URL read into the triple `origin`
 //!   compares, with `urllib.parse.urlparse` as CPython 3.13.13 has it;
 //! - [`credentials`]: the write gate's credential detectors, its first
@@ -241,6 +244,7 @@ pub mod caches;
 pub mod capture;
 pub mod checkout_token;
 pub mod claims;
+pub mod cli;
 pub mod config;
 pub mod control_tokens;
 pub mod credentials;
@@ -248,6 +252,7 @@ pub mod daemon_client;
 pub mod datetime;
 pub mod difflib;
 pub mod durability;
+pub mod entry;
 pub mod events;
 pub mod float_repr;
 pub mod fsdata;

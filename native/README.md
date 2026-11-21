@@ -93,6 +93,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl` |
 | `location_continuity` | `location.continuity` (`location.py` 1040-1094) | `location_continuity.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
+| `entry`, `cli::common` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff` | `cli_common.jsonl`, `cli_common_python.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
 | `claims` | units 1 and 2 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`) | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl` |
@@ -14634,6 +14635,111 @@ involved stable from Unicode 14 to 16):
   reference; the native signatures take `&[u32]` there, so that call
   cannot be written.
 
+## The process entry and the CLI's shared leaves
+
+Read at 6cf944e5. `_entry.py` (38 lines) whole, and the leaves of
+`cli/_common.py` that need no parser and open no store.
+
+### The map
+
+| Function | Reference lines | Needs from the machine | Status |
+| --- | --- | --- | --- |
+| `route_hook_word` | `_entry.py` 17-28 | nothing (`hook_main` is an argument) | built (`entry`) |
+| `main` | `_entry.py` 31-35 | `sys.argv` (an argument) | built (`entry`) |
+| `HOOK_WORDS` | `_daemon_client.py` 136-138 | nothing | built (`entry`, until the `_daemon_client` unit moves it) |
+| `_refuse` | `cli/_common.py` 44-51 | the parser (`UsageError`) | built (`cli::common`) |
+| `exit_if_bundle_file` | 130-145 | `backup.bundle_refusal`'s answer (an argument) | built |
+| `key_unreadable_line` | 148-158 | nothing | built |
+| `exit_if_key_unreadable` | 161-180 | the block's outcome (an argument) | built |
+| `migration_line` | 320-328 | nothing | built |
+| `parse_iso_cutoff` | 376-477 | the clock (`now`, an argument) | built |
+| `read_only_store_path`, `open_read_only`, `open_owner_store`, `CliContext`, `cli_context`, `migrate_at_open`, `run_migration_at_open`, `cli_recorder` | the rest | the config, the store, the recorder | cli__common-1b, not built |
+
+### As built
+
+`entry` (`src/entry.rs`): `HOOK_WORDS` is a `pub const` here with a
+comment naming its home; `is_hook_word` is the frozenset's membership,
+an exact match of code points. `route_hook_word(argv, hook_main)`
+answers `Some(code)` where the reference calls `sys.exit(hook_main(argv))`
+and `None` where it returns; only the first word is read. `main(argv,
+hook_main, cli_main)` takes `sys.argv[1:]` and both callees, and answers
+`Routed::Hook(code)` or `Routed::Cli(cli_main())`.
+
+`cli` (`src/cli/mod.rs`): `Exit { code, stderr }` stands for
+`SystemExit(code)` with what the command wrote to stderr before it, the
+one exit type the ported CLI uses. `UsageError` is what `_refuse` needs
+of an `argparse.ArgumentParser`: `prog` and `error` (the usage line and
+the message, exit 2); the parser's port implements it.
+
+`cli::common` (`src/cli/common.rs`):
+
+- `refuse(parser, message, exit_code)`: `parser.error` at code 2, else
+  `"{prog}: error: {message}\n"` and the code.
+- `exit_if_bundle_file(refusal, exit_code, prefix)` takes
+  `bundle_refusal`'s answer as `Option<PyStr>`.
+- `key_unreadable_line(exc, prefix)` builds `str(exc)` from the
+  `KeyUnreadable`'s path and reason (the path as Python holds it:
+  `os.fsdecode` of its bytes on POSIX, its UTF-16 units with a lone
+  surrogate kept on Windows) and passes the whole line, prefix included,
+  through `printable::printable`.
+- `exit_if_key_unreadable(outcome, exit_code, prefix)` is the context
+  manager over the block's `Result<T, RingError>`: a `KeyUnreadable` ends
+  the command with the line and a newline; anything else passes through.
+- `migration_line(totals)` over `MigrationTotals`, the seven counts it
+  prints; `homed` is summed in `i128`, so no sum of `i64` counts overflows.
+- `parse_iso_cutoff(value, flag, far_future, now)`: every `Z` replaced by
+  `+00:00`, read by `DateTime::from_isoformat` (CPython 3.13's C parser);
+  a ValueError is the "invalid ISO timestamp" exit with the bare-date
+  hint, a naive value the "missing a UTC offset" exit, and an instant past
+  `now` plus 24 hours (strictly) the refusal under `"refuse"` or the
+  warning under any other word. Instants are compared, not wall clocks.
+  The answer is `Cutoff { parsed, canonical, warning }`, or
+  `CutoffFault::Exit` or `CutoffFault::Raised { error, stderr }` for the
+  OverflowError the reference does not catch: `now + 24h` past year 9999,
+  or `astimezone(utc)` of a value whose instant falls outside years 1 to
+  9999 (after the warning, which `stderr` keeps).
+
+The one pattern, `re.fullmatch(r"\d{4}-\d{2}-\d{2}", value)`, is matched
+by hand under rule 3 of the pyre decision (no choice, no nesting): ten
+characters, `-` at 4 and 7, `unicode::is_re_digit` elsewhere (`\d` on a
+`str` pattern is Unicode's decimal digits). It is in the engine's
+inventory already through `gen_pyre_atom`'s scan of the sources; once the
+engine is green, a cross-check of this site against `pyre::Regex` is due.
+
+### Fixtures
+
+`tests/contract/gen_cli_common.py` writes `cli_common.jsonl` (not gated:
+the hook words and their routing over a recording `hook_main`, `_refuse`
+over a real `argparse.ArgumentParser`, the bundle refusal, the key lines
+over POSIX path texts that read alike on every system, the migration
+line, and cutoffs that 3.11 to 3.14 read alike) and
+`cli_common_python.jsonl` (gated on the Python release: the cutoffs at
+`fromisoformat`'s edges, week dates, compact forms, offsets with seconds,
+a NUL, digits past ASCII, lone surrogates and the year bounds). The clock
+is a fixed `now` patched into the module's `datetime`. The tests:
+`golden_cli_common`, `cli_common_kills` and `cli_common_robustness`.
+
+### Reference findings
+
+- The naive-value message appends `T00:00:00Z` to the value whatever it
+  is, so `2026-05-25T10:00:00` is told to write
+  `'2026-05-25T10:00:00T00:00:00Z'`, which is itself invalid.
+  Reproduction: `parse_iso_cutoff("2026-05-25T10:00:00", flag="--since")`.
+- A NUL ends the C parser's read: `2026-05-25T05:25:35\x00Z` is accepted
+  as `2026-05-25T05:25:35+00:00` under 3.13.13 (the Z after the NUL
+  becomes `+00:00` and is read past). The port reproduces it through
+  `DateTime::from_isoformat`.
+- An offset that takes the instant below year 1 (`0001-01-01T00:00:00+01:00`)
+  or above 9999 raises an uncaught OverflowError (a traceback, after the
+  warning under `"warn"`) instead of the flag's message.
+
+### Left for later
+
+cli__common-1b: `read_only_store_path`, `open_read_only`,
+`open_owner_store`, `CliContext`, `cli_context`, `migrate_at_open`,
+`run_migration_at_open` and `cli_recorder`, which need the config's
+loader, the store's opens and the recorder.
+
 ## The credential detectors
 
 Read at 465bc600. `credentials.py` (639 lines). Nothing in it reads the
@@ -17681,7 +17787,11 @@ What the reference has and this build does not, by area:
   sequence over `StopSide` in `hook_stop.rs`), and the command line. Of
   the hook mains' argument parsing, the flat parser (argparse-1a) and
   the subparsers (argparse-1b) are built; the help formatter
-  (argparse-2) is not.
+  (argparse-2) is not. Of the command line, the process entry's
+  hook-word routing (`entry`) and `cli/_common.py`'s parser-free leaves
+  (`_refuse`, `exit_if_bundle_file`, `key_unreadable_line`,
+  `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`) are
+  built; the rest, `cli__common-1b` included, is not.
 - `datetime.astimezone` of a naive value (the reference reads it as the
   machine's local time).
 

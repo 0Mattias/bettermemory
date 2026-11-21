@@ -40,6 +40,7 @@ from . import (
     gen_checkout_token_read,
     gen_checkout_token_write,
     gen_cli,
+    gen_cli_common,
     gen_config,
     gen_difflib,
     gen_credentials_prefixed,
@@ -268,6 +269,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "identity_caller_unicode": gen_identity_caller.generate_unicode,
     "session": gen_session.generate,
     "cli_surface": gen_cli.generate,
+    "cli_common": gen_cli_common.generate,
+    "cli_common_python": gen_cli_common.generate_python,
     "credentials_prefixed": gen_credentials_prefixed.generate,
     "credentials_prefixed_unicode": gen_credentials_prefixed.generate_unicode,
     "credentials_gate": gen_credentials_gate.generate,
@@ -562,6 +565,9 @@ PYTHON_VERSION = "3.13.13"
 #: the digests of the ``re`` sources the engine was read from (`gen_pyre`),
 #: and patterns with an empty negative lookaround, which `re._parser`
 #: parses to FAILURE from 3.13 (`gen_pyre_tree`).
+#: ``cli_common_python`` holds cutoffs read by `datetime.fromisoformat`
+#: at its edges (week dates, compact forms, offsets with seconds, a NUL,
+#: digits past ASCII), whose answers follow the release (`gen_cli_common`).
 #: ``pysyntax_python`` holds the eval-mode tokenizer's and
 #: `ast.literal_eval`'s answers as 3.13.13 gives them, classed by the
 #: release's messages; under another interpreter the generator writes its
@@ -607,6 +613,7 @@ PYTHON_GATED = frozenset(
     {
         "argparse_python",
         "argparse_subparsers_python",
+        "cli_common_python",
         "models_text_platform",
         "location_stamps_platform",
         "location_stamps_python",

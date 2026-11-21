@@ -196,6 +196,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "settings_paths_python.json"
         | "membership_lines_python.jsonl"
         | "claims_python.jsonl"
+        // `datetime.fromisoformat` at its edges (`gen_cli_common`).
+        | "cli_common_python.jsonl"
         // The tokenizer and `literal_eval` of 3.13.13 (`gen_pysyntax`);
         // `pysyntax.jsonl`, the values alone, is not gated.
         | "pysyntax_python.jsonl"
