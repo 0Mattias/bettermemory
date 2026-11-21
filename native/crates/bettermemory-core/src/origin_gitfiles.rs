@@ -10,11 +10,18 @@
 //! - [`machine`], unit 2: the leaves that read the machine through the
 //!   `Fs` trait: `_read_prefix`, `relative_to_root` and `_spelled_as_git`.
 //!   Built.
+//! - [`facts`], unit 3: what git dies on in a repository's or the
+//!   machine's config (`_rev_parse_dies` and its tables,
+//!   `_machine_config_dies`), what a config text says (`_facts_of`,
+//!   `_config_entries`), the directories a check holds
+//!   (`_hold_directory`, `directories_held`) and the global attributes
+//!   file (`_global_attributes_path`). Built.
 //!
 //! Texts are Python `str` values as code points ([`PyStr`]), since a
 //! caller's text may hold a lone surrogate, which the reference's UTF-8
 //! encode refuses with `UnicodeEncodeError`.
 
+pub mod facts;
 pub mod machine;
 
 use crate::pyvalue::PyStr;

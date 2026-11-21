@@ -61,6 +61,7 @@ from . import (
     gen_gitconfig_tree,
     gen_gitconfig_remote_rules,
     gen_origin_gitfiles,
+    gen_origin_gitfiles_facts,
     gen_origin_gitfiles_machine,
     gen_gitconfig_wildmatch,
     gen_origin_remote,
@@ -210,6 +211,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "origin_gitfiles_machine": gen_origin_gitfiles_machine.generate,
     "origin_gitfiles_machine_python": gen_origin_gitfiles_machine.generate_python,
     "origin_gitfiles_darwin": gen_origin_gitfiles_machine.generate_darwin,
+    "origin_gitfiles_facts": gen_origin_gitfiles_facts.generate,
+    "origin_gitfiles_facts_posix": gen_origin_gitfiles_facts.generate_posix,
     "ulid": gen_ulid.generate,
     "durability": gen_durability.generate,
     "durability_unicode": gen_durability.generate_unicode,
@@ -572,7 +575,10 @@ PLATFORM_GATED = frozenset(
 #: ``location_stamps_python`` name devices by ``os.major``, which Windows'
 #: ``os`` lacks (`gen_location_stamps`); ``location_probe``, ``location_probe_python``
 #: and ``location_probe_errno`` probe trees with links and a mode-000
-#: folder, the last raising POSIX errno numbers (`gen_location_probe`).
+#: folder, the last raising POSIX errno numbers (`gen_location_probe`);
+#: ``origin_gitfiles_facts_posix`` joins with the host's ``os.path``
+#: (``ntpath`` on Windows) and holds trees with links and a mode-000
+#: folder (`gen_origin_gitfiles_facts`).
 POSIX_ONLY = frozenset(
     {
         "checkout_token_read",
@@ -605,6 +611,7 @@ POSIX_ONLY = frozenset(
         "origin_gitfiles_machine",
         "origin_gitfiles_machine_python",
         "origin_gitfiles_darwin",
+        "origin_gitfiles_facts_posix",
         "gitsystem_record",
         "gitsystem_record_python",
         "gitsystem_probe",

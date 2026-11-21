@@ -75,9 +75,10 @@
 //! - [`credentials`]: the write gate's credential detectors, its first
 //!   two units (the vendor-prefixed shapes and the value gate);
 //! - [`origin_gitfiles`]: the repository files `origin` reads in-process,
-//!   its first two units (the pure decoders, and the leaves that read the
+//!   its first three units (the pure decoders; the leaves that read the
 //!   machine: a file's prefix, a path relative to the root, the root as
-//!   the kernel spells it);
+//!   the kernel spells it; and what git dies on in a config, what a config
+//!   text says, and the directories a check holds);
 //! - [`checkout_token`]: the checkout token, its first two units (the
 //!   text, and the reads over the file-system trait);
 //! - [`claims`]: what a memory claims, its first unit (the claim record,

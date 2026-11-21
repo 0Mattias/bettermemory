@@ -47,7 +47,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
-| `origin_gitfiles` | units 1 and 2 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`) and the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl` |
+| `origin_gitfiles` | units 1 to 3 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`), the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) and the config facts (`facts`: `_facts_of`, `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies`, `_config_entries`, `_config_variable_names`, `_hold_directory`, `directories_held`, `_global_attributes_path`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl`, `origin_gitfiles_facts.jsonl`, `origin_gitfiles_facts_posix.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
 | `fsutil` | unit 1 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads | `fsutil.jsonl`, `fsutil_python.jsonl` |
@@ -2359,6 +2359,9 @@ that Unicode too.
 | `golden_origin_gitfiles_machine`: `machine_python_every_query_in_memory`, `machine_python_every_query_on_disk` | `origin_gitfiles_machine_python.jsonl` | ii (Python) |
 | `golden_origin_gitfiles_machine`: `darwin_every_query_on_disk` | `origin_gitfiles_darwin.jsonl` | iii |
 | `origin_gitfiles_machine_kills` (17), `origin_gitfiles_machine_robustness` (7) | none | i |
+| `golden_origin_gitfiles_facts`: `origin_gitfiles_facts_every_case` | `origin_gitfiles_facts.jsonl` | i |
+| `golden_origin_gitfiles_facts_posix`: `origin_gitfiles_facts_posix_every_case` (POSIX only; `origin_gitfiles_facts_not_posix` records the gap as os) | `origin_gitfiles_facts_posix.jsonl` | i |
+| `origin_gitfiles_facts_kills` (9), `origin_gitfiles_facts_robustness` (4) | none | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_every_case` | `capture_vocabulary.jsonl` | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_python_every_case` | `capture_vocabulary_python.jsonl` | ii (Python) |
 | `capture_vocabulary_robustness` (5) | none | i |
@@ -4641,15 +4644,15 @@ so it is cut into units, leaves first.
 | `_read_prefix` | 1331-1343 | a seek and reads of an open file | built (unit 2) |
 | `relative_to_root` | 335-361 | `stat` of the root and of each parent; pathlib's `relative_to` and `parents` | built (unit 2) |
 | `_spelled_as_git` | 262-294 | the platform; `F_GETPATH` on macOS | built (unit 2) |
-| `_facts_of`, `_ConfigFacts`, `_BARE_FALSE` | 42-111 | nothing (a regular expression over bytes) | unit 3 |
-| `_fd_stamp`, `_read_flags`, `_config_facts` and its memo | 114-210 | open, `fstat`, reads, a bounded memo | unit 3 |
+| `_facts_of`, `_ConfigFacts`, `_NO_CONFIG`, `_BARE_FALSE`, `_INCLUDE_SECTIONS` | 46-94 | nothing (a regular expression over bytes) | built (unit 3, with unit 5's leaves) |
+| `_CONFIG_LIMIT`, `_fd_stamp`, `_read_flags`, `_config_facts` and its memo | 42, 97-210 | open, `fstat`, reads, a bounded memo, `githead.stamp` | unit 3 remainder |
 | `_worktree_config_facts`, `_config_moves_worktree` | 213-259 | `githead.GitDir`, the config facts | unit 3 |
 | `refused_worktree_root` | 364-403 | the git on PATH | unit 4 |
 | `first_not_a_directory` and its memo | 406-431 | `stat` | unit 4 |
 | `capture_files` | 434-460 | `githead`'s signature and discovery | unit 4 |
-| `_hold_directory`, `directories_held`, `_global_attributes_path` | 645-726 | `stat`, the environment | unit 5 |
-| `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies` | 729-999 | the git on PATH's version (`gitsystem`) | unit 5 |
-| `_config_entries`, `_config_variable_names` | 1002-1028 | nothing (`gitconfig`) | unit 5 |
+| `_hold_directory`, `directories_held`, `_global_attributes_path` | 645-720 | `stat`, the environment | built (unit 3) |
+| `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies` | 722-999 | the git on PATH's version (`gitsystem`) | built (unit 3) |
+| `_config_entries`, `_config_variable_names` | 1002-1028 | nothing (`gitconfig`) | built (unit 3) |
 | `attribute_files_signature`, `gitattributes_signature` | 1031-1194 | `stat`, reads, `gitconfig`'s tree | unit 6 |
 | `_index_gitmodules` and its memo, `_gitdir_at_root` | 1205-1237, 1346-1427 | open, `fstat`, the prefix reads | unit 6 |
 | `walk_files_signature`, `located_head`, `files_held` | 1430-1553 | `stat`, `githead` | unit 7 |
@@ -4850,6 +4853,134 @@ to `bettermemory-sys`, less 78 net from `origin_gitfiles.rs`, where the
 copy of `hunk_lines` went: about 245 lines, met).
 The second prediction, that the independent review finds an input on which
 the port and the reference differ, is the review's to settle.
+
+### Unit 3, built (`origin_gitfiles::facts`)
+
+This unit is the map's unit 5 with the text facts of its unit 3:
+`_facts_of` calls `_config_entries` and `_rev_parse_dies`, so the two are
+built together. The line ranges were confirmed against the source at this
+unit (`_BARE_FALSE` 46, `_ConfigFacts` 50-65, `_NO_CONFIG` 68-70,
+`_INCLUDE_SECTIONS` 74, `_facts_of` 77-94, `_hold_directory` 653-686,
+`directories_held` 689-699, `_global_attributes_path` 702-720, the tables
+722-873, `_rev_parse_dies` 876-920, `_merge_word_dies` 923-939,
+`_git_is_at_least` 942-948, `_machine_config_dies` 951-989,
+`_machine_value_dies` 992-999, `_config_entries` 1002-1014,
+`_config_variable_names` 1017-1028).
+
+- `facts_of` (`_facts_of`) gives `ConfigFacts`: the names of
+  `gitconfig::git_entries` (None for a text holding a NUL byte or one git
+  refuses), `attributesfile` or `[attr` anywhere in the lowered text, a
+  line naming `bare` that is not a plain false, `rev_parse_dies` of any
+  entry (its value cut at the first NUL), and an `include.` or
+  `includeif.` name. `no_config` is `_NO_CONFIG`.
+- `_BARE_FALSE`, `[ \t]*bare[ \t]*=[ \t]*(?:false|no|off|0)[ \t]*\r?`
+  under `fullmatch` over a lowered line, is matched by hand (rule 3 of the
+  pyre decision: one level of choice, no nesting). Each blank run is
+  followed by a byte it cannot hold, and no word followed by what the rest
+  takes is a prefix of another, so the greedy reading is the only match.
+  It is named here for pyre-8's cross-check against the engine; the
+  pattern is a literal of the reference, so the inventory scan of
+  `pyre.jsonl` already reads it.
+- `rev_parse_dies` (`_rev_parse_dies`) holds the tables as constant
+  slices and tests them in the reference's order: a boolean
+  (`_DIES_UNLESS_BOOL`, any `advice.`), a value (`_DIES_UNSET`), a size
+  (`-` anywhere in the whole value, past a NUL too, then
+  `gitconfig::git_int`), a word or a boolean, one of the named words as
+  written (cut at a NUL), `branch.autosetupmerge` (`merge_word_dies`), the
+  format version (no int, or above 1), the negotiation words in any case,
+  the two commit-graph versions, the includes, then `_READ_ANY` false and
+  `_READ_ELSEWHERE` or a `_READ_WHOLE` prefix true. `_OLDER_DIES` is
+  documentation in the reference (each name is in a table read) and is
+  kept as `OLDER_DIES` for the inventory.
+- `merge_word_dies` and `_git_is_at_least`: the git on PATH is data,
+  `gitfile_rule::format::GitFacts`, whose `is_at_least` answers None where
+  git named no release, as `gitsystem.is_at_least` does.
+- `machine_config_dies` (`_machine_config_dies`) takes the answer of
+  `gitconfig::stamped::machine_config_reads` rather than the callable.
+  State by state: `Err(NotPortedWhy::Raised)` (the reference's read raised
+  ValueError, which it catches) and a read's `raised` answer true; any
+  other `Err` (`Stamp`, `AskedBranch`, `Condition`, `RelativeGitDir`) and
+  a read's `not_ported` or `asks_branch`, states the reference never has,
+  answer `NotPorted`, which a caller declines on, never false and never a
+  guessed true; then `dies`, `maybe_dies` or not `complete` answer true,
+  then a value `machine_value_dies` refuses in `values` or `undecided`,
+  the `include` and `includeif` sections passed over. `asks_remote_urls`
+  and `forbidden` are not read, as in the reference. The reads are taken
+  in order, so a read that dies answers before a later one that declines.
+  A name is the section, the subsection's bytes (the reference's
+  `gitconfig.subsection_bytes`, which `Name.subsection` already holds) and
+  the key, joined by dots.
+- `config_entries` and `config_variable_names`: `git_entries`, None for a
+  text holding a NUL byte or one git refuses; the names as a set.
+- `hold_directory` (`_hold_directory`) and `directories_held` record and
+  compare `(st_mtime_ns, st_ctime_ns)` of `Fs::stat`, which follows links,
+  as `os.stat` does; never `githead.stamp`'s five fields (`_stamp` is an
+  alias in the module these functions do not call). A FileNotFoundError or
+  NotADirectoryError that `path_missing` reads as absence walks to the
+  parent (`hostpath::dirname` of the flavour); at the top, or for any other
+  error, the error is returned (`HoldFault::Raised`), ValueError for a NUL
+  included, as the reference lets it out. A file system that gives no
+  change time (`StdFs` on Windows) answers `HoldFault::NotPorted`. The map
+  is a `BTreeMap`: `directories_held` answers false at any moved pair or
+  failed stat whatever the order, so insertion order does not matter.
+- `global_attributes_path` (`_global_attributes_path`): XDG_CONFIG_HOME
+  and HOME are arguments; `root` is the text `os.fspath(root)` gives (so
+  `Path("")` is `.`), joined with `hostpath::join` where the candidate is
+  not absolute (`hostpath::isabs`).
+
+Fixtures: `gen_origin_gitfiles_facts.py` writes
+`origin_gitfiles_facts.jsonl` (class i, no gate, about 20 KB: every table
+name and 26 others against 61 values, each row a string of answers, with
+`gitsystem.is_at_least` patched to true, false and None, and to compare
+the releases 2.34, 2.35, 2.36 and 2.37, for `branch.autosetupmerge`; `_machine_value_dies` likewise; `_facts_of` and
+`_config_variable_names` over 56 texts; a digest of `_facts_of` over 5,000
+texts drawn from 39 tokens by a 64-bit congruence; `_machine_config_dies`
+over 42 described reads, two of which raise) and
+`origin_gitfiles_facts_posix.jsonl` (POSIX only: `_global_attributes_path`
+joins with the host's `os.path`, `ntpath` on Windows, and the scenarios
+make links and a mode-000 folder; 17 environments and 24 scenarios of
+`_hold_directory` and `directories_held` on a scratch tree, each step's
+answer the paths held, an exception's class, or whether every pair still
+holds, never a time). Each change in a scenario is made 50 ms after the
+step before it, in the generator and in the Rust test alike, since Linux
+stamps a change with a coarse clock.
+
+Reference findings, reproduced and pinned:
+
+- `_facts_of(b"[core]\n\tbare = false ; c\n").bare_moves` and
+  `_facts_of(b"[core]\n\tbare = 0\r\r\n").bare_moves` are true: git
+  reads `core.bare` false from both, where the field's docstring says a
+  line naming `bare` with anything but a plain false. A comment or a
+  second CR is not a plain false by the pattern; a false yes costs one
+  process.
+- `_rev_parse_dies(b"core.bigfilethreshold", b"1\0-")` is true: the sign
+  is looked for in the whole value, where git reads the value to its
+  first NUL. `_facts_of` cuts the value first and never reaches it.
+  Its cut is itself never reached: `_config_entries` answers None for a
+  text that holds a NUL, so the port's `.map(cut)` there is kept only to
+  follow the reference.
+
+Difference from the reference: a decimal value of more than 4,300
+digits, such as `core.repositoryformatversion` set to 5,000 nines, makes
+the reference's `gitconfig.git_int` raise ValueError (CPython's limit on
+converting a string to an int, which an interpreter setting moves), and
+`_rev_parse_dies` and `_facts_of` let it out. The port's `git_int` reads
+the number as out of range, so `rev_parse_dies` answers true and
+`facts_of` answers `git_dies` true: git refuses such a value, and the
+check fails closed. `origin_gitfiles_facts_robustness.rs` pins it; no
+fixture row holds it, since the reference's answer is an exception that
+turns on the interpreter.
+
+Left for later units: `_CONFIG_LIMIT`, the memo, `_fd_stamp`,
+`_read_flags`, `_config_facts`, `_WORKTREE_CONFIG_EXTENSION`,
+`_worktree_config_facts` and `_config_moves_worktree` (the map's unit 3
+remainder, once `githead.stamp` is native), then units 4, 6 and 7.
+
+Prediction for this unit: at most 600 lines of Rust source outside tests
+(457 lines in `origin_gitfiles/facts.rs` and 7 in `origin_gitfiles.rs`:
+the bound met; the estimate of 380 missed). The second prediction, that
+the independent review finds an input on which the port and the
+reference differ, is met: the long integer value above.
 
 ## Design notes for the rest of the tree half
 
@@ -11327,8 +11458,8 @@ What the reference has and this build does not, by area:
   body diffs, the record and link rows, `record_history` and the
   renderers (units 2 to 5).
 - Reading a checkout: `gitobjects.py` past its byte parsers and zlib streams (the files,
-  the reader: units 3 and 4), `origin_gitfiles.py` past its decoders and machine leaves
-  (units 3 to 7), `checkout_token.py` past its text and its reads (the
+  the reader: units 3 and 4), `origin_gitfiles.py` past its decoders, machine leaves
+  and config facts (`_config_facts` and its memo, units 4, 6 and 7), `checkout_token.py` past its text and its reads (the
   write, the remint and the claim: units 3 and 4), the origin's settling
   (`origin.py`), `location.py` and the rest of `location_git.py`.
 - `membership_records.py` past its path helpers and legacy ask rule
