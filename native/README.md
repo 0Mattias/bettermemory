@@ -55,6 +55,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `git_run` | `_git.py`'s `run_git` whole over a `GitProcess` (the command, `_environment`, stdin, the timeout given, both streams as text or bytes, the counts through `git_calls::run_git`, the logged lines as values) and `log_nonzero_exit` | `git_run.jsonl` |
 | `location_stamps` | `location_stamps.py` whole: `in_ticks`, `kept_in_ticks`, `stat_each`, `capture_ticks`, `_device_name` (macOS's `os.major`/`os.minor`, and Linux's under a CPython built against glibc or musl), `_drvfs` (the mount table read through `Fs`), `_init_stamps`, `filetime_ns`, `basic_info_ns` (FILE_BASIC_INFO through `Fs::basic_info`, declined by `StdFs`) | `location_stamps.jsonl`, `location_stamps_python.jsonl`, `location_stamps_platform.jsonl` |
 | `location_view` | `location.py`'s view continuity: `_git_dir_at`, `continuity`, `_head_at`, `view_state`, `_carries_project_file`, `_same_number`, with `object_key`, `_at_dotgit`, the project file's parse and the history's `holds` as arguments | `location_view.jsonl`, `location_view_posix.jsonl` |
+| `location_answer` | `location.py`'s client answer and liveness reads: `PROBE_BUDGET`, `path_liveness`, `path_liveness_many`, `_liveness_read`, `answer`, `Exchange`, `_history_of`, with the history (`AnswerHistory`), the re-mint and `view_state` (`ViewRead`) as arguments | `location_answer.jsonl` |
 | `location_git` | the readers of `location_git.py` that need neither discovery nor the object reader: `_Git`, `_resolve_head` (the peel a callback), `_ref_tips`, `_manifest`, `Reach`, `reachable_among`, `walk` | `location_git_readers.jsonl`, `location_git_readers_posix.jsonl` |
 | `location_cache` | `location.py`'s capture signature and capture cache: `_evicted`, `_stamp`, `signature`, `_masked`, `_Entry`, the cache, `forget`, `_fresh`, `capture`, `_capture_cached`, `capture_token` (unit loccache) | `location_cache.jsonl`, `location_cache_posix.jsonl` |
 | `location_witness` | the history half of `location_witness.py` (unit location_witness-1): `NeedWitnesses` with `joined`, `AnsweredHistory`, `AnsweredGit`, `answered_history`, `_independent_answers`, `independent_answer`, and the exchange keeping (`_NONCE`, `EXCHANGE_SECONDS`, `_EXCHANGES_CAP`, `_Kept`, `_EXCHANGES` as `Exchanges`, `_drop`, `ExchangeReads` with `carried`) | `location_witness.jsonl` |
@@ -4478,6 +4479,8 @@ that Unicode too.
 | `golden_location_stamps`: `device_names_answer_as_each_platform_that_made_them` | `location_stamps_platform.jsonl` | ii (Python, platform) |
 | `golden_location_view`: `location_view_every_case` | `location_view.jsonl` | i |
 | `golden_location_view_posix`: `location_view_posix_every_case` (unix) | `location_view_posix.jsonl` | i; os elsewhere (`location_view_not_posix`) |
+| `golden_location_answer`: `location_answer_every_case`, `exchange_defaults_to_an_empty_question` | `location_answer.jsonl` | i |
+| `location_answer_kills` (8), `location_answer_robustness` (3) | none | i |
 | `golden_witness_questions`: `witness_questions_every_case` | `witness_questions.jsonl` | i |
 | `witness_questions_kills`, `witness_questions_robustness` | none | i |
 | `golden_membership_records`: `every_case_of_the_ungated_file` | `membership_records_paths.jsonl` | i |
@@ -7322,6 +7325,97 @@ asked, a tuple holding a list taken as hashable) and
 `golden_location_view_posix`'s own tests of a raising `_at_dotgit` and a
 git directory that is not UTF-8.
 No Python regular expression is involved.
+
+## The client answer and liveness reads of location (`location.py` 1188-1417)
+
+`location_answer` reproduces the client's side of the witness exchange
+and the liveness reads of `location.py`: `path_liveness` 1188-1199,
+`path_liveness_many` 1202-1211, `_liveness_read` 1214-1246, `answer`
+1249-1336, `Exchange` 1339-1352 and `_history_of` 1414-1417 (line ranges
+confirmed against the source at 6cf944e5). `PROBE_BUDGET`
+(`location_git.py` 138, 0.5 seconds) is defined here, as no earlier unit
+defines it. `capture_location`, `process_machine` and `_recorded`
+(1420-1478) are left to the unit location-4, with the implementation of
+`AnswerHistory` for `RepositoryHistory`.
+
+### The module by function
+
+| function | lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `path_liveness` | 1188-1199 | `view_state` (a `ViewRead`), the bounded-read board (`location_reads::Board`) | ported |
+| `path_liveness_many` | 1202-1211 | the same | ported |
+| `_liveness_read` | 1214-1246 | nothing: the read's arguments from the checkout | ported (`liveness_read`, `liveness_args`) |
+| `answer` | 1249-1336 | `RepositoryHistory` (an `AnswerHistory` from a factory), `checkout_token.remint` (through `remint_answer`), `view_state`, the board | ported |
+| `Exchange` | 1339-1352 | nothing | ported |
+| `_history_of` | 1414-1417 | `RepositoryHistory` (a factory) | ported (`history_of`) |
+
+### What is reproduced, and why so
+
+- The effects are arguments. The history is the trait `AnswerHistory`
+  (`holds_objects`, `fingerprint`, `parents`, `reachable_among`
+  answering `location_git::Reach`, `blobs`, `independent`) built by a
+  factory from the capture's common directory; the re-mint is the
+  closure `witness_questions::remint_answer` takes; `view_state` is a
+  `ViewRead`, a shared closure over a path and the keyword arguments as
+  an `AskedView`, which a caller builds over `location_view::view_state`
+  with its machine and effects. It runs on the board's worker threads,
+  so it owns what it reads with.
+- `answer` builds the history where the capture is a repository naming
+  a common directory, and does not ask whether the capture was evicted;
+  `_history_of` does. Both are the reference's, and a row pins each.
+- The answers are copied as a Python `dict`: a key already there keeps
+  its place when set again (`remint_ok`, `exchange`, `asked`, `held`,
+  `walk`, `blobs`, `views`), and `dict(x or {})` of an earlier round's
+  value takes a mapping, or a sequence of pairs (a pair that is not two
+  long is ValueError, an element that is not iterable or a key that is
+  unhashable TypeError). `set(x or ())` and `sorted` follow the
+  reference: an unhashable member is TypeError, members that do not
+  compare (a `str` beside a number, `None` beside any other member)
+  TypeError, a repeated `None` kept once as the set holds it, numbers in
+  numeric order with `1`, `1.0` and `True` kept once (the first).
+- `str(x).lower()` of each asked commit uses `capture::str_of` and the
+  crate's Unicode lowering; a non-ASCII text is never a full hash, so the
+  ancestry answered without a history keeps it out.
+- The walk is `location_git::walk` over the history's `parents` and
+  `fingerprint`, in the reference's call order (parents, then the
+  fingerprint); the capture's HEAD and ref tips reach it as text, a code
+  point that is no scalar value as U+FFFD (git's hex names hold none).
+- The view reads go through `bounded_reads` with `raises`: the first
+  read that raised, in job order, fails the round (`AnswerError::View`),
+  and a read not answered within `PROBE_BUDGET` is ``unreachable``.
+  `what`, the board's key beside the path, is the debug text of the
+  arguments tagged by caller, so the reads of `answer` and of
+  `_liveness_read` stay apart on the board as their tuples do in the
+  reference. The path's key keeps every code point, as the reference's
+  `str` key does: a backslash is doubled and a lone surrogate (a
+  surrogateescape file name) is spelled `\x{..}`, so `\udc80`,
+  `\udc81` and U+FFFD are three reads, never one.
+- `Dict` finds a `str` key by a map and any other key by a linear scan
+  with `py_eq`, so n keys that are not `str` cost O(n^2) where Python is
+  O(n). Answers from the wire are JSON, whose keys are all `str`; only a
+  caller inside the crate can build such a mapping.
+- The bounded reads hold a real `PROBE_BUDGET` of 0.5 s, as the
+  reference does; a fixture read is a stub that answers at once and a
+  slow one sleeps 1.5 s, so only a runner that starves a read for 0.5 s
+  turns a row into ``unreachable``.
+- An `answers` or `question` that is no mapping raises AttributeError in
+  the reference (`answers.items()`, then `question.get`), which the port
+  answers as `AnswerError::NotMapping`, answers first.
+
+### Fixtures and tests
+
+`tests/contract/gen_location_answer.py` writes `location_answer.jsonl`
+(ungated, 100 rows: `answer` over a scripted history, re-mint and
+`view_state` on question and answer pairs of earlier rounds, the calls
+recorded in order; `path_liveness`, `path_liveness_many`,
+`Exchange.to_reply` and `_history_of`). `view_state` is a stub that
+echoes the arguments it is read with, so no row reads a real path and
+none follows the platform; the reads over real paths are
+`location_view`'s rows. `golden_location_answer`,
+`location_answer_kills` and `location_answer_robustness` (many ids in
+every field, deep and huge values, a growth claim on merging earlier
+answers) cover it. No Python regular expression is involved:
+`_FULL_HASH` is `githead::full_hash`.
 
 ## The bounded reads of recorded paths as a runtime (`location_reads.py`)
 
@@ -16637,8 +16731,11 @@ What the reference has and this build does not, by area:
   capture's filesystem leaves and its capture signature and cache
   (`continuity`, `view_state`, their helpers and unit 1's leaves in
   `location::leaves`, and `_evicted`, `_stamp`, `signature` to
-  `capture_token` from unit loccache are built; `path_liveness`,
-  `path_liveness_many` and `_liveness_read` are not; of the caller's
+  `capture_token` from unit loccache, and the client answer and its
+  liveness reads (`PROBE_BUDGET`, `path_liveness`, `path_liveness_many`,
+  `_liveness_read`, `answer`, `Exchange`, `_history_of`) from unit
+  locanswer are built; `process_machine`, `_recorded` and the
+  `AnswerHistory` impl for `RepositoryHistory` (location-4) are not; of the caller's
   resolution the per-process state is built in `location_caller`, and
   `capture_location`, `_model`, `Caller`, `resolve_caller`, `_caller`,
   `_resolved`, `resolve_here`, `resolve_hook` and `_hooked` (loccaller),

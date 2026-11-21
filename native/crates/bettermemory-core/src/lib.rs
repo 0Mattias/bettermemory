@@ -130,6 +130,10 @@
 //!   the project file's parse and the history's `holds` as arguments;
 //! - [`location_cache`]: the capture signature and the capture cache
 //!   (`location.py`'s `signature`, `_capture_cached`, `capture`);
+//! - [`location_answer`]: `location.py`'s client answer to a daemon's
+//!   question and its liveness reads (`path_liveness`,
+//!   `path_liveness_many`, `answer`, `Exchange`, `_history_of`), the
+//!   history, the re-mint and the view read as arguments;
 //! - [`location_git`]: a repository's head, ref tips, content manifest
 //!   and bounded history walks, the readers of `location_git.py` that need
 //!   neither discovery nor the object reader;
@@ -233,6 +237,7 @@ pub mod install_hints;
 pub mod json;
 pub mod lexicon;
 pub mod location;
+pub mod location_answer;
 pub mod location_cache;
 pub mod location_caller;
 pub mod location_continuity;
