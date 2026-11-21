@@ -144,3 +144,11 @@ fn fsutil_flock_python_every_case() {
         "fsutil_flock_python.jsonl",
     );
 }
+
+#[test]
+fn fsutil_flock_platform_every_case() {
+    run(
+        "fsutil_flock_platform_every_case",
+        "fsutil_flock_platform.jsonl",
+    );
+}

@@ -420,6 +420,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "fsutil_python": gen_fsutil.generate_python,
     "fsutil_flock": gen_fsutil.generate_flock,
     "fsutil_flock_python": gen_fsutil.generate_flock_python,
+    "fsutil_flock_platform": gen_fsutil.generate_flock_platform,
     "gitdir_read": gen_gitdir.generate,
     "gitdir_read_python": gen_gitdir.generate_python,
     "gitfile_identity": gen_identity.generate,
@@ -624,6 +625,7 @@ PYTHON_GATED = frozenset(
         "fs_realpath_strict_python",
         "fsutil_python",
         "fsutil_flock_python",
+        "fsutil_flock_platform",
         "gitconfig_legacy_python",
         "gitdir_read_python",
         "gitfile_identity_python",
@@ -707,6 +709,9 @@ def pydantic_core_version() -> str:
 #: ``LCMapStringEx`` (U+0130 kept, no final sigma) and `ntpath.abspath`
 #: reads the process's folder through ``_getfullpathname``, where on a
 #: POSIX host both are Python (`gen_membership_records`).
+#: ``fsutil_flock_platform`` holds pathlib's refusals of a lock path with
+#: no name, whose text names the host's class: ``PosixPath('/')`` on a
+#: POSIX host, ``WindowsPath('/')`` on Windows (`gen_fsutil`).
 #: ``log_keyfiles_darwin`` holds `KeyUnreadableError` messages whose reason
 #: is the C library's ``strerror`` (`gen_log_keyfiles`).
 PLATFORM = "darwin-arm64"
@@ -727,6 +732,7 @@ PLATFORM_GATED = frozenset(
         "location_probe_errno",
         "membership_records_paths_platform",
         "machine_facts_platform",
+        "fsutil_flock_platform",
     }
 )
 

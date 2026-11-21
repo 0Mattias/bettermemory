@@ -168,7 +168,12 @@ fn the_lock_name_is_appended_not_replaced() {
     let posix = |p: &str, s: &str| {
         lock_path(Path::new(p), s, false).map(|p| p.to_string_lossy().into_owned())
     };
+    #[cfg(not(windows))]
     assert_eq!(posix("d/x.tar.gz", ".lock").unwrap(), "d/x.tar.gz.lock");
+    // The path is joined with the host's separator: the reference's `Path`
+    // is a `WindowsPath` there, whose text is `d\x.tar.gz.lock`.
+    #[cfg(windows)]
+    assert_eq!(posix("d/x.tar.gz", ".lock").unwrap(), "d\\x.tar.gz.lock");
     assert_eq!(posix("a.", ".lock").unwrap(), "a..lock");
     assert_eq!(posix("x.txt", "lock").unwrap(), "x.txtlock");
     assert_eq!(
@@ -176,7 +181,10 @@ fn the_lock_name_is_appended_not_replaced() {
         "Invalid suffix 'lock'"
     );
     assert_eq!(posix("x", ".").unwrap_err().0, "Invalid suffix '.'");
+    #[cfg(not(windows))]
     assert_eq!(posix("d/..", ".lock").unwrap(), "d/...lock");
+    #[cfg(windows)]
+    assert_eq!(posix("d/..", ".lock").unwrap(), "d\\...lock");
     assert_eq!(posix("x.txt", "a\\b").unwrap(), "x.txta\\b");
     assert_eq!(
         lock_path(Path::new("x.txt"), "a\\b", true).unwrap_err().0,

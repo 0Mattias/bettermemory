@@ -1,20 +1,4 @@
-{"cases":60,"k":"header"}
-{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":".lock"}
-{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":".bettermemory.lock"}
-{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":""}
-{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":"."}
-{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":"lock"}
-{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":".."}
-{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":"a/b"}
-{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":".\u00e9"}
-{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":".lock"}
-{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":".bettermemory.lock"}
-{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":""}
-{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":"."}
-{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":"lock"}
-{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":".."}
-{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":"a/b"}
-{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":".\u00e9"}
+{"cases":44,"k":"header"}
 {"k":"p","o":["ValueError","Invalid suffix '.'"],"path":"x","sfx":"."}
 {"k":"p","o":["ValueError","Invalid suffix 'lock'"],"path":"x","sfx":"lock"}
 {"k":"p","o":"x..","path":"x","sfx":".."}

@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicBool;
 
-use bettermemory_core::fsutil::{flock_excl, flock_windows_by, lock_path, FlockError, Msvcrt};
+#[cfg(not(windows))]
+use bettermemory_core::fsutil::FlockError;
+use bettermemory_core::fsutil::{flock_excl, flock_windows_by, lock_path, Msvcrt};
 
 const CHILD: &str = "BM_FLOCK_ROBUSTNESS_CHILD";
 
@@ -275,9 +277,18 @@ fn very_long_names_and_suffixes_are_answered() {
     assert!(lock_path(Path::new(""), "\u{0}", false).is_err());
     // A name the system refuses is the system's error, not a panic.
     let dir = scratch("long");
+    #[cfg(not(windows))]
     match flock_excl(&dir.join(&long), ".lock") {
         Err(FlockError::Io(_)) => {}
         other => panic!("expected the system's refusal, got {}", other.is_ok()),
+    }
+    // On Windows the reference's `_flock_windows` catches the `OSError` of
+    // `os.open` and falls back to an unlocked yield with a one-shot
+    // warning, so the refused name is answered with a guard.
+    #[cfg(windows)]
+    match flock_excl(&dir.join(&long), ".lock") {
+        Ok(guard) => drop(guard),
+        Err(e) => panic!("expected the unlocked fallback, got {e:?}"),
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }

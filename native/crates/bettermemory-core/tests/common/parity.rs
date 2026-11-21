@@ -316,6 +316,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `pathlib`'s refusals of a lock path, in the release's words, and
         // the names and suffixes 3.14 reads differently (`gen_fsutil`).
         "fsutil_flock_python.jsonl" => &[Python],
+        // The refusals of a path with no name, whose text names the host's
+        // path class, `PosixPath` or `WindowsPath` (`gen_fsutil`).
+        "fsutil_flock_platform.jsonl" => &[Python, Platform],
         // The probe of a link loop (`gen_location_probe`), as above.
         "location_probe_python.jsonl" => &[Python],
         // Every errno number and the C library's text for it, both the

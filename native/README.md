@@ -78,7 +78,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `location_caller` | a caller's resolution (`location.py` 1420-1997), unit locstate: the per-process state around a resolution: `process_machine`, `_recorded`, `_clear_machine` (`ProcessMachine`), `_Held`, `_LOCKS`, `_location_lock` (`Locks`, `lock_name`), `_cwd_of`, `_Stand`, `_STANDS`, `_keep_stand`, `_stand_of`, `forget_session`, `_clear_stands` (`Stands`), `_with_file_errors`, `_same_namespace`; every read of the machine a closure | `location_caller_state.jsonl` |
 | `location_resolve` | a caller's resolution (`location.py` 1420-1997), unit loccaller: `capture_location`, `_model`, `Caller` (`home`, `add_head_witness`), `resolve_caller`, `_caller`, `_resolved`, `resolve_here`, `_hooked`; the model, capture cache, re-mint, `_earlier_tree` and `_machineless` arguments | `location_resolve.jsonl` |
 | `hook_stop`, `hook_stop_side` | the Stop audit's front half (`hook.py` 319-725, unit hook-2a): `run_audit` with `@hook_body("stop")`, `_audit_turn`, `_stop_window`, `_stop_pool`, `_stop_probe`, `_stop_recorder`, `_is_repeat_audit`, as a sequence over the trait `StopSide` (one method per call `hook.py` 319-946 makes outside itself, no implementation yet) with the settlement steps behind `StopSettle` | `hook_stop.jsonl` |
-| `fsutil` | units 1 and 2 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads; `flock_excl` (`lock_path`, a guard held until dropped) and its Windows branch `_flock_windows` over an `Msvcrt` trait, with `FLOCK_TIMEOUT_SECONDS` and the process-wide `_FLOCK_WARNED` | `fsutil.jsonl`, `fsutil_python.jsonl`, `fsutil_flock.jsonl`, `fsutil_flock_python.jsonl` |
+| `fsutil` | units 1 and 2 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads; `flock_excl` (`lock_path`, a guard held until dropped) and its Windows branch `_flock_windows` over an `Msvcrt` trait, with `FLOCK_TIMEOUT_SECONDS` and the process-wide `_FLOCK_WARNED` | `fsutil.jsonl`, `fsutil_python.jsonl`, `fsutil_flock.jsonl`, `fsutil_flock_python.jsonl`, `fsutil_flock_platform.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`); unit 4, `gitobjects::files::reader`: `ObjectReader`'s `has`, `has_many`, `name_length`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `_raw`, `_places`, `_object`, `_take_loose`, `_loose`, `_packed` | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl`, `gitobjects_reader.jsonl`, `gitobjects_reader_zlib.jsonl`, `gitobjects_reader_posix.jsonl` |
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text`; its write (`checkout_token::write`): `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_fs_now`, `_sweep`, `_place`, `_after_race`, `_failed`, `_unlink_quietly`, `TokenWrite` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only), `checkout_token_write.jsonl`, `checkout_token_write_posix.jsonl` (POSIX only) |
@@ -1335,7 +1335,14 @@ output, MachineGuid), and the platform as the `sys.platform` text.
   stated Windows gap (ENG-124), checked under `cfg(windows)` in the
   platform test and recorded as class os by `machine_facts_not_posix`.
   `seconds_of_time` turns `Metadata::created` into the floor form of
-  `st_birthtimespec`. `ns_of_seconds` raises ValueError for NaN and
+  `st_birthtimespec`. A Windows `SystemTime` holds 100 nanosecond steps
+  (as an NTFS file time does), so a time one nanosecond past a second
+  before 1970 is stored as that second: `machine_facts_kills.rs` asserts
+  the floor with 1 nanosecond under POSIX and with 100 nanoseconds under
+  `cfg(windows)` (judged by reading; CI's Windows job is the run). The
+  other tests of the unit passed in CI's Windows parity job at 65aea201;
+  `machine_facts_not_posix` is the Windows decline (ENG-124) and the
+  golden rows are patched stats and given texts. `ns_of_seconds` raises ValueError for NaN and
   OverflowError for an infinity, as `int` does.
 
 Regular expressions: both are matched by hand under rule 3 of the regular
@@ -17146,11 +17153,16 @@ calls in turn sharing `_FLOCK_WARNED`; each call's events (open, clock
 reads, lock and unlock with their byte counts, pauses, the body, close),
 warnings and outcome; and `flock_excl`'s lock path for eleven paths and
 eight suffixes where every release agrees. `fsutil_flock_python.jsonl`
-(gated on the Python release, 60 rows) holds the refused lock paths in
-the release's words, and every row of a name ending in a dot or a suffix
+(gated on the Python release, 44 rows) holds the other refused lock
+paths in the release's words, and every row of a name ending in a dot or a suffix
 `.` or `..`: CPython 3.14 reads `a.` as having the suffix `.` and takes
 `.` as a suffix, so `flock_excl(Path("a."), lock_suffix="lock")` is
-`a.lock` there and `ValueError` under 3.13, which the port follows. Tests: `golden_fsutil_flock.rs`,
+`a.lock` there and `ValueError` under 3.13, which the port follows.
+`fsutil_flock_platform.jsonl` (gated on the Python release and the
+platform, 16 rows) holds the refusals of `/` and `.` for every suffix:
+their text names the host's path class, `PosixPath('/') has an empty
+name` where the file was made and `WindowsPath('/')` on Windows, so it is
+compared on darwin-arm64 only and never held against another host. Tests: `golden_fsutil_flock.rs`,
 `fsutil_flock_kills.rs` (the deadline reached exactly, the pause's cap,
 one warning for both fallbacks, close without unlock on a timeout, close
 after a failed unlock, the appended name, the machine's lock held, released
@@ -17159,6 +17171,36 @@ and kept, 0600, the parent made before a refused name),
 Windows byte-0 interop, 100,000 retries and linear growth, infinite
 timeouts, 1 MiB names and suffixes, a 100,000-deep path, a name the
 system refuses). No regular expression is involved.
+
+Windows, judged by reading (CI's Windows parity job is the only run;
+nothing here runs on Windows):
+
+- The appended name (`fsutil_flock_kills.rs`): `lock_path` joins with
+  the host's separator, as the reference's `Path` is a `WindowsPath` on
+  Windows whose text is `d\x.tar.gz.lock`. The POSIX assertions stay;
+  under `cfg(windows)` the two joined paths are asserted with `\`. The
+  others hold a single component and are the same on every host.
+- A name the system refuses (`fsutil_flock_robustness.rs`): on POSIX the
+  open's refusal is `FlockError::Io`. On Windows the reference's
+  `_flock_windows` catches the `OSError` of `os.open` and yields
+  unlocked with its one-shot warning, so the port answers with a guard,
+  which the test asserts under `cfg(windows)`.
+- The refusal of a path with no name (`golden_fsutil_flock.rs`): the text
+  names the host's path class, so those rows moved from the
+  Python-gated file to `fsutil_flock_platform.jsonl` (above). The
+  ungated rows of `fsutil_flock.jsonl` are recorded with `as_posix` and
+  compared with `\` read as `/`, and hold on every host.
+- The held, released and kept lock (`fsutil_flock_kills.rs`): `File::try_lock`
+  of a second handle is `LockFileEx` over the whole range, refused while
+  the guard's lock is held and granted after the drop; the 0600 check is
+  `cfg(unix)`, as Windows has no mode bits. No file is removed or renamed
+  while open: the scratch folder is removed after every handle is
+  dropped.
+- The pathlib spelling test (`//`, `surrogateescape`) is `cfg(unix)`.
+  The byte-0 interop test and the child holder's `byte0` hold are
+  `cfg(windows)` and ran in CI's Windows job before this change.
+- The scripted `_flock_windows` tests use no real file, clock or
+  separator and hold on every host.
 
 ## Chunked runs
 

@@ -157,9 +157,17 @@ fn a_time_before_1970_floors_its_seconds() {
     use std::time::{Duration, UNIX_EPOCH};
     let half = Duration::from_millis(500);
     assert_eq!(f::seconds_of_time(UNIX_EPOCH - half), (-1, 500_000_000));
+    #[cfg(not(windows))]
     assert_eq!(
         f::seconds_of_time(UNIX_EPOCH - Duration::from_nanos(2_000_000_001)),
         (-3, 999_999_999)
+    );
+    // A Windows `SystemTime` holds 100 nanosecond steps, so one nanosecond
+    // past two seconds is not stored; the smallest step past them is.
+    #[cfg(windows)]
+    assert_eq!(
+        f::seconds_of_time(UNIX_EPOCH - Duration::from_nanos(2_000_000_100)),
+        (-3, 999_999_900)
     );
     assert_eq!(
         f::seconds_of_time(UNIX_EPOCH - Duration::from_secs(2)),

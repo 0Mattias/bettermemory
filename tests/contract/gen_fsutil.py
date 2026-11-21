@@ -44,7 +44,11 @@ with the count of the lines after it. Every other line is one of:
   its argument and ``mkdir`` recorded, for names and suffixes that every
   release and system answer alike.
 
-``fsutil_flock_python.jsonl`` holds the lock paths refused, ``"o":
+``fsutil_flock_platform.jsonl`` holds the refusals of a path with no
+name, ``"o": ["ValueError", text]``, whose text names the host's path
+class (``PosixPath`` or ``WindowsPath``).
+
+``fsutil_flock_python.jsonl`` holds the other lock paths refused, ``"o":
 ["ValueError", text]``, whose wording is the release's, and every row of
 a name ending in a dot or a suffix ``.`` or ``..``, which CPython 3.14
 answers differently.
@@ -403,13 +407,24 @@ def _release_bound(path: str, suffix: str) -> bool:
     return path.endswith(".") or suffix in (".", "..")
 
 
-def _lock_path_rows(python: bool) -> list[dict[str, Any]]:
+def _host_bound(row: dict[str, Any]) -> bool:
+    """Whether the answer names the host's path class: a refusal of a path
+    with no name spells ``PosixPath(...)`` or ``WindowsPath(...)`` by the
+    system the reference runs on."""
+    return isinstance(row["o"], list) and "Path(" in row["o"][1]
+
+
+def _lock_path_rows(python: bool, platform: bool = False) -> list[dict[str, Any]]:
     rows = []
     for path in _PATHS:
         for suffix in _SUFFIXES:
             row = _lock_path_row(path, suffix)
+            if _host_bound(row):
+                if platform:
+                    rows.append(row)
+                continue
             gated = _release_bound(path, suffix) or isinstance(row["o"], list)
-            if gated == python:
+            if gated == python and not platform:
                 rows.append(row)
     return rows
 
@@ -425,3 +440,11 @@ def generate_flock_python() -> dict[str, bytes]:
     rows = _lock_path_rows(python=True)
     data = jsonl([{"k": "header", "cases": len(rows)}, *rows])
     return {"fsutil_flock_python.jsonl": data}
+
+
+def generate_flock_platform() -> dict[str, bytes]:
+    """``fsutil_flock_platform.jsonl``: gated on the Python release and the
+    platform, since each refusal names the host's path class."""
+    rows = _lock_path_rows(python=True, platform=True)
+    data = jsonl([{"k": "header", "cases": len(rows)}, *rows])
+    return {"fsutil_flock_platform.jsonl": data}
