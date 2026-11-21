@@ -61,6 +61,10 @@
 //!   `admit`, `restore_state`), and `store_rows`' shared leaves (the
 //!   membership specs, the row sort, the schema's columns, the
 //!   verification row, a log row as a telemetry event and the kind sets);
+//!   the membership tables' store methods (`store::membership`: the puts,
+//!   deletes and control rows on the write transaction, the batched
+//!   reads over legacy and native rows, the id counters, `committed_seq`,
+//!   `in_batch`, `wrote_record` and the store id);
 //! - [`membership_records`]: the vocabulary and records of the membership
 //!   model, units 1 to 3 (the legacy ask rule and the helpers that
 //!   compare, join and rebase recorded paths in either spelling; the

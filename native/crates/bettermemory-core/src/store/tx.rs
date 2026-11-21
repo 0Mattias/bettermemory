@@ -79,6 +79,9 @@ pub struct Transaction<'s> {
     returns: Pending,
     /// The rows written so far that a rollback has not taken back.
     rows: Vec<LogRow>,
+    /// `_tx_first_seq` as it stood when a failed `ROLLBACK TO` took the
+    /// whole transaction away: the reference puts it back and keeps it.
+    lost_first: Option<i64>,
     /// A write this build does not port was asked for: the reference would
     /// have written it, so the transaction may not commit.
     refused: Option<WriteNotPorted>,
@@ -212,6 +215,7 @@ impl WritableStore {
             last: None,
             returns: Pending::new(),
             rows: Vec::new(),
+            lost_first: None,
             refused: None,
             open: true,
         };
@@ -444,7 +448,7 @@ impl Transaction<'_> {
         Ok(row)
     }
 
-    fn refuse(&mut self, why: WriteNotPorted) -> WriteError {
+    pub(super) fn refuse(&mut self, why: WriteNotPorted) -> WriteError {
         if self.refused.is_none() {
             self.refused = Some(why.clone());
         }
@@ -501,6 +505,55 @@ impl Transaction<'_> {
         self.step(|tx| tx.write_row(kind, payload, session))
     }
 
+    /// `_mutate` for a membership table's own kind
+    /// (`MEMBERSHIP_MUTATION_KINDS`, `native_member_put` and
+    /// `native_member_delete` among them), the rows only
+    /// [`super::membership`] appends: `prepare_mutation`'s
+    /// `require_native_writer` for the two native kinds, then the row
+    /// appended and applied under a savepoint of its own. No kind of these
+    /// names a record for `settle`.
+    pub(crate) fn mutate_membership(
+        &mut self,
+        kind: &str,
+        payload: &PyValue,
+        session: Option<&str>,
+    ) -> Result<LogRow, WriteError> {
+        debug_assert!(super::rows::is_membership_mutation(kind));
+        if kind.starts_with("native_member_") {
+            super::membership::require_native_writer(&self.store.conn)?;
+        }
+        self.step(|tx| tx.write_row(kind, payload, session))
+    }
+
+    /// `_append` alone, for a control row of design 8.10
+    /// (`MEMBERSHIP_EVENT_KINDS`): the row appended under a savepoint of
+    /// its own, no table changed.
+    pub(crate) fn append_control(
+        &mut self,
+        kind: &str,
+        payload: &PyValue,
+        session: Option<&str>,
+    ) -> Result<LogRow, WriteError> {
+        debug_assert!(super::rows::MEMBERSHIP_EVENT_KINDS.contains(&kind));
+        self.step(|tx| tx.append(kind, payload, session))
+    }
+
+    /// `Store.committed_seq()` inside the transaction: the row before the
+    /// first this transaction appended and no rollback took back
+    /// (`_tx_first_seq - 1`), or None when it has appended none.
+    pub fn committed_seq(&self) -> Option<i64> {
+        self.rows
+            .first()
+            .map(|row| row.seq)
+            .or(self.lost_first)
+            .map(|seq| seq - 1)
+    }
+
+    /// `Store.in_batch`: a transaction is open (`bool(self._tx_depth)`).
+    pub fn in_batch(&self) -> bool {
+        true
+    }
+
     /// `body` under a savepoint of this build's own: on failure the rows,
     /// the last row and the named records are put back as they were.
     fn step<T>(
@@ -543,6 +596,7 @@ impl Transaction<'_> {
                     // The owner's transaction is rolled back with it; the
                     // owner's commit then finds it ended (`_require_open`).
                     let _ = self.store.conn.execute_batch("ROLLBACK");
+                    self.lost_first = self.lost_first.or(self.rows.first().map(|row| row.seq));
                     self.rows.clear();
                     self.last = None;
                 }

@@ -282,6 +282,7 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_records_c.jsonl"
         | "store_records_d.jsonl"
         | "store_records_e.jsonl"
+        | "store_membership.jsonl"
         | "store_rows_written.jsonl"
         | "store_bulk.jsonl" => &[Unicode, Pydantic],
         // Payloads nested near `json.loads`'s recursion budget

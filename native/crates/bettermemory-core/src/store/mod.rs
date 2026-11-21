@@ -44,6 +44,7 @@ pub mod digest;
 pub mod fold;
 pub mod home;
 pub mod keys;
+pub mod membership;
 pub mod mint;
 pub mod open;
 pub mod pool;
