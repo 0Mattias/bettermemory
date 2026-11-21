@@ -58,6 +58,9 @@
 //!   call tallies, `printed_path`, `subcommand` and the nonzero-exit line;
 //! - [`location_stamps`]: a git directory's init stamps and whether its
 //!   file system keeps FILETIME's ticks (the whole module);
+//! - [`location_git`]: a repository's head, ref tips, content manifest
+//!   and bounded history walks, the readers of `location_git.py` that need
+//!   neither discovery nor the object reader;
 //! - [`githead`]: HEAD and refs read from a git directory's files, and
 //!   discovery (unit githead-1: the walk git's `setup.c` makes, `stamp`);
 //! - [`location_probe`]: the hook client's namespace probe (the cwd's
@@ -117,6 +120,7 @@ pub mod identity;
 pub mod in_force;
 pub mod json;
 pub mod lexicon;
+pub mod location_git;
 pub mod location_probe;
 pub mod location_stamps;
 pub mod log;

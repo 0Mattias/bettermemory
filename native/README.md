@@ -44,6 +44,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `git_read_budget`, `git_calls` | `git_read_budget.py` whole (`ReadBudget`, the scopes as a `Scope` value, `_progress` as `Progresses`, `call_scope`, `call`, `health_call`, `async_call`, `reading`, `expired`, `wait_for`, `unread`, `hit`, `allowance`, `exhausted`, `for_resume`); `_git.py`'s tallies, `run_git`'s counts around one call, `printed_path`, `subcommand`, the `log_nonzero_exit` message | `git_read_budget.jsonl` |
 | `location_stamps` | `location_stamps.py` whole: `in_ticks`, `kept_in_ticks`, `stat_each`, `capture_ticks`, `_device_name` (macOS's `os.major`/`os.minor`, and Linux's under a CPython built against glibc or musl), `_drvfs` (the mount table read through `Fs`), `_init_stamps`, `filetime_ns`, `basic_info_ns` (FILE_BASIC_INFO through `Fs::basic_info`, declined by `StdFs`) | `location_stamps.jsonl`, `location_stamps_python.jsonl`, `location_stamps_platform.jsonl` |
+| `location_git` | the readers of `location_git.py` that need neither discovery nor the object reader: `_Git`, `_resolve_head` (the peel a callback), `_ref_tips`, `_manifest`, `Reach`, `reachable_among`, `walk` | `location_git_readers.jsonl`, `location_git_readers_posix.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
@@ -6187,6 +6188,114 @@ The `Fs` trait has every operation unit A needs (`stat`, `lstat`,
   The asked ones are among the 21: a hit that skips the stamp, the key
   without the git directory, `reuse` ignored, an included file not
   compared, the stamps' order, and `_inside` without its separator.
+## The readers of a repository's head, refs, tree and history (`location_git.py`)
+
+`location_git.rs` holds the readers of `location_git.py` that need
+neither git's discovery nor the object reader's own port. The rest of the
+reference module is mapped and ported elsewhere: 259-1001 (remotes,
+spellings, stamps) in `gitconfig::{remotes, spellings, stamped}` (section
+"Which remotes a checkout has"), `_inside` (1002-1007) as
+`gitconfig::stamped::inside`, the capture's vocabulary (1188-1451) and the
+kinds (103-110) in `capture` (section "A location capture's vocabulary").
+
+### Map of what is left in the module
+
+| Function | Reference lines | What it needs from the machine | Status |
+| --- | --- | --- | --- |
+| `WALK_LIMIT`, `EDGE_LIMIT`, `_FULL_HASH`, `_PROJECT_FILE` | 172, 214, 232, 242 | none | built (`_FULL_HASH.fullmatch` is `githead::full_hash`) |
+| `_Git` | 989-999 | none | built (`location_git::Git`, paths as bytes) |
+| `_resolve_head` | 1454-1466 | HEAD and refs (`githead::RefFs`), a tag's peel | built; the peel is a callback |
+| `_ref_tips` | 1469-1502 | the refs folders and packed-refs (`fsdata::Fs`) | built |
+| `_manifest` | 1505-1537 | the working tree (`fsdata::Fs`), the working directory (`Process`) | built |
+| `Reach`, `reachable_among` | 1820-1970 | the history (closures) | built |
+| `walk` | 1973-1989 | the history (closures) | built |
+| `GitDies`, `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit` | | git's discovery, the environment | location_git-6 (reads ghdisc's `probed`) |
+| `_git`, `RepositoryHistory`, `_clear_above` | | the object reader, git, a lock | later units |
+
+### What each function reproduces
+
+- `resolve_head(fs, git, peel)`: `githead::head_commit` over a `GitDir`
+  of the git and common directories. `Answer` is the commit, `Decline` is
+  None, and `Peel(id)` asks the caller's `peel` with the ref's hash: the
+  reference reads that object through `gitobjects.ObjectReader`, whose
+  peel is not ported yet. The answer is lowercased; the branch is
+  `head_ref` past `refs/heads/`.
+- `ref_tips(fs, common_dir)`: `os.walk` of `refs/heads` then
+  `refs/remotes`, top down, each folder's files before its folders, both
+  sorted as `str` (`os.fsdecode`). An entry is a folder by `stat` (links
+  followed) and a folder that is a link is listed and not entered; a
+  listing or open that fails is skipped. A loose ref's first 128 bytes are
+  stripped of the ten ASCII whitespace bytes `str.strip` takes (tab, LF,
+  VT, FF, CR, 0x1c-0x1f, space) and matched by `full_hash`; a non-ASCII
+  byte, U+FFFD after the reference's decode, is neither space nor hex.
+  packed-refs is read in chunks as `for raw in fh` reads it, split at LF,
+  each line split on runs of the same ten bytes; reading stops once the
+  last tip is taken, and a read that fails keeps the tips taken before
+  it. The walk stops at `REF_TIPS_MAX` distinct tips, loose
+  refs in walk order first, packed lines in file order after.
+- `manifest(fs, flavour, process, root)`: the reference's stack (pop,
+  then the folders pushed in reverse) over name-sorted listings, `.git`
+  skipped at every depth, the project file only at the root, `lstat`'s
+  kind and size, stopping at `MANIFEST_LIMIT` entries before the final
+  sort of (path, size). The path is `os.path.relpath` (text.rs) with the
+  flavour's separator turned to `/`; its error (the working directory
+  where `root` is relative) is raised as the reference raises it. The name
+  is `capture::paths::basename`.
+- `reachable_among(parents, commits, limit, edges, committed)` and
+  `Reach`: the two-pass breadth-first traversal line for line. Masks are
+  a growable bitset (one bit per valid given commit, no width bound);
+  committer times are `i128` and a rise is the `u128` gap of two of
+  them; `floor - rise` is never formed, so every comparison holds as
+  Python's unbounded integers do, `i128::MIN` and `i128::MAX` included. `held` keeps
+  dict order (insertion, a deleted key re-added at the end).
+  `Reach.relations` lists the given commits in sorted order, each set
+  sorted.
+- `walk(parents, fingerprint, head, ref_tips)`: the stack walk from HEAD,
+  or the tips when HEAD is None or empty, up to `WALK_LIMIT`, in read
+  order.
+
+### Decisions
+
+- The history is closures (parents, committed time, fingerprint), not a
+  trait: `membership_records`' `HistoryReader` is another unit's.
+- `_FULL_HASH` is the matcher already built (`githead::full_hash`), kept
+  by rule 3 of the regular expression decision; no new pattern is written
+  by hand, and the pattern is already in the engine's inventory (its scan
+  of the reference).
+- Paths are bytes as the file-system traits take them; `os.path.join` is
+  the POSIX spelling (a separator unless the folder ends with one).
+
+### Reference findings
+
+- A FIFO under `refs/heads` or `refs/remotes` blocks `_ref_tips`: the
+  reference opens it with a blocking `open` (reproduce: `mkfifo
+  .git/refs/heads/f`, then capture the location). No fixture holds one;
+  `MemFs` answers its read with an error.
+- `_ref_tips` lowercases nothing and takes no uppercase hash, while
+  `_resolve_head` lowercases HEAD's commit: a detached HEAD written in
+  uppercase is refused by `githead` before that (row "detached upper").
+
+### Fixtures and tests
+
+- `location_git_readers.jsonl` (ungated): synthetic histories through
+  `reachable_among` and `walk` (chains, diamonds, skewed clocks, time 0
+  and 2**64-1, limits 1 to 4, edges 0 to 5, an octopus at the edge bound,
+  130 given commits, cycles, `WALK_LIMIT`), and a digest row over 2,000
+  seeded random histories (xorshift64*, mirrored in
+  `tests/common/location_git.rs`).
+- `location_git_readers_posix.jsonl` (POSIX only: links and mode-000
+  entries): ref tips (each whitespace byte, 128-byte cuts, uppercase, 39
+  and 64 digits, 70 loose refs, walk order at the bound, links, unreadable
+  entries, packed lines and packed past 64), manifests (`.git` and the
+  project file at several depths, links, unreadable entries, names past
+  ASCII, at and past 4,096 entries, the stack order at the bound) and
+  heads (branch, unborn, nested, a tag peeled, a tag without its object, a
+  worktree, packed). Names are UTF-8: macOS's file systems refuse other
+  names, and over UTF-8 the byte order and the `str` order agree.
+- `golden_location_git_readers`, `golden_location_git_readers_posix`
+  (in memory and on disk), `location_git_readers_not_posix`,
+  `location_git_readers_kills`, `location_git_readers_robustness`.
+
 ## The git on PATH and what it reads (`gitsystem.py`)
 
 `gitsystem.py` (986 lines, read at 485d3980) answers what the git on PATH
@@ -11811,7 +11920,9 @@ What the reference has and this build does not, by area:
   files (the reader: unit 4), `origin_gitfiles.py` past its decoders, machine leaves
   and config facts (`_config_facts` and its memo, units 4, 6 and 7), `checkout_token.py` past its text and its reads (the
   write, the remint and the claim: units 3 and 4), the origin's settling
-  (`origin.py`), `location.py` and the rest of `location_git.py`.
+  (`origin.py`), `location.py` and of `location_git.py` the discovery (`GitDies`,
+  `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit`), `_git`,
+  `RepositoryHistory` and `_clear_above`.
 - `membership_records.py` past its path helpers and legacy ask rule
   (the manifest, the portable identity, the checkout, view and project
   records, `_found_token` and the remaining frozen records: units 2 to

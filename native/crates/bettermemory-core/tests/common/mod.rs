@@ -13,6 +13,7 @@ pub mod githead;
 pub mod githead_discovery;
 pub mod gitobjects;
 pub mod gitobjects_files;
+pub mod location_git;
 pub mod location_stamps;
 pub mod opened;
 pub mod parity;
