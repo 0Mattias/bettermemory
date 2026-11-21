@@ -1,0 +1,269 @@
+{"cases":268,"home":"/hd/u","users":{"alice":"/hd/alice","empty":"","rel":"rel/./dir/","root":"/","slashy":"//srv//x/","tilde":"~elsewhere","triple":"///t"}}
+{"a":"","f":"nfc","home":"/hd/u","r":""}
+{"a":"/a/b","f":"nfc","home":"/hd/u","r":"/a/b"}
+{"a":"//a//b/","f":"nfc","home":"/hd/u","r":"//a/b"}
+{"a":"///a/./b/.","f":"nfc","home":"/hd/u","r":"/a/b"}
+{"a":"a/b/","f":"nfc","home":"/hd/u","r":"a/b"}
+{"a":".","f":"nfc","home":"/hd/u","r":"."}
+{"a":"./","f":"nfc","home":"/hd/u","r":"."}
+{"a":"./~x/y","f":"nfc","home":"/hd/u","r":{"raise":"RuntimeError"}}
+{"a":"~","f":"nfc","home":"/hd/u","r":"/hd/u"}
+{"a":"~/","f":"nfc","home":"/hd/u","r":"/hd/u"}
+{"a":"~/a//b/./c","f":"nfc","home":"/hd/u","r":"/hd/u/a/b/c"}
+{"a":"~/../x","f":"nfc","home":"/hd/u","r":"/hd/u/../x"}
+{"a":"~alice","f":"nfc","home":"/hd/u","r":"/hd/alice"}
+{"a":"~alice/p","f":"nfc","home":"/hd/u","r":"/hd/alice/p"}
+{"a":"~root/p","f":"nfc","home":"/hd/u","r":"/p"}
+{"a":"~empty/p","f":"nfc","home":"/hd/u","r":"/p"}
+{"a":"~slashy/p","f":"nfc","home":"/hd/u","r":"//srv/x/p"}
+{"a":"~tilde/p","f":"nfc","home":"/hd/u","r":{"raise":"RuntimeError"}}
+{"a":"~rel/p","f":"nfc","home":"/hd/u","r":"rel/dir/p"}
+{"a":"~triple/p","f":"nfc","home":"/hd/u","r":"/t/p"}
+{"a":"~nobody/p","f":"nfc","home":"/hd/u","r":{"raise":"RuntimeError"}}
+{"a":"~~/p","f":"nfc","home":"/hd/u","r":{"raise":"RuntimeError"}}
+{"a":"/~/p","f":"nfc","home":"/hd/u","r":"/~/p"}
+{"a":"a\\b","f":"nfc","home":"/hd/u","r":"a\\b"}
+{"a":"~\\x","f":"nfc","home":"/hd/u","r":{"raise":"RuntimeError"}}
+{"a":"~a\u0000b/x","f":"nfc","home":"/hd/u","r":"~a\u0000b/x"}
+{"a":"./~a\u0000b//x","f":"nfc","home":"/hd/u","r":"./~a\u0000b//x"}
+{"a":"","f":"nfc","home":"/","r":""}
+{"a":"/a/b","f":"nfc","home":"/","r":"/a/b"}
+{"a":"//a//b/","f":"nfc","home":"/","r":"//a/b"}
+{"a":"///a/./b/.","f":"nfc","home":"/","r":"/a/b"}
+{"a":"a/b/","f":"nfc","home":"/","r":"a/b"}
+{"a":".","f":"nfc","home":"/","r":"."}
+{"a":"./","f":"nfc","home":"/","r":"."}
+{"a":"./~x/y","f":"nfc","home":"/","r":{"raise":"RuntimeError"}}
+{"a":"~","f":"nfc","home":"/","r":"/"}
+{"a":"~/","f":"nfc","home":"/","r":"/"}
+{"a":"~/a//b/./c","f":"nfc","home":"/","r":"/a/b/c"}
+{"a":"~/../x","f":"nfc","home":"/","r":"/../x"}
+{"a":"~alice","f":"nfc","home":"/","r":"/hd/alice"}
+{"a":"~alice/p","f":"nfc","home":"/","r":"/hd/alice/p"}
+{"a":"~root/p","f":"nfc","home":"/","r":"/p"}
+{"a":"~empty/p","f":"nfc","home":"/","r":"/p"}
+{"a":"~slashy/p","f":"nfc","home":"/","r":"//srv/x/p"}
+{"a":"~tilde/p","f":"nfc","home":"/","r":{"raise":"RuntimeError"}}
+{"a":"~rel/p","f":"nfc","home":"/","r":"rel/dir/p"}
+{"a":"~triple/p","f":"nfc","home":"/","r":"/t/p"}
+{"a":"~nobody/p","f":"nfc","home":"/","r":{"raise":"RuntimeError"}}
+{"a":"~~/p","f":"nfc","home":"/","r":{"raise":"RuntimeError"}}
+{"a":"/~/p","f":"nfc","home":"/","r":"/~/p"}
+{"a":"a\\b","f":"nfc","home":"/","r":"a\\b"}
+{"a":"~\\x","f":"nfc","home":"/","r":{"raise":"RuntimeError"}}
+{"a":"~a\u0000b/x","f":"nfc","home":"/","r":"~a\u0000b/x"}
+{"a":"./~a\u0000b//x","f":"nfc","home":"/","r":"./~a\u0000b//x"}
+{"a":"","f":"nfc","home":"","r":""}
+{"a":"/a/b","f":"nfc","home":"","r":"/a/b"}
+{"a":"//a//b/","f":"nfc","home":"","r":"//a/b"}
+{"a":"///a/./b/.","f":"nfc","home":"","r":"/a/b"}
+{"a":"a/b/","f":"nfc","home":"","r":"a/b"}
+{"a":".","f":"nfc","home":"","r":"."}
+{"a":"./","f":"nfc","home":"","r":"."}
+{"a":"./~x/y","f":"nfc","home":"","r":{"raise":"RuntimeError"}}
+{"a":"~","f":"nfc","home":"","r":"/"}
+{"a":"~/","f":"nfc","home":"","r":"/"}
+{"a":"~/a//b/./c","f":"nfc","home":"","r":"/a/b/c"}
+{"a":"~/../x","f":"nfc","home":"","r":"/../x"}
+{"a":"~alice","f":"nfc","home":"","r":"/hd/alice"}
+{"a":"~alice/p","f":"nfc","home":"","r":"/hd/alice/p"}
+{"a":"~root/p","f":"nfc","home":"","r":"/p"}
+{"a":"~empty/p","f":"nfc","home":"","r":"/p"}
+{"a":"~slashy/p","f":"nfc","home":"","r":"//srv/x/p"}
+{"a":"~tilde/p","f":"nfc","home":"","r":{"raise":"RuntimeError"}}
+{"a":"~rel/p","f":"nfc","home":"","r":"rel/dir/p"}
+{"a":"~triple/p","f":"nfc","home":"","r":"/t/p"}
+{"a":"~nobody/p","f":"nfc","home":"","r":{"raise":"RuntimeError"}}
+{"a":"~~/p","f":"nfc","home":"","r":{"raise":"RuntimeError"}}
+{"a":"/~/p","f":"nfc","home":"","r":"/~/p"}
+{"a":"a\\b","f":"nfc","home":"","r":"a\\b"}
+{"a":"~\\x","f":"nfc","home":"","r":{"raise":"RuntimeError"}}
+{"a":"~a\u0000b/x","f":"nfc","home":"","r":"~a\u0000b/x"}
+{"a":"./~a\u0000b//x","f":"nfc","home":"","r":"./~a\u0000b//x"}
+{"a":"","f":"nfc","home":"//h/","r":""}
+{"a":"/a/b","f":"nfc","home":"//h/","r":"/a/b"}
+{"a":"//a//b/","f":"nfc","home":"//h/","r":"//a/b"}
+{"a":"///a/./b/.","f":"nfc","home":"//h/","r":"/a/b"}
+{"a":"a/b/","f":"nfc","home":"//h/","r":"a/b"}
+{"a":".","f":"nfc","home":"//h/","r":"."}
+{"a":"./","f":"nfc","home":"//h/","r":"."}
+{"a":"./~x/y","f":"nfc","home":"//h/","r":{"raise":"RuntimeError"}}
+{"a":"~","f":"nfc","home":"//h/","r":"//h"}
+{"a":"~/","f":"nfc","home":"//h/","r":"//h"}
+{"a":"~/a//b/./c","f":"nfc","home":"//h/","r":"//h/a/b/c"}
+{"a":"~/../x","f":"nfc","home":"//h/","r":"//h/../x"}
+{"a":"~alice","f":"nfc","home":"//h/","r":"/hd/alice"}
+{"a":"~alice/p","f":"nfc","home":"//h/","r":"/hd/alice/p"}
+{"a":"~root/p","f":"nfc","home":"//h/","r":"/p"}
+{"a":"~empty/p","f":"nfc","home":"//h/","r":"/p"}
+{"a":"~slashy/p","f":"nfc","home":"//h/","r":"//srv/x/p"}
+{"a":"~tilde/p","f":"nfc","home":"//h/","r":{"raise":"RuntimeError"}}
+{"a":"~rel/p","f":"nfc","home":"//h/","r":"rel/dir/p"}
+{"a":"~triple/p","f":"nfc","home":"//h/","r":"/t/p"}
+{"a":"~nobody/p","f":"nfc","home":"//h/","r":{"raise":"RuntimeError"}}
+{"a":"~~/p","f":"nfc","home":"//h/","r":{"raise":"RuntimeError"}}
+{"a":"/~/p","f":"nfc","home":"//h/","r":"/~/p"}
+{"a":"a\\b","f":"nfc","home":"//h/","r":"a\\b"}
+{"a":"~\\x","f":"nfc","home":"//h/","r":{"raise":"RuntimeError"}}
+{"a":"~a\u0000b/x","f":"nfc","home":"//h/","r":"~a\u0000b/x"}
+{"a":"./~a\u0000b//x","f":"nfc","home":"//h/","r":"./~a\u0000b//x"}
+{"a":"","f":"nfc","home":"~h","r":""}
+{"a":"/a/b","f":"nfc","home":"~h","r":"/a/b"}
+{"a":"//a//b/","f":"nfc","home":"~h","r":"//a/b"}
+{"a":"///a/./b/.","f":"nfc","home":"~h","r":"/a/b"}
+{"a":"a/b/","f":"nfc","home":"~h","r":"a/b"}
+{"a":".","f":"nfc","home":"~h","r":"."}
+{"a":"./","f":"nfc","home":"~h","r":"."}
+{"a":"./~x/y","f":"nfc","home":"~h","r":{"raise":"RuntimeError"}}
+{"a":"~","f":"nfc","home":"~h","r":{"raise":"RuntimeError"}}
+{"a":"~/","f":"nfc","home":"~h","r":{"raise":"RuntimeError"}}
+{"a":"~/a//b/./c","f":"nfc","home":"~h","r":{"raise":"RuntimeError"}}
+{"a":"~/../x","f":"nfc","home":"~h","r":{"raise":"RuntimeError"}}
+{"a":"~alice","f":"nfc","home":"~h","r":"/hd/alice"}
+{"a":"~alice/p","f":"nfc","home":"~h","r":"/hd/alice/p"}
+{"a":"~root/p","f":"nfc","home":"~h","r":"/p"}
+{"a":"~empty/p","f":"nfc","home":"~h","r":"/p"}
+{"a":"~slashy/p","f":"nfc","home":"~h","r":"//srv/x/p"}
+{"a":"~tilde/p","f":"nfc","home":"~h","r":{"raise":"RuntimeError"}}
+{"a":"~rel/p","f":"nfc","home":"~h","r":"rel/dir/p"}
+{"a":"~triple/p","f":"nfc","home":"~h","r":"/t/p"}
+{"a":"~nobody/p","f":"nfc","home":"~h","r":{"raise":"RuntimeError"}}
+{"a":"~~/p","f":"nfc","home":"~h","r":{"raise":"RuntimeError"}}
+{"a":"/~/p","f":"nfc","home":"~h","r":"/~/p"}
+{"a":"a\\b","f":"nfc","home":"~h","r":"a\\b"}
+{"a":"~\\x","f":"nfc","home":"~h","r":{"raise":"RuntimeError"}}
+{"a":"~a\u0000b/x","f":"nfc","home":"~h","r":"~a\u0000b/x"}
+{"a":"./~a\u0000b//x","f":"nfc","home":"~h","r":"./~a\u0000b//x"}
+{"a":"","f":"nfc","home":"rel","r":""}
+{"a":"/a/b","f":"nfc","home":"rel","r":"/a/b"}
+{"a":"//a//b/","f":"nfc","home":"rel","r":"//a/b"}
+{"a":"///a/./b/.","f":"nfc","home":"rel","r":"/a/b"}
+{"a":"a/b/","f":"nfc","home":"rel","r":"a/b"}
+{"a":".","f":"nfc","home":"rel","r":"."}
+{"a":"./","f":"nfc","home":"rel","r":"."}
+{"a":"./~x/y","f":"nfc","home":"rel","r":{"raise":"RuntimeError"}}
+{"a":"~","f":"nfc","home":"rel","r":"rel"}
+{"a":"~/","f":"nfc","home":"rel","r":"rel"}
+{"a":"~/a//b/./c","f":"nfc","home":"rel","r":"rel/a/b/c"}
+{"a":"~/../x","f":"nfc","home":"rel","r":"rel/../x"}
+{"a":"~alice","f":"nfc","home":"rel","r":"/hd/alice"}
+{"a":"~alice/p","f":"nfc","home":"rel","r":"/hd/alice/p"}
+{"a":"~root/p","f":"nfc","home":"rel","r":"/p"}
+{"a":"~empty/p","f":"nfc","home":"rel","r":"/p"}
+{"a":"~slashy/p","f":"nfc","home":"rel","r":"//srv/x/p"}
+{"a":"~tilde/p","f":"nfc","home":"rel","r":{"raise":"RuntimeError"}}
+{"a":"~rel/p","f":"nfc","home":"rel","r":"rel/dir/p"}
+{"a":"~triple/p","f":"nfc","home":"rel","r":"/t/p"}
+{"a":"~nobody/p","f":"nfc","home":"rel","r":{"raise":"RuntimeError"}}
+{"a":"~~/p","f":"nfc","home":"rel","r":{"raise":"RuntimeError"}}
+{"a":"/~/p","f":"nfc","home":"rel","r":"/~/p"}
+{"a":"a\\b","f":"nfc","home":"rel","r":"a\\b"}
+{"a":"~\\x","f":"nfc","home":"rel","r":{"raise":"RuntimeError"}}
+{"a":"~a\u0000b/x","f":"nfc","home":"rel","r":"~a\u0000b/x"}
+{"a":"./~a\u0000b//x","f":"nfc","home":"rel","r":"./~a\u0000b//x"}
+{"a":"","f":"nfc","home":null,"r":""}
+{"a":"/a/b","f":"nfc","home":null,"r":"/a/b"}
+{"a":"//a//b/","f":"nfc","home":null,"r":"//a/b"}
+{"a":"///a/./b/.","f":"nfc","home":null,"r":"/a/b"}
+{"a":"a/b/","f":"nfc","home":null,"r":"a/b"}
+{"a":".","f":"nfc","home":null,"r":"."}
+{"a":"./","f":"nfc","home":null,"r":"."}
+{"a":"./~x/y","f":"nfc","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"~","f":"nfc","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"~/","f":"nfc","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"~/a//b/./c","f":"nfc","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"~/../x","f":"nfc","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"~alice","f":"nfc","home":null,"r":"/hd/alice"}
+{"a":"~alice/p","f":"nfc","home":null,"r":"/hd/alice/p"}
+{"a":"~root/p","f":"nfc","home":null,"r":"/p"}
+{"a":"~empty/p","f":"nfc","home":null,"r":"/p"}
+{"a":"~slashy/p","f":"nfc","home":null,"r":"//srv/x/p"}
+{"a":"~tilde/p","f":"nfc","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"~rel/p","f":"nfc","home":null,"r":"rel/dir/p"}
+{"a":"~triple/p","f":"nfc","home":null,"r":"/t/p"}
+{"a":"~nobody/p","f":"nfc","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"~~/p","f":"nfc","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"/~/p","f":"nfc","home":null,"r":"/~/p"}
+{"a":"a\\b","f":"nfc","home":null,"r":"a\\b"}
+{"a":"~\\x","f":"nfc","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"~a\u0000b/x","f":"nfc","home":null,"r":"~a\u0000b/x"}
+{"a":"./~a\u0000b//x","f":"nfc","home":null,"r":"./~a\u0000b//x"}
+{"a":"","f":"scan","home":"/hd/u","r":[]}
+{"a":"see /etc/hosts here","f":"scan","home":"/hd/u","r":[["/etc/hosts",false,false]]}
+{"a":"`/etc/hosts` and /etc/hosts","f":"scan","home":"/hd/u","r":[["/etc/hosts",false,false]]}
+{"a":"/etc/hosts and `/etc/hosts`","f":"scan","home":"/hd/u","r":[["/etc/hosts",false,false]]}
+{"a":"`  /a/b/c  `","f":"scan","home":"/hd/u","r":[["/a/b/c",false,false]]}
+{"a":"`~/x/y` then /hd/u/x/y","f":"scan","home":"/hd/u","r":[["~/x/y",false,false]]}
+{"a":"/hd/u/x/y then ~/x/y","f":"scan","home":"/hd/u","r":[["/hd/u/x/y",false,false]]}
+{"a":"`/a/b`c/d/e`","f":"scan","home":"/hd/u","r":[["/a/b",false,false]]}
+{"a":"/opt/app Config here","f":"scan","home":"/hd/u","r":[["/opt/app",true,false]]}
+{"a":"/opt/app config here","f":"scan","home":"/hd/u","r":[["/opt/app",false,false]]}
+{"a":"/opt/app. The end","f":"scan","home":"/hd/u","r":[["/opt/app",false,false]]}
+{"a":"/opt/app Config then /opt/app ok","f":"scan","home":"/hd/u","r":[["/opt/app",false,false]]}
+{"a":"/opt/app ok then /opt/app Config","f":"scan","home":"/hd/u","r":[["/opt/app",false,false]]}
+{"a":"/opt/app (2).pdf","f":"scan","home":"/hd/u","r":[["/opt/app",true,false]]}
+{"a":"/opt/app 1x","f":"scan","home":"/hd/u","r":[["/opt/app",true,false]]}
+{"a":"/opt/app X","f":"scan","home":"/hd/u","r":[["/opt/app",true,false]]}
+{"a":"/opt/app  X","f":"scan","home":"/hd/u","r":[["/opt/app",true,false]]}
+{"a":"/etc/hosts TCP/IP keepalive","f":"scan","home":"/hd/u","r":[["/etc/hosts TCP/IP",false,true]]}
+{"a":"https://ex.com/api/v1 and /api/v1/x and /apix/y","f":"scan","home":"/hd/u","r":[["/apix/y",false,false]]}
+{"a":"`ex.com/api` /api/users","f":"scan","home":"/hd/u","r":[]}
+{"a":"x.y.com/srv /srv/data/z","f":"scan","home":"/hd/u","r":[]}
+{"a":"a=/x/y,b=/x/z","f":"scan","home":"/hd/u","r":[["/x/y",false,false],["/x/z",false,false]]}
+{"a":"`/a/b:12` /a/b:13","f":"scan","home":"/hd/u","r":[["/a/b",false,false]]}
+{"a":"`\\ \\ .` /a/b","f":"scan","home":"/hd/u","r":{"raise":"IndexError"}}
+{"a":"/a/b `\\ \\ .`","f":"scan","home":"/hd/u","r":{"raise":"IndexError"}}
+{"a":"/a/b /a/c /a/d /a/e /a/f /a/g /a/h /a/i /a/j","f":"scan","home":"/hd/u","r":[["/a/b",true,false],["/a/c",true,false],["/a/d",true,false],["/a/e",true,false],["/a/f",true,false],["/a/g",true,false],["/a/h",true,false],["/a/i",true,false]]}
+{"a":"`/a/b` `/a/c` `/a/d` `/a/e` `/a/f` `/a/g` `/a/h` `/a/i` `\\ \\ .`","f":"scan","home":"/hd/u","r":[["/a/b",false,false],["/a/c",false,false],["/a/d",false,false],["/a/e",false,false],["/a/f",false,false],["/a/g",false,false],["/a/h",false,false],["/a/i",false,false]]}
+{"a":"`/a/b` `/a/c` `/a/d` `/a/e` `/a/f` `/a/g` `/a/h` /a/i /a/j","f":"scan","home":"/hd/u","r":[["/a/b",false,false],["/a/c",false,false],["/a/d",false,false],["/a/e",false,false],["/a/f",false,false],["/a/g",false,false],["/a/h",false,false],["/a/i",true,false]]}
+{"a":"/a/b `/a/b` /a/b","f":"scan","home":"/hd/u","r":[["/a/b",false,false]]}
+{"a":"~/x","f":"scan","home":"/hd/u","r":[["~/x",false,false]]}
+{"a":"`~/x`","f":"scan","home":"/hd/u","r":[["~/x",false,false]]}
+{"a":"C:\\dir\\file.txt and C:/dir/f","f":"scan","home":"/hd/u","r":[["C:\\dir\\file.txt",false,false],["C:/dir/f",false,false]]}
+{"a":"/a/b\n/c/d\t/e/f","f":"scan","home":"/hd/u","r":[["/a/b",false,false],["/c/d",false,false],["/e/f",false,false]]}
+{"a":"/a/b/ /a/b","f":"scan","home":"/hd/u","r":[["/a/b",false,false]]}
+{"a":"/a//b","f":"scan","home":"/hd/u","r":[["/a//b",false,false]]}
+{"a":"/a/./b and /a/b","f":"scan","home":"/hd/u","r":[["/a/./b",false,false]]}
+{"a":"/path/to/thing /etc/foo","f":"scan","home":"/hd/u","r":[]}
+{"a":"","f":"scan","home":null,"r":[]}
+{"a":"see /etc/hosts here","f":"scan","home":null,"r":[["/etc/hosts",false,false]]}
+{"a":"`/etc/hosts` and /etc/hosts","f":"scan","home":null,"r":[["/etc/hosts",false,false]]}
+{"a":"/etc/hosts and `/etc/hosts`","f":"scan","home":null,"r":[["/etc/hosts",false,false]]}
+{"a":"`  /a/b/c  `","f":"scan","home":null,"r":[["/a/b/c",false,false]]}
+{"a":"`~/x/y` then /hd/u/x/y","f":"scan","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"/hd/u/x/y then ~/x/y","f":"scan","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"`/a/b`c/d/e`","f":"scan","home":null,"r":[["/a/b",false,false]]}
+{"a":"/opt/app Config here","f":"scan","home":null,"r":[["/opt/app",true,false]]}
+{"a":"/opt/app config here","f":"scan","home":null,"r":[["/opt/app",false,false]]}
+{"a":"/opt/app. The end","f":"scan","home":null,"r":[["/opt/app",false,false]]}
+{"a":"/opt/app Config then /opt/app ok","f":"scan","home":null,"r":[["/opt/app",false,false]]}
+{"a":"/opt/app ok then /opt/app Config","f":"scan","home":null,"r":[["/opt/app",false,false]]}
+{"a":"/opt/app (2).pdf","f":"scan","home":null,"r":[["/opt/app",true,false]]}
+{"a":"/opt/app 1x","f":"scan","home":null,"r":[["/opt/app",true,false]]}
+{"a":"/opt/app X","f":"scan","home":null,"r":[["/opt/app",true,false]]}
+{"a":"/opt/app  X","f":"scan","home":null,"r":[["/opt/app",true,false]]}
+{"a":"/etc/hosts TCP/IP keepalive","f":"scan","home":null,"r":[["/etc/hosts TCP/IP",false,true]]}
+{"a":"https://ex.com/api/v1 and /api/v1/x and /apix/y","f":"scan","home":null,"r":[["/apix/y",false,false]]}
+{"a":"`ex.com/api` /api/users","f":"scan","home":null,"r":[]}
+{"a":"x.y.com/srv /srv/data/z","f":"scan","home":null,"r":[]}
+{"a":"a=/x/y,b=/x/z","f":"scan","home":null,"r":[["/x/y",false,false],["/x/z",false,false]]}
+{"a":"`/a/b:12` /a/b:13","f":"scan","home":null,"r":[["/a/b",false,false]]}
+{"a":"`\\ \\ .` /a/b","f":"scan","home":null,"r":{"raise":"IndexError"}}
+{"a":"/a/b `\\ \\ .`","f":"scan","home":null,"r":{"raise":"IndexError"}}
+{"a":"/a/b /a/c /a/d /a/e /a/f /a/g /a/h /a/i /a/j","f":"scan","home":null,"r":[["/a/b",true,false],["/a/c",true,false],["/a/d",true,false],["/a/e",true,false],["/a/f",true,false],["/a/g",true,false],["/a/h",true,false],["/a/i",true,false]]}
+{"a":"`/a/b` `/a/c` `/a/d` `/a/e` `/a/f` `/a/g` `/a/h` `/a/i` `\\ \\ .`","f":"scan","home":null,"r":[["/a/b",false,false],["/a/c",false,false],["/a/d",false,false],["/a/e",false,false],["/a/f",false,false],["/a/g",false,false],["/a/h",false,false],["/a/i",false,false]]}
+{"a":"`/a/b` `/a/c` `/a/d` `/a/e` `/a/f` `/a/g` `/a/h` /a/i /a/j","f":"scan","home":null,"r":[["/a/b",false,false],["/a/c",false,false],["/a/d",false,false],["/a/e",false,false],["/a/f",false,false],["/a/g",false,false],["/a/h",false,false],["/a/i",true,false]]}
+{"a":"/a/b `/a/b` /a/b","f":"scan","home":null,"r":[["/a/b",false,false]]}
+{"a":"~/x","f":"scan","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"`~/x`","f":"scan","home":null,"r":{"raise":"RuntimeError"}}
+{"a":"C:\\dir\\file.txt and C:/dir/f","f":"scan","home":null,"r":[["C:\\dir\\file.txt",false,false],["C:/dir/f",false,false]]}
+{"a":"/a/b\n/c/d\t/e/f","f":"scan","home":null,"r":[["/a/b",false,false],["/c/d",false,false],["/e/f",false,false]]}
+{"a":"/a/b/ /a/b","f":"scan","home":null,"r":[["/a/b",false,false]]}
+{"a":"/a//b","f":"scan","home":null,"r":[["/a//b",false,false]]}
+{"a":"/a/./b and /a/b","f":"scan","home":null,"r":[["/a/./b",false,false]]}
+{"a":"/path/to/thing /etc/foo","f":"scan","home":null,"r":[]}
+{"f":"scan","home":"/hd/u","r":[["/a/b",false,false]],"runs":[["/a/b ",6600]]}
+{"f":"scan","home":"/hd/u","r":[["/a/bc",false,false]],"runs":[["x",32760],[" /a/bc",2]]}
+{"f":"scan","home":"/hd/u","r":[["/q/r",false,false],["/q/s",false,false]],"runs":[["`/q/r` ",4000],["/q/s",1]]}
+{"count":7381,"depth":4,"f":"scan","frags":["`","/a"," ","Ab","~/x","x.co/a",".","\n","b/"],"home":"/hd/u","sha256":"40567eaf30b9895286844bbe5eb9b640ce7da214a868312c5386c32e55f883c9"}
+{"count":9331,"depth":5,"f":"scan","frags":["`","/a"," ","~/","X","/hd/u"],"home":null,"sha256":"a2091fa17613a9e3dc3fb1dab66b683cbd1d34d2b0817e3e7e0686a7f58efc33"}

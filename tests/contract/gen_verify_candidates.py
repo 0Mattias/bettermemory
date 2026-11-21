@@ -35,6 +35,7 @@ lowercase (``lower``, as ranges): its answers are the Unicode data's.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import itertools
 import re
@@ -604,3 +605,255 @@ def generate_patterns_unicode() -> dict[str, bytes]:
     rows = _pattern_rows(wide=True)
     header = {"cases": len(rows), "unicode": unicodedata.unidata_version}
     return {"verify_candidates_patterns_unicode.jsonl": jsonl([header, *rows])}
+
+
+# Unit 3: `_normalize_for_compare` and `_scan_candidates`
+# (``verify_candidates_scan.jsonl``, ``verify_candidates_scan_unicode.jsonl``),
+# POSIX only: the reference reads `Path`, whose Windows flavour spells
+# other texts. The home directory is recorded, never read: ``$HOME`` is set
+# to the row's ``home`` (or removed when it is null, with the password
+# entry of the running user unknown), and ``pwd.getpwnam`` answers from
+# ``USERS`` in the header (an unknown name raises `KeyError`; a name the
+# real ``getpwnam`` refuses, one holding NUL or one ``os.fsencode`` cannot
+# encode, raises `ValueError` as it does). A line is
+# one of:
+#
+# - ``{"f": "nfc", "a", "home", "r"}``: `_normalize_for_compare(a)`;
+# - ``{"f": "scan", "a", "home", "r"}``: `_scan_candidates(a)`, each
+#   candidate ``[path, drop_if_missing, bare_spaced]``;
+# - ``{"f": "scan", "runs", "home", "r"}``: the body is the runs
+#   (``[text, times]``) joined;
+# - ``{"f": "scan", "frags", "depth", "home", "count", "sha256"}``: every
+#   body joined from up to ``depth`` fragments in `itertools.product`'s
+#   order, each answer spelled ``path|AS`` (``A`` and ``S`` the flags as
+#   0 or 1) joined by newlines, or ``!`` and the class raised, then a
+#   newline, encoded UTF-8 with surrogates passed.
+#
+# A raise is ``{"raise": class name}``.
+
+HOME = "/hd/u"
+USERS = {
+    "alice": "/hd/alice",
+    "root": "/",
+    "empty": "",
+    "slashy": "//srv//x/",
+    "tilde": "~elsewhere",
+    "rel": "rel/./dir/",
+    "triple": "///t",
+}
+
+
+class _FakePwd:
+    @staticmethod
+    def getpwnam(name: str) -> Any:
+        import os
+
+        if "\x00" in name:
+            raise ValueError("embedded null character")
+        os.fsencode(name)
+        if name not in USERS:
+            raise KeyError(name)
+        return type("pw", (), {"pw_dir": USERS[name]})()
+
+    @staticmethod
+    def getpwuid(uid: int) -> Any:
+        raise KeyError(uid)
+
+
+def _with_home(home: str | None, fn: Callable[[], Any]) -> Any:
+    import os
+    import sys
+    from unittest.mock import patch
+
+    env = dict(os.environ)
+    env.pop("HOME", None)
+    if home is not None:
+        env["HOME"] = home
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch.dict(sys.modules, {"pwd": _FakePwd}),
+    ):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - the class is the answer
+            return {"raise": type(exc).__name__}
+
+
+def _scan(body: str, home: str | None) -> Any:
+    got = _with_home(home, lambda: vc._scan_candidates(body))
+    if isinstance(got, dict):
+        return got
+    return [[_t(p), a, s] for p, a, s in got]
+
+
+NFC_TEXTS = [
+    "",
+    "/a/b",
+    "//a//b/",
+    "///a/./b/.",
+    "a/b/",
+    ".",
+    "./",
+    "./~x/y",
+    "~",
+    "~/",
+    "~/a//b/./c",
+    "~/../x",
+    "~alice",
+    "~alice/p",
+    "~root/p",
+    "~empty/p",
+    "~slashy/p",
+    "~tilde/p",
+    "~rel/p",
+    "~triple/p",
+    "~nobody/p",
+    "~~/p",
+    "/~/p",
+    "a\\b",
+    "~\\x",
+    "~a\x00b/x",
+    "./~a\x00b//x",
+    "~\ud800/x",
+    "~\udc7f/x",
+    "~\udc80/x",
+]
+NFC_HOMES: list[str | None] = [HOME, "/", "", "//h/", "~h", "rel", None]
+
+SCAN_TEXTS = [
+    "",
+    "see /etc/hosts here",
+    "`/etc/hosts` and /etc/hosts",
+    "/etc/hosts and `/etc/hosts`",
+    "`  /a/b/c  `",
+    "`~/x/y` then /hd/u/x/y",
+    "/hd/u/x/y then ~/x/y",
+    "`/a/b`c/d/e`",
+    "/opt/app Config here",
+    "/opt/app config here",
+    "/opt/app. The end",
+    "/opt/app Config then /opt/app ok",
+    "/opt/app ok then /opt/app Config",
+    "/opt/app (2).pdf",
+    "/opt/app 1x",
+    "/opt/app X",
+    "/opt/app  X",
+    "/etc/hosts TCP/IP keepalive",
+    "https://ex.com/api/v1 and /api/v1/x and /apix/y",
+    "`ex.com/api` /api/users",
+    "x.y.com/srv /srv/data/z",
+    "a=/x/y,b=/x/z",
+    "`/a/b:12` /a/b:13",
+    "`\\ \\ .` /a/b",
+    "/a/b `\\ \\ .`",
+    "/a/b /a/c /a/d /a/e /a/f /a/g /a/h /a/i /a/j",
+    "`/a/b` `/a/c` `/a/d` `/a/e` `/a/f` `/a/g` `/a/h` `/a/i` `\\ \\ .`",
+    "`/a/b` `/a/c` `/a/d` `/a/e` `/a/f` `/a/g` `/a/h` /a/i /a/j",
+    "/a/b `/a/b` /a/b",
+    "~/x",
+    "`~/x`",
+    "C:\\dir\\file.txt and C:/dir/f",
+    "/a/b\n/c/d\t/e/f",
+    "/a/b/ /a/b",
+    "/a//b",
+    "/a/./b and /a/b",
+    "/path/to/thing /etc/foo",
+    "/a/b \u00e9tat /a/c \u00c9tat",
+    "/a/b \u0391x /a/c \u03b1x",
+    "\u201c/a/b\u201d and \u2018/c/d\u2019",
+    "/a/b\u3000Xy",
+    "/a/b \u02b0x",
+    "`/\u00e9/b` /\u00e9/b",
+]
+SCAN_HOMES: list[str | None] = [HOME, None]
+SCAN_RUNS: list[tuple[list[list[Any]], str | None]] = [
+    ([["/a/b ", 6600]], HOME),
+    ([["x", 32760], [" /a/bc", 2]], HOME),
+    ([["`/q/r` ", 4000], ["/q/s", 1]], HOME),
+]
+SCAN_SWEEPS: list[tuple[list[str], int, str | None]] = [
+    (["`", "/a", " ", "Ab", "~/x", "x.co/a", ".", "\n", "b/"], 4, HOME),
+    (["`", "/a", " ", "~/", "X", "/hd/u"], 5, None),
+]
+
+
+def _spell(got: Any) -> bytes:
+    if isinstance(got, dict):
+        text = "!" + got["raise"]
+    else:
+        text = "\n".join(f"{p}|{int(a)}{int(s)}" for p, a, s in got)
+    return (text + "\n").encode("utf-8", "surrogatepass")
+
+
+def _scan_sweep(frags: list[str], depth: int, home: str | None) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    count = 0
+
+    def run() -> None:
+        nonlocal count
+        for k in range(depth + 1):
+            for combo in itertools.product(frags, repeat=k):
+                try:
+                    got: Any = vc._scan_candidates("".join(combo))
+                except Exception as exc:  # noqa: BLE001 - the class is the answer
+                    got = {"raise": type(exc).__name__}
+                digest.update(_spell(got))
+                count += 1
+
+    _with_home(home, run)
+    return {
+        "f": "scan",
+        "frags": [_t(f) for f in frags],
+        "depth": depth,
+        "home": home,
+        "count": count,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _nfc(text: str) -> Any:
+    return _t(vc._normalize_for_compare(text))
+
+
+def _scan_rows(wide: bool) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for home in NFC_HOMES:
+        for text in NFC_TEXTS:
+            if _wide_text(text) == wide:
+                got = _with_home(home, functools.partial(_nfc, text))
+                rows.append({"f": "nfc", "a": _t(text), "home": home, "r": got})
+    for home in SCAN_HOMES:
+        for text in SCAN_TEXTS:
+            if _wide_text(text) == wide:
+                rows.append(
+                    {"f": "scan", "a": _t(text), "home": home, "r": _scan(text, home)}
+                )
+    if not wide:
+        for runs, home in SCAN_RUNS:
+            body = "".join(t * n for t, n in runs)
+            rows.append(
+                {"f": "scan", "runs": runs, "home": home, "r": _scan(body, home)}
+            )
+        rows += [_scan_sweep(f, d, h) for f, d, h in SCAN_SWEEPS]
+    return rows
+
+
+def _wide_text(text: str) -> bool:
+    return not text.isascii()
+
+
+def generate_scan() -> dict[str, bytes]:
+    rows = _scan_rows(wide=False)
+    header = {"cases": len(rows), "home": HOME, "users": USERS}
+    return {"verify_candidates_scan.jsonl": jsonl([header, *rows])}
+
+
+def generate_scan_unicode() -> dict[str, bytes]:
+    rows = _scan_rows(wide=True)
+    header = {
+        "cases": len(rows),
+        "home": HOME,
+        "users": USERS,
+        "unicode": unicodedata.unidata_version,
+    }
+    return {"verify_candidates_scan_unicode.jsonl": jsonl([header, *rows])}

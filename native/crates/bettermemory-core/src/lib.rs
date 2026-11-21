@@ -37,8 +37,11 @@
 //!   search snippets;
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
 //! - [`verify_candidates`]: the path candidates verification reads, its
-//!   first two units (one candidate validated; `_BACKTICK_RE`,
-//!   `_BARE_RE` and `_DOMAIN_ROUTE_RE` as hand matchers);
+//!   first three units (one candidate validated; `_BACKTICK_RE`,
+//!   `_BARE_RE` and `_DOMAIN_ROUTE_RE` as hand matchers; the candidate
+//!   scan of a body);
+//! - [`path_drift_steps`]: `_check_body_candidates`, the body-candidate
+//!   pass of path drift, its effects as closures;
 //! - [`attestation_paths`]: explicit path attestations compiled beside
 //!   the legacy reference grammar (`attestation_paths.py` whole);
 //! - [`project_file`]: the project file, its first unit (the vocabulary,
@@ -226,6 +229,7 @@ pub mod models_text;
 pub mod origin_gitfiles;
 pub mod origin_history;
 pub mod origin_remote;
+pub mod path_drift_steps;
 pub mod printable;
 pub mod project_file;
 pub mod pyre;

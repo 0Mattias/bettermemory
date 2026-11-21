@@ -29,7 +29,8 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth; lookarounds refused (`supports`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
-| `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer` | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl` |
+| `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl` |
+| `path_drift_steps` | `path_drift_steps.py`: `_check_body_candidates`, its checks and keys as closures | `path_drift_steps.jsonl` |
 | `attestation_paths` | `attestation_paths.py` whole: `LiteralPaths`/`ReferencePaths` (`Paths` and its `Kind`), `path_mode`, `interpret_path`, `_may_be_literal`, `joined_path`, `_REFERENCE_ROOT`, `absolute_spelling`, `literal_path`, `reference_path`, `placeholder_spelling`, `target_path`, `record_paths`, `commit_paths`, `compile_targets`, `unverifiable_inputs`, with `ntpath.splitdrive` and both `commonpath`s; the host (`os.name`, `expanduser`, `lstat`, `ntpath.normcase` on Windows) a trait | `attestation_paths.jsonl`, `attestation_paths_posix.jsonl` |
 | `project_file` | unit 1 of `project_file.py`: the constants, `ErrorReason`, `ProjectFile`, `ProjectFileError` (`directory`, `line`), `Found`, `Above`, `mint_id`, `render`, `_ID_RE` (`id_text`), `_bad_name`, `_bad_char`, `_toml_string` | `project_file.jsonl` |
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store` | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_darwin.jsonl` |
@@ -131,9 +132,9 @@ than 600 lines of Rust, so it is cut into four units.
 | `_normalize_candidate` | 806-877 | nothing | unit 1, built |
 | `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` | 87, 107-119, 184-186 | nothing | unit 2, built (hand matchers) |
 | `_RELATIVE_CITATION_RE` | 238-243 | nothing | its first reader, on `pyre::Regex` |
-| `_normalize_for_compare` | 326-343 | the home directory (`Path.expanduser`) | unit 3 |
-| `_scan_candidates`, `_extract_candidates` | 549-677 | the home directory, through `_normalize_for_compare` | unit 3 |
-| `_body_key`, `_recall_parse`, `_keep_parse`, `_clear_body_parses`, `_CANDIDATES`, `_ANCHORS` | 487-526 | the home directory (in the key); a lock | unit 3 |
+| `_normalize_for_compare` | 326-343 | the home directory (`Path.expanduser`) | unit 3, built (POSIX flavour) |
+| `_scan_candidates`, `_extract_candidates` | 549-677 | the home directory, through `_normalize_for_compare` | unit 3, built (`_extract_candidates` without its memo) |
+| `_body_key`, `_recall_parse`, `_keep_parse`, `_clear_body_parses`, `_CANDIDATES`, `_ANCHORS` | 487-526 | the home directory (in the key); a lock | the memo, a later unit; it wraps `scan::extract_candidates` unchanged |
 | `_claim_key`, `_ClaimKeys` | 346-450 | the home directory, `realpath` and `lstat` (the file-system trait), `os.name` and `normcase` | unit 4 |
 | `_is_under_home`, `_home_ignores_case` | 991-1095 | the home directory, `os.sep`/`os.altsep`, `samefile` | unit 4 |
 | `_is_multi_segment_routelike` | 1098-1207 | the above and `isdir` | unit 4 |
@@ -269,6 +270,61 @@ scan, so these matchers and their fixtures do not model the masking
 
 No crate was added.
 
+### Unit 3, built (`verify_candidates::scan`)
+
+`_normalize_for_compare` (326-343), `_scan_candidates` (562-677) and
+`_extract_candidates` (549-559) without its body parse memo. The home
+directory is an argument: `home` is what `~` expands to (`$HOME`, else
+the running user's password entry; None when neither is known) and
+`lookup` answers `pwd.getpwnam(name)` for `~name` as a `UserHome`: the
+`pw_dir`, `Unknown` for an unknown name, or `Refused` for a name
+`getpwnam` rejects with `ValueError`. Unit 4 reads both from the machine.
+
+- `normalize_for_compare`: `str(Path(raw).expanduser())` under
+  `PosixPath`. The text is parsed as `_parse_path` parses it (exactly two
+  leading slashes keep a `//` root, one or three or more give `/`; empty
+  and `.` parts are dropped, `..` stays). When there is no root and the
+  first part starts with `~`, `posixpath.expanduser` of that part gives
+  the home with trailing slashes cut, or `/` when nothing is left; a home
+  that is unknown, or that itself starts with `~`, is
+  `Err(CompareError::Home)`: the reference catches only `OSError` and
+  `ValueError`, so the `RuntimeError` escapes. A `~user` name that
+  `pwd.getpwnam` refuses with `ValueError` (a NUL, or a surrogate the
+  filesystem encoding cannot encode; `getpwnam_refuses` states the rule
+  and the lookup answers `UserHome::Refused`) gives the raw text back,
+  since the reference's handler catches that `ValueError`. The expanded home is parsed again and the rest
+  of the parts appended.
+- `scan_candidates`: the body bounded (`bounded_scan_text`); the set of
+  `_DOMAIN_ROUTE_RE` group 1 over that body; the backtick pass, each
+  group `str.strip`ped, normalized, kept unless a route, deduplicated on
+  `normalize_for_compare`, the cap checked after each append and
+  returning at once; every backtick span (delimiters included) masked
+  with spaces of the same length, kept or not; then the bare pass over
+  the masked text, its ambiguity flag set when the candidate needed no
+  trim and the two code points after the group are a U+0020 and a code
+  point `str.islower` refuses. A key seen before only downgrades a stored
+  ambiguity; `bare_spaced` is a U+0020 in the candidate. The cap breaks
+  after an append. `_normalize_candidate`'s `IndexError` and
+  `expanduser`'s `RuntimeError` both escape (`ScanError`), at the same
+  candidate as in the reference, since both passes take their matches in
+  order.
+- `extract_candidates(body, home, lookup)`: `[]` for an empty body,
+  else the scan. The memo, a later unit, wraps it unchanged. It takes no
+  `attested` argument, as the reference's `_extract_candidates` takes
+  none.
+
+**Patterns.** The scan calls the three hand matchers of unit 2 and adds
+no pattern; nothing goes into the engine's inventory.
+
+**Windows.** Only the POSIX flavour of `Path` is ported. Under
+`WindowsPath` the reference parses drives, UNC roots and both
+separators; that flavour is not built here. On a target that is not
+Unix, `normalize_for_compare` of a non-empty text answers
+`CompareError::NotPorted` and the scan of a non-empty body
+`ScanError::NotPorted`. The fixtures that pin the comparison form and
+the kills test are POSIX only (`verify_candidates_scan_not_posix`
+records the gap, class os, and checks the decline).
+
 ### What the reference does that looks wrong (not changed)
 
 - A candidate that trims to whitespace alone raises. `\ \ .` in
@@ -306,6 +362,11 @@ No crate was added.
 | `golden_verify_candidates_patterns`: `verify_candidates_patterns_unicode_every_case` | `verify_candidates_patterns_unicode.jsonl` | ii (Unicode) |
 | `verify_candidates_patterns_kills` (9) | none | i |
 | `verify_candidates_patterns_robustness` (2) | none | i |
+| `golden_verify_candidates_scan` (POSIX): `verify_candidates_scan_every_case` | `verify_candidates_scan.jsonl` | i |
+| `golden_verify_candidates_scan` (POSIX): `verify_candidates_scan_unicode_every_case` | `verify_candidates_scan_unicode.jsonl` | ii (Unicode) |
+| `verify_candidates_scan_not_posix` (not POSIX) | both scan files, recorded | os |
+| `verify_candidates_scan_kills` (12) | none | i |
+| `verify_candidates_scan_robustness` (2) | none | i |
 
 `gen_verify_candidates.py` writes two files. A case whose texts are all
 ASCII goes in `verify_candidates.jsonl` (every table answers ASCII the
@@ -324,6 +385,51 @@ goes in `verify_candidates_patterns_unicode.jsonl`, gated on the Unicode
 data only. Each file holds chosen texts with their matches and, per
 pattern, digest rows: every text joined from zero to `depth` fragments in
 `itertools.product`'s order, the count and the SHA-256 of the answers.
+
+Unit 3's files are POSIX only (`POSIX_ONLY` in `generate.py`): the
+reference spells the comparison form through the host's `Path`. The
+home is recorded, never read: the generator sets `$HOME` to the row's
+home (or removes it, with the password entry of the running user
+unknown) and replaces `pwd` with a table in the header. Rows pin each
+`Path` collapse (slash runs, `//`, trailing slash, `.` parts), each home
+spelling, the unknown home as the error row, each pass, the masking, the
+ambiguity tail and its downgrade, the routes, the cap in each pass and
+past the scan bound, and two digest sweeps of 7,381 and 9,331 bodies.
+A body past ASCII goes in `verify_candidates_scan_unicode.jsonl`, gated
+on the Unicode data as well.
+
+## Body candidates of path drift (`path_drift_steps.py`)
+
+`_check_body_candidates` (29-169), the one function of the module,
+built whole in `path_drift_steps.rs` (about 90 lines). It needs nothing
+built: `_path_exists` and `_is_multi_segment_routelike` (unit 4 of
+`verify_candidates`) and the claim key function reach it as closures
+(`exists`, `routelike`, `keys`), and the buckets with the seen set are a
+`Buckets` struct handed in by `&mut`.
+
+- The closures are called in the reference's order: `exists(path)` then
+  `keys(path)`; in the spaced arm `keys(prefix)` then `exists(prefix)`,
+  the seen test only when the prefix exists (the `and` short-circuit);
+  `routelike(path)` only after the spaced and ambiguous arms decline.
+- The prefix is `path.split(" ", 1)[0]`: U+0020 only.
+- `dropped_as_route` is appended unguarded, as the reference does; a
+  caller that hands one route twice gets it twice.
+- Paths are `String`: a candidate holding a lone surrogate cannot reach
+  this port. The caller that joins the scan to this pass decides how such
+  a candidate travels.
+
+| test | golden file | class |
+| --- | --- | --- |
+| `golden_path_drift_steps`: `path_drift_steps_every_case` | `path_drift_steps.jsonl` | i |
+| `path_drift_steps_kills` (7) | none | i |
+
+`gen_path_drift_steps.py` replaces both module-level checks with recorded
+sets and logs every closure call. Its rows are every combination of the
+flags, existence, attestation, route reading, prefix existence and a
+seen key handed in (with the path existing, route and prefix are never
+read), plus multi-candidate rows for shared keys, a prefix met twice, a
+tab before the space and duplicate routes. It holds no path of the host
+and is ungated.
 
 ## Path attestations (`attestation_paths.py`)
 
@@ -15953,9 +16059,11 @@ What the reference has and this build does not, by area:
   reads (unit 2), then the walk, `find` and the write (unit 3).
 - Each hit's signals and drift report: `claims.py` past its leaves and
   its literal reader (the drift index, the declare-time oracle),
-  `verify_candidates.py` past the validation of one candidate and its
+  `verify_candidates.py` past the validation of one candidate, its
   three extraction patterns (`_BACKTICK_RE`, `_BARE_RE`,
-  `_DOMAIN_ROUTE_RE`), and `verify.py`. The history readers of `origin_history.py` (its leaves
+  `_DOMAIN_ROUTE_RE`) and the candidate scan (`_normalize_for_compare`
+  on POSIX, `_scan_candidates`, `_extract_candidates` without its body
+  parse memo), and `verify.py`. The history readers of `origin_history.py` (its leaves
   and memo are built).
 - The write gates past the control tokens and the dedup: `credentials.py`
   after its vendor-prefixed detectors and its value gate (the generic and

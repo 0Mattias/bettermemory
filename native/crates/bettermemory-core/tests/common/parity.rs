@@ -226,6 +226,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `re`'s `finditer` of three patterns past Latin-1, where `\w` and
         // `\s` follow the Unicode data (`gen_verify_candidates`).
         "verify_candidates_patterns_unicode.jsonl" => &[Unicode],
+        // `str.islower` and `re`'s `\w` and `\s` past ASCII, through the
+        // candidate scan (`gen_verify_candidates`).
+        "verify_candidates_scan_unicode.jsonl" => &[Unicode],
         // `_sre`'s lower case, upper case and cased test, `re`'s categories
         // and the extra cases of `re._casefix` over every code point
         // (`gen_pyre`).

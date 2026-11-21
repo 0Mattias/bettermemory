@@ -99,6 +99,7 @@ from . import (
     gen_in_force,
     gen_lexicon,
     gen_verify_candidates,
+    gen_path_drift_steps,
     gen_attestation_paths,
     gen_project_file,
     gen_log,
@@ -164,6 +165,9 @@ GOLDEN = Path(__file__).parent / "golden"
 GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "lexicon": gen_lexicon.generate,
     "verify_candidates": gen_verify_candidates.generate,
+    "verify_candidates_scan": gen_verify_candidates.generate_scan,
+    "verify_candidates_scan_unicode": gen_verify_candidates.generate_scan_unicode,
+    "path_drift_steps": gen_path_drift_steps.generate,
     "verify_candidates_unicode": gen_verify_candidates.generate_unicode,
     "attestation_paths": gen_attestation_paths.generate,
     "attestation_paths_posix": gen_attestation_paths.generate_posix,
@@ -398,6 +402,7 @@ UNICODE_GATED = frozenset(
         "attribution_unicode",
         "lexicon",
         "verify_candidates_unicode",
+        "verify_candidates_scan_unicode",
         "verify_candidates_patterns_unicode",
         "unicode",
         "models_text_unicode",
@@ -746,6 +751,9 @@ PLATFORM_GATED = frozenset(
 #: ``checkout_token_write`` runs `write` over the same scripted OS and
 #: ``checkout_token_write_posix`` writes real trees with modes and real
 #: errno texts (`gen_checkout_token_write`);
+#: ``verify_candidates_scan`` and ``verify_candidates_scan_unicode`` expand
+#: ``~`` through the host's ``Path``, whose Windows flavour parses and
+#: spells paths otherwise (`gen_verify_candidates`);
 #: ``location_stamps`` and
 #: ``location_stamps_python`` name devices by ``os.major``, which Windows'
 #: ``os`` lacks (`gen_location_stamps`); ``location_probe``, ``location_probe_python``
@@ -767,6 +775,8 @@ POSIX_ONLY = frozenset(
         "checkout_token_read_posix",
         "checkout_token_write",
         "checkout_token_write_posix",
+        "verify_candidates_scan",
+        "verify_candidates_scan_unicode",
         "store_restore_lock",
         "store_restore_lock_hold",
         "store_schema_posix",
