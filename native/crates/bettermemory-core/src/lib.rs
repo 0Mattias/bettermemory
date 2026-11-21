@@ -165,6 +165,9 @@
 //!   per-process state around a resolution: the machine opened once,
 //!   the per-location locks, where each session stands, the file
 //!   errors' lines and the namespace test);
+//! - [`location_resolve`]: a caller's resolution, unit loccaller (the
+//!   capture, the model, the ladder under the location's lock, the
+//!   token re-minted where asked, the session's stand kept by a hook);
 //! - [`gitobjects`]: git objects read from a repository's files, the
 //!   whole module in four units (the byte parsers; the zlib streams and
 //!   the delta chain over a file handle; the file reads, the object format
@@ -245,6 +248,7 @@ pub mod location_discovery;
 pub mod location_git;
 pub mod location_probe;
 pub mod location_reads;
+pub mod location_resolve;
 pub mod location_stamps;
 pub mod location_view;
 pub mod location_witness;
