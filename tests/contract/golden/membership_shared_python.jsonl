@@ -1,0 +1,3 @@
+{"cases":2,"f":"header"}
+{"checkout":"k1","e":"RecursionError","f":"joined","log":[["checkout_registered","{\"checkout\": \"k1\", \"rule\": \"join:T\"}"],["checkout_registered",{"rep":["[","[",200000,""]}]]}
+{"checkout":"k1","e":"RecursionError","f":"joined","log":[["checkout_registered",{"rep":["[","[",200000,""]}],["resolution_joined","{\"checkout\": \"k1\", \"principal\": \"os:u\"}"]]}

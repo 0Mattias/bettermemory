@@ -102,6 +102,10 @@
 //!   compare, join and rebase recorded paths in either spelling; the
 //!   manifest's JSON and match, the reader traits and the checkout,
 //!   view, project and proposal records);
+//! - [`membership_shared`]: one git directory several machines see, its
+//!   first unit (the stamp and tick comparisons, the re-mint read from
+//!   another machine's view over carriers given, and the predicates over
+//!   a checkout's question rows and log rows);
 //! - [`membership_rows`]: the membership table rows read into records and
 //!   written back, the object-key and stamp codecs, `_jsonable`,
 //!   `_signature`, `_unwritten` and `_Tally`;
@@ -284,6 +288,7 @@ pub mod membership;
 pub mod membership_lines;
 pub mod membership_records;
 pub mod membership_rows;
+pub mod membership_shared;
 pub mod models_text;
 pub mod native_text;
 pub mod origin_dates;

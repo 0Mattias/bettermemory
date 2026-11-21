@@ -132,6 +132,7 @@ from . import (
     gen_store,
     gen_store_schema,
     gen_membership_records,
+    gen_membership_shared,
     gen_membership_rows,
     gen_membership_core,
     gen_membership_views,
@@ -215,6 +216,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "membership_records_paths_python": gen_membership_records.generate_python,
     "membership_records_paths_platform": gen_membership_records.generate_platform,
     "membership_records_records": gen_membership_records.generate_records,
+    "membership_shared": gen_membership_shared.generate,
+    "membership_shared_python": gen_membership_shared.generate_python,
     "membership_rows": gen_membership_rows.generate,
     "membership_rows_python": gen_membership_rows.generate_python,
     "membership_core": gen_membership_core.generate,
@@ -545,7 +548,9 @@ PYTHON_VERSION = "3.13.13"
 #: names ``NoDefaultCurrentDirectoryInExePath`` or a PATHEXT entry ending in
 #: a dot, which `shutil.which` before 3.12 does not read as 3.13 does.
 #: ``history_rows_python`` holds log payloads nested near `json.loads`'s
-#: recursion budget (`gen_history_rows`).
+#: recursion budget (`gen_history_rows`). ``membership_shared_python``
+#: holds log payloads nested 200,000 arrays deep, which `json.loads` reads
+#: whole under 3.14 on Linux (`gen_membership_shared`).
 #: ``origin_remote_python`` holds URLs with a bracket, whose host checks in
 #: `urlsplit` and `ipaddress` are the release's (`gen_origin_remote`).
 #: ``gitfile_pin_text_python`` holds pin records read through ``ntpath``
@@ -623,6 +628,7 @@ PYTHON_GATED = frozenset(
         "membership_records_paths_python",
         "membership_records_paths_platform",
         "membership_rows_python",
+        "membership_shared_python",
         "origin_remote_python",
         "claims_python",
         "pysyntax_python",
