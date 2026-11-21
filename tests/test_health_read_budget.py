@@ -20,6 +20,9 @@ from .test_health_root_rotation import _NOW, _caller, home, memories
 
 __all__ = ["home", "memories"]
 
+# Real seconds for the Git calls the fake clock does not script.
+_REAL_SECONDS = 60.0
+
 
 @pytest.mark.parametrize("offline", [False, True])
 @pytest.mark.parametrize("count", [8, 9])
@@ -64,6 +67,11 @@ def test_health_time_budget_preserves_eventual_coverage(
             if Path(cwd) == bad_root or timeout < cost:
                 raise subprocess.TimeoutExpired(argv, timeout)
             completed.add(Path(cwd))
+        elif isinstance(argv, list) and argv and argv[0] == "git":
+            # The budget runs on the fake clock, so a real call's timeout
+            # is a fake-time allowance, not a real-time bound. A slow host
+            # must not turn an identification probe into a skipped root.
+            kwargs["timeout"] = max(float(kwargs.get("timeout") or 0.0), _REAL_SECONDS)
         return real(argv, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", run)
