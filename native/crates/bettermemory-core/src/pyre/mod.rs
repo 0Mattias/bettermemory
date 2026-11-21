@@ -14,8 +14,12 @@
 //!   `_parse_sub`, the groups, lookarounds and inline flags, and
 //!   `fix_flags` (unit pyre-3b); `refusal`, the matcher's subset over the
 //!   finished tree, and its nesting bound (unit pyre-3c).
+//! - [`charset`]: a class compiled as `_optimize_charset` compiles it, the
+//!   opcode `_compile` chooses for it and the test of one code point
+//!   against it (unit pyre-4a).
 
 pub mod atom;
+pub mod charset;
 pub mod fold;
 pub mod parse;
 pub mod token;

@@ -26,7 +26,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
-| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH` | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
+| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
@@ -3026,6 +3026,10 @@ that Unicode too.
 | `golden_pyre_parse`: `pyre_parse_every_row` | `pyre.jsonl` (the `parse.` parts) | i |
 | `golden_pyre_parse`: `pyre_parse_python_every_row` | `pyre_python.jsonl` (the `parse.` parts) | ii (Python) |
 | `pyre_parse_kills` (17), `pyre_parse_robustness` (9) | none | i |
+| `golden_pyre_charset`: `pyre_charset_every_row` | `pyre.jsonl` (the `charset.` parts) | i |
+| `golden_pyre_charset`: `pyre_charset_unicode_every_row` | `pyre_unicode.jsonl` (the `charset.` parts) | ii (Unicode) |
+| `golden_pyre_charset`: `pyre_charset_python_every_row` | `pyre_python.jsonl` (the `charset.` parts) | ii (Python) |
+| `pyre_charset_kills` (10), `pyre_charset_robustness` (3) | none | i |
 | `golden_models_text`: `models_text_every_case`; `models_text_kills` (16), `models_text_robustness` (4) | `models_text.jsonl` (the last two none) | i |
 | `golden_models_text`: `models_text_unicode_every_case` | `models_text_unicode.jsonl` | ii (Unicode) |
 | `golden_models_text`: `models_text_platform_every_case` | `models_text_platform.jsonl` | iii |
@@ -3183,7 +3187,8 @@ Leaves first. A unit's lines are Rust source outside tests.
 | pyre-3a | `pyre/parse.rs`, `pyre/tree.rs` | repeats with their errors, `getwidth` | `_parser.py` 177-227, 638-703 | pyre-2 | built, 210 lines |
 | pyre-3b | `pyre/parse.rs` | `_parse_sub` with its rewrites, groups, scoped and leading flags, lookarounds, `checkgroupname`, `_parse_flags`, `fix_flags`, `parse` | `_parser.py` 303-309, 451-509, 708-873, 884-995 | pyre-3a | built, 475 lines |
 | pyre-3c | `pyre/parse.rs` | the refusal predicate over the finished tree, the nesting bound of the matcher | none (the engine's subset) | pyre-3b | built, 103 lines |
-| pyre-4 | `pyre/lower.rs` | classes compiled as `_optimize_charset` does, nodes threaded by `next`, `_simple`, group repeats unrolled, the arena cap | `_compiler.py` 241-387, 401-408 | pyre-1, pyre-3 | not built |
+| pyre-4a | `pyre/charset.rs` | a class compiled as `_optimize_charset` compiles it, the opcode `_compile` chooses for it, the engine's refusals of a class, the test of one code point against it | `_compiler.py` 46-55, 85-97, 226-236, 241-399 | pyre-1, pyre-2a | built, 365 lines |
+| pyre-4b | `pyre/lower.rs` | nodes threaded by `next`, `_simple`, group repeats unrolled, the arena cap; `compile_class` for each `IN` | `_compiler.py` 37-213, 401-408 | pyre-4a, pyre-3 | not built |
 | pyre-5 | `pyre/exec.rs` | one loop, one stack, one trail; anchors, lookarounds, the three acceptance rules, the scan over starts, the step count | `_sre` (by differential) | pyre-4 | not built |
 | pyre-6 | `pyre/regex.rs` | `Regex`, `Match`, `finditer`, `findall`, `sub`, `subn`, `split`, `pos` and `endpos`, literal and function replacement | `_sre` (by differential) | pyre-5, pyre-2 | not built |
 | pyre-7 | tests only | every remaining pattern of the reference built from its own text; mutants; the inventory tripwire | the reference's patterns | pyre-6 | not built |
@@ -4227,6 +4232,93 @@ refusal at 0.
 | `golden_pyre_parse` | 2 | `parse.refuse` read as `parse.group` is; eight parts |
 | `pyre_parse_kills` | 24 | seven new: the negated categories and `\B` in and out of sets, the flags in order and scoped, nullable loops by their maximum, captures under loops and in lookarounds, a choice in a lookbehind at any depth, nesting at 32 and 33 for five kinds and the walk's order around it, the predicate over trees built by hand |
 | `pyre_parse_robustness` | 11 | two new: trees of five kinds 200,000 levels deep judged on a thread of 64 KiB, every parse at `MAX_DEPTH` refused at 0, and the predicate linear in a wide tree |
+
+### Unit pyre-4a, built (`pyre::charset`)
+
+pyre-4 was planned as one unit, `pyre/lower.rs`. It is cut in two at the
+line between a class and the rest of a pattern: pyre-4a compiles a class
+(`IN`) and needs nothing of the tree but its `Member` list; pyre-4b
+threads the nodes and calls `compile_class` for each `IN`. Neither calls
+the parser: the generator writes each class as the members
+`re._parser.parse` gives it, and the tests build `Member` lists from them.
+
+| function | reference (`Lib/re/_compiler.py`, 3.13.13) | what it needs from the machine | status |
+| --- | --- | --- | --- |
+| `optimize_charset` | `_optimize_charset` 241-384, `_mk_bitmap` 386-392, `_bytes_to_codes` 394-399 | the Unicode tables through `fold` | built |
+| `Fold::of` | the choice of `iscased`, `tolower` and `fixes` in `_compile` 46-55 | nothing | built |
+| `compile_class` | the `IN` branch of `_compile` 85-97; the engine's refusals of a class | nothing | built |
+| `Charset::contains` | `_sre`'s `IN` and `IN_UNI_IGNORE` with the members `_compile_charset` writes (226-236: a category through `CH_UNICODE`) | the Unicode tables (`unicode::is_decimal`, `is_space`, `is_alnum`) | built, by differential against `re.findall` |
+
+What each reproduces:
+
+- `optimize_charset(members, fold)` returns the members `_optimize_charset`
+  returns and `hascased`, for every fold `_compile` passes: none (no
+  IGNORECASE, or LOCALE), the ASCII fold (`_sre.ascii_tolower`,
+  `ascii_iscased`, no extra cases) and the Unicode fold (`sre_lower`,
+  `sre_iscased`, `_EXTRA_CASES`). The map starts at 256 entries and widens
+  to 65,536 on the first write past it, as the `IndexError` of the
+  bytearray does; a member past the BMP then goes to the tail. Under a fold
+  a literal is lowered before the write that fails and lowered again when
+  the write is retried, and a range past the BMP is RANGE_UNI_IGNORE under
+  the Unicode fold and stays RANGE under the ASCII one, `hascased` set
+  either way. At most two runs give literals and ranges; three or more
+  give CHARSET (8 words) on a map of 256 and BIGCHARSET on a map of 65,536,
+  its chunks numbered in the order first seen and the chunk numbers cast to
+  words little-endian.
+- `compile_class(members, flags)` refuses, in this order: LOCALE
+  (`Feature::Locale`); IGNORECASE without UNICODE (`Ascii` under
+  `re.ASCII`, `BytesIgnorecase` on a bytes pattern); a category without
+  UNICODE (`Ascii`, `BytesCategory`); under IGNORECASE a literal or range
+  bound past U+FFFF (`ClassPastBmpIgnorecase`, the wider refusal the
+  decision keeps; `optimize_charset` itself answers those classes as `re`
+  does). Otherwise it returns the members and `IN` or `IN_UNI_IGNORE`, as
+  `_compile` chooses by `hascased`.
+- `Charset::contains(c)` walks the members as `_sre` does: `ok` starts
+  true and each NEGATE turns it, the first member that holds `c` answers
+  `ok`, none answers `not ok`; under IN_UNI_IGNORE `c` is lowered first
+  and RANGE_UNI_IGNORE also asks its upper case.
+
+What `re` does here that a reader would not expect (reproduced):
+
+- A rewrite that is no shorter and not cased is dropped and the members
+  are kept as written: `[\U00010000a]` stays `LITERAL 65536, LITERAL 97`,
+  though the map holds `a`; `[ac]` stays two literals.
+- A member past the BMP widens the map though it never lands in it, so
+  `[ace\U00010000]` is BIGCHARSET where `[ace]` is CHARSET.
+- A class without a cased member under IGNORECASE keeps its members
+  unlowered and compiles to plain `IN`.
+- `hascased` of a range asks the range as written, of a literal its lower
+  case.
+
+Fixtures (`gen_pyre_charset`, unit pyre-4a of `gen_pyre`'s header): 81
+`charset.class` rows (46 parsed classes and 7 member lists the parser
+never writes in `pyre.jsonl`, 22 classes under the Unicode fold in
+`pyre_unicode.jsonl`, 6 classes whose answer follows the release in
+`pyre_python.jsonl`), 60 `charset.sweep` rows (30 in each of the first
+two files: each class the engine compiles, asked of every code point by
+`re.findall`, by SHA-256; the class of 256 distinct chunks is not swept)
+and 6 `charset.fuzz` rows (600 seeded member lists each, under no fold,
+the ASCII fold and the Unicode fold: in the first two files over members
+in the BMP and the categories that are not a complement, in
+`pyre_python.jsonl` over every member). A class that folds, or a sweep
+that reads a category, is in `pyre_unicode.jsonl`. Two inputs give
+answers that follow the release, so their rows are in
+`pyre_python.jsonl`: a category beside its complement (3.14 makes
+`[\s\S]` a class of everything, 3.13 keeps both categories) and, under
+a fold, a member past the BMP (3.11 keeps such a literal unlowered, makes
+every such range RANGE_UNI_IGNORE and sets `hascased` for either). The
+answers hold no source line, path or time.
+
+| test file | tests | what it holds |
+| --- | --- | --- |
+| `golden_pyre_charset` | 3 | every `charset.` row of the three files |
+| `pyre_charset_kills` | 10 | the members kept when no shorter, the map widened past the BMP, the folds past the BMP, the refusals, the fold of the text character with the extra cases, uncased classes under IGNORECASE, Unicode categories, NEGATE, BIGCHARSET chunks |
+| `pyre_charset_robustness` | 3 | 200,000 members in linear time under two folds, bounds at `u32::MAX`, every code point through a folded class |
+
+No regular expression is used by the unit: it is part of the engine.
+Left for pyre-4b: the rest of `_compile` (literals, repeats, groups,
+`_simple`, the arena cap), and the `IN` items it lowers through
+`compile_class`.
 
 ### Left for later units
 
@@ -13537,7 +13629,7 @@ What the reference has and this build does not, by area:
 - The regular expression engine (`pyre`) past its case folding and the
   parser (its tree, state, tokenizer, atoms, repeats, widths, groups,
   lookarounds, inline flags, alternatives and `parse`, and the refusal
-  predicate over the finished tree with the matcher's nesting bound): the lowering, the matcher and the methods (pyre-4 to
+  predicate over the finished tree with the matcher's nesting bound): the lowering (pyre-4b), the matcher and the methods (pyre-5 to
   pyre-6), the inventory proof, the cross-check of the hand-written
   matchers and the memo (pyre-7 to pyre-9).
 - This machine's id past its record and clone rule: `machine.py`'s

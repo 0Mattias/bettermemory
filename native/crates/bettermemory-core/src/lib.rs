@@ -24,7 +24,9 @@
 //!   the escapes, sets and flat sequences it reads, and `re.escape`; the
 //!   repeats the parser reads and the width of a tree; `re._parser.parse`
 //!   with alternatives, groups, lookarounds and inline flags, and the
-//!   refusal of what the matcher has no rule for;
+//!   refusal of what the matcher has no rule for; a class
+//!   compiled as `_optimize_charset` compiles it, with its opcode and the
+//!   test of one code point against it;
 //! - [`models_text`]: the text helpers of `models.py`: a memory's slug
 //!   and file name, its summary line, the truncation heuristic and the
 //!   search snippets;
