@@ -48,6 +48,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `location_view` | `location.py`'s view continuity: `_git_dir_at`, `continuity`, `_head_at`, `view_state`, `_carries_project_file`, `_same_number`, with `object_key`, `_at_dotgit`, the project file's parse and the history's `holds` as arguments | `location_view.jsonl`, `location_view_posix.jsonl` |
 | `location_git` | the readers of `location_git.py` that need neither discovery nor the object reader: `_Git`, `_resolve_head` (the peel a callback), `_ref_tips`, `_manifest`, `Reach`, `reachable_among`, `walk` | `location_git_readers.jsonl`, `location_git_readers_posix.jsonl` |
 | `location_witness` | the history half of `location_witness.py` (unit location_witness-1): `NeedWitnesses` with `joined`, `AnsweredHistory`, `AnsweredGit`, `answered_history`, `_independent_answers`, `independent_answer`, and the exchange keeping (`_NONCE`, `EXCHANGE_SECONDS`, `_EXCHANGES_CAP`, `_Kept`, `_EXCHANGES` as `Exchanges`, `_drop`, `ExchangeReads` with `carried`) | `location_witness.jsonl` |
+| `location` | `location.py`, unit 1: the capture's filesystem leaves: `_statx_birth`, `_birth`, `object_key`, `_evicted`, `_read_one`, `_fetch`, `_stamp`, `_local`, `_url_path` (3.13.13's `nturl2path`), `_file_url_path`, `kept_apart`, `record_working_tree`, `_real_git` | `location_leaves.jsonl`, `location_leaves_python.jsonl`, `location_leaves_posix.jsonl` |
 | `location_reads` | `location_reads.py` whole as a timed runtime: `READ_HANDOFF`, `READ_LANES`, `READ_SLOTS`, `_Flight`, `_Slots`, the board (`_FLIGHTS`, `_LANDED`, `_SLOTS`, `UNANSWERED`, `NOT_READ`) as a `Board` the caller holds, `_stalled`, `_board`, `_give_up`, `_fly`, `bounded_read`, `bounded_reads`, `_Lanes` | `location_reads.jsonl` |
 | `witness_questions` | `location_witness.py`'s question half: `AnsweredToken` (`__call__`, `located`), `remint_answer`, `remint_refused`, `AnsweredLiveness`, `asked_views`, `_asked_head`, `_asked_stamps` (and `location_git._key` reimplemented); the re-mint and the model's `checkouts` are closures | `witness_questions.jsonl` |
 | `location_discovery` | `location_git.py`'s repository discovery: `_DISCOVERY_ENV`, `GitDies` and `DiscoveryDies` (`Dies`), `_from_env`, `_discover` (`githead.across_filesystems()` and `githead.probed` as arguments), `_at_dotgit` | `location_discovery.jsonl` |
@@ -7790,6 +7791,122 @@ The `Fs` trait has every operation unit A needs (`stat`, `lstat`,
   The asked ones are among the 21: a hit that skips the stamp, the key
   without the git directory, `reuse` ignored, an included file not
   compared, the stamps' order, and `_inside` without its separator.
+## The capture's filesystem leaves (`location.py`)
+
+`location.py` is about 1,900 lines; its pure vocabulary is ported in
+`capture` and its git readers in `location_git`. Its own functions are
+cut into units, leaves first. Unit location-1a is built
+(`src/location/leaves.rs`); the capture, the signature and its cache,
+the resolution, the history reader and the witness exchange are later
+units.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `REPORT_BIRTH`, `_STATX_LOCK`, `_STATX` | 243-250 | none (a switch; the cached `statx` symbol) | `report: bool` argument; no cache (the call is the file system's) |
+| `_statx_birth` | 253-290 | `statx(2)` on Linux | built: `statx_birth(platform, answer)` over the call's return code and buffer |
+| `_birth` | 293-307 | `st_birthtime_ns`, `st_birthtime`, `st_ctime_ns`, statx | built: `birth(report, &BirthFacts, platform)` |
+| `object_key` | 310-318 | `os.stat` | built |
+| `_evicted` | 321-326 | none | built (`StatResult::placeholder`) |
+| `_read_one`, `_fetch` | 329-352 | a read on a worker thread | built over `location_reads::bounded_read` |
+| `_stamp` | 355-359 | `os.stat` | built over `githead::discovery::stamp` |
+| `_local`, `_url_path`, `_file_url_path` | 408-460 | `realpath`, `os.path.sep` | built: `local`, `local_key`, `url2pathname_nt`, `file_url_path`, `unquote` |
+| `kept_apart`, `record_working_tree`, `_real_git` | 694-750 | `lstat`, the record store, `realpath` | built |
+
+### Unit location-1a, built
+
+- `statx_birth` reads the mask (bytes 0-4), the signed seconds (80-88)
+  and the nanoseconds (88-92) of the buffer, as the reference does with
+  `int.from_bytes` (a buffer shorter than 92 bytes is read as the
+  slices are: fewer bytes, a narrower signed field). None off Linux,
+  where the call is missing, where it returns nonzero, or where the mask
+  lacks `STATX_BTIME`.
+- `birth` takes the attributes in the reference's order through
+  `isinstance`: an int `st_birthtime_ns` (a `bool` is one, so the key
+  holds `True`), then an int or float `st_birthtime` times 10^9 through
+  `int()` (`int_of_float`, exact at any size; OverflowError for an
+  infinity, ValueError for a NaN), then Windows' `st_ctime_ns`, then
+  what `_statx_birth` answered (None off Linux, by its own check). The facts are the file system's
+  (`Fs::birth_facts`, a new method at the end of the trait that reports
+  nothing by default). `StdFs` reads the standard library's creation
+  time and hands it over as `os.stat_result` carries it under CPython
+  3.13: on macOS and the BSDs only the float `st_birthtime`, built as
+  CPython builds it (`(double)(unsigned long)tv_sec + 1e-9 * tv_nsec`,
+  `fsdata::birthtime_float`), so the key is `int(st_birthtime * 1e9)`
+  with its rounded low digits and matches a key the reference wrote; on
+  Windows the int `st_birthtime_ns` (3.12 and later; 3.11's
+  `st_ctime_ns` is not followed); on Linux no attribute, and `statx`
+  with `STATX_BTIME` (None where the mask lacks it or the call is
+  missing); on Android, whose `sys.platform` is `android` (PEP 738),
+  nothing, and `HOST_PLATFORM` is `Platform::Other` there. The rule's
+  other branches are pinned by the scripted rows, not live.
+  `int_of_float` shifts its base-10^9 limbs up to 29 bits a pass, so
+  the largest float takes about 35 passes. No
+  `bettermemory-sys` wrapper is needed for it: the standard library
+  makes the same calls.
+- `object_key` stats the path where no stat is given (None where that
+  raises) and declines (`BirthError::NotPorted`) where `st_dev` or
+  `st_ino` is not ported (Windows). The birth facts are read for the
+  path, not taken from the given stat: a path replaced between the
+  caller's stat and this read pairs one file's device and inode with
+  another's birth time, where the reference reads both from one stat.
+- `fetch` reads one byte of the file on a worker thread through
+  `bounded_read` (an OSError dropped; a ValueError for a NUL raised, as
+  the reference's `open` raises it out of the read), false where that
+  does not answer; then whether a stat says it is not evicted.
+- `stamp` is `githead.stamp` with `(-1, -1, -1, -1, -1)` for an
+  OSError or a ValueError, and None where nothing is there.
+- `local_key` completes `capture::remote::remote_key`'s local branch:
+  ``local:`` and `_local` of the text, or of `_file_url_path` of a file
+  URL. `_local` joins a relative path onto the base with `posixpath`
+  rules, resolves it through `fsdata::realpath` and normalises it with
+  `capture::paths::norm`. Under the Windows flavour it declines
+  (`realpath` is not ported there, ENG-124); `location_leaves_not_posix`
+  records that gap as class os.
+- `file_url_path` reproduces both branches. Off Windows it is `unquote`
+  of everything after the authority. `unquote` is `urllib.parse.unquote`:
+  each run of ASCII percent-decoded and read as UTF-8 with U+FFFD for
+  each maximal invalid part, the other characters kept; so a UTF-8
+  sequence split by a non-ASCII character reads as two errors. On
+  Windows a drive authority (`[A-Za-z]:`, matched by hand: a fixed
+  two-character class under no flag, rule 3 of the pattern decision) is
+  moved into the path; a host other than `localhost` (compared after
+  `str.lower`, where no non-ASCII character lowers into that word, so an
+  ASCII fold answers the same) is a UNC path; else `url2pathname_nt`,
+  CPython 3.13.13's `nturl2path.url2pathname`, with the unquoted
+  fallback on its OSError. That function's text changed within 3.13 and
+  again in 3.14, so its rows are Python-gated.
+- `kept_apart`: a primary checkout reached from a `.git` entry other
+  than its git directory, whose `root/.git` lstats as no directory of its
+  own, and whose config names no `core.worktree` (`trust::tree_format`).
+  An lstat that raises is false; a junction cannot be told on Windows
+  (`is_link` None), which declines.
+- `record_working_tree` takes the record store as `trait PinStore`
+  (`gitdir_pin.recorded` and `put`) and reads the recorded folder through
+  `follow::recorded_reading` (its `[0]` is `_recorded_refusal`).
+- `real_git` resolves the four paths in the reference's order.
+
+The Python helpers `_asciire` (in `urllib.parse`) and `_DRIVE` are
+character runs and one fixed class, matched by hand; no pattern of this
+unit waits for the regex engine.
+
+Fixtures (`tests/contract/gen_location_leaves.py`):
+`location_leaves.jsonl` (not gated) holds `_statx_birth` over scripted
+answers, `_birth` over namespaces whose attributes are the case's (so no
+release or platform decides) and `_file_url_path` off Windows;
+`location_leaves_python.jsonl` (Python-gated) holds the Windows branch and
+`nturl2path.url2pathname`, each backslash of an answer spelled `<b>`
+(the host-fact guard refuses a UNC prefix's two backslashes); `location_leaves_posix.jsonl` (POSIX only)
+holds local keys through links, `kept_apart`, `_real_git`,
+`record_working_tree` with the record store scripted, and `_stamp`'s
+shapes, each built in a scratch folder. Tests: `golden_location_leaves`,
+`golden_location_leaves_posix`, `location_leaves_not_posix`,
+`location_leaves_kills`, `location_leaves_robustness`.
+
+Left for later units of `location.py`: `remote_key` as a whole (its
+`_PATH` swap included) is `capture::remote::remote_key` plus
+`local_key`; the capture (`capture`, `_walk_files`, the token slot), the
+signature and its cache, the resolution and the witness exchange.
+
 ## The readers of a repository's head, refs, tree and history (`location_git.py`)
 
 `location_git.rs` holds the readers of `location_git.py` that need
@@ -14375,8 +14492,9 @@ What the reference has and this build does not, by area:
 - Reading a checkout: `origin_gitfiles.py` past its decoders, machine leaves
   and config facts (`_config_facts` and its memo, units 4, 6 and 7), `checkout_token.py` past its text, reads and write (the
   remint and the claim: unit 4), the origin's settling
-  (`origin.py`), `location.py` past its view continuity (`continuity`,
-  `view_state` and their helpers are built; `path_liveness`,
+  (`origin.py`), `location.py` past its view continuity and the
+  capture's filesystem leaves (`continuity`, `view_state`, their helpers
+  and unit 1's leaves in `location::leaves` are built; `path_liveness`,
   `path_liveness_many` and `_liveness_read` are not), and of
   `location_git.py` the binding of `probed` to githead's discovery,
   `_sources_once`, `_SYMBOLIC_HEAD`, `_ABOVE` and `_clear_above`.

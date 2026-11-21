@@ -327,6 +327,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // in 3.12.13, 3.13 and 3.14 (`gen_location_stamps`,
         // `gen_origin_gitfiles_machine`).
         "location_stamps_python.jsonl" | "origin_gitfiles_machine_python.jsonl" => &[Python],
+        // `nturl2path.url2pathname`, whose text changed within 3.13 and
+        // again in 3.14 (`gen_location_leaves`).
+        "location_leaves_python.jsonl" => &[Python],
         "models_stores.jsonl" => &[Python, Sqlite, Pydantic],
         // `re`'s `\d` and `int` of a hunk count past ASCII or past 4,300
         // digits (`gen_origin_gitfiles`).

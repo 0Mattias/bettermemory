@@ -494,6 +494,52 @@ pub trait Fs {
             .iter()
             .any(|other| other.as_slice() != name))
     }
+    /// What `location._birth` reads of `path`'s birth time
+    /// ([`BirthFacts`]). Nothing by default, as a file system that
+    /// reports no birth time.
+    fn birth_facts(&self, _path: &[u8]) -> BirthFacts {
+        BirthFacts::default()
+    }
+}
+
+/// A number attribute of `os.stat_result` as `getattr` gives it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum BirthAttr {
+    /// The attribute is missing (or None).
+    #[default]
+    Absent,
+    Int(i128),
+    Float(f64),
+    /// A `bool`, which `isinstance(_, int)` takes.
+    Bool(bool),
+}
+
+/// The birth time facts `location._birth` reads: `st_birthtime_ns` and
+/// `st_birthtime` of the stat result, `st_ctime_ns` (Windows before
+/// 3.12), and what `_statx_birth` answers (Linux).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BirthFacts {
+    pub birthtime_ns: BirthAttr,
+    pub birthtime: BirthAttr,
+    pub ctime_ns: Option<i128>,
+    pub statx: Option<i128>,
+}
+
+/// `SystemTime` as nanoseconds from the epoch, negative before it.
+fn epoch_ns(time: std::time::SystemTime) -> i128 {
+    match time.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d.as_nanos() as i128,
+        Err(e) => -(e.duration().as_nanos() as i128),
+    }
+}
+
+/// CPython's `st_birthtime` on macOS and the BSDs from nanoseconds since
+/// the epoch: `bsec + 1e-9 * bnsec` with `bsec` the seconds cast to
+/// `unsigned long` (a time before the epoch wraps, as there) and `bnsec`
+/// the nanoseconds of the timespec (0 to 999,999,999).
+pub fn birthtime_float(ns: i128) -> f64 {
+    let (sec, nsec) = (ns.div_euclid(1_000_000_000), ns.rem_euclid(1_000_000_000));
+    (sec as i64 as u64) as f64 + 1e-9 * (nsec as u64) as f64
 }
 
 // ---------------------------------------------------------------------------
@@ -830,6 +876,38 @@ impl Fs for StdFs {
 
     fn close(&self, file: StdFile) -> Result<(), OsError> {
         bettermemory_sys::close(file.file).map_err(|e| os_error(&e))
+    }
+
+    /// What `os.stat_result` carries of the creation time on this host,
+    /// as CPython 3.13 builds it: on Linux no attribute, so `_birth` asks
+    /// `statx` with `STATX_BTIME` (None where the mask lacks it or the
+    /// call is missing); on Windows `st_birthtime_ns`, an int; on macOS
+    /// and the BSDs only the float `st_birthtime`, which CPython makes as
+    /// `(double)(unsigned long)tv_sec + 1e-9 * tv_nsec` (posixmodule.c),
+    /// so `_birth` loses the low digits through `int(seconds * 1e9)`.
+    /// Android's `sys.platform` is `android` (PEP 738): no attribute and
+    /// no `statx` there, so nothing.
+    fn birth_facts(&self, path: &[u8]) -> BirthFacts {
+        let mut facts = BirthFacts::default();
+        if cfg!(target_os = "android") {
+            return facts;
+        }
+        let created = native_path(path)
+            .ok()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| m.created().ok())
+            .map(epoch_ns);
+        let Some(ns) = created else {
+            return facts;
+        };
+        if cfg!(target_os = "linux") {
+            facts.statx = Some(ns);
+        } else if cfg!(windows) {
+            facts.birthtime_ns = BirthAttr::Int(ns);
+        } else {
+            facts.birthtime = BirthAttr::Float(birthtime_float(ns));
+        }
+        facts
     }
 
     #[cfg(unix)]

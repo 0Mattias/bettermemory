@@ -90,6 +90,10 @@
 //! - [`location_git`]: a repository's head, ref tips, content manifest
 //!   and bounded history walks, the readers of `location_git.py` that need
 //!   neither discovery nor the object reader;
+//! - [`location`]: the caller's location (`location.py`), its first
+//!   unit: the capture's filesystem leaves (birth time, the object key,
+//!   eviction and fetch, the HEAD stamp, the local remote key, the
+//!   kept-apart rule, the working-tree record, the resolved git paths);
 //! - [`location_reads`]: the bounded reads of recorded paths as a timed
 //!   runtime on worker threads (the whole module);
 //! - [`location_discovery`]: the repository git finds from a directory
@@ -169,6 +173,7 @@ pub mod identity;
 pub mod in_force;
 pub mod json;
 pub mod lexicon;
+pub mod location;
 pub mod location_discovery;
 pub mod location_git;
 pub mod location_probe;

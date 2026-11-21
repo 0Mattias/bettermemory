@@ -1,0 +1,56 @@
+{"cases":55,"fixture":"location_leaves_posix"}
+{"b":null,"k":"local","r":"local:@/a/repo","u":"@/a/repo"}
+{"b":null,"k":"local","r":"local:@/a/repo","u":"@/link"}
+{"b":null,"k":"local","r":"local:@/a/x","u":"@/link/../x"}
+{"b":null,"k":"local","r":"local:@/a/repo","u":"@/abs/repo/"}
+{"b":null,"k":"local","r":"local:@/a/repo","u":"@//a//./repo"}
+{"b":null,"k":"local","r":"local:@/loop","u":"@/loop"}
+{"b":null,"k":"local","r":"local:@/nowhere/x","u":"@/dangling"}
+{"b":"@","k":"local","r":"local:@/a/repo","u":"link"}
+{"b":"@","k":"local","r":"local:@/a/repo/sub","u":"./link/sub"}
+{"b":"@/a","k":"local","r":"local:@/a/repo","u":"../link"}
+{"b":"@/","k":"local","r":"local:@/a/repo","u":"abs/repo"}
+{"b":"@/a","k":"local","r":"local:@/a/repo","u":"@/link"}
+{"b":"@/","k":"local","r":"local:@/a/repo","u":"@/a/repo"}
+{"b":null,"k":"local","r":"local:@/a/repo","u":"file://@/link"}
+{"b":null,"k":"local","r":"local:@/a/repo","u":"file://host@/link"}
+{"b":null,"k":"local","r":"local:@/a/repo","u":"file://@/a%2Frepo"}
+{"b":null,"k":"local","r":"local:@/a/repo","u":"file:///../..@/link"}
+{"b":"@","k":"local","r":"local:@","u":"file://link"}
+{"b":null,"k":"local","r":"local:@/a/repo","u":"  @/link  "}
+{"b":"@/link","k":"local","r":"local:@/a/repo","u":"."}
+{"b":"@","k":"local","r":"local:@/\\x","u":"\\x"}
+{"b":"@","k":"local","r":"local:@/C:/x","u":"C:/x"}
+{"b":"@","k":"local","r":"local:@/C:x","u":"C:x"}
+{"b":"@","k":"local","r":"local:@/git@host:owner/repo.git","u":"git@host:owner/repo.git"}
+{"b":"@","k":"local","r":"host/owner/repo","u":"https://Host/Owner/Repo.git"}
+{"g":["@/w/.git","@/sep.git","@/sep.git","@/w","primary"],"k":"kept","r":true,"real":["@/w/.git","@/sep.git","@/sep.git","@/w","primary"],"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"],["f","w/.git","gitdir: @/sep.git\n"]]}
+{"g":["@/w/.git","@/sep.git","@/sep.git","@/w","primary"],"k":"kept","r":true,"real":["@/sep.git","@/sep.git","@/sep.git","@/w","primary"],"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"],["l","w/.git","@/sep.git"]]}
+{"g":["@/w/.git","@/sep.git","@/sep.git","@/w","primary"],"k":"kept","r":false,"real":["@/w/.git","@/sep.git","@/sep.git","@/w","primary"],"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w/.git"]]}
+{"g":["@/w/.git","@/sep.git","@/sep.git","@/w","primary"],"k":"kept","r":false,"real":["@/w/.git","@/sep.git","@/sep.git","@/w","primary"],"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"]]}
+{"g":["@/sep.git","@/sep.git","@/sep.git","@/w","primary"],"k":"kept","r":false,"real":["@/sep.git","@/sep.git","@/sep.git","@/w","primary"],"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"],["f","w/.git","x"]]}
+{"g":[null,"@/sep.git","@/sep.git","@/w","primary"],"k":"kept","r":false,"real":[null,"@/sep.git","@/sep.git","@/w","primary"],"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"],["f","w/.git","x"]]}
+{"g":["@/w/.git","@/sep.git","@/sep.git",null,"primary"],"k":"kept","r":false,"real":["@/w/.git","@/sep.git","@/sep.git",null,"primary"],"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"],["f","w/.git","x"]]}
+{"g":["@/w/.git","@/sep.git","@/sep.git","@/w","linked"],"k":"kept","r":false,"real":["@/w/.git","@/sep.git","@/sep.git","@/w","linked"],"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"],["f","w/.git","x"]]}
+{"g":["@/w/.git","@/sep.git","@/sep.git","@/w","bare"],"k":"kept","r":false,"real":["@/w/.git","@/sep.git","@/sep.git","@/w","bare"],"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"],["f","w/.git","x"]]}
+{"g":["@/w/.git","@/sep.git","@/sep.git","@/w","primary"],"k":"kept","r":false,"real":["@/w/.git","@/sep.git","@/sep.git","@/w","primary"],"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tworktree = /elsewhere\n"],["d","w"],["f","w/.git","x"]]}
+{"g":["@/w/.git","@/sep.git","@/sep.git","@/w","primary"],"k":"kept","r":true,"real":["@/w/.git","@/sep.git","@/sep.git","@/w","primary"],"t":[["d","sep.git"],["d","w"],["f","w/.git","x"]]}
+{"g":["@/w/.git","@/g","@/g/.","@/w","primary"],"k":"kept","r":true,"real":["@/sep.git","@/sep.git","@/sep.git","@/real","primary"],"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","real"],["l","w","real"],["l","real/.git","../sep.git"],["l","g","sep.git"]]}
+{"g":["@/w/.git","@/g/worktrees/w","@/c/.git","@/w","linked"],"k":"kept","r":false,"real":["@/w/.git","@/c/.git/worktrees/w","@/c/.git","@/w","linked"],"t":[["d","c/.git/worktrees/w"],["l","g","c/.git"],["d","w"],["f","w/.git","gitdir: @/c/.git/worktrees/w\n"]]}
+{"first":null,"k":"record","n":1,"put":true,"r":"first","second":null,"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"]]}
+{"first":null,"k":"record","n":2,"put":false,"r":"kept","second":null,"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"]]}
+{"first":null,"k":"record","n":2,"put":false,"r":"elsewhere","second":["@/sep.git","@/o"],"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"],["d","o"],["f","o/.git","gitdir: @/sep.git\n"]]}
+{"first":["@/sep.git","@/w"],"k":"record","n":1,"put":true,"r":"kept","second":null,"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"]]}
+{"first":["@/sep.git","@/v"],"k":"record","n":1,"put":true,"r":"kept","second":null,"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"],["l","v","w"]]}
+{"first":["@/sep.git","@/o"],"k":"record","n":1,"put":true,"r":"elsewhere","second":null,"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"],["d","o"],["f","o/.git","gitdir: @/sep.git\n"]]}
+{"first":["@/sep.git","@/o"],"k":"record","n":1,"put":true,"r":"kept","second":null,"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"],["d","o"],["f","o/.git","gitdir: @/other.git\n"]]}
+{"first":["@/sep.git","@/gone"],"k":"record","n":1,"put":true,"r":"kept","second":null,"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"]]}
+{"first":["@/sep.git","@/gone"],"k":"record","n":2,"put":false,"r":"kept","second":null,"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"]]}
+{"first":["@/sep.git","@/o"],"k":"record","n":1,"put":true,"r":"kept","second":null,"t":[["d","sep.git"],["f","sep.git/config","[core]\n\trepositoryformatversion = 0\n\tbare = false\n"],["f","sep.git/HEAD","ref: refs/heads/main\n"],["d","w"],["d","o"],["d","o/.git"]]}
+{"k":"stamp","path":"f","r":"stat"}
+{"k":"stamp","path":"nothing","r":null}
+{"k":"stamp","path":"nothing/below","r":null}
+{"k":"stamp","path":"f/below","r":null}
+{"k":"stamp","path":"f\u0000x","r":"unread"}
+{"k":"stamp","path":"l","r":"stat"}
+{"k":"stamp","path":"dangling","r":null}

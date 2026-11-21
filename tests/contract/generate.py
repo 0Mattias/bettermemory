@@ -76,6 +76,7 @@ from . import (
     gen_location_view,
     gen_location_witness,
     gen_location_discovery,
+    gen_location_leaves,
     gen_gitsystem_answers,
     gen_gitsystem_ask,
     gen_gitsystem_sources,
@@ -293,6 +294,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "location_view_posix": gen_location_view.generate_posix,
     "location_witness": gen_location_witness.generate,
     "location_discovery": gen_location_discovery.generate,
+    "location_leaves": gen_location_leaves.generate,
+    "location_leaves_python": gen_location_leaves.generate_python,
+    "location_leaves_posix": gen_location_leaves.generate_posix,
     "gitsystem_record": gen_gitsystem_record.generate,
     "gitsystem_record_python": gen_gitsystem_record.generate_python,
     "gitsystem_answers": gen_gitsystem_answers.generate,
@@ -473,6 +477,8 @@ PYTHON_VERSION = "3.13.13"
 #: `gen_origin_gitfiles_machine`).
 #: ``membership_records_paths_platform`` holds rows of the Python-gated
 #: file as well as release-stable ones (`gen_membership_records`).
+#: ``location_leaves_python`` holds `nturl2path.url2pathname`'s answers,
+#: whose text changed within 3.13 and again in 3.14 (`gen_location_leaves`).
 #: ``location_probe_python`` probes link loops, which 3.11's `realpath`
 #: walks otherwise, and paths holding a NUL, whose ValueError text 3.11
 #: words otherwise (`gen_location_probe`).
@@ -482,6 +488,7 @@ PYTHON_GATED = frozenset(
         "location_stamps_platform",
         "location_stamps_python",
         "origin_gitfiles_machine_python",
+        "location_leaves_python",
         "gitsystem_record_python",
         "gitsystem_answers_python",
         "gitsystem_probe_python",
@@ -653,6 +660,8 @@ PLATFORM_GATED = frozenset(
 #: changes such trees between reads (`gen_location_stamped`);
 #: ``gitobjects_files_posix`` walks alternates over links, FIFOs and modes,
 #: its directories spelled by ``posixpath.realpath`` (`gen_gitobjects_files`);
+#: ``location_leaves_posix`` resolves local remote keys and git paths
+#: through links on disk (`gen_location_leaves`);
 #: ``location_git_readers_posix`` walks refs and trees with links and mode-000
 #: entries (`gen_location_git_readers`); ``location_view_posix`` builds
 #: repositories with links and a mode-000 folder (`gen_location_view`);
@@ -727,6 +736,7 @@ POSIX_ONLY = frozenset(
         "location_git_readers_posix",
         "location_view_posix",
         "location_discovery",
+        "location_leaves_posix",
         "origin_gitfiles_machine",
         "origin_gitfiles_machine_python",
         "origin_gitfiles_darwin",
