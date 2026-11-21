@@ -51,6 +51,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `location_reads` | `location_reads.py` whole as a timed runtime: `READ_HANDOFF`, `READ_LANES`, `READ_SLOTS`, `_Flight`, `_Slots`, the board (`_FLIGHTS`, `_LANDED`, `_SLOTS`, `UNANSWERED`, `NOT_READ`) as a `Board` the caller holds, `_stalled`, `_board`, `_give_up`, `_fly`, `bounded_read`, `bounded_reads`, `_Lanes` | `location_reads.jsonl` |
 | `witness_questions` | `location_witness.py`'s question half: `AnsweredToken` (`__call__`, `located`), `remint_answer`, `remint_refused`, `AnsweredLiveness`, `asked_views`, `_asked_head`, `_asked_stamps` (and `location_git._key` reimplemented); the re-mint and the model's `checkouts` are closures | `witness_questions.jsonl` |
 | `location_discovery` | `location_git.py`'s repository discovery: `_DISCOVERY_ENV`, `GitDies` and `DiscoveryDies` (`Dies`), `_from_env`, `_discover` (`githead.across_filesystems()` and `githead.probed` as arguments), `_at_dotgit` | `location_discovery.jsonl` |
+| `repository_history` | `location_git.py`'s `RepositoryHistory` (`_batch_check`, `_askable`, `_expand`, `expand`, `holds`, `holds_objects`, `_commit_body`, `fingerprint`, `parents`, `committed`, `reachable_among`, `independent`, `blobs`) and its git fallback `_git`; the object reader is the `Objects` trait, git the `GitRun` trait | `repository_history.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
@@ -7582,7 +7583,8 @@ kinds (103-110) in `capture` (section "A location capture's vocabulary").
 | `Reach`, `reachable_among` | 1820-1970 | the history (closures) | built |
 | `walk` | 1973-1989 | the history (closures) | built |
 | `_DISCOVERY_ENV`, `GitDies`, `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit` | 241, 1015-1180 | the file system (`fsdata::Fs`), `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, githead's across value and walk | built (`location_discovery`; below) |
-| `_git`, `RepositoryHistory`, `_clear_above` | | the object reader, git, a lock | later units |
+| `_git`, `RepositoryHistory` | 1563-1817 (constants 175-181, 224, 230, 232, 236, 237, 242, 1560) | the object reader (`Objects`), git (`GitRun`) | built (`repository_history.rs`) |
+| `_clear_above` | | a lock | later unit |
 
 ### What each function reproduces
 
@@ -7729,8 +7731,7 @@ the rule stands on (the crate's stated Windows gap, ENG-124). No regular
 expression is used.
 
 Left for later units: `_sources_once`, `_SYMBOLIC_HEAD`, `_ABOVE` and
-`_clear_above` (the capture unit); `_git` and `RepositoryHistory` (lane
-lochist); the binding of `probed` to githead's discovery port.
+`_clear_above` (the capture unit); the binding of `probed` to githead's discovery port.
 
 Fixtures and tests: `tests/contract/gen_location_discovery.py` writes
 `location_discovery.jsonl` (POSIX only: links, and paths spelled with
@@ -7754,6 +7755,89 @@ the walk, a placeholder `HEAD` `at_dotgit` does not fetch, the
 (the times printed beside the reference's). How
 `GIT_DISCOVERY_ACROSS_FILESYSTEM` reads as a boolean is githead's
 (`across_filesystems`); these tests take the reference's answer.
+
+### `RepositoryHistory` and `_git` (`repository_history.rs`)
+
+The history reader of a capture lives in its own module,
+`repository_history.rs`. It carries only the constants it reads:
+`BLOBS_PER_WITNESS`, `BLOB_MIN_SIZE`, `BLOB_LOOK`, `INDEPENDENT_SECONDS`,
+`INDEPENDENT_MAX`, `_INDEPENDENT_ARGS`, `_UNGRAFTED` (its key, with the
+host's null device as `NULL_DEVICE`) and `_GIT_TIMEOUT_SECONDS`;
+`_FULL_HASH` is `githead::full_hash` and `_PROJECT_FILE`
+`location_git::PROJECT_FILE`.
+
+- `git(run, common_dir, args, stdin)` is `_git`: the runner's answer at
+  `GIT_TIMEOUT_SECONDS`, raw bytes, None where git cannot run, and a
+  non-zero exit logged through `log_nonzero_exit` and answered None.
+- `RepositoryHistory::new(common_dir, make, run)`: the reader is made by
+  `make` on first use; a factory that fails raises and is asked again
+  next time, as the reference's property is.
+- `_batch_check` decodes git's output as UTF-8 with replacement, splits
+  it with `str.splitlines` (`splitlines`: LF, CR, CRLF, VT, FF,
+  0x1c-0x1e, U+0085, U+2028, U+2029) and each line with `str.split`
+  (`split`, on `unicode::is_space`). Paired by position when the counts
+  agree, else each line against each id by `ln.split()[:1] ==
+  [i.lower()]`, a later line overwriting an earlier one.
+- `_expand` keeps the reference's dict order (a popped key set again goes
+  to the end), `dict.fromkeys`' dedup and `_askable` (`askable`: 4 to 64
+  ASCII hex characters, counted as code points); `expand`,
+  `expand_typed`, `holds` and `holds_objects` answer from it. Where the
+  reader is incomplete and git answers None the reader's answer stands.
+- `fingerprint`, `parents`, `committed`: `_commit_body` through the
+  reader, then git's `cat-file commit` where the reader is incomplete;
+  `parents` caches `()` and time 0 for a body it could not read, and
+  hexsz is 64 only for a 64-character id.
+- `reachable_among`: `location_git::reachable_among` with closures over
+  this history; both closures borrow it, so its state sits in a
+  `RefCell`.
+- `independent`: the lowercased full ids, sorted and deduplicated; fewer
+  than two answer that set, more than `INDEPENDENT_MAX` None; git runs
+  `--no-replace-objects -c core.commitGraph=false merge-base
+  --independent` with `GIT_GRAFT_FILE` the null device, in text mode
+  (the bytes are decoded here with replacement, as the runner decodes
+  them); a non-zero exit is logged with `_INDEPENDENT_ARGS` alone; the
+  answer is the lines stripped and lowercased, blank ones dropped, and
+  stands only as a non-empty subset of the ids given.
+- `blobs`: the FIFO of (tree, depth), directories entered from the root
+  only, the project file and every entry that is not a regular file
+  skipped without counting toward `BLOB_LOOK`, sizes from the headers at
+  least `BLOB_MIN_SIZE`, sorted and cut to `BLOBS_PER_WITNESS`.
+
+Decisions:
+
+- `Objects` (complete, name_length, has_many, resolve, read, commit, tree,
+  header, each fallible with an associated `Raised`) stands for
+  `gitobjects.ObjectReader` until that reader's port lands; `GitRun`
+  (`run`, `log_nonzero_exit`) stands for `_git.run_git` until the git
+  read budget's port lands. `Done` carries raw stdout; the `text` flag
+  travels with the call. The runner's `ReadDeadline` is not modelled.
+- An error of the reader inside `reachable_among` cannot unwind through
+  the traversal's closures: it is kept, every later read answers nothing
+  without touching the reader or the caches, and it is raised when the
+  traversal returns. The caches hold what the reference's hold at its
+  raise.
+- A header size is a `u64`; the reference's size is an unbounded int, and
+  only its comparison with `BLOB_MIN_SIZE` is read.
+- No regular expression is written: `_FULL_HASH` is
+  `githead::full_hash` (rule 3, already in the engine's inventory).
+
+Reference finding: where git's `--batch-check` lines do not pair with the
+ids (a line too many or too few), `_batch_check` matches only full ids,
+and `_expand` then drops every abbreviation, the ones the reader resolved
+included (reproduce: an incomplete reader that resolves `ca9781`, git
+answering two lines for one id; case "git answers abbreviation reader
+also found" and `git_overrides_the_reader_for_an_abbreviation`). The port
+reproduces it.
+
+Fixtures and tests: `repository_history.jsonl` (ungated: no host path,
+the null device spelled `<devnull>`), 30 cases of a scripted reader and a
+scripted git (`tests/common/repository_history.rs` mirrors the
+generator's): complete and incomplete readers, git None, non-zero,
+paired, mispaired, ambiguous, odd separators, invalid UTF-8, the
+reader's raises and failing factory, parents through git, the traversal,
+`independent`'s bounds and answers, and blob samples at their bounds.
+Tests: `golden_repository_history`, `repository_history_kills`,
+`repository_history_robustness`.
 
 ## The witness exchange's history half (`location_witness.py`)
 
@@ -14066,8 +14150,7 @@ What the reference has and this build does not, by area:
   `view_state` and their helpers are built; `path_liveness`,
   `path_liveness_many` and `_liveness_read` are not), and of
   `location_git.py` the binding of `probed` to githead's discovery,
-  `_sources_once`, `_SYMBOLIC_HEAD`, `_ABOVE`, `_git`,
-  `RepositoryHistory` and `_clear_above`.
+  `_sources_once`, `_SYMBOLIC_HEAD`, `_ABOVE` and `_clear_above`.
 - `membership_records.py` past its path helpers and legacy ask rule
   (the portable identity and the remaining frozen records: unit 4).
   Membership's writes, and of the caller's resolution its file roots

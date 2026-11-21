@@ -89,6 +89,10 @@
 //!   runtime on worker threads (the whole module);
 //! - [`location_discovery`]: the repository git finds from a directory
 //!   (`GitDies`, `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit`);
+//! - [`repository_history`]: `location_git.RepositoryHistory` and its
+//!   git fallback `_git`: a repository's objects through an object
+//!   reader made on first use, `git cat-file` where it is incomplete, and
+//!   `git merge-base --independent`;
 //! - [`githead`]: HEAD and refs read from a git directory's files, and
 //!   discovery (unit githead-1: the walk git's `setup.c` makes, `stamp`;
 //!   unit githead-2: `entry_above` and the change signature);
@@ -181,6 +185,7 @@ pub mod pyre;
 pub mod pysyntax;
 pub mod pyvalue;
 pub mod records;
+pub mod repository_history;
 pub mod search;
 pub mod search_dedup;
 pub mod session;
