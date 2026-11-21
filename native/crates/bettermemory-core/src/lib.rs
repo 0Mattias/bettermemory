@@ -98,10 +98,10 @@
 //! - [`witness_questions`]: the question half of `location_witness.py`:
 //!   the answered token and liveness readers, the client's re-mint answer
 //!   and its refusal, and the client's reading of a view question;
-//! - [`gitobjects`]: git objects read from a repository's files, its
-//!   first three units (the byte parsers; the zlib streams and the delta
-//!   chain over a file handle; the file reads, the object format and the
-//!   alternates walk);
+//! - [`gitobjects`]: git objects read from a repository's files, the
+//!   whole module in four units (the byte parsers; the zlib streams and
+//!   the delta chain over a file handle; the file reads, the object format
+//!   and the alternates walk; the reader's object questions);
 //! - [`fsdata`]: the file system as the config readers ask it, as data;
 //! - [`fsutil`]: `_fsutil.py`, its first unit (`unlink_retrying` with
 //!   its Windows retry, `bounded_stream_read`);

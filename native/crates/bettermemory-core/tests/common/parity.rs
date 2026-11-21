@@ -340,6 +340,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // Where the linked zlib's `inflate` stops and what it has consumed
         // there (`gen_gitobjects_streams`).
         "gitobjects_streams.jsonl" => &[Zlib],
+        // The object reader over damaged streams (`gen_gitobjects_reader`).
+        "gitobjects_reader_zlib.jsonl" => &[Zlib],
         // `int()` and `float()` of a recorded stamp or time read non-ASCII
         // digits and spaces from `unicodedata` (`gen_gitsystem_record`).
         "gitsystem_record.jsonl" => &[Unicode],

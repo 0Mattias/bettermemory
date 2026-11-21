@@ -57,7 +57,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs`; unit githead-1, `githead::discovery`: `stamp`, `find_gitdir`, `gitdir_at`, `locate`, `probed`, `across_filesystems`, `discovery_moved`, `_entry_above`, `_located` and their helpers over `fsdata::Fs`, membership's `Rule`, an `Env` and the owners (`Owners`) | `githead.jsonl`, `githead_posix.jsonl`, `githead_discovery.jsonl` |
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
 | `fsutil` | unit 1 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads | `fsutil.jsonl`, `fsutil_python.jsonl` |
-| `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`) | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl` |
+| `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`); unit 4, `gitobjects::files::reader`: `ObjectReader`'s `has`, `has_many`, `name_length`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `_raw`, `_places`, `_object`, `_take_loose`, `_loose`, `_packed` | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl`, `gitobjects_reader.jsonl`, `gitobjects_reader_zlib.jsonl`, `gitobjects_reader_posix.jsonl` |
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text`; its write (`checkout_token::write`): `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_fs_now`, `_sweep`, `_place`, `_after_race`, `_failed`, `_unlink_quietly`, `TokenWrite` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only), `checkout_token_write.jsonl`, `checkout_token_write_posix.jsonl` (POSIX only) |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
@@ -2889,7 +2889,8 @@ with, by the generator that writes it, mirroring the Python side's
 
 SQLite is no gate: the native build links its own (3.54.1), so the
 reference's SQLite version is recorded, and its effects compared strictly.
-zlib is a gate for `gitobjects_streams.jsonl` alone, which pins where
+zlib is a gate for `gitobjects_streams.jsonl` and
+`gitobjects_reader_zlib.jsonl`, which pin where
 the linked zlib's `inflate` stops and how much input it has consumed
 there: the native build reproduces macOS's libz 1.2.12 through
 `zlib-rs`, and no other zlib has been compared (`ZLIB_GATED`,
@@ -2984,6 +2985,10 @@ that Unicode too.
 | `golden_gitobjects_files`: in memory, and on disk (unix) | `gitobjects_files.jsonl` | i |
 | `golden_gitobjects_files_posix`: in memory and on disk (unix) | `gitobjects_files_posix.jsonl` | i; os elsewhere (`gitobjects_files_not_posix`) |
 | `gitobjects_files_kills` (12; 11 off unix), `gitobjects_files_robustness` (5) | none | i |
+| `golden_gitobjects_reader`: `gitobjects_reader_every_case`, in memory and on disk (unix) | `gitobjects_reader.jsonl` | i |
+| `golden_gitobjects_reader`: `gitobjects_reader_zlib_every_case` | `gitobjects_reader_zlib.jsonl` | ii (zlib) |
+| `golden_gitobjects_reader_posix`: in memory and on disk (unix) | `gitobjects_reader_posix.jsonl` | i; os elsewhere (`gitobjects_reader_not_posix`) |
+| `gitobjects_reader_kills` (9), `gitobjects_reader_robustness` (4) | none | i |
 | `golden_gitfile_leaves`: `gitfile_leaves_every_case` | `gitfile_leaves.jsonl` | i |
 | `golden_gitfile_leaves_posix`: in memory and on disk (unix) | `gitfile_leaves_posix.jsonl` | i; os elsewhere (`gitfile_leaves_not_posix`) |
 | `gitfile_leaves_robustness` (9; 8 off unix) | none | i |
@@ -9464,9 +9469,9 @@ mode-000 folder can still be listed (a root user);
 `src/bettermemory/gitobjects.py` (1,234 lines, read at 465bc600) reads
 commits, trees and object names from a repository's loose objects, pack
 indexes, packs and alternates, with no git process. Its Rust port is well
-over 600 lines, so it is cut into units, leaves first. Units 1, 2 and 3
-are built (`gitobjects`, `gitobjects::stream`, `gitobjects::files`); unit
-4 is designed below.
+over 600 lines, so it is cut into units, leaves first. All four units
+are built (`gitobjects`, `gitobjects::stream`, `gitobjects::files`,
+`gitobjects::files::reader`).
 
 ### Map, by function
 
@@ -9484,7 +9489,7 @@ are built (`gitobjects`, `gitobjects::stream`, `gitobjects::files`); unit
 | `_dir_key`, `_object_dirs`, `_link_alternates` | 500-535, 995-999 | `realpath`, `normcase`, `normpath`, `isabs`, `isdir` | 3, built |
 | `_object_format`, `_list_new`, `_rescan`, `_load` | 477-498, 537-575 | `listdir`, `isfile`, `gitfile_rule.object_format` (ported) | 3, built |
 | `ObjectReader.__init__`, `object_dirs`, `complete`, `evicted` | 287-328 | the loaded state | 3, built |
-| `ObjectReader`: `has`, `has_many`, `_take_loose`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `name_length`, `_raw`, `_places`, `_object`, `_loose`, `_packed` | 330-476, 616-746 | all of the above, and `listdir` of a fanout directory | 4 |
+| `ObjectReader`: `has`, `has_many`, `_take_loose`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `name_length`, `_raw`, `_places`, `_object`, `_loose`, `_packed` | 330-476, 616-746 | all of the above, and `listdir` of a fanout directory | 4, built |
 
 Units 3 and 4: unit 3 is the file reads through `fsdata`'s `Fs`
 (extended with `st_flags` and `st_file_attributes` for eviction, and
@@ -9945,9 +9950,143 @@ Fixtures and tests:
   of a MiB and a NUL, sixty directories each naming all, a link cycle,
   3,000 pack names against 300).
 
-Left for unit 4: `has`, `has_many`, `_take_loose`, `resolve`, `header`,
-`read`, `commit`, `tree`, `fingerprint`, `name_length`, `_raw`,
-`_places`, `_object`, `_loose`, `_packed`.
+Unit 4 builds the object questions on this state.
+
+### Unit 4, built (`gitobjects::files::reader`)
+
+Lines 63-64, 82-83, 89, 97, 126-129, 330-476 and 618-751 were confirmed
+against the source at 7a52c602. `gitobjects::files::reader` is a child
+module of `gitobjects::files` holding a second `impl` block of
+`ObjectReader`, so it reads the private fields (`fs`, `flavour`, `dirs`)
+and helpers (`isfile`, `open`, `rescan`) of unit 3 without widening any;
+`files.rs` gains only its `pub mod reader;` line. The machine reaches it
+through `fsdata`'s `Fs` (`stat`, `listdir`, the non-waiting open and
+`FsHandle`'s `seek` and `read`), as for unit 3.
+
+What each function reproduces:
+
+- `has`, `has_many`: `_raw` of each name (the length counted in
+  characters, `_HEX` over a `&str`, so text outside ASCII is no match),
+  the lowercase answers in a set, each raw name once in the order first
+  met; then `_take` over the loaded indexes, `_take_loose`, and `_take`
+  over the indexes the one `_rescan` appends (`packs[len - count..]`),
+  each step only while names are wanted.
+- `_take_loose`: names grouped by their fanout digits in the order met;
+  per object directory and group, the names still wanted; two or more are
+  looked up in one `listdir` of the fanout (any error passes that
+  directory over for the group), one alone by `isfile` of its path. So an
+  unlistable but searchable fanout hides two names and shows one.
+- `name_length`: twice the hash length, None for an unknown format.
+- `resolve`: None for an unknown format, a prefix of fewer than
+  `MIN_ABBREV` or more than a full name's characters, or one `_HEX`
+  refuses; a full name answers as `has`; otherwise the names of a set,
+  from `starting(prefix, 2)` of each loaded index, from each object
+  directory's fanout listing (a name of the remaining width that starts
+  with the rest and `_HEX_BYTES` matches; uppercase names included,
+  where the rest holds no letter), then from the rescanned indexes, None
+  as soon as the set holds two distinct names. One object listed in two
+  packs and loose is one name.
+- `header`, `read`, `commit`, `tree`, `fingerprint`: `_object` with a cap
+  of None (`header`) or `max_size`, over `_places` in git's order: each
+  loaded index that lists the name at an offset (`_listed_in`), its loose
+  path in each object directory, then the rescanned indexes, the first
+  answer winning. The packs are asked one at a time, as the reference's
+  generator asks them, so a pack after the one that answers is never
+  read. `header` of a delta answers its target size (the top
+  link's), of a loose object the size its header states, of any width
+  (`Wide`). `commit` and `tree` parse with `parse_commit` and
+  `parse_tree` where the type matches and the hash length is known;
+  `fingerprint` is `commit_fingerprint` of a commit's body.
+- `_loose`: `_open` (an evicted file is recorded and answers None), a
+  `Stream` of 1,024 bytes a read for a header and 65,536 for a body,
+  `read(32)`, `loose_header`; over a cap, or with more body in the first
+  32 bytes than the size, None; then `read_to_end` of the rest.
+- `_packed`: `_open` of the pack, `chain`, then for a read the base and
+  each delta inflated (`inflate_at`) and applied (`apply_delta`) from
+  the base up, None at the first that fails.
+
+Decisions:
+
+- What the reference raises out of a question is `Fault`: `Stop` (unit
+  3's, from loading or a NUL in a path), `Overflow` (`OverflowError`, an
+  offset of 2**63 or more), `Raised` (unit 1's `IndexError`,
+  `struct.error`, `ValueError`) and `Key` (`KeyError` of `_TYPE_NAMES`).
+  Unit 3's `Stop::Raised` holds an `fsdata::PyErr`, which has no
+  `OverflowError`, so the reader's questions answer `Fault` and `Stop`
+  converts into it. Only `Failure::Zlib` and `Failure::Os`, from
+  anywhere in `chain`, `inflate_at` or a loose stream, are an absent
+  object, as the reference's `except (OSError, zlib.error)`.
+- `chain` answers a base code of 1 to 4 only (`entry_header` reads no
+  other as a base), so `Fault::Key` is never met; it is kept, checked
+  where the reference indexes `_TYPE_NAMES`, before any content is
+  inflated, so a code outside 1 to 4 would raise and never read as None.
+- The cap is `u64`; the reference's `max_size` is any int, and its
+  callers pass the default (`MAX_OBJECT_BYTES`, 4 MiB) or a positive one.
+- `has_many` takes `&[&str]` and answers a `BTreeSet<String>`: the
+  reference's set has no order, and the fixture records it sorted.
+- While a pack is read, `packs` is moved out of the reader and put back,
+  so `_packed` can record an eviction through `&mut self` while the
+  index is borrowed. Nothing in a question appends to `packs` between
+  the move and the return.
+- `_HEX` (a `str` pattern) and `_HEX_BYTES` are matched by hand as byte
+  tests, the matchers unit 1 built (the decision's rule 3, a matcher
+  already built): one or more ASCII hex digits, `fullmatch` so no
+  trailing newline. Both are in the engine's inventory through its scan of
+  the reference's source; the cross-check with `pyre::Regex` waits for
+  pyre-6.
+
+Reference findings (reproduced, pinned or recorded):
+
+- `has` and `has_many` can disagree on a case-insensitive file system.
+  `has(x)` checks the loose path with `isfile`, which on macOS's default
+  APFS or on NTFS finds a file stored as `AB/CDEF...`; `has_many([x, y])`
+  with `y` in the same fanout lists the folder and compares exact bytes,
+  so it leaves `x` out. Reproduction: on macOS, a loose blob stored at
+  `objects/ce/0136...` renamed to `objects/CE/0136...` in uppercase:
+  `has(name)` is True and `has_many([name, other])` with `other` starting
+  `ce` is empty. The port asks the same questions of its `Fs`, so `StdFs`
+  answers as the host's file system does; no golden row holds it, since
+  the answer follows the volume.
+- A damaged zlib check is seen by `header` of a loose object only where
+  the 32 bytes asked for reach the stream's end: a 13-byte loose blob
+  with a wrong Adler-32 has no header (None), while `has` is True. The
+  golden case "loose a wrong check" (`gitobjects_reader_zlib.jsonl`).
+
+Fixtures and tests:
+
+- `gitobjects_reader.jsonl` (class i, 35 cases, 60 KB),
+  `gitobjects_reader_zlib.jsonl` (class ii, zlib, 6 cases) and
+  `gitobjects_reader_posix.jsonl` (POSIX only, 5 cases), written by
+  `tests/contract/gen_gitobjects_reader.py`. Every store is laid out by
+  hand: zlib streams of stored blocks (no compressor's bytes), packs with
+  whole, OFS and REF entries, version 2 indexes with a 64-bit table,
+  names that are the content's SHA-1 or SHA-256. The cases: loose
+  objects of every type and each question; malformed loose headers; a
+  blob of 100,000 bytes in two blocks at and one past its cap; loose
+  files cut at six lengths; a folder at a loose path; eviction of a loose
+  file and of a pack; a pack of a blob, an OFS delta, a REF delta on it, a
+  tree and a commit; a chain of 20 deltas under caps past the size and
+  the work factor; damaged pack entries (type 5, a lost base, a distance
+  past the start, a wrong source size, a cut header); an offset at 2**63;
+  prefixes shared by two loose names, two packs, a pack and a loose file,
+  and one object in two packs and loose; fanout names not hex or of
+  another width; a fanout that is a file; packs written between
+  questions; sha256; an unknown format; no objects folder. The zlib file
+  holds damaged loose streams and deltas of 20 and 21 bytes with a wrong
+  check; the POSIX file a FIFO at a loose path, unreadable files, an
+  unlistable fanout and objects in an alternate.
+- `golden_gitobjects_reader` (2 tests) and
+  `golden_gitobjects_reader_posix` ask each case in memory (`MemFs`)
+  and, on unix, on disk (`StdFs`), under unit 3's `Claims`;
+  `gitobjects_reader_not_posix` records the gap off unix;
+  `gitobjects_reader_kills` (9 tests); `gitobjects_reader_robustness`
+  (4 tests: 20,000 names against 2,000 and a fanout of 20,000 names
+  against 2,000 for linear growth, names of a MiB, outside ASCII and
+  empty, caps at 0 and `u64::MAX`, a 4 MiB object and a chain of 5,000
+  deltas).
+
+Left for later: `location_git`'s `RepositoryHistory` takes this reader
+through a trait (lane lochist); the impl is a follow-up.
 
 ## A location capture's vocabulary
 
@@ -13725,8 +13864,7 @@ What the reference has and this build does not, by area:
   renderers (units 2 to 5).
 - Reading a checkout: `githead.py` past its resolution and discovery
   (`entry_above`, `_stops_at`, `_would_be_git_directory`, `_Undetermined`,
-  `_ref_stamps` and `signature`: githead-2), `gitobjects.py` past its byte parsers, zlib streams and object
-  files (the reader: unit 4), `origin_gitfiles.py` past its decoders, machine leaves
+  `_ref_stamps` and `signature`: githead-2), `origin_gitfiles.py` past its decoders, machine leaves
   and config facts (`_config_facts` and its memo, units 4, 6 and 7), `checkout_token.py` past its text, reads and write (the
   remint and the claim: unit 4), the origin's settling
   (`origin.py`), `location.py` past its view continuity (`continuity`,

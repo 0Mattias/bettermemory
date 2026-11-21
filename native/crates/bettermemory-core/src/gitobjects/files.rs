@@ -12,6 +12,8 @@
 //! [`GitFacts`] given at construction. [`FsHandle`] is an open file of
 //! [`Fs`] behind unit 2's [`Handle`], for the packed reads of unit 4.
 
+pub mod reader;
+
 use std::collections::HashSet;
 
 use super::stream::Handle;

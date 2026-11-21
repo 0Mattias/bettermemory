@@ -86,6 +86,7 @@ from . import (
     gen_location_probe,
     gen_gitobjects,
     gen_gitobjects_files,
+    gen_gitobjects_reader,
     gen_gitobjects_streams,
     gen_gitfile_leaves,
     gen_json,
@@ -255,6 +256,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitobjects_python": gen_gitobjects.generate_python,
     "gitobjects_files": gen_gitobjects_files.generate,
     "gitobjects_files_posix": gen_gitobjects_files.generate_posix,
+    "gitobjects_reader": gen_gitobjects_reader.generate,
+    "gitobjects_reader_zlib": gen_gitobjects_reader.generate_zlib,
+    "gitobjects_reader_posix": gen_gitobjects_reader.generate_posix,
     "gitobjects_streams": gen_gitobjects_streams.generate,
     "githead_posix": gen_githead.generate_posix,
     "capture_vocabulary": gen_capture_vocabulary.generate,
@@ -498,8 +502,11 @@ PYTHON_GATED = frozenset(
 #: is a compressor's, but the stopping points are the inflate's. macOS's
 #: libz 1.2.12 and the native build's `zlib-rs` agree on them; no other
 #: build has been compared, so under another the file is not compared.
+#: ``gitobjects_reader_zlib`` pins the object reader over damaged streams,
+#: whose answers follow from the same stopping points
+#: (`gen_gitobjects_reader`).
 ZLIB_VERSION = "1.2.12"
-ZLIB_GATED = frozenset({"gitobjects_streams"})
+ZLIB_GATED = frozenset({"gitobjects_streams", "gitobjects_reader_zlib"})
 
 
 def zlib_version() -> str:
@@ -621,6 +628,8 @@ PLATFORM_GATED = frozenset(
 #: ``location_git_readers_posix`` walks refs and trees with links and mode-000
 #: entries (`gen_location_git_readers`); ``location_view_posix`` builds
 #: repositories with links and a mode-000 folder (`gen_location_view`);
+#: ``gitobjects_reader_posix`` reads objects over FIFOs, modes and an
+#: alternates file (`gen_gitobjects_reader`);
 #: ``gitsystem_record`` reads and writes the record over links, modes and
 #: FIFOs (`gen_gitsystem_record`); ``gitsystem_probe`` builds, sweeps and
 #: clears the probe over links, modes and FIFOs (`gen_gitsystem_probe`);
@@ -669,6 +678,7 @@ POSIX_ONLY = frozenset(
         "githead_posix",
         "gitobjects_files_posix",
         "githead_discovery",
+        "gitobjects_reader_posix",
         "location_probe",
         "location_probe_python",
         "location_probe_errno",
