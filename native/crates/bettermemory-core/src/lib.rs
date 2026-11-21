@@ -112,6 +112,9 @@
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
 //! - [`events`]: the telemetry recorder's rows, its first unit (the
 //!   event kinds, their row classes and the fields a state row keeps);
+//! - [`audit`]: the silent-miss audit, its first unit (the constants,
+//!   `MissHit`, `MissReport` and the `turn_audited`, `search_miss`,
+//!   `recall_held` and `prompt_recall` field builders);
 //! - [`control_tokens`]: the chat-template delimiters a stored text may
 //!   not carry, found, counted, refused and written by their bare names;
 //! - [`durability`]: the write gate's transient markers, its first unit
@@ -212,6 +215,7 @@
 
 pub mod attestation_paths;
 pub mod attribution;
+pub mod audit;
 pub mod caches;
 pub mod capture;
 pub mod checkout_token;

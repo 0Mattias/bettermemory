@@ -50,6 +50,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `history_rows` | `history.py`'s third unit: `HistoryRow` with `to_dict`, `_changed` (with `py_ne`, Python's `!=` over payload values), `_body_diff` (through `difflib::body_diff`), `_set`, `_event_detail`, `_RecordWalk`, `_record_row`, `_link_change_rows` | `history_detail.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
+| `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields` | `audit_fields.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `git_read_budget`, `git_calls` | `git_read_budget.py` whole (`ReadBudget`, the scopes as a `Scope` value, `_progress` as `Progresses`, `call_scope`, `call`, `health_call`, `async_call`, `reading`, `expired`, `wait_for`, `unread`, `hit`, `allowance`, `exhausted`, `for_resume`); `_git.py`'s tallies, `run_git`'s counts around one call, `printed_path`, `subcommand`, the `log_nonzero_exit` message | `git_read_budget.jsonl` |
@@ -3878,6 +3879,69 @@ True})` and `state_fields("write", {1: "x"})` raise `AttributeError`
 (`int` has no `endswith`). A row read from JSON always has `str` keys, so
 no log row reaches it; a handler passing a non-`str` keyword cannot
 either.
+
+## The silent-miss audit's reports and event fields (`audit.py`)
+
+`audit` reproduces `src/bettermemory/audit.py`, unit by unit. The map by
+function:
+
+| Function | Lines | Needs from the machine | Status |
+|---|---|---|---|
+| the constants (`_RETRIEVAL_EVENT_KINDS`, `THRESHOLD_RULE_V1`, `_TOP_HITS_RETAINED`, `DEFAULT_LOOKBACK_SECONDS`, `ATTRIBUTION_LOOKBACK_SECONDS`, `REAUDIT_DEDUP_WINDOW_SECONDS`, `DEFAULT_CREATION_SHIELD_SECONDS`, `MIN_PROBE_CONTENT_TOKENS`, `_ACK_SURFACE`, `_VALID_TRIGGERED_FROM`, `Verdict`, `NO_OWNER_PROMPT`, `_VALID_NO_SIGNAL_REASON`, `_VALID_REPLY_SOURCE`, `HELD_CAUSES`) | 136-309, 477-491, 704 | nothing | built (audit-1) |
+| `_ACK_TOKENS` | 282 | the unstemmed tokenizer | with `probe_for_miss` |
+| `MissHit` (`to_dict`, `to_compact_dict`), `MissReport` (`is_miss`, `to_dict`) | 311-471 | nothing | built (audit-1) |
+| `no_owner_prompt_report` | 494-509 | nothing | built (audit-1) |
+| `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields` | 512-856 | nothing (the id minter passed in) | built (audit-1) |
+| `is_duplicate_audit` | 859-914 | the clock passed in; `parse_event_ts` | audit-2 |
+| `probe_for_miss` and its helpers (`_probe_now` through `_count_recent_retrievals`) | 917-1483 | the store's search, the clock, the caller's admission | audit-3 and later |
+| `_retrieved_ids` | 1486-1510 | nothing; `events._event_id_items` | with `_count_recent_retrievals` |
+
+What audit-1 reproduces. Every builder returns the event's fields as a
+`PyValue::Dict` in the reference's insertion order, each optional key
+present only on the reference's condition (a `rule` on `prompt_recall`
+writes `chars` right after it, an empty `top_hits` is left off
+`turn_audited` and kept on the others, `repeat` only when true). The
+checks run in the reference's order: `settled_count` first (a `bool` is
+refused, so is any value that is not a non-negative `int`, its message
+spelling `repr` of the value), then `triggered_from`, then `reply_source`
+or `cause`, then the report's `no_signal_reason`. Each message spells
+`sorted(set)!r` as Python's `repr` of a list of `str` and the refused text
+through `repr`. `settled_count` is taken as any `PyValue` for that reason;
+a value `repr` cannot spell (a list nested past the interpreter's depth)
+answers `AuditError::Repr`, as the reference's f-string raises
+`RecursionError` there. `MissReport.to_dict` spells `checked_at` through
+`DateTime::isoformat_utc` (every `+00:00` replaced, so an offset of
+`+00:00:30` spells `Z:30`). The two builders that mint an id take
+`mint: &mut dyn FnMut() -> String` in place of `generate_ulid`;
+`search_miss_fields` mints only when `event_id` is None (an empty id is
+kept). The reference's keyword defaults are `TurnAuditedOptions::default`
+and `PromptRecallOptions::reference`; `recall_held_fields` takes its
+`triggered_from` from the caller. A `held` or `suppressed` entry is a list
+of `(key, value)` pairs, copied in order as `dict(entry)` does: a
+repeated key keeps its first place and its last value. A hand-built
+`settled_count` whose text is not canonical decimal (`" -1"`, `"-0"`) is
+refused, since Python prints no int that way.
+
+Decisions. `Verdict` is an enum: the reference annotates it as a
+`Literal` and no producer writes another value. Integer fields are `i64`
+(Python's are unbounded; every producer writes counts and window
+lengths). `REAUDIT_DEDUP_WINDOW_SECONDS` is defined here, the crate's one
+definition; a later unit that needs it (the settlement) reads it from
+`audit`, and the golden header pins its value. No pattern is matched, so
+no regular expression is involved.
+
+`audit_fields.jsonl` (not gated, 57 KB) holds the constants and the seven
+reports in its header, every report's `to_dict` and `is_miss`, every hit's
+two shapes, `no_owner_prompt_report`, and each builder over a grid of
+keyword sets: every variant on the first report and two on each other,
+every `ValueError` included. An answer is spelled as `json.dumps` with its
+defaults spells it (key order kept), and every quoted text is ASCII, so no
+row follows the Unicode tables behind `str.isprintable`.
+`tests/audit_fields_kills.rs` holds the cases a plausible wrong port fails
+(check order, key orders, keys written only when set, the bool rule);
+`tests/audit_fields_robustness.rs` holds 2,000-hit reports, a 100,000
+code point refused text, a `settled_count` nested 200,000 deep, integer
+bounds, and the growth from 500 to 5,000 hits.
 
 ## Chat-template control tokens (`control_tokens.py`)
 
