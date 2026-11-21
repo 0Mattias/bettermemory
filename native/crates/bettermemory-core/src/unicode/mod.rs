@@ -11,6 +11,8 @@
 #[allow(clippy::all)]
 mod tables;
 
+pub mod xid;
+
 pub use tables::UNIDATA_VERSION;
 
 use std::sync::OnceLock;

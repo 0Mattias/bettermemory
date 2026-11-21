@@ -16,6 +16,7 @@
 //! - [`origin_history`]: how `origin` reads a repository's history, its
 //!   first unit (the leaves and the memo of author dates);
 //! - [`unicode`]: normalization, case mapping and the character classes,
+//!   XID_Start and XID_Continue (`unicode::xid`, `str.isidentifier`),
 //!   over tables generated from the reference Python's Unicode 15.1.0;
 //! - [`pyre`]: Python's regular expressions as CPython 3.13.13's `re` runs
 //!   them, its first units: the case folding and the test of one literal;

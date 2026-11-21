@@ -25,7 +25,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
-| `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d` | `unicode.jsonl`, `unicode_sequences.jsonl` |
+| `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`, read by `parse_flat`) and `SubPattern.getwidth` (`SubPattern::getwidth`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
@@ -2921,7 +2921,7 @@ that Unicode too.
 | `golden_pyre_fold`: `pyre_python_every_case` | `pyre_python.jsonl` | ii (Python) |
 | `pyre_fold_kills` (13), `pyre_fold_robustness` (6), `pyre_fold_first_read` (1) | none | i |
 | `golden_pyre_fold`: `pyre_fold_differential_file` | a file `BM_PYRE_FOLD_DIFF` names | a tool, `#[ignore]`d, not part of parity |
-| `unicode_tables_regen`: `regenerating_the_unicode_tables_gives_the_same_bytes` | `src/unicode/tables.rs` | ii (Unicode) |
+| `unicode_tables_regen`: `regenerating_the_unicode_tables_gives_the_same_bytes` | `src/unicode/tables.rs`, `src/unicode/xid_tables.rs` | ii (Unicode) |
 | `golden_pyre_tree`: `pyre_tree_and_token_every_row` | `pyre.jsonl` (the `tree.` and `token.` parts) | i |
 | `golden_pyre_tree`: `pyre_tree_python_every_row` | `pyre_python.jsonl` (the `tree.` parts) | ii (Python) |
 | `pyre_tree_kills` (20), `pyre_tree_robustness` (11) | none | i |
@@ -3007,6 +3007,50 @@ The generator refuses any other Unicode version. Its output depends only on
 that data and, for the last table, `SRE_EXTRA_CASES`, on
 `re._casefix._EXTRA_CASES` (`Lib/re/_casefix.py` of the same interpreter,
 `pyre::fold`), so the same interpreter writes the same bytes.
+
+## XID and `str.isidentifier` (`unicode::xid`)
+
+The reference reads `str.isidentifier` once (`doctor.py` 884, the
+`NAME=value` words before a command). `unicode::xid` reproduces it over
+CPython 3.13.13 and Unicode 15.1.0, in one unit of 53 lines of Rust
+source outside tests, plus the generated `src/unicode/xid_tables.rs`
+(data, not counted, as `tables.rs`).
+
+| function | reproduces | needs | status |
+| --- | --- | --- | --- |
+| `is_xid_start(cp)` | XID_Start as `str.isidentifier` reads it: `chr(cp).isidentifier()` for every code point but `_` | `XID_START` | built |
+| `is_xid_continue(cp)` | XID_Continue: `("a" + chr(cp)).isidentifier()` | `XID_CONTINUE` | built |
+| `is_identifier(&[u32])` | `str.isidentifier`: not empty, the first `_` or XID_Start, the rest XID_Continue | both | built |
+
+Decisions:
+
+- The tables are written by `native/tools/gen_unicode_tables.py`
+  (`generate_xid`) from the interpreter's own `str.isidentifier`, not from
+  `DerivedCoreProperties.txt`, which is not on the build machine; the
+  generator's `--check` and the test `unicode_tables_regen` cover both
+  files.
+- `_` is not XID_Start. CPython accepts it as the first character by name
+  (`_PyUnicode_ScanIdentifier`), so the start table leaves it out and
+  `is_identifier` names it. `is_xid_start('_')` is false.
+- No NFKC is applied, as `str.isidentifier` applies none (the compiler
+  normalizes identifiers; this method does not). So U+309B and U+309C,
+  Other_ID_Start but changed by NFKC, are neither start nor continue.
+- A surrogate and any value past U+10FFFF answer false, as CPython's
+  `chr` of a surrogate does.
+- No pattern of `re` is involved.
+
+Fixtures (`gen_unicode_xid`): `unicode_xid.jsonl`, gated on Unicode
+15.1.0 only (the `_` rule is the same in every CPython 3). Its header pins every code point from U+0000 to
+U+10FFFF (surrogates included) by one answer character
+`"0123"[isidentifier(c) | isidentifier("a"+c) << 1]`: the count, the
+SHA-256 of all answers in order and of each 0x1000 block. Then 44 whole
+strings with their answer. Tests: `golden_unicode_xid` (digest, blocks and
+cases), `unicode_xid_kills` (`_`, ASCII and other digits, Other_ID_Start
+members, the middle dots that only continue, the NFKC exclusions, bounds),
+`unicode_xid_robustness` (every `u32` boundary, a million code points, a
+linear growth claim).
+
+Left for later units: the caller in `doctor` that reads it.
 
 ## Python's regular expressions (`pyre`)
 
