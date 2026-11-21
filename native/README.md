@@ -58,6 +58,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only) |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
+| `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`) | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
@@ -2160,6 +2161,77 @@ the generator's `Path.cwd` answers a pure path of the case's flavour
 (`PurePosixPath`, or `PureWindowsPath` where the case says `nt`) on every
 host; the test's world spells it with `config::pure_path` of that
 flavour. `resolve` itself takes the spelled text from its caller.
+
+## Per-session state and the client registry (`session.py`)
+
+`session.rs` reproduces `session.py` whole in one unit (about 400 lines of
+Rust source). Nothing in it reads the machine but the clock and the random
+source, and both are `Effects` passed to each call that reads them:
+`time()` is `time.time()` and `token_hex8()` is `secrets.token_hex(8)`.
+`System` reads `SystemTime` (spelled as CPython spells nanoseconds as a
+double) and `getrandom`.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| constants (`_DEFAULT_CLIENT_KEY`, `_PENDING_USE_TOKEN_TTL_SECONDS`, `DEFAULT_USE_TOKEN_TTL_TURNS`, `AUTO_COMMIT_MIN_AGE_SECONDS`, `DEFAULT_MAX_CLIENTS`) | 81, 87, 97, 109, 452 | nothing | built |
+| `_new_session_id` | 112-115 | the random source | built |
+| `PendingUseToken` | 118-138 | nothing | built |
+| `_locked`, `SessionState.lock` | 145-155, 199 | nothing | built (`SessionState::lock`) |
+| `disable`, `enable` | 205-213 | nothing | built |
+| `advance_turn`, `_evict_expired_use_tokens` | 217-230, 317-345 | the clock | built |
+| `issue_use_tokens` | 232-253 | the clock, the random source | built |
+| `consume_old_tokens` | 255-305 | the clock | built |
+| `purge_use_token`, `pop_expired_use_tokens`, `reset` | 307-315, 347-382 | nothing | built |
+| `SessionState.for_request` | 386-399 | nothing | built (the identity; `bind` is the caller's) |
+| `SessionSource` | 402-413 | nothing | built (a trait) |
+| `SessionRegistry` (`__init__`, `for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`) | 416-527 | nothing | built |
+| `_default_registry`, `get_default_registry`, `get_state` | 532-556 | nothing | built (`default_registry` over `OnceLock`) |
+
+Decisions:
+
+- The reference's `RLock` is a `Mutex<Inner>`; `lock()` gives a guard
+  whose methods are the reference's methods, so a caller that needs
+  several calls under one lock (the handler layer's `_advance_turn`)
+  takes the guard once. Rust callers never re-enter. A poisoned lock
+  still gives the state.
+- `pending_use_tokens` and `_expired_use_tokens` keep Python dict order
+  through `OrderedMap` (slots with tombstones and a hash index, compacted
+  when half empty): assigning a present key keeps its place, a pop and
+  insert moves it last. The registry's `OrderedDict` is the same map with
+  `move_to_end` and `pop_front`; a cursor past the leading tombstones
+  keeps `pop_front` amortized constant time at any cap.
+- `consume_old_tokens` computes the turn cutoff in `i128`, so a
+  `ttl_turns` anywhere in `i64` answers as the reference's integers do.
+  `turn_counter` is `i64` with a checked add: past `i64::MAX`, where the
+  reference's integer keeps growing, `advance_turn` panics with a stated
+  message. A `ttl_turns` or `max_clients` outside `i64` is not taken.
+- The wall-clock comparisons are the reference's on `f64`, NaN and the
+  infinities included: readiness is `issued_at <= time() - min_age`
+  (None is `AUTO_COMMIT_MIN_AGE_SECONDS`), eviction is
+  `issued_at < time() - 1800`, strict.
+- `SessionRegistry::for_request(key)` takes `_key_for_ctx`'s key already
+  resolved: the caller passes `identity::registry_key` of the bound actor,
+  and None is `_DEFAULT_CLIENT_KEY`, so a key spelled `__default__` is the
+  default bucket, as in the reference. The lookup, the touch, the insert
+  and one eviction of the least recently used entry while the size passes
+  `max_clients` happen under one lock, so concurrent first requests for
+  one key make one state (`session_kills`). A cap of 0 or below evicts
+  the state just made, which is still returned, as in the reference.
+- `disable` and `enable` return a sorted copy; a set's order is not
+  observable. `known_keys` is a set; `keys_in_order` exposes the LRU's
+  order for the tests.
+- The module's logger is unused and not ported.
+
+Fixtures: `gen_session.py` writes `session.jsonl` (ungated): scripted
+sequences over a bare state and over registries with caps 256, 2, 1, 0
+and -3, the clock and the draws scripted, each step's return, clock
+reads, draws and the state after; and a digest row over 3,000 random
+sequences from a splitmix64 seed. `golden_session`, `session_kills` and
+`session_robustness` read and extend them. No regular expression is used.
+
+Left for later: the handler layer that emits `use_token_expired` and the
+auto-commit `record_use` events (`handlers/_shared`), and the
+pending-write sidecar that files rows under `client_key`.
 
 ## Running the tests (offline)
 

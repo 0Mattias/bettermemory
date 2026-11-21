@@ -5,6 +5,8 @@
 //!   file's pins, and `config check|show|path --json`;
 //! - [`identity`]: a request's caller as the reference resolves it, its
 //!   leaves first (the declared-value check, the actor rule, `resolve`);
+//! - [`session`]: `session.py` whole: the per-session state (scopes, the
+//!   turn counter, use-tokens), the per-client registry and its LRU;
 //! - [`json`]: `json.dumps` as the reference's call sites spell values
 //!   (the log payload's canonical text among them) and `json.loads`;
 //! - [`in_force`]: what is in force at delivery (`in_force.py` whole):
@@ -140,6 +142,7 @@ pub mod pyvalue;
 pub mod records;
 pub mod search;
 pub mod search_dedup;
+pub mod session;
 pub mod store;
 pub mod toml;
 pub mod unicode;
