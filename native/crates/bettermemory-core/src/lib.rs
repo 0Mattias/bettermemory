@@ -58,7 +58,8 @@
 //!   call tallies, `printed_path`, `subcommand` and the nonzero-exit line;
 //! - [`location_stamps`]: a git directory's init stamps and whether its
 //!   file system keeps FILETIME's ticks (the whole module);
-//! - [`githead`]: HEAD and refs read from a git directory's files;
+//! - [`githead`]: HEAD and refs read from a git directory's files, and
+//!   discovery (unit githead-1: the walk git's `setup.c` makes, `stamp`);
 //! - [`location_probe`]: the hook client's namespace probe (the cwd's
 //!   state, its view spelling, the host's name);
 //! - [`gitobjects`]: git objects read from a repository's files, its

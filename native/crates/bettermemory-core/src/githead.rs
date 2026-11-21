@@ -8,6 +8,7 @@
 //! caller asks git. See `native/README.md`, "HEAD and refs from a git
 //! directory's files".
 
+pub mod discovery;
 pub mod fs;
 
 pub use fs::{Flavour, MemFs, StdFs};

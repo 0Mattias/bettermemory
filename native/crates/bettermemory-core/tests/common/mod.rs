@@ -10,6 +10,7 @@ pub mod dedup;
 pub mod gitconfig_file;
 pub mod gitconfig_tree;
 pub mod githead;
+pub mod githead_discovery;
 pub mod gitobjects;
 pub mod gitobjects_files;
 pub mod location_stamps;

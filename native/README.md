@@ -48,7 +48,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `origin_gitfiles` | units 1 to 3 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`), the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) and the config facts (`facts`: `_facts_of`, `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies`, `_config_entries`, `_config_variable_names`, `_hold_directory`, `directories_held`, `_global_attributes_path`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl`, `origin_gitfiles_facts.jsonl`, `origin_gitfiles_facts_posix.jsonl` |
-| `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
+| `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs`; unit githead-1, `githead::discovery`: `stamp`, `find_gitdir`, `gitdir_at`, `locate`, `probed`, `across_filesystems`, `discovery_moved`, `_entry_above`, `_located` and their helpers over `fsdata::Fs`, membership's `Rule`, an `Env` and the owners (`Owners`) | `githead.jsonl`, `githead_posix.jsonl`, `githead_discovery.jsonl` |
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
 | `fsutil` | unit 1 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads | `fsutil.jsonl`, `fsutil_python.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`) | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl` |
@@ -2379,6 +2379,8 @@ that Unicode too.
 | `golden_githead`: `githead_every_case` (both flavours) | `githead.jsonl` | i |
 | `golden_githead`: `githead_posix_every_case` (unix) | `githead_posix.jsonl` | i; os elsewhere (`githead_not_posix`) |
 | `githead_robustness` (7), `githead_stdfs` (2 on unix, 1 elsewhere) | none | i |
+| `golden_githead_discovery`: in memory and on disk (unix) | `githead_discovery.jsonl` | i; os elsewhere (`githead_discovery_not_posix`) |
+| `githead_discovery_kills` (15), `githead_discovery_robustness` (5) | none | i |
 | `golden_location_probe`: `location_probe_every_query` (unix) | `location_probe.jsonl` | i |
 | `golden_location_probe`: `location_probe_loops` (unix) | `location_probe_python.jsonl` | ii (Python) |
 | `golden_location_probe`: `location_probe_errnos` (unix) | `location_probe_errno.jsonl` | iii |
@@ -7574,6 +7576,107 @@ other 11, which native reproduces:
   refs: git reads no files there; the reference reads no config
   (`head_ref`, 1080). A real reftable repository's `HEAD` declines.
 
+### Discovery, unit githead-1 (`githead::discovery`)
+
+The discovery half of `githead.py` (line numbers at v9), cut in two.
+Unit githead-1, built: `_DISCOVERY_ENV` 138-145, `_POSIX` 147,
+`_GITFILE_LIMIT` 166, `Stamp` 174, `GitDir` 178-192, `stamp` 211-235,
+`_check_environment` 243-245, `_read_gitfile` 248-270, `_check_owner`
+273-287, `_probe` 290-336, `_ceiling_offset` 339-364, `_discover`
+367-389, `find_gitdir` 392-402, `gitdir_at` 405-418, `_below` 421-428,
+`_ceilings` 431-457, `locate` 460-486, `_locate` 489-502, `probed`
+505-522, `_device` 525-527, `across_filesystems` 530-539,
+`_across_filesystems` 542-546, `discovery_moved` 549-553, `_entry_above`
+556-573 and `_located` 669-684. Unit githead-2, later: `entry_above`
+576-604, `_stops_at` 607-624, `_would_be_git_directory` 627-666,
+`_Undetermined` 195-203, `_ref_stamps` 1097-1126 and `signature`
+1129-1209.
+
+| Function | What it needs from the machine | Status |
+| --- | --- | --- |
+| `stamp` | `os.stat` (followed or not) | built, `stamp` |
+| `_check_environment`, `discovery_moved` | the environment | built (`Env`) |
+| `across_filesystems`, `_across_filesystems` | the environment, `gitconfig.git_bool` | built |
+| `_read_gitfile` | `gitfile_rule._read`, `_real`, `_git_directory` | built |
+| `_check_owner` | `os.geteuid`, `os.lstat(...).st_uid`, `SUDO_UID` | built (`Host`, `Owners`) |
+| `_probe` | `gitfile_rule.reading_at`, `os.stat`, the two above | built |
+| `_ceiling_offset`, `_discover`, `find_gitdir`, `gitdir_at` | `realpath`, `os.stat`, `os.access`, the ceilings | built |
+| `_below`, `_ceilings`, `probed`, `_device` | `PurePosixPath.parts`, strict `realpath`, `os.stat` | built (`probed` is an iterator, `Probed`) |
+| `locate`, `_locate`, `_entry_above`, `_located` | all of the above, `os.lstat` | built (`any_entry_above` for `_entry_above`) |
+
+What each reproduces, and the decisions:
+
+- Effects are data. The file system, its flavour and the working
+  directory come in membership's `Rule` (`gitfile_rule::discovery`),
+  whose `ctx.fs` serves every stat, `realpath`, `lstat`, `access` and
+  read, so one file system answers both the rule and the walk. The
+  variables the reference reads (`GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_COMMON_DIR`, `GIT_DISCOVERY_ACROSS_FILESYSTEM`,
+  `GIT_TEST_ASSUME_DIFFERENT_OWNER`, `GIT_CEILING_DIRECTORIES`,
+  `SUDO_UID`) are an `Env`; the effective user is `Host::euid`, and a
+  path's owner the trait `Owners` (`owner_uid(path, follow)`), which
+  `StdFs` answers on unix through `MetadataExt::uid` and declines
+  elsewhere. Discovery reads no ref, so `githead::RefFs` is not an
+  argument here: HEAD's validation is membership's own, over `fsdata::Fs`.
+- `githead::GitDir` keeps its two fields; `Found { gd, worktree_root }`
+  carries the folder that holds the `.git` entry beside it. Each path of
+  a `Found` is `os.fspath(Path(...))` of the reference's (`pure`).
+- `find_gitdir`, `gitdir_at` and `locate` answer `Option<Found>`: every
+  `_Unsettled`, OSError and ValueError of the reference is None, and so
+  is the Windows flavour (`NotPorted`), where `_check_environment`
+  declines and `realpath` and `reading_at` are not ported. `_located`
+  answers `Result`, `Unsettled` where the reference raises.
+- Two ceiling rules, as the reference has two. `_ceiling_offset`
+  (`find_gitdir`, `gitdir_at`) resolves each entry before an empty one
+  strictly (`gitdir::real`), so one entry that does not resolve declines
+  the whole discovery, and compares by string prefix and length.
+  `_ceilings` (`probed`, `locate`, `_located`) drops an entry that does
+  not resolve and compares by parts (`_below`). After an empty entry both
+  read the entries as written, so `:/w/./r` stops `locate` but not
+  `find_gitdir` (pinned by `githead_discovery_kills`).
+- `_below` compares `PurePosixPath(...).parts`: empty and `.` parts
+  dropped, `..` kept, exactly two leading slashes their own root
+  (`parts`). `config::pure_path` is the same rule over `str`; a path here
+  is bytes, which may not be UTF-8, so `parts` is written over bytes and
+  `githead_discovery_kills` holds `pure` to `pure_path` on UTF-8 text.
+  `os.path.normcase` is the identity on POSIX.
+- `_ceiling_offset` compares lengths of `str`, counted in characters.
+  The port counts bytes: every length compared is of a prefix of the
+  same resolved path, so the order of the two counts is the same.
+- `probed` is lazy, as the reference's generator is: `_locate` probes a
+  folder before the stat of its parent, so a repository found below a
+  parent that cannot be stated is still found. A stat that fails is the
+  iterator's last item.
+- `stamp` answers `gitconfig::legacy::Stamp` (`[i128; 5]`), `st_size` for
+  every kind of file (where `legacy::file_stamp` writes 0 for a folder),
+  and `NotPorted` where the file system gives no inode, mode or change
+  time (Windows).
+- No regular expression is used.
+
+Fixture and tests. `tests/contract/gen_githead_discovery.py` writes each
+case as a real tree and asks the reference through a stand-in for
+`githead`'s own `os` module, so no other module sees the case's
+environment, effective user, owners (`os.lstat` with `st_uid` replaced)
+or devices (`os.stat` with `st_dev` replaced: a mounted folder's number
+at or under it, 0 everywhere else, as `MemFs::mount` answers).
+`githead_discovery.jsonl` (94 cases, 982 queries, about 86 KB) is
+POSIX only (links, FIFOs, a mode-600 folder, owners); stamps are reduced
+to the file type, a regular file's size and equality with an earlier
+stamp of the case, and a walk's folders above the case to whether it went
+there. `golden_githead_discovery` checks every query in memory (the
+case under `/tmp/<scratch>`, so a walk past it meets a folder before the
+root, as on disk) and every case that names no other owner, user or
+device on disk through `StdFs`; `githead_discovery_not_posix` records the
+gap elsewhere. `githead_discovery_kills` (15) and
+`githead_discovery_robustness` (5: a 1,000-folder walk, 10,000 ceilings,
+a 64 MiB `.git` file, hostile bytes, growth of a walk with its depth)
+run in memory on every platform.
+
+Left for githead-2: `entry_above` and what it reads (`_stops_at`,
+`_would_be_git_directory`), and the signature (`_Undetermined`,
+`_ref_stamps`, `signature`), which read this unit's `stamp`, `probed`,
+`_located` and `_across_filesystems`.
+
 ## The hook client's namespace probe (`_location_probe.py`)
 
 `_location_probe.py` is the probe every hook posts before anything else:
@@ -11702,7 +11805,9 @@ What the reference has and this build does not, by area:
   MAC by chain segment and replaced detail, the versions' changes and
   body diffs, the record and link rows, `record_history` and the
   renderers (units 2 to 5).
-- Reading a checkout: `gitobjects.py` past its byte parsers, zlib streams and object
+- Reading a checkout: `githead.py` past its resolution and discovery
+  (`entry_above`, `_stops_at`, `_would_be_git_directory`, `_Undetermined`,
+  `_ref_stamps` and `signature`: githead-2), `gitobjects.py` past its byte parsers, zlib streams and object
   files (the reader: unit 4), `origin_gitfiles.py` past its decoders, machine leaves
   and config facts (`_config_facts` and its memo, units 4, 6 and 7), `checkout_token.py` past its text and its reads (the
   write, the remint and the claim: units 3 and 4), the origin's settling

@@ -75,6 +75,7 @@ from . import (
     gen_gitsystem_probe,
     gen_gitsystem_record,
     gen_githead,
+    gen_githead_discovery,
     gen_location_probe,
     gen_gitobjects,
     gen_gitobjects_files,
@@ -219,6 +220,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "durability_unicode": gen_durability.generate_unicode,
     "verify_status": gen_verify_status.generate,
     "githead": gen_githead.generate,
+    "githead_discovery": gen_githead_discovery.generate,
     "location_probe": gen_location_probe.generate,
     "location_probe_python": gen_location_probe.generate_python,
     "location_probe_errno": gen_location_probe.generate_errno,
@@ -538,7 +540,9 @@ PLATFORM_GATED = frozenset(
 #: same state after each write, ``store_tx`` after each transaction,
 #: ``store_records`` after each writer call.
 #: ``githead_posix`` reads links, FIFOs and ENOTDIR, which Windows answers
-#: otherwise (`gen_githead`); ``gitconfig_file`` reads links, FIFOs and
+#: otherwise (`gen_githead`); ``githead_discovery`` walks trees with links,
+#: FIFOs and modes and reads owners and devices through ``os.lstat`` and
+#: ``os.stat`` (`gen_githead_discovery`); ``gitconfig_file`` reads links, FIFOs and
 #: mode-000 files and opens directories (`gen_gitconfig_file`);
 #: ``fs_realpath`` and ``fs_realpath_python`` resolve links and FIFOs by
 #: ``posixpath`` (`gen_fs_realpath`); ``fs_stat`` states and lists links,
@@ -602,6 +606,7 @@ POSIX_ONLY = frozenset(
         "store_rows_written",
         "githead_posix",
         "gitobjects_files_posix",
+        "githead_discovery",
         "location_probe",
         "location_probe_python",
         "location_probe_errno",
