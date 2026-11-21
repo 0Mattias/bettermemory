@@ -161,3 +161,203 @@ fn spellings_cap_and_order() {
     // The written spelling comes first.
     assert_eq!(claims::stored_spellings(&c("e\u{301}"))[0], c("e\u{301}"));
 }
+
+// Unit 2: the claim parser and the literal readers.
+
+fn refused(raw: &str) -> String {
+    match claims::parse_claim(&c(raw)) {
+        Err(claims::ClaimError::Refused(m)) => {
+            m.iter().map(|&x| char::from_u32(x).unwrap()).collect()
+        }
+        other => panic!("{raw:?} gave {other:?}"),
+    }
+}
+
+fn parsed(raw: &str) -> (claims::Kind, String, String, String) {
+    let s = |v: &[u32]| {
+        v.iter()
+            .map(|&x| char::from_u32(x).unwrap())
+            .collect::<String>()
+    };
+    let cl = claims::parse_claim(&c(raw)).expect("a claim");
+    (cl.kind, s(&cl.rel_path), s(&cl.name), s(&cl.value))
+}
+
+#[test]
+fn messages_are_byte_exact() {
+    // An ASCII hyphen for the em dash, or a lost backtick, fails these.
+    assert_eq!(
+        refused("a::"),
+        "claim 'a::' ends at '::' \u{2014} name a symbol (`path::name`) or a constant (`path::NAME=value`)"
+    );
+    assert_eq!(
+        refused("!a::b"),
+        "claim '!a::b': absence claims are path-only \u{2014} `!path` asserts nothing exists at that path; symbol and literal absence are not claimable kinds"
+    );
+    // The absence message quotes the whole stripped claim, `!` included;
+    // the others quote the text after it.
+    assert_eq!(refused("! ::x"), "claim '::x' has no path before '::'");
+    assert_eq!(
+        refused("a\\b"),
+        "claim path 'a\\\\b' must use forward slashes"
+    );
+}
+
+#[test]
+fn length_counts_code_points() {
+    // A byte count refuses 1,024 two-byte characters.
+    let ok: String = "\u{e9}".repeat(1024);
+    assert_eq!(parsed(&ok).0, claims::Kind::Path);
+    let long: String = "\u{e9}".repeat(1025);
+    assert!(refused(&long).starts_with("claim is 1025 chars \u{2014} cap is 1024."));
+    // The cap is read after the strip and before the `!` is dropped.
+    assert_eq!(
+        parsed(&format!(" {} ", "a".repeat(1024))).0,
+        claims::Kind::Path
+    );
+    assert!(refused(&format!("!{}", "a".repeat(1024))).starts_with("claim is 1025"));
+}
+
+#[test]
+fn partitions_take_the_first_separator() {
+    // A last-separator split (`rpartition`) answers otherwise.
+    assert_eq!(
+        refused("a::b::c"),
+        "claim symbol 'b::c' is not a Python identifier"
+    );
+    let (_, path, name, _) = parsed("a:b::c");
+    assert_eq!((path.as_str(), name.as_str()), ("a:b", "c"));
+    assert!(refused("a::f=1=2").starts_with("claim value '1=2' is not a Python literal"));
+    assert_eq!(parsed("a::f='a=b'").3, "'a=b'");
+    // `a:::b` splits at the first two colons: the name is `:b`.
+    assert_eq!(
+        refused("a:::b"),
+        "claim symbol ':b' is not a Python identifier"
+    );
+}
+
+#[test]
+fn bang_is_followed_by_lstrip_of_every_unicode_space() {
+    // An ASCII-only strip keeps U+3000 in the path.
+    let (kind, path, _, _) = parsed("!\u{3000}\u{85}x ");
+    assert_eq!((kind, path.as_str()), (claims::Kind::Absent, "x"));
+    // Only one `!` is dropped.
+    assert_eq!(parsed("!!x").1, "!x");
+    assert!(refused("! \u{3000}").starts_with("an absence claim needs a path"));
+}
+
+#[test]
+fn values_are_canonical_and_type_sensitive() {
+    assert_eq!(parsed("a::N={3, 1, 2}").3, "{1, 2, 3}");
+    assert_eq!(parsed("a::N={'b': 1, 'a': 2}").3, "{'a': 2, 'b': 1}");
+    assert_eq!(parsed("a::N=30.0").3, "30.0");
+    assert_eq!(parsed("a::N=0x1F").3, "31");
+    let raw: Vec<Vec<u32>> = ["a::N={1, 2}", "a::N={2,1}", "a::N=1", "a::N=1.0"]
+        .iter()
+        .map(|s| c(s))
+        .collect();
+    // Duplicates collapse on the rendered claim, not on the raw text.
+    assert_eq!(claims::parse_claims(&raw).unwrap().len(), 3);
+}
+
+#[test]
+fn count_cap_is_read_before_any_entry() {
+    let mut raw = vec![c("bad\\")];
+    raw.extend((0..64).map(|i| c(&format!("p{i}"))));
+    match claims::parse_claims(&raw) {
+        Err(claims::ClaimError::Refused(m)) => {
+            assert!(m.starts_with(&c("claims capped at 64 entries (got 65)")))
+        }
+        other => panic!("{other:?}"),
+    }
+    // Sixty-four of one claim is within the cap and collapses to one.
+    assert_eq!(claims::parse_claims(&vec![c("p"); 64]).unwrap().len(), 1);
+}
+
+#[test]
+fn containers_are_unaddressable_and_block_every_spelling() {
+    let lit = |path: &str, v: &str| claims::Claim {
+        kind: claims::Kind::Literal,
+        rel_path: c(path),
+        name: c("N"),
+        value: c(v),
+    };
+    for v in ["()", "[]", "{}", "set()", "(1,)", "{1}", "not literal", ""] {
+        assert_eq!(claims::claim_is_addressable(&lit("a", v)), Ok(false), "{v}");
+    }
+    for v in ["1", "'[1]'", "b'x'", "None", "(1)", "-1"] {
+        assert_eq!(claims::claim_is_addressable(&lit("a", v)), Ok(true), "{v}");
+    }
+    let path = |p: &str| claims::Claim {
+        kind: claims::Kind::Path,
+        rel_path: c(p),
+        name: c(p),
+        value: vec![],
+    };
+    // A block by the raw path misses the decomposed spelling.
+    let cs = [path("caf\u{e9}"), lit("cafe\u{301}", "[1]"), path("cafe")];
+    assert_eq!(claims::governed_claim_paths(&cs), Ok(vec![c("cafe")]));
+}
+
+#[test]
+fn string_fragment_strips_one_paren_each_side() {
+    let sf = |s: &str| claims::string_fragment(&c(s)).unwrap().map(|v| v.len());
+    assert_eq!(sf("('a'),,"), Some(1));
+    // A tuple once the one `)` is gone.
+    assert_eq!(sf("'a',)"), None);
+    assert_eq!(sf("(('a'))"), None);
+    assert_eq!(sf("b'a'"), None);
+    // `rstrip(",")` drops every trailing comma.
+    assert_eq!(sf("'ab',,,"), Some(2));
+}
+
+#[test]
+fn anchors_floor_is_twelve_stripped_code_points() {
+    let an = |s: &str| claims::anchors_from_value(&c(s)).unwrap().len();
+    assert_eq!(an("'abcdefghijkl\\nabcdefghijk'"), 1);
+    assert_eq!(an("'  abcdefghijk  \\nx'"), 0);
+    assert_eq!(
+        an("'\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\\n'"),
+        1
+    );
+    assert_eq!(an("'aaaaaaaaaaaa\\naaaaaaaaaaaa'"), 1);
+    // No line feed: no anchors, however long.
+    assert_eq!(an("'abcdefghijklmnopqrstuvwxyz'"), 0);
+}
+
+#[test]
+fn load_claims_skips_non_str_and_keeps_repeats() {
+    use bettermemory_core::pyvalue::PyValue;
+    let raw = vec![
+        PyValue::Str(c("a")),
+        PyValue::None,
+        PyValue::Int("1".into()),
+        PyValue::Str(c("a::1x")),
+        PyValue::Path(c("b")),
+        PyValue::Str(c("a")),
+    ];
+    assert_eq!(claims::load_claims(&raw).unwrap().len(), 2);
+}
+
+#[test]
+fn a_missing_table_is_a_gap_not_a_refusal() {
+    use bettermemory_core::pysyntax::literal::LiteralError;
+    // The reference reads `'\N{BULLET}'` as a str; the port has no name
+    // table, so it must not call the value "not a Python literal".
+    assert_eq!(
+        claims::parse_claim(&c("a::N='\\N{BULLET}'")),
+        Err(claims::ClaimError::Gap(LiteralError::NeedsNameTable))
+    );
+    assert_eq!(
+        claims::string_fragment(&c("'\\N{BULLET}',")),
+        Err(LiteralError::NeedsNameTable)
+    );
+    // load_claims passes the gap on rather than dropping the entry: the
+    // reference keeps it as a literal claim.
+    assert_eq!(
+        claims::load_claims(&[bettermemory_core::pyvalue::PyValue::Str(c(
+            "p::N='\\N{BULLET}'"
+        ))]),
+        Err(LiteralError::NeedsNameTable)
+    );
+}

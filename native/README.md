@@ -76,7 +76,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
-| `claims` | unit 1 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path` | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl` |
+| `claims` | units 1 and 2 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`) | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl` |
 | `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`) | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested) | `store_restore_lock.json` (POSIX only) |
@@ -3669,7 +3669,8 @@ that Unicode too.
 | `golden_claims`: `claims_every_case` | `claims.jsonl` | i |
 | `golden_claims`: `claims_unicode_every_case` | `claims_unicode.jsonl` | ii (Unicode) |
 | `golden_claims`: `claims_python_every_case` | `claims_python.jsonl` | ii (Python) |
-| `claims_kills` (9), `claims_robustness` (10) | none | i |
+| `golden_claims`: `claims_literal_every_case` | `claims_literal.jsonl` | i |
+| `claims_kills` (20), `claims_robustness` (15) | none | i |
 | `golden_pysyntax`: `pysyntax_values` | `pysyntax.jsonl` | i |
 | `golden_pysyntax`: `pysyntax_every_case` | `pysyntax_python.jsonl` | ii (Python) |
 | `pysyntax_kills` (14), `pysyntax_robustness` (7) | none | i |
@@ -12779,18 +12780,18 @@ does not have yet, so the module is cut into units, leaves first.
 | `MAX_CLAIMS`, `MAX_CLAIM_LEN`, `COMMIT_MARK`, `MAX_SPELLINGS`, `INDETERMINATE_REASON_MARKER` | 137-145, 386, 598 | nothing | built (unit 1) |
 | `_DEF_RE`, `_ASSIGN_RE`, `_HUNK_RE`, `_MARK_HASH_RE`, `_IDENT_RE` | 153-169 | Unicode tables (`\w`, `\d`) | built (unit 1) |
 | `Claim`, `Claim.render` | 178-201 | nothing | built (unit 1) |
-| `_canonical_repr` | 204-231 | `repr` of literal values, set and dict order | unit 2 |
-| `parse_claim` | 234-303 | `ast.literal_eval`, `repr` | unit 2 |
+| `_canonical_repr` | 204-231 | `repr` of literal values, set and dict order | built (`pysyntax::literal::canonical_repr`) |
+| `parse_claim` | 234-303 | `ast.literal_eval`, `repr` | built (unit 2) |
 | `control_character`, `lone_surrogate` | 306-320 | nothing | built (unit 1) |
-| `parse_claims`, `load_claims` | 323-382 | `parse_claim` | unit 2 |
+| `parse_claims`, `load_claims` | 323-382 | `parse_claim` | built (unit 2) |
 | `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings` | 389-437 | Unicode tables (NFC, NFD) | built (unit 1) |
 | `claim_paths` | 440-445 | nothing | built (unit 1) |
-| `claim_is_addressable`, `governed_claim_paths` | 448-518 | `ast.literal_eval` | unit 2 |
+| `claim_is_addressable`, `governed_claim_paths` | 448-518 | `ast.literal_eval` | built (unit 2) |
 | `_resolve_claim_path`, `_occupancy`, `_is_regular_file` | 521-586 | the file system (`resolve`, `lstat`, `stat`), `path_missing` | unit 4 |
 | `claim_reason_is_indeterminate` | 601-604 | nothing | built (unit 1) |
 | `check_claim` | 607-715 | the file system, `ast.parse` of a module | unit 4 (and a Python parser) |
 | `_binding_token` | 718-733 | Unicode tables | built (unit 1) |
-| `_rhs_repr`, `string_fragment`, `anchors_from_value` | 736-803 | `ast.literal_eval`, `repr` | unit 2 |
+| `_rhs_repr`, `string_fragment`, `anchors_from_value` | 736-803 | `ast.literal_eval`, `repr` | built (unit 2) |
 | `_header_path` | 815-822 | nothing | built (unit 1) |
 | `_Headers` | 825-874 | nothing | unit 3 |
 | `hunk_lines` | 877-885 | Unicode tables, `int`'s digit limit | built (unit 1) |
@@ -12809,7 +12810,8 @@ module's top level, which is a unit of its own.
 
 ### Unit 1, built (`claims`)
 
-`src/claims.rs` (499 lines, no dependency added). Text is `&[u32]`, as in
+`src/claims/mod.rs` (499 lines when built as `src/claims.rs`; moved
+unchanged when unit 2 was added, no dependency added). Text is `&[u32]`, as in
 `unicode`, since a claim path may hold a lone surrogate.
 
 - `Claim { kind, rel_path, name, value }` with `Kind` (`path`, `symbol`,
@@ -12864,9 +12866,59 @@ Each pattern is a hand-written matcher; no `regex` crate is used.
   place in its run of ten (as `int` reads it).
 - `_MARK_HASH_RE` with `fullmatch`: exactly 40 or 64 of `[0-9a-f]`.
 
+### Unit 2, built (`claims::literal`)
+
+`src/claims/literal.rs` (343 lines, no dependency added), re-exported
+from `claims`. It reads values with `pysyntax::literal::literal_eval`
+and writes them with `pysyntax::literal::canonical_repr` (lane pylit),
+and quotes a text in a message with `pyvalue::repr_str`. Line ranges
+were confirmed against `claims.py` at 860b002d.
+
+- `parse_claim` (234-303): `str.strip()` is `claims::strip`, whose space
+  set is `unicode::is_space` (`str.isspace`, the set `str.strip()` uses);
+  after `!` it is `lstrip()` of the same set, once. `str.partition` is
+  taken at the first `::` and then the first `=`. The length cap counts
+  code points (`len`), read after the strip and before `!` is dropped.
+  Each message is the reference's text, em dash and backticks included;
+  the absence message quotes the whole stripped claim, the others the text
+  after `!`. Any failure of `literal_eval` or `_canonical_repr` (an int
+  past 4,300 digits made by a hex literal, too deep a nesting) is the
+  "is not a Python literal" refusal, as `except Exception` makes it.
+- `parse_claims` (323-365): the count cap is read before any entry; then
+  each entry in order, the first refusal ending the list; the control
+  character and lone surrogate rules on the path with `U+%04X`;
+  duplicates by `Claim.render` through a hash set, first kept.
+- `load_claims` (366-382) takes a `PyValue` slice: an entry that is not
+  `PyValue::Str` is skipped (`isinstance(entry, str)`), and a refused one;
+  repeats stay.
+- `claim_is_addressable` (448-503): every kind but `literal` is; a value
+  that does not read back is not; a container (tuple, list, set, dict) is
+  not. `literal_eval` never returns a `frozenset`.
+- `governed_claim_paths` (505-518): `claim_paths` less every path whose
+  `path_key` (NFC) an unaddressable claim holds, so one blocked spelling
+  blocks every other.
+- `rhs_repr` (`_rhs_repr`, 736-750), `string_fragment` (753-779) and
+  `anchors_from_value` (782-803, `_MIN_ANCHOR_CHARS` as
+  `MIN_ANCHOR_CHARS`, 12): `rstrip(",")` drops every trailing comma,
+  `removesuffix(")")` and `removeprefix("(")` one each; anchors are the
+  lines of a `str` value split at line feeds only, stripped, of at least
+  twelve code points, first spelling first (`dict` order).
+
+The pylex gaps. `literal_eval` answers `LiteralError::NeedsIdentTable`
+for a name past ASCII whose NFKC is `True`, `False`, `None` or `set`, and
+`LiteralError::NeedsNameTable` for a `\N{...}` escape, where the reference
+answers. Each function here returns that gap as its own error
+(`ClaimError::Gap` from `parse_claim` and `parse_claims`, the
+`LiteralError` from the others), never as the refusal or as `None`, so a
+caller can tell "the reference refuses" from "the port cannot say". The
+gaps close when the lexer gains the XID and name tables.
+
+No pattern of `claims.py` is read by this unit: it holds no `re` call,
+so nothing is added to the engine's inventory.
+
 ### Fixtures and tests
 
-`tests/contract/gen_claims.py`, three files:
+`tests/contract/gen_claims.py`, four files:
 
 - `claims.jsonl` (444 cases, not gated, class i): the values of
   `MAX_CLAIMS`, `MAX_CLAIM_LEN`, `MAX_SPELLINGS`, `COMMIT_MARK` and
@@ -12888,21 +12940,49 @@ Each pattern is a hand-written matcher; no `regex` crate is used.
   3.10.7, 3.9.14, 3.8.14 and 3.7.14 releases). Both generators set the
   limit to 4,300 while they run, so `PYTHONINTMAXSTRDIGITS` or
   `-X int_max_str_digits` does not change their bytes; the port
-  hardcodes 4,300.
+  hardcodes 4,300. Unit 2 adds 63 rows: `parse_claim`, `_rhs_repr`
+  and `claim_is_addressable` over complex arithmetic (`1+2j`, `-0j`,
+  `1e999j`, mixed real and complex sums, which `literal_eval` has read
+  differently across releases), a 1,018-digit int, nesting at and past
+  the tokenizer's 200 levels, a run of 500 signs, and `_rhs_repr` of
+  ints of 4,300 and 4,301 digits and of hex literals whose decimal text
+  meets the limit.
+- `claims_literal.jsonl` (360 rows, not gated, class i; unit 2): the
+  value of `_MIN_ANCHOR_CHARS`, then each function of unit 2 per branch
+  and message: empty and blank claims, 1,024 and 1,025 code points (ASCII,
+  two-byte, surrogate and CJK), every `!` form, `::` at each edge and
+  repeated, a backslash path, bad identifiers, `=` at each edge and
+  repeated, about a hundred literal and non-literal values, duplicates,
+  control and surrogate paths, the count cap at 64 and 65, non-`str`
+  entries, containers, `path_key` blocking, string fragments with
+  parentheses and trailing commas, multi-line values and the twelve code
+  point floor. Texts obey the same rule as `claims.jsonl` (`_stable`).
+  One sweep row pins every text of one to four characters over
+  `" !:=a1'\\(),\n"` (22,620 texts, `itertools.product` order) through
+  `parse_claim`, `string_fragment`, `_rhs_repr` and `anchors_from_value`
+  by count and SHA-256; the test makes the same texts.
 
 Tests: `golden_claims` (`claims_every_case`, `claims_unicode_every_case`,
-`claims_python_every_case`); `claims_kills` (9: the end anchor, Unicode
+`claims_python_every_case`, `claims_literal_every_case`); `claims_kills`
+(20; unit 1's 9: the end anchor, Unicode
 `\w` and `\d`, the walrus and comparison shapes, an operator after an
 annotation, `int("0")`, the digit limit counting leading zeros, the
 halves of a header path, `str.strip`'s spaces, the spelling cap);
-`claims_robustness` (10: annotations, identifiers, blanks, hunk digits,
+unit 2's 11: message bytes, code point length, the first-separator
+partitions, `lstrip` after `!`, canonical values and render dedupe, the
+count cap before any entry, containers and `path_key` blocking, one
+parenthesis each side of a fragment, the anchor floor, non-`str` entries,
+the name-table gap); `claims_robustness` (15; unit 1's 10: annotations, identifiers, blanks, hunk digits,
 header paths and a reason at 200,000 code points, linear in their
 length; `claim_paths` over 200,000 distinct paths and
 `patch_header_path` over 200,000 distinct headers, linear in their
 count; each linearity check holds the least times seen to 60 times
 (`timing`), so other work on the machine does not fail it; a path of
 10,000 components; the digit limit's edges; every seventh code point
-through every function).
+through every function; unit 2's 5: values 100,000 brackets, signs,
+quotes and digits deep without a panic, trailing commas, anchor lines and
+governed claims linear in their count, a full list of 1,024-code-point
+claims).
 
 ### Reference findings (reproduced and pinned)
 
@@ -12916,10 +12996,17 @@ through every function).
   that is not the file git changed. Pinned in `claims.jsonl`.
 - `_IDENT_RE` accepts one trailing line feed (`"a\n"`). `parse_claim`
   strips the name first, so no claim reaches it with one.
+- `string_fragment` removes one `)` before it removes the `(`, and only
+  after `rstrip(",")`: the line `'a',)` (a string with a trailing comma
+  closing a parenthesised group) is read as the tuple `('a',)` and gives
+  `None`, so a changed line of that shape is not matched against a
+  claimed value. `string_fragment("'a',)")` is `None` and
+  `string_fragment("'a'),")` is `'a'`. Pinned in `claims_literal.jsonl`.
 
 ### Left for later units
 
-Units 2 to 4 above. Nothing in unit 1 reads a file, a clock or git.
+Units 3 and 4 above (`_Headers`, the index and its scoring; the oracle
+`check_claim`). Nothing in units 1 and 2 reads a file, a clock or git.
 
 ## Python source as CPython reads it (`pysyntax`)
 

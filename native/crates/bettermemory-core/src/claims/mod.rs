@@ -1,11 +1,19 @@
 //! The leaves of `claims.py`: the claim record and its wire string, the
 //! path spellings, and the column-zero patterns the drift index reads a
-//! patch by. Nothing here reads the file system, the clock or git.
+//! patch by, and in [`literal`] the functions that read a value with
+//! `ast.literal_eval`. Nothing here reads the file system, the clock or git.
 //!
 //! Text is a slice of code points, as in [`crate::unicode`], since a Python
 //! `str` may hold a lone surrogate. Each `re` pattern of the reference is a
 //! hand-written matcher here; `\w` and `\d` are [`unicode::is_word`] and
 //! [`unicode::is_re_digit`], `str.strip()` is [`unicode::is_space`].
+
+pub mod literal;
+
+pub use literal::{
+    anchors_from_value, claim_is_addressable, governed_claim_paths, load_claims, parse_claim,
+    parse_claims, rhs_repr, string_fragment, ClaimError, MIN_ANCHOR_CHARS,
+};
 
 use crate::unicode::{self, Form};
 

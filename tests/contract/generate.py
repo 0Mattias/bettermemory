@@ -342,6 +342,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "claims": gen_claims.generate,
     "claims_unicode": gen_claims.generate_unicode,
     "claims_python": gen_claims.generate_python,
+    "claims_literal": gen_claims.generate_literal,
     "pysyntax": gen_pysyntax.generate_stable,
     "pysyntax_python": gen_pysyntax.generate,
     "pysyntax_literal": gen_pysyntax_literal.generate_stable,

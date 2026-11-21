@@ -154,8 +154,9 @@
 //!   text says, and the directories a check holds);
 //! - [`checkout_token`]: the checkout token, its first three units (the
 //!   text, the reads over the file-system trait, and the write);
-//! - [`claims`]: what a memory claims, its first unit (the claim record,
-//!   the path spellings and the patterns a patch is read by);
+//! - [`claims`]: what a memory claims, its first two units (the claim
+//!   record, the path spellings and the patterns a patch is read by; the
+//!   claim parser and the literal readers over [`pysyntax`]);
 //! - [`pysyntax`]: Python source as CPython 3.13.13 reads it, its first
 //!   two units: the eval-mode tokenizer `ast.literal_eval` meets, with
 //!   string and number literals read, and the literal reader with

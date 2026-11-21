@@ -1,11 +1,13 @@
-//! Every case of `claims.jsonl` (not gated), `claims_unicode.jsonl` (gated
-//! on the Unicode version) and `claims_python.jsonl` (gated on the Python
-//! release) against `claims`. The spelling of texts and outputs is the
+//! Every case of `claims.jsonl` and `claims_literal.jsonl` (not gated),
+//! `claims_unicode.jsonl` (gated on the Unicode version) and
+//! `claims_python.jsonl` (gated on the Python release) against `claims`. The spelling of texts and outputs is the
 //! generator's (`tests/contract/gen_claims.py`).
 
 mod common;
 
-use bettermemory_core::claims::{self, Binding, Claim, Kind};
+use bettermemory_core::claims::{self, Binding, Claim, ClaimError, Kind};
+use bettermemory_core::pysyntax::literal::LiteralError;
+use bettermemory_core::pyvalue::PyValue;
 use common::jsonl;
 use common::parity::Ledger;
 use serde_json::{json, Value};
@@ -142,7 +144,52 @@ fn answer(f: &str, a: &[Value]) -> Value {
                 "deleted": texts(&sorted(deleted)),
             })
         }
+        "parse_claim" => parsed(claims::parse_claim(&a0()).map(|c| claim_out(&c))),
+        "parse_claims" => {
+            let raw: Vec<Vec<u32>> = a[0].as_array().unwrap().iter().map(text).collect();
+            parsed(
+                claims::parse_claims(&raw)
+                    .map(|cs| Value::Array(cs.iter().map(claim_out).collect())),
+            )
+        }
+        "load_claims" => {
+            let raw: Vec<PyValue> = a[0]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| match e {
+                    Value::Null => PyValue::None,
+                    Value::Bool(b) => PyValue::Bool(*b),
+                    Value::Number(n) => PyValue::Int(n.to_string()),
+                    Value::Object(o) if o.contains_key("s") => PyValue::Str(text(&e["s"])),
+                    Value::Object(_) => PyValue::List(Vec::new()),
+                    other => panic!("no entry {other:?}"),
+                })
+                .collect();
+            match claims::load_claims(&raw) {
+                Ok(cs) => Value::Array(cs.iter().map(claim_out).collect()),
+                Err(gap) => json!({ "gap": format!("{gap:?}") }),
+            }
+        }
+        "claim_is_addressable" => {
+            gapped(claims::claim_is_addressable(&claim_in(a)).map(|b| json!(b)))
+        }
+        "governed_claim_paths" => {
+            let cs: Vec<Claim> = a[0]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| claim_in(c.as_array().unwrap()))
+                .collect();
+            gapped(claims::governed_claim_paths(&cs).map(|p| texts(&p)))
+        }
+        "rhs_repr" => gapped(claims::rhs_repr(&a0()).map(|o| o.map_or(Value::Null, |s| t(&s)))),
+        "string_fragment" => {
+            gapped(claims::string_fragment(&a0()).map(|o| o.map_or(Value::Null, |s| t(&s))))
+        }
+        "anchors_from_value" => gapped(claims::anchors_from_value(&a0()).map(|v| texts(&v))),
         "constant" => match a[0].as_str().unwrap() {
+            "MIN_ANCHOR_CHARS" => json!(claims::MIN_ANCHOR_CHARS),
             "MAX_CLAIMS" => json!(claims::MAX_CLAIMS),
             "MAX_CLAIM_LEN" => json!(claims::MAX_CLAIM_LEN),
             "MAX_SPELLINGS" => json!(claims::MAX_SPELLINGS),
@@ -154,6 +201,31 @@ fn answer(f: &str, a: &[Value]) -> Value {
     }
 }
 
+fn claim_out(c: &Claim) -> Value {
+    json!([c.kind.name(), t(&c.rel_path), t(&c.name), t(&c.value)])
+}
+
+fn claim_in(a: &[Value]) -> Claim {
+    Claim {
+        kind: kind(a[0].as_str().unwrap()),
+        rel_path: text(&a[1]),
+        name: text(&a[2]),
+        value: text(&a[3]),
+    }
+}
+
+fn parsed(r: Result<Value, ClaimError>) -> Value {
+    match r {
+        Ok(v) => v,
+        Err(ClaimError::Refused(m)) => json!({"raised": "ValueError", "m": t(&m)}),
+        Err(ClaimError::Gap(g)) => json!({ "gap": format!("{g:?}") }),
+    }
+}
+
+fn gapped(r: Result<Value, LiteralError>) -> Value {
+    r.unwrap_or_else(|g| json!({ "gap": format!("{g:?}") }))
+}
+
 fn claims_cps(s: &str) -> Vec<u32> {
     s.chars().map(u32::from).collect()
 }
@@ -163,6 +235,19 @@ fn rows_file(test: &str, name: &str) {
     let mut ledger = Ledger::new(test, name);
     for (i, row) in rows.iter().enumerate() {
         let f = row["f"].as_str().expect("f");
+        if f == "sweep" {
+            let (n, h) = sweep(
+                row["alphabet"].as_str().expect("alphabet"),
+                row["max"].as_u64().expect("max") as usize,
+            );
+            ledger.case(format!("{name}:{} sweep", i + 1), || {
+                assert_eq!(
+                    json!({"n": n, "h": h}),
+                    json!({"n": row["n"], "h": row["h"]})
+                );
+            });
+            continue;
+        }
         let got = answer(f, row["a"].as_array().expect("args"));
         ledger.case(format!("{name}:{} {f}", i + 1), || {
             assert_eq!(got, row["o"], "{f} {:?}", row["a"]);
@@ -174,6 +259,63 @@ fn rows_file(test: &str, name: &str) {
 #[test]
 fn claims_every_case() {
     rows_file("claims_every_case", "claims.jsonl");
+}
+
+#[test]
+fn claims_literal_every_case() {
+    rows_file("claims_literal_every_case", "claims_literal.jsonl");
+}
+
+fn opt_line(r: Result<Option<Vec<u32>>, LiteralError>) -> String {
+    match r.expect("no gap in the sweep") {
+        None => "-".into(),
+        Some(s) => format!("s{}", hexes(&s)),
+    }
+}
+
+/// The generator's `_sweep_line` over every text of one to `max` code
+/// points of `alphabet`, in `itertools.product` order: the count and the
+/// SHA-256 of the lines.
+fn sweep(alphabet: &str, max: usize) -> (usize, String) {
+    let alpha = claims_cps(alphabet);
+    let mut h = Sha256::new();
+    let mut n = 0;
+    for k in 1..=max {
+        let count = alpha.len().pow(k as u32);
+        for mut code in 0..count {
+            let mut input = vec![0u32; k];
+            for slot in input.iter_mut().rev() {
+                *slot = alpha[code % alpha.len()];
+                code /= alpha.len();
+            }
+            let pc = match claims::parse_claim(&input) {
+                Ok(c) => format!(
+                    "{}:{}:{}:{}",
+                    c.kind.name(),
+                    hexes(&c.rel_path),
+                    hexes(&c.name),
+                    hexes(&c.value)
+                ),
+                Err(ClaimError::Refused(m)) => format!("E{}", hexes(&m)),
+                Err(ClaimError::Gap(g)) => panic!("gap {g:?}"),
+            };
+            let an = claims::anchors_from_value(&input)
+                .expect("no gap")
+                .iter()
+                .map(|x| hexes(x))
+                .collect::<Vec<_>>()
+                .join(",");
+            let line = format!(
+                "{}|{pc}|{}|{}|{an}\n",
+                hexes(&input),
+                opt_line(claims::string_fragment(&input)),
+                opt_line(claims::rhs_repr(&input)),
+            );
+            h.update(line.as_bytes());
+            n += 1;
+        }
+    }
+    (n, common::hex(&h.finalize()))
 }
 
 #[test]

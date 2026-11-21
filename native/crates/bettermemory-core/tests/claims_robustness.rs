@@ -190,3 +190,86 @@ fn every_code_point_panics_nowhere() {
         let _ = claims::patch_header_path(t, t, &mut f, &mut d);
     }
 }
+
+// Unit 2: the claim parser and the literal readers.
+
+#[test]
+fn hostile_values_do_not_panic() {
+    for v in [
+        "[".repeat(100_000),
+        "(".repeat(100_000) + "1",
+        "-".repeat(100_000) + "1",
+        "'".repeat(100_001),
+        "1".repeat(100_000),
+        "0x".to_string() + &"f".repeat(100_000),
+        "{".repeat(50_000) + &"}".repeat(50_000),
+    ] {
+        let raw = c(&format!("p::N={v}"));
+        let _ = claims::parse_claim(&raw);
+        let _ = claims::rhs_repr(&c(&format!("N = {v}")));
+        let _ = claims::string_fragment(&c(&v));
+        let _ = claims::anchors_from_value(&c(&v));
+        let lit = claims::Claim {
+            kind: claims::Kind::Literal,
+            rel_path: c("p"),
+            name: c("N"),
+            value: c(&v),
+        };
+        let _ = claims::claim_is_addressable(&lit);
+    }
+}
+
+#[test]
+fn trailing_commas_are_linear() {
+    linear(
+        "string_fragment",
+        |n| c(&format!("'a'{}", ",".repeat(n))),
+        |t, _| {
+            assert_eq!(
+                claims::string_fragment(t).unwrap().map(|s| s.len()),
+                Some(1)
+            )
+        },
+    );
+}
+
+#[test]
+fn anchors_are_linear_in_lines() {
+    linear(
+        "anchors_from_value",
+        |n| c(&format!("'{}'", "abcdefghijklmnop\\n".repeat(n / 10))),
+        |t, _| assert_eq!(claims::anchors_from_value(t).unwrap().len(), 1),
+    );
+}
+
+#[test]
+fn governed_paths_are_linear_in_claims() {
+    linear(
+        "governed_claim_paths",
+        |n| -> Vec<claims::Claim> {
+            (0..n)
+                .map(|i| claims::Claim {
+                    kind: claims::Kind::Literal,
+                    rel_path: c(&format!("p{}", i / 2)),
+                    name: c("N"),
+                    value: c(if i % 4 == 0 { "[1]" } else { "1" }),
+                })
+                .collect()
+        },
+        |cs, n| assert_eq!(claims::governed_claim_paths(cs).unwrap().len(), n / 4),
+    );
+}
+
+#[test]
+fn a_full_list_of_longest_claims_is_read() {
+    let raw: Vec<Vec<u32>> = (0..claims::MAX_CLAIMS)
+        .map(|i| c(&format!("p{i:04}::N='{}'", "x".repeat(1024 - 11))))
+        .collect();
+    assert!(raw.iter().all(|r| r.len() == 1024));
+    let started = Instant::now();
+    assert_eq!(
+        claims::parse_claims(&raw).unwrap().len(),
+        claims::MAX_CLAIMS
+    );
+    assert!(started.elapsed() < Duration::from_secs(20));
+}
