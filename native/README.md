@@ -74,7 +74,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
 | `claims` | unit 1 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path` | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl` |
-| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred | `pysyntax.jsonl`, `pysyntax_python.jsonl` |
+| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`) | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested) | `store_restore_lock.json` (POSIX only) |
 | `durability` | unit 1 of `durability.py`: `canonical_marker`, `quoted_spans`, `in_quoted_span`, `TransientMatch`, `_snippet_around`, `_at_sentence_start`, `_is_titlecase_name` with `str.istitle`, `sentence_around` | `durability.jsonl`, `durability_unicode.jsonl` |
@@ -3193,6 +3193,9 @@ that Unicode too.
 | `golden_pysyntax`: `pysyntax_values` | `pysyntax.jsonl` | i |
 | `golden_pysyntax`: `pysyntax_every_case` | `pysyntax_python.jsonl` | ii (Python) |
 | `pysyntax_kills` (14), `pysyntax_robustness` (7) | none | i |
+| `golden_pysyntax_literal`: `pysyntax_literal_every_case` | `pysyntax_literal.jsonl` | i |
+| `golden_pysyntax_literal`: `pysyntax_literal_python_every_case` | `pysyntax_literal_python.jsonl` | ii (Python) |
+| `pysyntax_literal_kills` (14), `pysyntax_literal_robustness` (6) | none | i |
 | `golden_ulid`: `ulid_every_case`, `ulid_order_and_round_trip` | `ulid.jsonl` (the second none) | i |
 | `golden_githead`: `githead_every_case` (both flavours) | `githead.jsonl` | i |
 | `golden_githead`: `githead_posix_every_case` (unix) | `githead_posix.jsonl` | i; os elsewhere (`githead_not_posix`) |
@@ -12355,7 +12358,7 @@ none edits another's.
 | part | reproduces | needs from the machine | status |
 | --- | --- | --- | --- |
 | `lex` | the eval-mode tokenizer (`Parser/lexer/lexer.c`'s `tok_get_normal_mode`), the newline translation of `_PyTokenizer_FromString`, the string decoders (`_PyUnicode_DecodeUnicodeEscapeInternal`, `_PyBytes_DecodeEscape`) and the number readers (`parsenumber`, `int`'s 4,300-digit limit) | nothing | built (unit pylex) |
-| `literal` | the eval-mode parser over `lex`'s tokens and `literal_eval`'s evaluation | nothing | lane pylit |
+| `literal` | the eval-mode parser over `lex`'s tokens, `literal_eval`'s evaluation and `claims._canonical_repr` | nothing | built (unit pylit) |
 | `module_lex` | the module-mode reader for `ast.parse` at 672 | nothing | lane pymodlex |
 | the XID tables | whether a name past ASCII is an identifier | Unicode tables | lane pyident |
 | `\N{...}` | the Unicode name table | Unicode tables | unit pysyntax-names |
@@ -12451,9 +12454,89 @@ four kinds of literal, followed by nothing, `7` or `41` (7,104 texts),
 and 20,000 texts of one to seven characters of number syntax drawn by a
 fixed LCG. `pysyntax_kills` and `pysyntax_robustness` hold the rest.
 
+### The literal reader (`literal`)
+
+`literal_eval(text) -> Result<Literal, LiteralError>` reproduces CPython
+3.13.13's `ast.literal_eval` (`Lib/ast.py`: `_convert`, `_convert_num`,
+`_convert_signed_num`, the `set()` call and the complex `BinOp` rule)
+over `lex::literal_tokens`. `canonical_repr(&Literal)` reproduces
+`claims._canonical_repr` (`claims.py` 204-231). `Literal::is_container`
+and `Literal::as_str` serve the callers in `claims`.
+
+- Forms read: constants (str, bytes, int, float, complex, `True`,
+  `False`, `None`, `...`), adjacent strings of one kind joined (str next
+  to bytes is refused, as the parser refuses it), parentheses, tuples
+  (`(1,)`, `()`, a bare `1,` or `1, 2` at the top only), lists, non-empty
+  sets, dicts without `**`, the call `set()` (also `(set)()`, since
+  parentheses make no node), one sign on an int, float or complex
+  constant (`-(1)` too; never a bool, never a sign on a sign), and a
+  signed int or float plus or minus an unsigned complex constant. Every
+  other token sequence is one `LiteralError::Invalid`: a text that parses
+  to a non-literal (ValueError) and one that does not parse (SyntaxError)
+  are not told apart, since every caller catches `Exception`.
+  `NeedsIdentTable` and `NeedsNameTable` from `lex` pass through.
+- Arithmetic is 3.13's: `x + cj` is `complex(x, 0.0) + cj`, so the real
+  part is `x + 0.0` (`-0.0+0j` is `0j`) and the imaginary part `0.0 + c`
+  or `0.0 - c` (`0.0-0j` is `0j`); 3.14 changed mixed arithmetic, which
+  is why the fixture is gated on the release. An int operand is rounded
+  to a float correctly; past the float range it is refused
+  (OverflowError). A minus on a complex negates both parts (`-0j` is
+  `(-0-0j)`).
+- Sets and dicts: each member is reduced to a key by Python equality
+  (an integral number, bool, int, integral float or complex with a zero
+  imaginary part, by its exact decimal text; another float by its bits;
+  a complex by its parts with `-0.0` as `0.0`; str and bytes apart;
+  tuples by their members), so `1 == 1.0 == True == (1+0j)`, `0.0 ==
+  -0.0`, and a big int equals a float only when the float's exact value
+  is that int. A list, set or dict member or key is refused (TypeError).
+  A set keeps the first of equal members and a dict the first of equal
+  keys with the last value, as CPython's `set` and `dict` do. Hashing the
+  keys keeps a large set linear.
+- `canonical_repr`: `set()` for an empty set, sets and dict items sorted
+  by their canonical text (code point order, a dict's pairs as Python
+  tuples sort), a one-element tuple with its comma, and the scalars by
+  `repr`: `pyvalue::repr_str`, `float_repr::repr`, an int's decimal text
+  (ValueError past 4,300 digits, which only a radix literal reaches,
+  since `lex` refuses longer decimal literals), `bytes.__repr__` (`'`
+  unless the bytes hold `'` and no `"`, `\t \n \r`, `\xhh` outside
+  printable ASCII, backslash and the quote escaped) and CPython's
+  `complex_repr` (the `'r'` format without `.0`, the real part left out
+  only when it is +0.0, the imaginary part signed).
+- Depth: `lex` holds brackets to 200, and one sign and one binary `+`
+  or `-` are the most a literal holds per level (a second is refused
+  where it is read, without recursion), so the parser's, the
+  evaluation's and the canonical text's recursion is bounded by about
+  three frames per bracket. That early refusal, like the others the
+  reader makes (a `.` trailer, a bytes token after a str, the `set()`
+  trailer's closing bracket, a float key that is not finite), bounds
+  the work alone: the later steps refuse the same texts, so no answer
+  depends on it.
+
+No regular expression is involved: the reference is `Lib/ast.py` and the
+C parser.
+
+Fixtures: `tests/contract/gen_pysyntax_literal.py` writes
+`pysyntax_literal_python.jsonl`, gated on the Python release, with every
+text that holds an imaginary part and a `+` or `-` (3.14 changed mixed
+real and complex arithmetic; under another interpreter the generator
+writes its header alone), and `pysyntax_literal.jsonl`, not gated, with
+every other text, which 3.11 to 3.14 answer alike. It imports
+`claims._canonical_repr` from the reference. Each row holds a text and
+its canonical text, or null where `literal_eval` or `_canonical_repr`
+raises: every accepted form and its near misses, cross-type dedupe,
+signed zeros and complex signs, ints at the 4,300-digit limit, at the
+float range and past `i64`, bytes and str repr edges, and nesting to
+the bracket limit. A sweep row in each file pins 20,000 texts drawn by a
+fixed LCG by count and SHA-256: from 25 pieces in the gated file, from
+the 24 without `1j` in the other.
+`golden_pysyntax_literal` checks every row;
+`pysyntax_literal_kills` and `pysyntax_literal_robustness` (a 100,000
+element list and a 50,000 member set within ten times the time of a
+tenth of the input) hold the rest.
+
 ### Left for later units
 
-`literal` (lane pylit), `module_lex` (lane pymodlex), the XID tables
+`module_lex` (lane pymodlex), the XID tables
 (lane pyident) and the name table of `\N{...}` (unit pysyntax-names),
 which `lex` answers with `NeedsIdentTable` and `NeedsNameTable` until
 they are built.
@@ -14613,9 +14696,8 @@ What the reference has and this build does not, by area:
   Membership's writes, and of the caller's resolution its file roots
   and workspace declaration (`identity` resolves the rest; its
   admission is `store::caller`).
-- Each hit's signals and drift report: `claims.py` past its leaves (the
-  literal reader past its eval-mode tokenizer `pysyntax::lex`, the drift
-  index, the declare-time oracle),
+- Each hit's signals and drift report: `claims.py` past its leaves and
+  its literal reader (the drift index, the declare-time oracle),
   `verify_candidates.py` past the validation of one candidate, and
   `verify.py`. The history readers of `origin_history.py` (its leaves
   and memo are built).

@@ -105,6 +105,7 @@ from . import (
     gen_membership_lines,
     gen_claims,
     gen_pysyntax,
+    gen_pysyntax_literal,
     gen_models,
     gen_origin_history,
     gen_restore_lock,
@@ -324,6 +325,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "claims_python": gen_claims.generate_python,
     "pysyntax": gen_pysyntax.generate_stable,
     "pysyntax_python": gen_pysyntax.generate,
+    "pysyntax_literal": gen_pysyntax_literal.generate_stable,
+    "pysyntax_literal_python": gen_pysyntax_literal.generate,
     "gitfile_leaves": gen_gitfile_leaves.generate,
     "gitfile_leaves_posix": gen_gitfile_leaves.generate_posix,
     "store_provenance": gen_store_provenance.generate,
@@ -467,6 +470,12 @@ PYTHON_VERSION = "3.13.13"
 #: release's messages; under another interpreter the generator writes its
 #: header alone. Its sibling ``pysyntax`` holds the values alone, which
 #: 3.11 to 3.14 answer alike, and is not gated (`gen_pysyntax`).
+#: ``pysyntax_literal_python`` holds the texts of mixed real and complex
+#: arithmetic, whose values `ast.literal_eval` of 3.14 changed, as 3.13.13
+#: answers them; under another interpreter the generator writes its
+#: header alone. Its sibling ``pysyntax_literal`` holds every other text,
+#: which 3.11 to 3.14 answer alike, and is not gated
+#: (`gen_pysyntax_literal`).
 #: ``location_stamps_platform`` holds `os.major` and `os.minor` of NODEV
 #: (-1) and of numbers past ``dev_t``. 3.11 truncates a number macOS's
 #: 32-bit ``dev_t`` cannot hold, where 3.12.13 and 3.13 raise; 3.11 and
@@ -514,6 +523,7 @@ PYTHON_GATED = frozenset(
         "origin_remote_python",
         "claims_python",
         "pysyntax_python",
+        "pysyntax_literal_python",
         "capture_vocabulary_python",
         "fs_realpath_python",
         "fs_realpath_strict_python",

@@ -140,8 +140,9 @@
 //! - [`claims`]: what a memory claims, its first unit (the claim record,
 //!   the path spellings and the patterns a patch is read by);
 //! - [`pysyntax`]: Python source as CPython 3.13.13 reads it, its first
-//!   unit: the eval-mode tokenizer `ast.literal_eval` meets, with string
-//!   and number literals read;
+//!   two units: the eval-mode tokenizer `ast.literal_eval` meets, with
+//!   string and number literals read, and the literal reader with
+//!   `claims._canonical_repr`;
 //! - [`gitfile_rule`]: the rule a `.git` entry is followed by, whole on
 //!   POSIX: from a `gitdir:` file's bytes to the judge of an entry and the
 //!   walk git's discovery makes.
