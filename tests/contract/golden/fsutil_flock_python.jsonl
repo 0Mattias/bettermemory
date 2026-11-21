@@ -1,0 +1,61 @@
+{"cases":60,"k":"header"}
+{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":".lock"}
+{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":".bettermemory.lock"}
+{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":""}
+{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":"."}
+{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":"lock"}
+{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":".."}
+{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":"a/b"}
+{"k":"p","o":["ValueError","PosixPath('/') has an empty name"],"path":"/","sfx":".\u00e9"}
+{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":".lock"}
+{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":".bettermemory.lock"}
+{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":""}
+{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":"."}
+{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":"lock"}
+{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":".."}
+{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":"a/b"}
+{"k":"p","o":["ValueError","PosixPath('.') has an empty name"],"path":".","sfx":".\u00e9"}
+{"k":"p","o":["ValueError","Invalid suffix '.'"],"path":"x","sfx":"."}
+{"k":"p","o":["ValueError","Invalid suffix 'lock'"],"path":"x","sfx":"lock"}
+{"k":"p","o":"x..","path":"x","sfx":".."}
+{"k":"p","o":["ValueError","Invalid suffix 'a/b'"],"path":"x","sfx":"a/b"}
+{"k":"p","o":"x.txt.","path":"x.txt","sfx":"."}
+{"k":"p","o":"x.txt..","path":"x.txt","sfx":".."}
+{"k":"p","o":["ValueError","Invalid name 'x.txta/b'"],"path":"x.txt","sfx":"a/b"}
+{"k":"p","o":"d/x.json.","path":"d/x.json","sfx":"."}
+{"k":"p","o":"d/x.json..","path":"d/x.json","sfx":".."}
+{"k":"p","o":["ValueError","Invalid name 'x.jsona/b'"],"path":"d/x.json","sfx":"a/b"}
+{"k":"p","o":"/r/d/x.tar.gz.","path":"/r/d/x.tar.gz","sfx":"."}
+{"k":"p","o":"/r/d/x.tar.gz..","path":"/r/d/x.tar.gz","sfx":".."}
+{"k":"p","o":["ValueError","Invalid name 'x.tar.gza/b'"],"path":"/r/d/x.tar.gz","sfx":"a/b"}
+{"k":"p","o":["ValueError","Invalid suffix '.'"],"path":".hidden","sfx":"."}
+{"k":"p","o":["ValueError","Invalid suffix 'lock'"],"path":".hidden","sfx":"lock"}
+{"k":"p","o":".hidden..","path":".hidden","sfx":".."}
+{"k":"p","o":["ValueError","Invalid suffix 'a/b'"],"path":".hidden","sfx":"a/b"}
+{"k":"p","o":"a..lock","path":"a.","sfx":".lock"}
+{"k":"p","o":"a..bettermemory.lock","path":"a.","sfx":".bettermemory.lock"}
+{"k":"p","o":"a.","path":"a.","sfx":""}
+{"k":"p","o":["ValueError","Invalid suffix '.'"],"path":"a.","sfx":"."}
+{"k":"p","o":["ValueError","Invalid suffix 'lock'"],"path":"a.","sfx":"lock"}
+{"k":"p","o":"a...","path":"a.","sfx":".."}
+{"k":"p","o":["ValueError","Invalid suffix 'a/b'"],"path":"a.","sfx":"a/b"}
+{"k":"p","o":"a..\u00e9","path":"a.","sfx":".\u00e9"}
+{"k":"p","o":"a..b.","path":"a..b","sfx":"."}
+{"k":"p","o":"a..b..","path":"a..b","sfx":".."}
+{"k":"p","o":["ValueError","Invalid name 'a..ba/b'"],"path":"a..b","sfx":"a/b"}
+{"k":"p","o":"...lock","path":"..","sfx":".lock"}
+{"k":"p","o":"...bettermemory.lock","path":"..","sfx":".bettermemory.lock"}
+{"k":"p","o":"..","path":"..","sfx":""}
+{"k":"p","o":["ValueError","Invalid suffix '.'"],"path":"..","sfx":"."}
+{"k":"p","o":["ValueError","Invalid suffix 'lock'"],"path":"..","sfx":"lock"}
+{"k":"p","o":"....","path":"..","sfx":".."}
+{"k":"p","o":["ValueError","Invalid suffix 'a/b'"],"path":"..","sfx":"a/b"}
+{"k":"p","o":"...\u00e9","path":"..","sfx":".\u00e9"}
+{"k":"p","o":"d/...lock","path":"d/..","sfx":".lock"}
+{"k":"p","o":"d/...bettermemory.lock","path":"d/..","sfx":".bettermemory.lock"}
+{"k":"p","o":"d/..","path":"d/..","sfx":""}
+{"k":"p","o":["ValueError","Invalid suffix '.'"],"path":"d/..","sfx":"."}
+{"k":"p","o":["ValueError","Invalid suffix 'lock'"],"path":"d/..","sfx":"lock"}
+{"k":"p","o":"d/....","path":"d/..","sfx":".."}
+{"k":"p","o":["ValueError","Invalid suffix 'a/b'"],"path":"d/..","sfx":"a/b"}
+{"k":"p","o":"d/...\u00e9","path":"d/..","sfx":".\u00e9"}

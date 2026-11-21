@@ -292,6 +292,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // overflow of `max_bytes + 1`, in the interpreter's words
         // (`gen_fsutil`).
         "fsutil_python.jsonl" => &[Python],
+        // `pathlib`'s refusals of a lock path, in the release's words, and
+        // the names and suffixes 3.14 reads differently (`gen_fsutil`).
+        "fsutil_flock_python.jsonl" => &[Python],
         // The probe of a link loop (`gen_location_probe`), as above.
         "location_probe_python.jsonl" => &[Python],
         // Every errno number and the C library's text for it, both the

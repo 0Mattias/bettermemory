@@ -119,8 +119,9 @@
 //!   the delta chain over a file handle; the file reads, the object format
 //!   and the alternates walk; the reader's object questions);
 //! - [`fsdata`]: the file system as the config readers ask it, as data;
-//! - [`fsutil`]: `_fsutil.py`, its first unit (`unlink_retrying` with
-//!   its Windows retry, `bounded_stream_read`);
+//! - [`fsutil`]: `_fsutil.py`, its first two units (`unlink_retrying` with
+//!   its Windows retry, `bounded_stream_read`, `flock_excl` and its
+//!   Windows branch `_flock_windows`);
 //! - [`verify_status`] and [`attribution`]: a memory's verification
 //!   staleness, and phrase-match attribution of memories to a reply;
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and

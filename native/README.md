@@ -59,7 +59,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_gitfiles` | units 1 to 3 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`), the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) and the config facts (`facts`: `_facts_of`, `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies`, `_config_entries`, `_config_variable_names`, `_hold_directory`, `directories_held`, `_global_attributes_path`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl`, `origin_gitfiles_facts.jsonl`, `origin_gitfiles_facts_posix.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs`; unit githead-1, `githead::discovery`: `stamp`, `find_gitdir`, `gitdir_at`, `locate`, `probed`, `across_filesystems`, `discovery_moved`, `_entry_above`, `_located` and their helpers over `fsdata::Fs`, membership's `Rule`, an `Env` and the owners (`Owners`); unit githead-2, `githead::signature`: `entry_above`, `_stops_at`, `_would_be_git_directory`, `_Undetermined`, `_ref_stamps`, `signature`, and `CtxRefs`, a `RefFs` over a `gitdir::Ctx` | `githead.jsonl`, `githead_posix.jsonl`, `githead_discovery.jsonl`, `githead_signature.jsonl` |
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
-| `fsutil` | unit 1 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads | `fsutil.jsonl`, `fsutil_python.jsonl` |
+| `fsutil` | units 1 and 2 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads; `flock_excl` (`lock_path`, a guard held until dropped) and its Windows branch `_flock_windows` over an `Msvcrt` trait, with `FLOCK_TIMEOUT_SECONDS` and the process-wide `_FLOCK_WARNED` | `fsutil.jsonl`, `fsutil_python.jsonl`, `fsutil_flock.jsonl`, `fsutil_flock_python.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`); unit 4, `gitobjects::files::reader`: `ObjectReader`'s `has`, `has_many`, `name_length`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `_raw`, `_places`, `_object`, `_take_loose`, `_loose`, `_packed` | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl`, `gitobjects_reader.jsonl`, `gitobjects_reader_zlib.jsonl`, `gitobjects_reader_posix.jsonl` |
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text`; its write (`checkout_token::write`): `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_fs_now`, `_sweep`, `_place`, `_after_race`, `_failed`, `_unlink_quietly`, `TokenWrite` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only), `checkout_token_write.jsonl`, `checkout_token_write_posix.jsonl` (POSIX only) |
@@ -14262,10 +14262,10 @@ constants, not a walk.
   - R and X swapped (`MemFs` and the sys mapping): both `fs_access`
     golden tests.
 
-## Removal with retry and the capped stream read (`_fsutil.py`, unit 1)
+## Removal with retry, the capped stream read and the sidecar lock (`_fsutil.py`, units 1 and 2)
 
-`src/fsutil.rs` holds the first unit of `_fsutil.py`. The rest of that
-module already lives in `store`: `ensure_owner_only_dir`, `fsync`,
+`src/fsutil.rs` holds the first two units of `_fsutil.py`. The rest of
+that module already lives in `store`: `ensure_owner_only_dir`, `fsync`,
 `atomic_write_bytes` and `replace_atomic` in `store/create.rs`,
 `store/open.rs` and `store/write.rs`, and `flock_excl`'s POSIX lock in
 `store/write.rs` (`open_lock` and its callers). This unit moves none of
@@ -14276,7 +14276,9 @@ them.
 | `_REPLACE_ATTEMPTS`, `_REPLACE_BACKOFF_S` | 329-330 | nothing | built (`REPLACE_ATTEMPTS`, `REPLACE_BACKOFF_S`) |
 | `unlink_retrying` | 386-417 | `os.unlink`, `time.sleep`, `sys.platform` | built |
 | `bounded_stream_read` | 673-688 | a binary stream | built |
-| `_flock_windows`, a native `flock_excl` | | `msvcrt.locking` | unit `_fsutil-2` |
+| `_FLOCK_WARNED`, `FLOCK_TIMEOUT_SECONDS` | 467, 473 | nothing | built (`FLOCK_WARNED`, `FLOCK_TIMEOUT_SECONDS`) |
+| `flock_excl` | 477-572 | `mkdir`, `os.open`, `fcntl.flock`, `sys.platform` | built (unit `_fsutil-2`) |
+| `_flock_windows` | 575-670 | `msvcrt.locking`, `os.open`, `os.close`, `time.monotonic`, `time.sleep`, a logger | built (unit `_fsutil-2`) |
 | `ensure_owner_only_dir`, `fsync`, `atomic_write_bytes`, `replace_atomic` | | | in `store` |
 
 `unlink_retrying_by(remover, windows, still)` is the reference's loop
@@ -14342,6 +14344,114 @@ unlinks, pauses and questions; the Windows code table; short reads; the
 machine's unlink of a missing file), `fsutil_robustness.rs` (the integer
 bounds, an endless stream, linear growth, a remover that always fails).
 No regular expression is involved.
+
+### Unit 2: `flock_excl` and `_flock_windows`
+
+Read at 00f3310b, lines as in the table above.
+
+`lock_path(path, lock_suffix, windows)` is `path.with_suffix(path.suffix +
+lock_suffix)` as CPython 3.13's pathlib answers it. A stem and its suffix
+put back together are the name, so the lock path is the last component
+with `lock_suffix` appended (`d/x.tar.gz.lock`, `a..lock` for `a.`,
+`x.txtlock` for `x.txt` and `lock`, `d/...lock` for `d/..`). It is
+refused, with the release's `ValueError` text, where the path has no name
+(`/`, `.`: `PosixPath('/') has an empty name`, `WindowsPath` on Windows),
+where a name without a suffix (`x`, `.hidden`, `a.`, `..`) meets a
+`lock_suffix` that is neither empty nor `.` followed by more (`Invalid
+suffix 'lock'`), and where the new name holds a separator (`/`, and `\`
+too where `windows`: `Invalid name 'x.txta/b'`). The path is spelled as
+pathlib spells it: every `.` component dropped (`./b` gives `b.lock`, an
+empty path is shown as `.`) and, on POSIX, a leading `//` of exactly two
+slashes kept (`//x.lock`, `PosixPath('//') has an empty name`; three or
+more are one). The text in a message is the `str` Python holds:
+`surrogateescape` on POSIX (`Invalid name '\udcff.t.a/b'`), the UTF-16
+units on Windows, shown by `pyvalue::repr_str`. Windows path parsing beyond the separators (drives,
+UNC prefixes) is std's, not `ntpath`'s.
+
+`flock_windows_by(lock_path, msvcrt, timeout, warned, warn)` is
+`_flock_windows` over an `Msvcrt` (the open, `locking` of one byte with
+`LK_NBLCK` and `LK_UNLCK`, the close, `time.monotonic` and `time.sleep`;
+`None` is the module that does not import). The import's failure and the
+open's failure each yield unlocked and warn through `warn` only when
+`warned` (`_FLOCK_WARNED`) was clear, so the two fallbacks share one
+warning per process. Otherwise the deadline is the clock plus `timeout`;
+each failed try reads the clock again, and at or past the deadline the
+file is closed (not unlocked) and `FlockTimeout` carries
+`flock_excl: could not acquire {lock_path} within {timeout:.1f}s`
+(Rust's `{:.1}` rounds the exact binary value half to even, as Python's
+`.1f` does: 0.25 gives 0.2, 1.25 gives 1.2, 0.35 gives 0.3); else a
+pause of 0.005 s doubling to a cap of 0.1 s and another try. The
+returned `WindowsHold` releases on drop: the unlock's failure ignored,
+then the close's.
+
+`flock_excl(path, lock_suffix)` is the machine's: the parent made
+(`create_dir_all`, before the name is checked, as the reference's
+`mkdir` runs first), then the lock path. On POSIX the file is opened
+read-write, created 0600 and never truncated, and held with std's
+`File::lock` (`flock(LOCK_EX)`, blocking with no deadline, as the
+reference), taken again after EINTR as `fcntl.flock` does under PEP 475
+(std returns `Interrupted`; the retry is `lock_retrying_eintr`, tested over
+a scripted lock in `fsutil_flock_kills.rs`); the
+`FlockGuard` unlocks (the reference's `LOCK_UN`) then closes on drop and
+the file is kept. Closing alone releases the lock as well, so no test
+tells the explicit unlock from its absence. On Windows it is `flock_windows_by` over `StdMsvcrt` with
+`FLOCK_TIMEOUT_SECONDS`, the process-wide `FLOCK_WARNED` and a warning
+recorded for `flock_warning()` (no logging crate: the caller reads it).
+`StdMsvcrt` locks with std's `File::try_lock`, which on Windows is
+`LockFileEx` over the whole range and so overlaps the reference's byte 0
+in both directions; no one-byte call was added to `bettermemory-sys`.
+`fsutil_flock_robustness.rs` holds the Windows-only test of that: a
+second process taking byte 0 with `LockFile(h, 0, 0, 1, 0)` (what
+`msvcrt.locking(fd, LK_NBLCK, 1)` does at a fresh file's position 0)
+refuses the native lock, and the native lock held by a second process
+refuses byte 0. It runs in Windows CI only. That `LockFile` declaration
+and its one call are the only `unsafe` in the core crate's files: an
+integration test is outside the library's `#![forbid(unsafe_code)]`, and
+the call stays in the test rather than adding a one-byte lock to
+`bettermemory-sys` that no product code uses.
+
+The store's own lock (`open_lock` in `store/write.rs`, `create.rs`,
+`open.rs`) is unchanged. `log.py`'s port (unit log-1 and later) takes its
+locks through `fsutil::flock_excl`, and a later unit moves `store` onto
+it.
+
+Reference findings (reproduced, not corrected):
+
+- The sidecar is documented as `<path><lock_suffix>`, but the name goes
+  through `with_suffix`, so a `lock_suffix` without a leading dot on a
+  path without a suffix raises `ValueError` (`flock_excl(Path("x"),
+  lock_suffix="lock")`), and on a path with one it is glued to it
+  (`x.txtlock`). The `mkdir` of the parent has already happened.
+- `_FLOCK_WARNED` is one flag for both fallbacks: after the warning for
+  a missing `msvcrt`, a lock file that cannot be opened is silent
+  (`gen_fsutil`'s rows with both fallbacks in turn).
+- With a clock that reads infinity and an infinite timeout of the
+  opposite sign the deadline is NaN, no reading passes it, and the loop
+  never ends; the port loops as well. Not reachable with the constant
+  30.0 and a finite clock.
+
+Fixtures (`gen_fsutil.py`): `fsutil_flock.jsonl` (not gated, 59 rows,
+13 KB) drives `_flock_windows` on any host with `msvcrt` stubbed in
+`sys.modules` (absent, or `locking` failing k times or always),
+`os.open` and `os.close` scripted to fail, `time.monotonic` a scripted
+line and `time.sleep` recorded, `FLOCK_TIMEOUT_SECONDS` patched, several
+calls in turn sharing `_FLOCK_WARNED`; each call's events (open, clock
+reads, lock and unlock with their byte counts, pauses, the body, close),
+warnings and outcome; and `flock_excl`'s lock path for eleven paths and
+eight suffixes where every release agrees. `fsutil_flock_python.jsonl`
+(gated on the Python release, 60 rows) holds the refused lock paths in
+the release's words, and every row of a name ending in a dot or a suffix
+`.` or `..`: CPython 3.14 reads `a.` as having the suffix `.` and takes
+`.` as a suffix, so `flock_excl(Path("a."), lock_suffix="lock")` is
+`a.lock` there and `ValueError` under 3.13, which the port follows. Tests: `golden_fsutil_flock.rs`,
+`fsutil_flock_kills.rs` (the deadline reached exactly, the pause's cap,
+one warning for both fallbacks, close without unlock on a timeout, close
+after a failed unlock, the appended name, the machine's lock held, released
+and kept, 0600, the parent made before a refused name),
+`fsutil_flock_robustness.rs` (a second process holding the lock, the
+Windows byte-0 interop, 100,000 retries and linear growth, infinite
+timeouts, 1 MiB names and suffixes, a 100,000-deep path, a name the
+system refuses). No regular expression is involved.
 
 ## Chunked runs
 

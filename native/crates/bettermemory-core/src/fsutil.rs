@@ -1,22 +1,29 @@
-//! `_fsutil.py`, its first unit: `unlink_retrying` with its Windows retry
-//! budget (`_REPLACE_ATTEMPTS`, `_REPLACE_BACKOFF_S`), and
-//! `bounded_stream_read`.
+//! `_fsutil.py`, its first two units: `unlink_retrying` with its Windows
+//! retry budget (`_REPLACE_ATTEMPTS`, `_REPLACE_BACKOFF_S`),
+//! `bounded_stream_read`, and `flock_excl` with its Windows branch
+//! `_flock_windows` (`FLOCK_TIMEOUT_SECONDS`, `_FLOCK_WARNED`).
 //!
 //! The rest of `_fsutil.py` already lives elsewhere and stays there:
 //! `ensure_owner_only_dir`, `fsync`, `atomic_write_bytes` and
 //! `replace_atomic` in `store/create.rs`, `store/open.rs` and
-//! `store/write.rs`; `flock_excl`'s POSIX lock in `store/write.rs`
-//! (`open_lock` and its callers). `_flock_windows` and a native
-//! `flock_excl` are the next unit.
+//! `store/write.rs`. The store's own lock (`open_lock` in
+//! `store/write.rs`) is the same `flock` and is moved onto
+//! [`flock_excl`] by a later unit.
+//!
+//! The Windows branch runs over an [`Msvcrt`] (the open, the one-byte
+//! lock, the close, the clock and the pause) so it runs anywhere.
 //!
 //! The retry runs over a [`Remover`] (the unlink, the class of its error
 //! and the pause as one small trait) with the platform an argument, so its
 //! Windows branch runs anywhere; [`unlink_retrying`] is the machine's.
 
 use std::io::{ErrorKind, Read};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use crate::fsdata::{Numbered, OsError, PyErr};
+use crate::toml::py_repr_str;
 
 /// `_REPLACE_ATTEMPTS` (`_fsutil.py` 329).
 pub const REPLACE_ATTEMPTS: u32 = 5;
@@ -273,4 +280,378 @@ pub fn bounded_stream_read<R: Read + ?Sized>(
         return Err(StreamReadError::OverCap(max_bytes));
     }
     Ok(raw)
+}
+
+/// `FLOCK_TIMEOUT_SECONDS` (473): how long the Windows branch of
+/// [`flock_excl`] waits for a contended lock.
+pub const FLOCK_TIMEOUT_SECONDS: f64 = 30.0;
+
+/// `_FLOCK_WARNED` (467): set once the fallback warning has been given.
+pub static FLOCK_WARNED: AtomicBool = AtomicBool::new(false);
+/// The warning given in this process, for a caller to read.
+static FLOCK_WARNING: Mutex<Option<FlockWarning>> = Mutex::new(None);
+
+/// The one-shot warning of `_flock_windows`'s unlocked fallback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlockWarning {
+    /// `import msvcrt` failed.
+    MsvcrtUnavailable,
+    /// `os.open` of the lock file failed; the text is `str(lock_path)`.
+    CannotOpen(String),
+}
+
+impl FlockWarning {
+    /// The logged text, `%s` filled in.
+    pub fn message(&self) -> String {
+        match self {
+            FlockWarning::MsvcrtUnavailable => "flock_excl: msvcrt unavailable on this Windows \
+                 interpreter; cross-process locking is disabled. Concurrent writers may corrupt \
+                 files. Falling back to in-process-only yield."
+                .to_owned(),
+            FlockWarning::CannotOpen(path) => format!(
+                "flock_excl: cannot open lockfile {path} on Windows; cross-process locking is \
+                 disabled. Concurrent writers may corrupt files."
+            ),
+        }
+    }
+}
+
+/// The warning this process gave, if any: the native form of
+/// `logger.warning`, given at most once per process.
+pub fn flock_warning() -> Option<FlockWarning> {
+    FLOCK_WARNING.lock().map_or(None, |w| w.clone())
+}
+
+/// What `_flock_windows` asks of the machine: `os.open`, `msvcrt.locking`
+/// of one byte, `os.close`, `time.monotonic` and `time.sleep`. A `false`
+/// or `None` answer is the `OSError` the reference catches.
+pub trait Msvcrt {
+    type Fd;
+    /// `os.open(str(lock_path), O_CREAT | O_RDWR)`.
+    fn open(&mut self, lock_path: &Path) -> Option<Self::Fd>;
+    /// `msvcrt.locking(fd, LK_NBLCK, 1)`.
+    fn lock(&mut self, fd: &Self::Fd) -> bool;
+    /// `msvcrt.locking(fd, LK_UNLCK, 1)`.
+    fn unlock(&mut self, fd: &Self::Fd) -> bool;
+    /// `os.close(fd)`.
+    fn close(&mut self, fd: Self::Fd) -> bool;
+    /// `time.monotonic()`.
+    fn monotonic(&mut self) -> f64;
+    /// `time.sleep(seconds)`.
+    fn sleep(&mut self, seconds: f64);
+}
+
+/// `TimeoutError` of the Windows branch; the text is `str(exc)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlockTimeout(pub String);
+
+/// `_flock_windows`'s hold: dropping it releases the byte (an error
+/// ignored) and closes the file (an error ignored). Without a file the
+/// hold is the unlocked fallback.
+pub struct WindowsHold<'a, M: Msvcrt> {
+    msvcrt: Option<&'a mut M>,
+    fd: Option<M::Fd>,
+}
+
+impl<M: Msvcrt> WindowsHold<'_, M> {
+    /// Whether the byte is held (false: the unlocked fallback).
+    pub fn locked(&self) -> bool {
+        self.fd.is_some()
+    }
+}
+
+impl<M: Msvcrt> Drop for WindowsHold<'_, M> {
+    fn drop(&mut self) {
+        if let (Some(m), Some(fd)) = (self.msvcrt.take(), self.fd.take()) {
+            let _ = m.unlock(&fd);
+            let _ = m.close(fd);
+        }
+    }
+}
+
+/// `{value:.1f}`: the exact binary value rounded half to even.
+fn fixed1(value: f64) -> String {
+    format!("{value:.1}")
+}
+
+fn warn_once(warned: &AtomicBool, warning: FlockWarning, warn: &mut dyn FnMut(FlockWarning)) {
+    if !warned.swap(true, Ordering::SeqCst) {
+        warn(warning);
+    }
+}
+
+/// `_flock_windows(lock_path)` (575-670) over `msvcrt` (`None`: the
+/// module does not import), with `FLOCK_TIMEOUT_SECONDS` as `timeout`,
+/// `_FLOCK_WARNED` as `warned` and the logger as `warn`. Either fallback
+/// warns once and holds nothing. Otherwise one byte is tried, then after
+/// each failure the clock is read: at or past the deadline the file is
+/// closed and `TimeoutError` returned, else a pause of 0.005 s doubling
+/// up to 0.1 s and another try.
+pub fn flock_windows_by<'a, M: Msvcrt>(
+    lock_path: &Path,
+    msvcrt: Option<&'a mut M>,
+    timeout: f64,
+    warned: &AtomicBool,
+    warn: &mut dyn FnMut(FlockWarning),
+) -> Result<WindowsHold<'a, M>, FlockTimeout> {
+    let Some(m) = msvcrt else {
+        warn_once(warned, FlockWarning::MsvcrtUnavailable, warn);
+        return Ok(WindowsHold {
+            msvcrt: None,
+            fd: None,
+        });
+    };
+    let Some(fd) = m.open(lock_path) else {
+        let shown = lock_path.display().to_string();
+        warn_once(warned, FlockWarning::CannotOpen(shown), warn);
+        return Ok(WindowsHold {
+            msvcrt: None,
+            fd: None,
+        });
+    };
+    let deadline = m.monotonic() + timeout;
+    let mut backoff = 0.005_f64;
+    loop {
+        if m.lock(&fd) {
+            return Ok(WindowsHold {
+                msvcrt: Some(m),
+                fd: Some(fd),
+            });
+        }
+        if m.monotonic() >= deadline {
+            let _ = m.close(fd);
+            return Err(FlockTimeout(format!(
+                "flock_excl: could not acquire {} within {}s",
+                lock_path.display(),
+                fixed1(timeout)
+            )));
+        }
+        m.sleep(backoff);
+        backoff = (backoff * 2.0).min(0.1);
+    }
+}
+
+/// Why `path.with_suffix(path.suffix + lock_suffix)` refused (the
+/// `ValueError` text of CPython 3.13).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockPathError(pub String);
+
+/// `path.with_suffix(path.suffix + lock_suffix)` as CPython 3.13's
+/// pathlib answers it: the last component with `lock_suffix` appended (a
+/// stem and its suffix put back together are the name), refused when the
+/// path has no name, when a path without a suffix meets a `lock_suffix`
+/// that is not `.` and more, or when the new name holds a separator
+/// (`/`, and `\` too where `windows`).
+pub fn lock_path(path: &Path, lock_suffix: &str, windows: bool) -> Result<PathBuf, LockPathError> {
+    // pathlib drops every `.` component (a leading `./` too) and, on
+    // POSIX, keeps a leading `//` (exactly two slashes) as it is.
+    let mut comps: Vec<Component<'_>> = path
+        .components()
+        .filter(|c| !matches!(c, Component::CurDir))
+        .collect();
+    let bytes = path.as_os_str().as_encoded_bytes();
+    let double_root = !windows && bytes.starts_with(b"//") && !bytes.starts_with(b"///");
+    let rebuild = |comps: &[Component<'_>]| -> PathBuf {
+        let mut out = PathBuf::new();
+        for c in comps {
+            if double_root && matches!(c, Component::RootDir) {
+                out.push("//");
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    };
+    let name = match comps.last() {
+        Some(Component::Normal(name)) => name.to_os_string(),
+        Some(Component::ParentDir) => "..".into(),
+        _ => {
+            let kind = if windows { "WindowsPath" } else { "PosixPath" };
+            let mut shown = rebuild(&comps);
+            if shown.as_os_str().is_empty() {
+                shown = PathBuf::from(".");
+            }
+            let mut text = py_text(shown.as_os_str());
+            for cp in &mut text {
+                if *cp == u32::from(b'\\') {
+                    *cp = u32::from(b'/');
+                }
+            }
+            return Err(LockPathError(format!(
+                "{kind}({}) has an empty name",
+                py_repr_text(&text)
+            )));
+        }
+    };
+    let bytes = name.as_encoded_bytes();
+    let has_suffix = bytes
+        .iter()
+        .rposition(|&b| b == b'.')
+        .is_some_and(|i| i > 0 && i + 1 < bytes.len());
+    let valid = lock_suffix.is_empty() || (lock_suffix.starts_with('.') && lock_suffix.len() > 1);
+    if !has_suffix && !valid {
+        return Err(LockPathError(format!(
+            "Invalid suffix {}",
+            py_repr_str(lock_suffix)
+        )));
+    }
+    let mut new = name;
+    new.push(lock_suffix);
+    if lock_suffix.contains('/') || (windows && lock_suffix.contains('\\')) {
+        return Err(LockPathError(format!(
+            "Invalid name {}",
+            py_repr_text(&py_text(&new))
+        )));
+    }
+    comps.pop();
+    let mut out = rebuild(&comps);
+    out.push(new);
+    Ok(out)
+}
+
+/// The `str` Python holds for a path's text: `os.fsdecode` on POSIX
+/// (`surrogateescape`, a byte outside UTF-8 as U+DC80 + byte), the UTF-16
+/// units on Windows (a lone surrogate kept as itself).
+fn py_text(text: &std::ffi::OsStr) -> crate::pyvalue::PyStr {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        char::decode_utf16(text.encode_wide())
+            .map(|r| r.map_or_else(|e| u32::from(e.unpaired_surrogate()), u32::from))
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        crate::gitsystem::record::surrogateescape(text.as_encoded_bytes())
+    }
+}
+
+/// `repr(s)` of a `str` that may hold a lone surrogate.
+fn py_repr_text(text: &[u32]) -> String {
+    crate::unicode::to_string(&crate::pyvalue::repr_str(text)).expect("a repr is text")
+}
+
+/// Why [`flock_excl`] gave no lock.
+#[derive(Debug)]
+pub enum FlockError {
+    /// `ValueError` of the lock path's name.
+    Path(LockPathError),
+    /// `OSError` of the directory, the open or the lock.
+    Io(std::io::Error),
+    /// `TimeoutError` of the Windows branch.
+    Timeout(FlockTimeout),
+}
+
+/// The machine's [`Msvcrt`]: std's whole-file `try_lock`, which on
+/// Windows covers byte 0 and so excludes the reference's lock.
+pub struct StdMsvcrt;
+
+impl Msvcrt for StdMsvcrt {
+    type Fd = std::fs::File;
+
+    fn open(&mut self, lock_path: &Path) -> Option<std::fs::File> {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock_path)
+            .ok()
+    }
+
+    fn lock(&mut self, fd: &std::fs::File) -> bool {
+        fd.try_lock().is_ok()
+    }
+
+    fn unlock(&mut self, fd: &std::fs::File) -> bool {
+        fd.unlock().is_ok()
+    }
+
+    fn close(&mut self, fd: std::fs::File) -> bool {
+        drop(fd);
+        true
+    }
+
+    fn monotonic(&mut self) -> f64 {
+        static START: OnceLock<std::time::Instant> = OnceLock::new();
+        START
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_secs_f64()
+    }
+
+    fn sleep(&mut self, seconds: f64) {
+        std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
+    }
+}
+
+/// `flock_excl(path, lock_suffix=...)`'s hold; dropping it releases.
+pub struct FlockGuard {
+    _file: Option<std::fs::File>,
+    #[cfg(windows)]
+    _hold: Option<WindowsHold<'static, StdMsvcrt>>,
+}
+
+#[cfg(not(windows))]
+impl Drop for FlockGuard {
+    fn drop(&mut self) {
+        if let Some(file) = &self._file {
+            let _ = file.unlock();
+        }
+    }
+}
+
+/// `flock_excl(path, lock_suffix=lock_suffix)` (477-572) on this machine:
+/// the parent made, then the lock file `<name><lock_suffix>`. On POSIX it
+/// is opened (created 0600) and held with a blocking `flock(LOCK_EX)`, no
+/// deadline; on Windows `_flock_windows`, warning through
+/// [`flock_warning`].
+pub fn flock_excl(path: &Path, lock_suffix: &str) -> Result<FlockGuard, FlockError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(FlockError::Io)?;
+    }
+    let lock = lock_path(path, lock_suffix, cfg!(windows)).map_err(FlockError::Path)?;
+    #[cfg(windows)]
+    {
+        // A unit struct: leaking it allocates nothing.
+        let msvcrt: &'static mut StdMsvcrt = Box::leak(Box::new(StdMsvcrt));
+        let mut record = |w: FlockWarning| {
+            if let Ok(mut slot) = FLOCK_WARNING.lock() {
+                *slot = Some(w);
+            }
+        };
+        let hold = flock_windows_by(
+            &lock,
+            Some(msvcrt),
+            FLOCK_TIMEOUT_SECONDS,
+            &FLOCK_WARNED,
+            &mut record,
+        )
+        .map_err(FlockError::Timeout)?;
+        Ok(FlockGuard {
+            _file: None,
+            _hold: Some(hold),
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let file = options.open(&lock).map_err(FlockError::Io)?;
+        lock_retrying_eintr(|| file.lock()).map_err(FlockError::Io)?;
+        Ok(FlockGuard { _file: Some(file) })
+    }
+}
+
+/// Calls `lock` until it answers anything but `Interrupted`, as
+/// `fcntl.flock` tries again on EINTR (PEP 475); std's `lock` does not.
+pub fn lock_retrying_eintr(mut lock: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
+    loop {
+        match lock() {
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            other => return other,
+        }
+    }
 }
