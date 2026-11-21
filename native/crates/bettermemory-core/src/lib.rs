@@ -191,6 +191,9 @@
 //! - [`response_links`], [`response_memo`] and [`verdict_signals`]: the
 //!   response layer's leaves (`candidate_link_rows`, the per-hit drift
 //!   memo as a generic bounded LRU, and the verdict ladder);
+//! - [`hook`]: the hooks of `hook.py`, their first unit (the stdin
+//!   payload reader, the pending-retrieval scan and the Stop's
+//!   attribution settlement);
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
 //!   the lines shown about which project a folder belongs to;
 //! - [`origin_remote`]: a remote URL read into the triple `origin`
@@ -245,6 +248,7 @@ pub mod gitobjects;
 pub mod gitsystem;
 pub mod history;
 pub mod history_rows;
+pub mod hook;
 pub mod identity;
 pub mod in_force;
 pub mod install_hints;

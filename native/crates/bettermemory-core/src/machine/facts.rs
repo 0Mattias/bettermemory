@@ -41,7 +41,7 @@ pub fn is_machine_id(value: &[u32]) -> bool {
 
 /// `str.strip()`.
 fn strip(t: &[u32]) -> &[u32] {
-    crate::capture::remote::py_strip(t)
+    crate::unicode::py_strip(t)
 }
 
 /// `str.splitlines()` (no ends kept).

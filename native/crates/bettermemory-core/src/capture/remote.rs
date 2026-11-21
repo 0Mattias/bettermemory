@@ -12,6 +12,7 @@
 
 use crate::pyvalue::PyStr;
 use crate::unicode;
+use crate::unicode::py_strip;
 
 /// What `remote_key` makes of a URL.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -115,18 +116,6 @@ fn scp_url(t: &[u32]) -> Option<(usize, usize, usize)> {
         }
     }
     from(0)
-}
-
-/// `str.strip()`: whitespace as `str.isspace` reads it, both ends.
-pub fn py_strip(t: &[u32]) -> &[u32] {
-    let start = t.iter().position(|&c| !unicode::is_space(c));
-    match start {
-        None => &[],
-        Some(s) => {
-            let end = t.iter().rposition(|&c| !unicode::is_space(c)).unwrap_or(s);
-            &t[s..=end]
-        }
-    }
 }
 
 /// `remote_key(url)`: None for no URL or a blank one.

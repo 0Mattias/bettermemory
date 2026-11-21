@@ -32,6 +32,7 @@ from pathlib import Path
 
 from . import (
     gen_attribution,
+    gen_hook_leaf,
     gen_caller_admission,
     gen_capture_vocabulary,
     gen_checkout_token,
@@ -301,6 +302,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "location_reads": gen_location_reads.generate,
     "attribution": gen_attribution.generate,
     "attribution_unicode": gen_attribution.generate_unicode,
+    "hook_leaf": gen_hook_leaf.generate,
     "caller_admission": gen_caller_admission.generate,
     "gitconfig_wildmatch": gen_gitconfig_wildmatch.generate,
     "origin_remote": gen_origin_remote.generate,

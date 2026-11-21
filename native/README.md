@@ -43,6 +43,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
 | `verify_anchoring` | unit 1a of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_anchor.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
+| `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
@@ -694,6 +695,99 @@ and pinned to the reference's set by the golden header.
 Nothing of either module is left for a later unit. The callers
 (`verify.py`'s re-export, `_response.ResponseBuilder.apply_trust`, the
 Stop hook) are not ported here.
+
+## The Stop and UserPromptSubmit hooks (`hook.py`)
+
+`src/bettermemory/hook.py` (1352 lines), read at 6cf944e5, is the hooks'
+entry points: the Stop hook's audit and attribution, the prompt-recall
+hook, and their stdin. Its whole is well past 600 lines of Rust, so it is
+cut into units, leaves first; each lands in its own flat file beside
+`hook.rs` (`hook_stop_side.rs`, `hook_stop.rs`, `hook_settle.rs`,
+`hook_cli.rs`) so that no two units edit one file.
+
+### The map
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_ATTRIBUTION_LOOKBACK_SECONDS` (alias of `audit.ATTRIBUTION_LOOKBACK_SECONDS`, audit 185) | 189 | nothing | hook-1a |
+| `_STDIN_PAYLOAD_CAP_BYTES` | 207 | nothing | hook-1a |
+| `_read_payload` | 210-221 | nothing | hook-1a |
+| `_payload_text` | 224-227 | nothing | hook-1a |
+| `_emit_hook_attributions` | 1066-1170 | the store, the recorder, the session join, the clock | hook-1a, all four as arguments |
+| `_pending_retrievals` | 1173-1248 | the clock (`utcnow`) | hook-1a, the clock as an argument |
+| `_utcnow`, `is_synthetic_prompt`, `human_prompt`, `_origin_for` | 174-256 | the clock, the origin | later |
+| `audit_transcript`, `run_audit`, `_audit_turn` | 258-587 | the transcript, the store, the recorder | later |
+| `_stop_window` to `_settle_stop_interrupted` | 588-948 | the store, the recorder, the probe | later |
+| `run_prompt_recall`, `prompt_main`, `main` | 949-1065, 1251-1352 | stdin, the store, the configuration | later |
+
+### Unit hook-1a (`hook.rs`)
+
+- `ATTRIBUTION_LOOKBACK_SECONDS` (600) is defined in `hook.rs`; its home
+  is `audit.py`, and it moves to the port of that module when one exists.
+  `STDIN_PAYLOAD_CAP_BYTES` is 64 KiB; the bounded read itself is the
+  caller's.
+- `read_payload(text)` strips as `str.strip` does (`unicode::py_strip`,
+  `str.isspace` over the Unicode tables; the helper that
+  `capture::remote` held privately is now this one public function) and
+  reads the rest with `json::loads_detailed`. A blank text, a decode
+  failure and a value that is not a dict answer an empty dict. The
+  reference catches only `JSONDecodeError`, so an integer past 4300
+  digits is `Err(LoadError::IntDigits)` (its ValueError) and a payload
+  nested past the decoder's budget is `Err(LoadError::Recursion)` (its
+  RecursionError). The depth at which the reference's RecursionError
+  starts follows the interpreter's recursion limit and stack; the
+  crate's budget is CPython 3.13.13's, and the exact Python depth is not
+  matched bit for bit.
+- `payload_text(payload, name)`: the field when it is a non-empty `str`.
+- `pending_retrievals(events, now, retrieval_session_id,
+  used_session_ids, lookback_seconds)`: `now` is the clock the
+  reference reads through `utcnow()`. The window test is the reference's
+  float comparison, `ts.timestamp() < now.timestamp() - lookback`, each
+  timestamp the microsecond count since the epoch divided once
+  (`verify_status::micros_to_seconds`): in year 9000 an event a
+  microsecond older than the cutoff rounds onto it and is kept, where a
+  comparison of microseconds drops it. Every `or` reads Python
+  truthiness (`events::truthy`), kinds and sessions match only a `str`
+  equal to the one named, and ids are kept only from a `list` of `str`.
+  An event that is not a dict is `Err(ScanError::NotADict)` (the
+  reference's AttributeError on `event.get`); a `use` row in the window
+  whose session is unhashable (a list, a dict, a tuple holding one) is
+  `Err(ScanError::Unhashable)` (its TypeError from `in` on a set), while
+  a retrieval row with such a session is skipped by `!=` as in the
+  reference. The answer is a `BTreeSet`, whose order is the code-point
+  order of `sorted`.
+- `emit_hook_attributions(turn, load_one, recorder, latest_session)`:
+  `load_one` answers a body, None where the store raises
+  `MemoryNotFoundError` or `TombstonedError`, or the store's error; the
+  recorder is the trait `RowSink` (`record(kind, fields)`, the fields in
+  the keyword order the reference passes); `latest_session` is
+  `sessions._latest_in_process_session`, asked only when
+  `server_session` is None. Bodies are loaded in code-point order, the
+  attributed `use` row (ids, outcome, auto, attribution,
+  claim_excerpts, triggered_from, then client_model when given, an
+  empty one included) comes before the auto row of the unmatched ids,
+  and an error of the store or the recorder ends the call where the
+  reference's exception would.
+- No regular expression is matched here; `attribute_uses` is
+  `attribution`'s.
+
+Fixtures and tests: `tests/contract/gen_hook_leaf.py` writes
+`hook_leaf.jsonl` (not gated, 94 cases, about 44 KB): stdin texts over
+Unicode whitespace, non-dict values, invalid JSON, lone surrogates, the
+4300-digit bound; payload fields; event windows with mixed kinds, falsy
+fallbacks, non-`str` ids and sessions, unhashable sessions, the window's
+edges, malformed and offset timestamps and the year-9000 rounding; and
+`_emit_hook_attributions` with a fake store, a recording recorder and a
+scripted join (joins asked or not, empty server sessions, missing and
+failing memories, a failing recorder). Bodies and replies are ASCII, so
+no answer reads a Unicode table that differs between releases. Rust:
+`golden_hook_leaf.rs`, `hook_leaf_kills.rs` and
+`hook_leaf_robustness.rs` (200,000-deep nesting, a megabyte of
+U+3000, a hundred thousand events held to linear growth, the
+calendar's ends with `i64` lookbacks against the reference's sets, tuple
+sessions JSON cannot spell).
+
+Left for later units: everything in the map not marked hook-1a.
 
 ## Anchoring and the sparse checkout (`verify_anchoring.py`)
 
@@ -17095,7 +17189,8 @@ What the reference has and this build does not, by area:
   deadline (unit 3), and the `Recorder` (unit 4).
 - `recall_settle.py` past its settlement: `_probe_message` and
   `settle_interrupted` (settleint).
-- The daemon, the MCP tools, the hooks and the command line.
+- The daemon, the MCP tools, the hooks past the pure leaves of `hook.py`
+  (hook-1a, in `hook.rs`) and the command line.
 - `datetime.astimezone` of a naive value (the reference reads it as the
   machine's local time).
 

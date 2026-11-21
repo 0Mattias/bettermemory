@@ -157,6 +157,18 @@ pub fn is_space(cp: u32) -> bool {
     in_ranges(tables::SPACE, cp)
 }
 
+/// `str.strip()`: whitespace as `str.isspace` reads it, both ends.
+pub fn py_strip(t: &[u32]) -> &[u32] {
+    let start = t.iter().position(|&c| !is_space(c));
+    match start {
+        None => &[],
+        Some(s) => {
+            let end = t.iter().rposition(|&c| !is_space(c)).unwrap_or(s);
+            &t[s..=end]
+        }
+    }
+}
+
 /// `re`'s `\w` on a `str` pattern (Unicode): what the tokenizer's
 /// patterns, lookarounds and `\b` read.
 pub fn is_word(cp: u32) -> bool {
