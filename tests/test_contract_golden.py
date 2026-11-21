@@ -12,6 +12,7 @@ files then describe the pinned versions and not this interpreter's.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import sys
 import tempfile
@@ -86,7 +87,33 @@ _NOT_POSIX = "POSIX only: the generator has no case on Windows"
 
 
 @pytest.mark.parametrize("name", sorted(GENERATORS))
-def test_golden_files_match_the_reference(name: str) -> None:
+def test_golden_files_match_the_reference(
+    name: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    try:
+        _compare_with_the_reference(name)
+    finally:
+        _no_lone_surrogate_logged(name, caplog.records)
+
+
+def _no_lone_surrogate_logged(name: str, records: list[logging.LogRecord]) -> None:
+    """A generator that captures a logger's records keeps them from
+    propagating. A record left in pytest's capture with a lone surrogate
+    makes the test report impossible to send from an xdist worker, which
+    kills the worker; this fails the same fault in a single process."""
+    for record in records:
+        message = record.getMessage()
+        if any(0xD800 <= ord(ch) <= 0xDFFF for ch in message):
+            pytest.fail(
+                f"{name} left a log record with a lone surrogate in pytest's "
+                f"capture (logger {record.name!r}): {ascii(message)}; capture "
+                "it with tests.contract._common.captured_by so it does not "
+                "propagate",
+                pytrace=False,
+            )
+
+
+def _compare_with_the_reference(name: str) -> None:
     if name in POSIX_ONLY and sys.platform == "win32":
         pytest.skip(f"{name}: {_NOT_POSIX}")
     drift = _drift(name)

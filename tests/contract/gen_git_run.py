@@ -45,7 +45,7 @@ from unittest import mock
 
 from bettermemory import _git, git_read_budget as grb
 
-from ._common import jsonl
+from ._common import captured_by, jsonl
 
 ENVIRON = {
     "PATH": "/usr/bin:/bin",
@@ -124,11 +124,9 @@ def _run(case: dict[str, Any]) -> dict[str, Any]:
         _git.missing_calls(),
     )
     token = grb._ACTIVE.set(budget)
-    _git.log.addHandler(capture)
-    old_level = _git.log.level
-    _git.log.setLevel(logging.DEBUG)
     try:
         with (
+            captured_by(_git.log, capture, logging.DEBUG),
             mock.patch("subprocess.run", run),
             mock.patch("os.path.isdir", is_dir),
             mock.patch("os.environ", dict(ENVIRON)),
@@ -157,8 +155,6 @@ def _run(case: dict[str, Any]) -> dict[str, Any]:
             except (grb.ReadDeadline, ValueError) as exc:
                 ans = type(exc).__name__
     finally:
-        _git.log.removeHandler(capture)
-        _git.log.setLevel(old_level)
         grb._ACTIVE.reset(token)
     after = (
         _git.unanswered_calls(),
@@ -288,15 +284,9 @@ def _nonzero() -> list[dict[str, Any]]:
     ]
     for args, rc, err, where in cases:
         capture = _Capture()
-        _git.log.addHandler(capture)
-        old = _git.log.level
-        _git.log.setLevel(logging.DEBUG)
-        try:
+        with captured_by(_git.log, capture, logging.DEBUG):
             result = subprocess.CompletedProcess(args, rc, b"", err)
             _git.log_nonzero_exit(args, result, where)
-        finally:
-            _git.log.removeHandler(capture)
-            _git.log.setLevel(old)
         level, message = capture.lines[0]
         texts = [*args, message, *([err] if isinstance(err, str) else [])]
         if where is not None:

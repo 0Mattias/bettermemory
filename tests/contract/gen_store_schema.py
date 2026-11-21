@@ -35,7 +35,7 @@ from typing import Any
 
 from bettermemory import store_schema as ss
 
-from ._common import jsonl
+from ._common import captured_by, jsonl
 
 _MINTED = "ab" * 16
 _TEXTS = (
@@ -96,15 +96,14 @@ def _run(conn: sqlite3.Connection, step: str, meta: dict[str, str]) -> dict[str,
     saved = names["secrets"]
     names["secrets"] = types.SimpleNamespace(token_hex=token_hex)
     handler = _Warnings()
-    ss.log.addHandler(handler)
     out: dict[str, Any] = {}
     try:
-        _STEPS[step](conn, "STORE", meta)  # type: ignore[arg-type]
+        with captured_by(ss.log, handler):
+            _STEPS[step](conn, "STORE", meta)  # type: ignore[arg-type]
     except sqlite3.Error as exc:
         out["error"] = [type(exc).__name__, str(exc)]
     finally:
         names["secrets"] = saved
-        ss.log.removeHandler(handler)
     out["drawn"] = bool(drawn)
     out["warnings"] = handler.said
     return out

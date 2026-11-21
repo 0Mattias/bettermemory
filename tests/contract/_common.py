@@ -9,6 +9,7 @@ escape); it is written as a list of code points under a ``*_cps`` key.
 from __future__ import annotations
 
 import json
+import logging
 import struct
 import sys
 import unicodedata
@@ -18,6 +19,29 @@ from datetime import datetime
 from pathlib import PurePath
 from typing import Any
 from unittest.mock import patch
+
+
+@contextmanager
+def captured_by(
+    logger: logging.Logger, handler: logging.Handler, level: int | None = None
+) -> Iterator[None]:
+    """Route ``logger``'s records to ``handler`` alone for the block.
+
+    The logger stops propagating, so no ancestor (pytest's own capture
+    among them) keeps a copy of a record; its handlers, level and
+    propagate flag are restored afterwards whatever happens.
+    """
+    propagate, old_level = logger.propagate, logger.level
+    logger.addHandler(handler)
+    logger.propagate = False
+    if level is not None:
+        logger.setLevel(level)
+    try:
+        yield
+    finally:
+        logger.removeHandler(handler)
+        logger.propagate = propagate
+        logger.setLevel(old_level)
 
 
 def has_surrogate(text: str) -> bool:
