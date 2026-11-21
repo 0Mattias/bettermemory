@@ -76,6 +76,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
 | `location_caller` | a caller's resolution (`location.py` 1420-1997), unit locstate: the per-process state around a resolution: `process_machine`, `_recorded`, `_clear_machine` (`ProcessMachine`), `_Held`, `_LOCKS`, `_location_lock` (`Locks`, `lock_name`), `_cwd_of`, `_Stand`, `_STANDS`, `_keep_stand`, `_stand_of`, `forget_session`, `_clear_stands` (`Stands`), `_with_file_errors`, `_same_namespace`; every read of the machine a closure | `location_caller_state.jsonl` |
 | `location_resolve` | a caller's resolution (`location.py` 1420-1997), unit loccaller: `capture_location`, `_model`, `Caller` (`home`, `add_head_witness`), `resolve_caller`, `_caller`, `_resolved`, `resolve_here`, `_hooked`; the model, capture cache, re-mint, `_earlier_tree` and `_machineless` arguments | `location_resolve.jsonl` |
+| `hook_stop`, `hook_stop_side` | the Stop audit's front half (`hook.py` 319-725, unit hook-2a): `run_audit` with `@hook_body("stop")`, `_audit_turn`, `_stop_window`, `_stop_pool`, `_stop_probe`, `_stop_recorder`, `_is_repeat_audit`, as a sequence over the trait `StopSide` (one method per call `hook.py` 319-946 makes outside itself, no implementation yet) with the settlement steps behind `StopSettle` | `hook_stop.jsonl` |
 | `fsutil` | units 1 and 2 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads; `flock_excl` (`lock_path`, a guard held until dropped) and its Windows branch `_flock_windows` over an `Msvcrt` trait, with `FLOCK_TIMEOUT_SECONDS` and the process-wide `_FLOCK_WARNED` | `fsutil.jsonl`, `fsutil_python.jsonl`, `fsutil_flock.jsonl`, `fsutil_flock_python.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`); unit 4, `gitobjects::files::reader`: `ObjectReader`'s `has`, `has_many`, `name_length`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `_raw`, `_places`, `_object`, `_take_loose`, `_loose`, `_packed` | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl`, `gitobjects_reader.jsonl`, `gitobjects_reader_zlib.jsonl`, `gitobjects_reader_posix.jsonl` |
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
@@ -12211,6 +12212,83 @@ through `StdFs` and the machine's `strerror`, skipping a case whose
 mode-000 folder can still be listed (a root user);
 `location_probe_kills` and `location_probe_robustness` run in memory.
 
+## The Stop audit's front half (`hook.py` 319-725, unit hook-2a)
+
+`hook.py`'s Stop audit runs over modules not ported yet (`audit`,
+`recall`, `recall_settle`, `sessions`, `events`' recorder, `origin`), so
+the unit is the order of its calls, not their answers. `hook_stop_side`
+holds the trait `StopSide`: one method per call `hook.py` 319-946 makes
+outside itself, named after it, with the Python objects passed between
+them as associated types (`Store`, `Config`, `Report`, `Admission`,
+`RecallState`, `Origin`, `Turn`, `Recorder`, `Event`, `Time`, `Path`,
+`Posted`, `Dict`, `Fields`) and an error that is the exception the
+reference raises there. The methods the settlement makes (`hook.py`
+728-946) are in it too, so lane hookstopb adds none. `hook_stop` holds
+the sequence.
+
+| Function | Reference lines | Status |
+| --- | --- | --- |
+| `run_audit`, with `hook_body("stop")` (`events.py` 639-653) | 319-447 | built: `hook_stop::run_audit` |
+| `_audit_turn` | 450-585 | built: `audit_turn` |
+| `_stop_window` | 588-600 | built: `stop_window` |
+| `_stop_pool` | 603-650 | built: `stop_pool` |
+| `_stop_probe` | 653-685 | built, inside `audit_turn` |
+| `_stop_recorder` | 688-704 | built, inside `audit_turn` |
+| `_is_repeat_audit` | 707-725 | built: `is_repeat_audit` |
+| `_settle_stop_turn`, `_record_stop_rows`, `_count_stop_reviews`, `_settle_stop_interrupted` | 728-946 | unit hook-2b (lane hookstopb), through `StopSettle` |
+| `audit_transcript`, `is_synthetic_prompt`, `human_prompt`, `_origin_for`, `run_prompt_recall` | 230-316, 949-981 | unit hook-2c |
+| an implementation of `StopSide` | | unit hook-2w |
+
+What the sequence keeps from the reference:
+
+- The hook budget (`within_hook_budget`, through `hook_body`) is given
+  the `store=` the caller passed, so a default store `_audit_turn` opens
+  is never under it (the budget is handed None).
+- A dry run enters the budget, then `suppressed()`, then runs
+  `run_audit` once more inside it, under the budget again, with
+  `dry_run` false and `state` None, so the recall state is a fresh
+  `RecallState()`. Each context is closed on the way out, raised or not
+  (`StopSide::within_hook_budget` and `suppressed` take the body as a
+  closure).
+- `config or load_config(None)`, and the default store
+  (`cfg.resolved_directory() / STORE_FILENAME`, `Store.open_or_create`)
+  only when no store is passed.
+- The window is `_utcnow()` less `REAUDIT_DEDUP_WINDOW_SECONDS`
+  (3600, defined in `hook_stop_side` with its home, `audit.py` 196).
+- The clock is read three times in a turn with a prompt (`utcnow()` for
+  the probe, for the turn's `now`, for the dedup), twice without one; the
+  probe's and the dedup's reads are not the turn's `now`.
+- `harness or "claude-code"` keys the recall state, so an empty harness
+  keys the default; the settlements are handed `harness` as given.
+- `cfg.behavior.search_mode or "hybrid"`: None and `""` probe as hybrid.
+- A turn with no owner prompt is never a repeat (`redact_query` and
+  `is_duplicate_audit` are not called); an empty prompt is a prompt.
+  Whether `search_miss` is recorded for a miss that is not a repeat is
+  `_record_stop_rows`' (hook-2b), which is handed `repeat`.
+- `assistant_present` is `assistant_response is not None`: an empty reply
+  is present.
+- The settlement steps run in the reference's order, each after the
+  previous one returned, and `report.to_dict()` last.
+
+`caller_admission`'s first argument is always `POOL_PREFILTER`, so the
+trait method does not take it, and its second answer is dropped.
+
+Fixtures: `gen_hook_stop` replaces every name the front half resolves
+with a recording fake (each object a label, a clock read `U<k>` or
+`N<k>`, a path a label joined with `/`, so no host path is spelled and
+the file is the same on every platform and release) and records the
+ordered log of calls and the answer for 47 cases: the plain turn, no
+prompt, an empty prompt, no reply, an empty reply, a tail reply, a repeat,
+the default store and config, the harness and search mode defaults, no
+state, nothing known, three dry runs, and a raise at each call. A raising
+case's log is stored as the length it shares with the raise-free case
+over the same arguments and the rest. `golden_hook_stop` runs the same
+fakes in Rust (`tests/common/hook_stop.rs`); `hook_stop_kills` holds the
+defaults and orders a plausible port gets wrong; `hook_stop_robustness`
+runs a window of 100,000 events and a prompt of a megabyte, and holds
+time to linear growth. No pattern is matched. Nothing in the unit
+depends on the platform.
+
 ## Git objects read from a repository's files (`gitobjects.py`)
 
 `src/bettermemory/gitobjects.py` (1,234 lines, read at 465bc600) reads
@@ -17190,7 +17268,8 @@ What the reference has and this build does not, by area:
 - `recall_settle.py` past its settlement: `_probe_message` and
   `settle_interrupted` (settleint).
 - The daemon, the MCP tools, the hooks past the pure leaves of `hook.py`
-  (hook-1a, in `hook.rs`) and the command line.
+  (hook-1a, in `hook.rs`) and the Stop audit's front half (hook-2a, a
+  sequence over `StopSide` in `hook_stop.rs`), and the command line.
 - `datetime.astimezone` of a naive value (the reference reads it as the
   machine's local time).
 

@@ -15,6 +15,7 @@ pub mod githead_discovery;
 pub mod gitobjects;
 pub mod gitobjects_files;
 pub mod gitobjects_reader;
+pub mod hook_stop;
 pub mod location_git;
 pub mod location_reads;
 pub mod location_stamps;

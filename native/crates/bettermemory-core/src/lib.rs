@@ -161,6 +161,10 @@
 //!   unit githead-2: `entry_above` and the change signature);
 //! - [`location_probe`]: the hook client's namespace probe (the cwd's
 //!   state, its view spelling, the host's name);
+//! - [`hook_stop`]: the Stop audit's front half (`run_audit` through
+//!   `_is_repeat_audit`, unit hook-2a) as a sequence over
+//!   [`hook_stop_side::StopSide`], the calls into modules not yet ported,
+//!   with the settlement steps behind `hook_stop::StopSettle`;
 //! - [`location_witness`]: the witness exchange's history half: the
 //!   question raised (`NeedWitnesses`), the readers over the client's
 //!   answers, git's reading of tied witnesses and the keeping of one
@@ -249,6 +253,8 @@ pub mod gitsystem;
 pub mod history;
 pub mod history_rows;
 pub mod hook;
+pub mod hook_stop;
+pub mod hook_stop_side;
 pub mod identity;
 pub mod in_force;
 pub mod install_hints;
