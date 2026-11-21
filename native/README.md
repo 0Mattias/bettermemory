@@ -65,6 +65,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text`; its write (`checkout_token::write`): `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_fs_now`, `_sweep`, `_place`, `_after_race`, `_failed`, `_unlink_quietly`, `TokenWrite` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only), `checkout_token_write.jsonl`, `checkout_token_write_posix.jsonl` (POSIX only) |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
+| `difflib` | `history._body_diff` (`body_diff`), `str.splitlines`, and CPython 3.13.13's `difflib.unified_diff` as it calls it: `SequenceMatcher` with autojunk (`__chain_b`, `find_longest_match`, `get_matching_blocks`, `get_opcodes`, `get_grouped_opcodes`), `_format_range_unified`, `unified_diff` with `lineterm=""` and no dates (`unified_diff_lines` joined with newlines) | `difflib.jsonl` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl` |
@@ -2709,6 +2710,77 @@ after canonicalising, `expanduser` takes only `~` and `~/`, `under` is
 case-sensitive and `is_dir` follows symlinks. No entry point uses it by
 default; every compared case goes through the test's world.
 
+## Body diffs and `str.splitlines` (`difflib`)
+
+`history._body_diff` (`history.py` 534-543) is the only caller of
+`difflib` the native build needs: `unified_diff` over the two bodies'
+`splitlines()`, with `fromfile` and `tofile` the version names,
+`lineterm=""` and no dates, the lines joined with a newline. The module
+`difflib` reproduces that path of CPython 3.13.13's `Lib/difflib.py`,
+built whole in one unit (335 lines of source with its comments). The `difflib` of
+`config` (`config::difflib`, `get_close_matches` only) is a separate
+port over characters and is left as it is.
+
+| function | reference | needs from the machine | status |
+| --- | --- | --- | --- |
+| `body_diff` | `history._body_diff` 534-543 | nothing | built |
+| `splitlines` | `str.splitlines()` (no `keepends`) | nothing | built |
+| `SequenceMatcher::new` | `SequenceMatcher(None, a, b)`: `set_seqs`, `__chain_b` | nothing | built |
+| `find_longest_match` | `find_longest_match` | nothing | built |
+| `get_matching_blocks` | `get_matching_blocks` | nothing | built |
+| `get_opcodes` | `get_opcodes` | nothing | built |
+| `get_grouped_opcodes` | `get_grouped_opcodes(n)` | nothing | built |
+| `format_range_unified` | `_format_range_unified` | nothing | built |
+| `unified_diff`, `unified_diff_lines` | `unified_diff(..., lineterm="")`, and its lines joined | nothing | built |
+
+What each reproduces, and the decisions:
+
+- The matcher is generic over `Eq + Hash` elements; the diff's lines are
+  `PyStr`, so a lone surrogate is a line's code point like any other.
+- Autojunk: when `b` holds 200 lines or more, a line occurring more than
+  `len(b) // 100 + 1` times is popular and dropped from `b2j`. With no
+  junk function the junk set is empty, so `find_longest_match`'s second
+  pair of extension loops (over junk) never moves and is not written; its
+  first pair extends over popular lines, as the reference does, also from
+  a match of size 0 (a block can start on a popular line).
+- Ties go to the earliest `i`, then the earliest `j`: the `j2len` maps
+  roll per `i` as the reference's dicts do, and a longer match replaces
+  the best only when strictly longer.
+- `get_matching_blocks` keeps the reference's explicit queue (a stack,
+  popped from the end), so no input recurses; the blocks are sorted and
+  adjacent ones merged, then the sentinel `(len(a), len(b), 0)`.
+- `get_grouped_opcodes(3)`: with no opcodes (both sides empty) the one
+  `equal (0, 1, 0, 1)` stands in and, being a lone equal group, is not
+  yielded, so `unified_diff` writes nothing at all, no header either. The
+  first and last equal runs are trimmed to the context, and an equal run
+  longer than twice the context splits the groups.
+- The header is `--- old` and `+++ new` with no tab and no date; a range
+  of one line is its number alone, an empty one `start,0` with the line
+  before it.
+- `splitlines` ends a line at `\n`, `\r`, `\r\n` (one end),
+  `\x0b`, `\x0c`, `\x1c`, `\x1d`, `\x1e`, `\x85`, `\u2028` and
+  `\u2029`; a final end makes no empty last line.
+- Cost: the reference is quadratic in the worst case
+  (`find_longest_match` walks every `j` of a line for each `i`, once per
+  block); the port grows the same way. `difflib_robustness` pins that
+  twice the lines cost under 4.5 times the time for identical, disjoint
+  and interleaved sequences.
+
+No regular expression is involved. The golden file `difflib.jsonl`
+(`tests/contract/gen_difflib.py`) holds every text as a list of code
+points; it pins the hand pairs (empty, equal, one-line edits, every
+`splitlines` boundary and some that are not, CRLF, a trailing newline,
+lone surrogates, the context and group bounds), `unified_diff` over line
+lists (an autojunk case written out) and seeded random sweeps as digests:
+199, 200 and 201 lines with a line at `n // 100 + 1` and `n // 100 + 2`
+places, and 3,000 small pairs over four lines. The file is not gated:
+`difflib`, `SequenceMatcher` and `str.splitlines` answer its rows alike
+under Python 3.11 to 3.14 on every system, so every Python CI job
+compares it. The Rust test reads the committed file on every host.
+
+Left for later units: `history.py`'s unit 3 (`_changed`, `_event_detail`)
+calls `body_diff`.
+
 ## The event kinds and their row classes (`events.py`)
 
 `events` reproduces the telemetry recorder's module, unit by unit. The map
@@ -3313,6 +3385,8 @@ that Unicode too.
 | `golden_settings`: `settings_paths` (unix) | `settings_paths.json` | i; os elsewhere (`settings_paths_not_posix`) |
 | `golden_settings`: `settings_paths_python` (unix) | `settings_paths_python.json` | ii (Python); os elsewhere |
 | `config_robustness` (6) | none | i |
+| `golden_difflib`: `difflib_every_case` | `difflib.jsonl` | i |
+| `difflib_kills` (7), `difflib_robustness` (8) | none | i |
 | `robustness` (5), `search_robustness` (8), `store_robustness` (3), `store_read_only` (11), the library's unit tests | none, or `store_bases.json` / `store_files.jsonl` as input only | i |
 | `golden_datetime_edges`: `datetime_edges_every_case` | `datetime_edges.jsonl` | ii (Python) |
 | `golden_json_edges`: `json_edges_every_case` | `json_edges.jsonl` | ii (Python) |
@@ -14758,8 +14832,9 @@ What the reference has and this build does not, by area:
   into the writing open and `run_steps`, rekey, reclaim, a restore's
   rows, re-spelling the index.
 - A record's history past the rows that name it: `history.py`'s row
-  MAC by chain segment and replaced detail, the versions' changes and
-  body diffs, the record and link rows, `record_history` and the
+  MAC by chain segment and replaced detail, the versions' changes
+  (`_changed` and `_event_detail`; the body diffs are `difflib`'s
+  `body_diff`), the record and link rows, `record_history` and the
   renderers (units 2 to 5).
 - Reading a checkout: `origin_gitfiles.py` past its decoders, machine leaves
   and config facts (`_config_facts` and its memo, units 4, 6 and 7), `checkout_token.py` past its text, reads and write (the

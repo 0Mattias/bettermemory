@@ -3,6 +3,8 @@
 //!
 //! - [`config`]: the settings: the config file's loader, the managed
 //!   file's pins, and `config check|show|path --json`;
+//! - [`difflib`]: `difflib.unified_diff` as `history._body_diff` calls it
+//!   (the matcher with autojunk, the grouped opcodes) and `str.splitlines`;
 //! - [`identity`]: a request's caller as the reference resolves it, its
 //!   leaves first (the declared-value check, the actor rule, `resolve`);
 //! - [`session`]: `session.py` whole: the per-session state (scopes, the
@@ -160,6 +162,7 @@ pub mod config;
 pub mod control_tokens;
 pub mod credentials;
 pub mod datetime;
+pub mod difflib;
 pub mod durability;
 pub mod events;
 pub mod float_repr;
