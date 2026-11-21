@@ -168,6 +168,7 @@ from . import (
     gen_witness_questions,
     gen_verify_anchoring_sparse,
     gen_verify_anchoring_anchor,
+    gen_response_leaf,
     gen_store_provenance,
     gen_store_bulk,
 )
@@ -317,6 +318,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "witness_questions": gen_witness_questions.generate,
     "verify_anchoring_sparse": gen_verify_anchoring_sparse.generate,
     "verify_anchoring_anchor": gen_verify_anchoring_anchor.generate,
+    "response_leaf": gen_response_leaf.generate,
     "githead": gen_githead.generate,
     "githead_discovery": gen_githead_discovery.generate,
     "githead_signature": gen_githead_signature.generate,

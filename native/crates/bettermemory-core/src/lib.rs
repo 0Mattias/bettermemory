@@ -181,6 +181,9 @@
 //!   skip-worktree reader; the drift report and the claim anchors);
 //! - [`verify_status`] and [`attribution`]: a memory's verification
 //!   staleness, and phrase-match attribution of memories to a reply;
+//! - [`response_links`], [`response_memo`] and [`verdict_signals`]: the
+//!   response layer's leaves (`candidate_link_rows`, the per-hit drift
+//!   memo as a generic bounded LRU, and the verdict ladder);
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
 //!   the lines shown about which project a folder belongs to;
 //! - [`origin_remote`]: a remote URL read into the triple `origin`
@@ -272,6 +275,8 @@ pub mod pysyntax;
 pub mod pyvalue;
 pub mod records;
 pub mod repository_history;
+pub mod response_links;
+pub mod response_memo;
 pub mod search;
 pub mod search_dedup;
 pub mod session;
@@ -279,6 +284,7 @@ pub mod standing;
 pub mod store;
 pub mod toml;
 pub mod unicode;
+pub mod verdict_signals;
 pub mod verify_anchoring;
 pub mod verify_candidates;
 pub mod verify_status;

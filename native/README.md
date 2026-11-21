@@ -42,6 +42,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
 | `verify_anchoring` | unit 1a of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_anchor.jsonl` |
+| `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
@@ -821,6 +822,85 @@ the reference's own, which are ported by their own units.
 Tests: `golden_verify_anchoring_anchor`, `verify_anchoring_anchor_kills`,
 `verify_anchoring_anchor_robustness` (megabyte paths, 50,000 records, the
 memo past its cap; linear time in the number of asks).
+
+## The response layer's leaves (`_response_links.py`, the drift memo, the verdict ladder)
+
+Three leaves the response builder calls that call nothing unbuilt:
+`response_links.rs`, `response_memo.rs` and `verdict_signals.rs` (311
+lines of source). The builder itself, the drift pass and
+`verdict.with_objection` are later units.
+
+### The map
+
+| Function | Reference lines | Needs from the machine | Status |
+| --- | --- | --- | --- |
+| `candidate_link_rows` | `_response_links.py` 15-41 | nothing | built |
+| `_DRIFT_MEMO_CAP`, `_TIMED_OUT_SECONDS`, `_clear_drift_memo`, `_recall_drift`, `_remember_drift` | `_response.py` 156-223 | the monotonic clock, as the argument `now` | built (generic) |
+| `_VERDICT_FRESH`, `_VERDICT_RECOMMENDED`, `_VERDICT_REQUIRED`, `_VERDICT_RAISE_STATUSES` | `verify.py` 1600-1610 | nothing | built |
+| `_COMMIT_DRIFT_ESCALATES`, `_commit_leg_escalates` | `verify.py` 1690-1722 | nothing | built |
+| `verdict_from_signals`, `compute_staleness_verdict` | `verify.py` 1725-1800 | nothing | built |
+
+No regular expression is involved.
+
+### What each reproduces
+
+- `candidate_link_rows(memories, ids)` returns a `Vec` of (id, (outbound,
+  inbound)) in the order the ids first came, as the reference's dict
+  comprehension keeps them; a repeated id keeps its first place. An edge
+  is (the link type's value, the other id, the note). A link is kept when
+  either end is wanted, and an exact (source, type, target, note) repeat
+  is dropped, across repeated memories too. Each list is sorted stably by
+  (type, id), so ties keep their order in the snapshot whatever the note.
+  A self link lands in both lists. A `HashMap` serves only the look-ups;
+  output order never comes from it.
+- `DriftMemo<K, V>` holds the memo and the timed-out memo behind one
+  `Mutex`, each an insertion-ordered map with move-to-end as
+  `OrderedDict` is used. `recall(key, now)` answers the memo first (and
+  moves the hit to the end), then a timed-out value when `0.0 <= now -
+  kept < 60.0` (the entry keeps its place), else removes that timed-out
+  entry; NaN and a clock that went back remove it. `remember(resolved,
+  timed_out, now)` sets the resolutions in order (a key already held keeps
+  its place and takes the new value), keeps each timed-out value with
+  `now` and moves it to the end, then evicts the oldest of each table past
+  the cap. `clear()` empties both. The key and value types, the one
+  instance and its registration with the cache clearing belong to the
+  drift pass; `with_cap` stands in for the patched cap the fixtures use.
+- `VERDICT_FRESH`, `VERDICT_RECOMMENDED` and `VERDICT_REQUIRED` are
+  defined here, the crate's one home for the three strings; the verify
+  unit re-exports them. `verdict_from_signals` takes the status as text,
+  as the reference does, so a status outside the four answers as the
+  reference answers it; `compute_staleness_verdict` passes
+  `VerificationStatus.status.name()`. The counts are `i64` and the commit
+  count `Option<i64>`.
+
+### Reference findings (reproduced)
+
+1. `_remember_drift` sets a resolution with `OrderedDict.update`, which
+   leaves a key already held at its old place: a key resolved again by a
+   later search stays the least recently used and is evicted first. The
+   port keeps its place.
+2. `_recall_drift`'s docstring says a hit becomes the most recently used
+   entry, but a timed-out hit does not move: only a memo hit does.
+3. A key kept in the memo and later kept as timed out lives in both
+   tables; the memo's value is answered for as long as it is held, the
+   timed-out one never.
+
+### Fixtures and tests
+
+- `tests/contract/gen_response_leaf.py` writes `response_leaf.jsonl` (not
+  gated, about 7 KB): nine snapshot cases for `candidate_link_rows`
+  (memories given links past the model's own checks, so a self link and
+  repeats are reachable) and a sweep of 400 cases from a 64-bit LCG as a
+  digest row; eight memo scripts with `time.monotonic` replaced by
+  scripted values and `_DRIFT_MEMO_CAP` patched (3, 0 and the real 5000);
+  fourteen verdict rows with `_commit_leg_escalates`, a digest of
+  `verdict_from_signals` over 7 statuses and small counts (1,260
+  answers), and `compute_staleness_verdict` over the four statuses.
+- Rust: `golden_response_leaf.rs`, `response_leaf_kills.rs` and
+  `response_leaf_robustness.rs` (20,000 inbound links, 20,000 memo
+  rounds past a cap of 1,000, both as tenfold growth claims; infinite and
+  NaN clocks; `i64` bounds). The shared builders are in
+  `tests/common/response_leaf.rs`.
 
 ## Limits and key material
 
@@ -16828,7 +16908,11 @@ What the reference has and this build does not, by area:
   three extraction patterns (`_BACKTICK_RE`, `_BARE_RE`,
   `_DOMAIN_ROUTE_RE`) and the candidate scan (`_normalize_for_compare`
   on POSIX, `_scan_candidates`, `_extract_candidates` without its body
-  parse memo), and `verify.py`.
+  parse memo), and `verify.py` past its verdict ladder (`verdict_signals`).
+  Of the response layer, `_response_links.py` and the drift memo are
+  built; the memo's key and value types, its one instance and its
+  `_caches` registration (the drift pass) and `verdict.with_objection`
+  (respreason) are not.
 - The write gates past the control tokens and the dedup: `credentials.py`
   after its vendor-prefixed detectors and its value gate (the generic and
   URI patterns, spans and markers: units 3 and 4), `durability.py` past

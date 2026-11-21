@@ -30,6 +30,7 @@ pub mod parity;
 pub mod provenance;
 pub mod record_calls;
 pub mod repository_history;
+pub mod response_leaf;
 pub mod rows;
 pub mod schema_steps;
 pub mod session;
