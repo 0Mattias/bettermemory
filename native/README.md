@@ -68,7 +68,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `difflib` | `history._body_diff` (`body_diff`), `str.splitlines`, and CPython 3.13.13's `difflib.unified_diff` as it calls it: `SequenceMatcher` with autojunk (`__chain_b`, `find_longest_match`, `get_matching_blocks`, `get_opcodes`, `get_grouped_opcodes`), `_format_range_unified`, `unified_diff` with `lineterm=""` and no dates (`unified_diff_lines` joined with newlines) | `difflib.jsonl` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
 | `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore` | `membership_core.jsonl`, `membership_core_unicode.jsonl` |
@@ -13175,6 +13175,99 @@ conflicts, imports and quarantine put, re-put, deleted, missing, refused;
 rollback-journal mode; the `homes` and `standing` tables dropped; every
 type as a body, scopes, a takeaway, a conflict record and a standing giver.
 
+## The store's connection leaves and admitted reads (`store::reads`)
+
+`src/store/reads.rs` ports the connection leaves of `store.py` and the
+reads the index used to serve, each over a `rusqlite::Connection` with the
+caller's admission a closure. Reference lines are those of `store.py` at
+a9bfd8ce.
+
+| function | reference | needs from the machine | status |
+| --- | --- | --- | --- |
+| `STORE_BUSY`, `STORE_FULL`, `_RETRYABLE_CODES` | 319-331 | nothing | built |
+| `note_residue` | 342-353 | a process-wide latch (`AtomicBool`); the caller logs `residue_message` when it answers true | built |
+| `error_code_name` | 356-360 | nothing: CPython 3.13's result-code name table is `ERROR_NAMES` | built |
+| `retryable_code` | 363-372 | nothing | built |
+| `Store.set_busy_timeout` | 1074-1083 | the connection | built |
+| `Store.document_frequencies` (outside the memo) | 1681-1745 | the connection | built |
+| `Store._term_masks` | 1832-1851 | the connection | built |
+| `Store.scope_counts` | 1853-1874 | the connection | built |
+| `Store.scopes_for` | 1876-1893 | the connection | built |
+| `Store.category_rows` | 1895-1916 | the connection | built |
+| `Store.brief_rows` | 1918-1961 | the connection | built |
+| `StoreSource`, `DefaultStoreSource` | 2048-2072 | the binder of `principal_of`, as an argument | built |
+
+What each reproduces, and the decisions:
+
+- An exception is named by its class and its SQLite code. `failure_of`
+  maps a `rusqlite` failure to the class sqlite3 raises for its primary
+  code (`_pysqlite_seterror`'s table: InternalError, MemoryError without a
+  code, OperationalError, DatabaseError, DataError, IntegrityError,
+  InterfaceError) and the extended code it carries. `error_code_name`
+  answers the code's name from `ERROR_NAMES`, the class name for a code
+  the table lacks or none. The class mapping is private to this module;
+  `store::fold`'s own is left as it is.
+- `retryable_code` reads `code & 0xFF` as Python's `&` reads it on an
+  int, so a negative code reads its two's complement low byte (-251 is
+  SQLITE_BUSY). A code that is not an int is no code.
+- `set_busy_timeout` takes an `f64`: the ValueError text is the float's
+  `repr` (`float_repr`); the reference words an `int` argument without
+  `.0`, which a Rust caller cannot pass. `int(seconds * 1000)` is spelled
+  in full (`pyvalue::py_int`). SQLite 3.50.4, the reference's, reads a
+  value past 32 bits as 0 (`sqlite3Atoi`) and so disables the timeout;
+  the bundled SQLite 3.54.1 leaves the timeout as it was. The port sends
+  0 for such a value, so it answers as the reference under its SQLite;
+  those rows are in `store_reads_python.jsonl`, gated on the release and
+  on SQLite. An infinite product is the reference's OverflowError.
+- A scope list is `store_rows._load_json(text, None)` (`records::rows::
+  load_json`), so `admit` sees every JSON value the list holds, as the
+  reference hands it `list(scopes)`; the fixture's predicates compare
+  texts. The home project is handed as the column's value, None as
+  `SqlValue::Null`. The actor of `document_frequencies` is built when
+  either column is not NULL; a column pydantic's `str | None` refuses
+  (a number) raises ValidationError, a blob is decoded as UTF-8.
+- `scope_counts` keys its counts as a Python dict does: 1, True and 1.0
+  are one key and the first spelling stays; json's NaN is one object, so
+  every NaN is one key; a list or object raises TypeError once its row is
+  admitted. Keys are hashed by a canonical form, so the count is linear.
+- `scopes_for` answers in the order the `IN` queries give rows, a later
+  row of an id replacing the value in place; each scope is `str()` of the
+  JSON value (`pyvalue::py_str`).
+- `_term_masks` takes the row number to position map and the width that
+  `PoolReader::read_inputs` builds, and answers each mask as a `Vec<bool>`
+  over positions in place of the reference's int.
+- `StoreSource<C>` is a trait over the request context type; the default
+  source serves its one store. `principal_of` takes the binder
+  (`identity.bind`) as an argument, since the binder reads the session
+  registry, the environment and the working directory.
+- Each row's selected columns are all decoded before any is used, as
+  sqlite3 converts a whole row when it fetches it: a text that is not
+  UTF-8 raises OperationalError in any selected column, on a row the read
+  then skips or refuses too, and before the actor's ValidationError or a
+  scope list's JSON error.
+
+Fixtures: `tests/contract/gen_store_reads.py` builds small stores in
+memory (untyped `memories` and `homes`, so a hostile row keeps its type,
+and `memories_fts`), runs the reference's unbound `Store` methods on an
+object holding the connection under the predicates all, none, by scope,
+by project, without a home and by actor (stores with a text that is not
+UTF-8 in an id, a home and a scope list, and two rows of one id among
+them), and writes `store_reads.jsonl`
+(the reads, the retryable codes, live SQLite failures, the busy timeouts
+from -inf to NaN and past 2**31). A store of 1,200 rows is named by rule
+and an answer whose compact JSON passes 1,500 characters is pinned as
+its length and SHA-256. `store_reads_python.jsonl` holds the name of
+every result code in the release's table and the busy timeouts past 32
+bits, gated on the Python release and on SQLite; the generator stops
+unless the names sqlite3 attaches to errors it raises for real agree with
+that table.
+Tests: `golden_store_reads`, `store_reads_kills`, `store_reads_robustness`.
+No regular expression is involved.
+
+Left for later units: the memoised branch of `document_frequencies` and
+`ranking_statistics` (`_DOC_FREQS`), `_read_doc_freq_inputs` beyond the
+pool reader's, and `store_orphans` (store-3).
+
 ## The rule a .git entry is followed by
 
 `src/bettermemory/gitfile_rule.py` (1,537 lines, read at v9's 6000b993)
@@ -15129,8 +15222,10 @@ What the reference has and this build does not, by area:
   (`store::home`, `store::tables`): the rest of the public record API
   (the episode prune), the membership kinds' native (surrogate) writes,
   the membership log and the store id reissue (store_membership-2),
-  wiring the schema steps into the writing open and `run_steps`, rekey, reclaim, a restore's
-  rows, re-spelling the index.
+  wiring the schema steps into the writing open and `run_steps`, rekey,
+  reclaim, a restore's rows, re-spelling the index. Of `store.py`'s
+  reads, the memoised branch of `document_frequencies`,
+  `ranking_statistics` and `store_orphans` (store-3).
 - A record's history past the rows that name it: `history.py`'s row
   MAC by chain segment and replaced detail, the versions' changes
   (`_changed` and `_event_detail`; the body diffs are `difflib`'s

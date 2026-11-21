@@ -49,6 +49,7 @@ pub mod mint;
 pub mod open;
 pub mod pool;
 pub mod provenance;
+pub mod reads;
 pub mod restore_lock;
 pub mod rows;
 pub mod schema;

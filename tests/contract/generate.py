@@ -128,6 +128,7 @@ from . import (
     gen_store_records_e,
     gen_store_membership,
     gen_history_rows,
+    gen_store_reads,
     gen_store_rows,
     gen_store_rows_written,
     gen_store_tx,
@@ -240,6 +241,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_membership": gen_store_membership.generate,
     "history_rows": gen_history_rows.generate,
     "history_rows_python": gen_history_rows.generate_python,
+    "store_reads": gen_store_reads.generate,
+    "store_reads_python": gen_store_reads.generate_python,
     "store_rows_leaves": gen_store_rows.generate,
     "store_rows_leaves_python": gen_store_rows.generate_python,
     "store_rows_columns": gen_store_rows.generate_columns,
@@ -428,7 +431,8 @@ UNICODE_GATED = frozenset(
 #: prompt recall's pointers and the Stop audit's hits the same way, and
 #: ``store_files``, whose FTS case records ``bm25()`` score bits.
 #: ``store_rows_columns`` names the SQLite it read the schema's columns
-#: under (FTS5's shadow tables among them).
+#: under (FTS5's shadow tables among them). ``store_reads_python`` holds
+#: busy timeouts past 32 bits, which SQLite 3.50.4 sets to 0.
 SQLITE_VERSION = "3.50.4"
 SQLITE_GATED = frozenset(
     {
@@ -439,6 +443,7 @@ SQLITE_GATED = frozenset(
         "hooks",
         "models_stores",
         "store_rows_columns",
+        "store_reads_python",
     }
 )
 
@@ -458,6 +463,9 @@ PYTHON_VERSION = "3.13.13"
 #: texts, pathlib's parsing); 3.11 and 3.12 ship another `tomllib`.
 #: ``store_rows_leaves_python`` holds log payloads nested near the
 #: recursion budget `json.loads` stops at (`gen_store_rows`).
+#: ``store_reads_python`` holds the name `sqlite_errorname` gives each
+#: SQLite result code, from the release's table, and busy timeouts past
+#: 32 bits of milliseconds, which the SQLite decides (`gen_store_reads`).
 #: ``gitsystem_record_python`` holds records nested past 1,000 levels,
 #: where `json.loads` raising RecursionError is the interpreter's.
 #: ``gitsystem_answers_python`` holds Windows paths a separator then a colon
@@ -523,6 +531,7 @@ PYTHON_GATED = frozenset(
         "gitsystem_which_windows_python",
         "gitsystem_sources_python",
         "history_rows_python",
+        "store_reads_python",
         "store_rows_leaves_python",
         "origin_gitfiles_leaves_python",
         "pyre_python",

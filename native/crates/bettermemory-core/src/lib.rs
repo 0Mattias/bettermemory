@@ -65,6 +65,7 @@
 //!   deletes and control rows on the write transaction, the batched
 //!   reads over legacy and native rows, the id counters, `committed_seq`,
 //!   `in_batch`, `wrote_record` and the store id);
+//!   `store.py`'s connection leaves and its admitted reads (`store::reads`);
 //! - [`membership_records`]: the vocabulary and records of the membership
 //!   model, units 1 to 3 (the legacy ask rule and the helpers that
 //!   compare, join and rebase recorded paths in either spelling; the

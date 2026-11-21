@@ -292,6 +292,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `list.sort`: the pair a TypeError names, the order a NaN leaves
         // (`gen_store_rows`).
         "store_rows_leaves_python.jsonl" => &[Python],
+        // `sqlite_errorname`'s table is the release's, and SQLite decides a
+        // busy timeout past 32 bits (`gen_store_reads`).
+        "store_reads_python.jsonl" => &[Python, Sqlite],
         "models_rows.jsonl" => &[Python, Pydantic],
         // 3.11's realpath walks a link loop otherwise (`gen_fs_realpath`).
         "fs_realpath_python.jsonl" => &[Python],
