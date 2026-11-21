@@ -441,6 +441,12 @@ pub trait Fs {
     fn fstat_result(&self, file: &mut Self::File) -> Result<Stat, OsError> {
         self.fstat(file).map_err(OsError::of_class)
     }
+    /// `os.fstat(fd)` in full, as [`Fs::stat`] answers a path: the fields
+    /// `githead.stamp` reads of an open file (`origin_gitfiles._fd_stamp`).
+    /// By default not offered (None); `StdFs` and `MemFs` answer.
+    fn fstat_full(&self, _file: &mut Self::File) -> Option<Result<StatResult, OsError>> {
+        None
+    }
     /// One `os.read(fd, max)`: what a single read answers, at most `max`
     /// bytes and empty at the end, with the error's errno. By default
     /// [`Fs::read`], which may read more than once, with the class alone.
@@ -855,6 +861,15 @@ impl Fs for StdFs {
 
     fn fstat_result(&self, file: &mut StdFile) -> Result<Stat, OsError> {
         fstat_of(file).map_err(|e| os_error(&e))
+    }
+
+    fn fstat_full(&self, file: &mut StdFile) -> Option<Result<StatResult, OsError>> {
+        Some(
+            file.file
+                .metadata()
+                .map(|meta| stat_of(&meta))
+                .map_err(|e| os_error(&e)),
+        )
     }
 
     /// One `read(2)`, tried again on EINTR as `os.read` is. The buffer is
@@ -1587,6 +1602,10 @@ impl Fs for MemFs {
             identity: Some(FileId(file.identity.clone())),
             size,
         })
+    }
+
+    fn fstat_full(&self, file: &mut MemFile) -> Option<Result<StatResult, OsError>> {
+        Some(Ok(self.stat_result(&file.identity, &file.node)))
     }
 
     fn read(&self, file: &mut MemFile, max: usize) -> Result<Vec<u8>, PyErr> {

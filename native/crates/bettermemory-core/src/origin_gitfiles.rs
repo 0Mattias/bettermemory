@@ -16,6 +16,11 @@
 //!   `_config_entries`), the directories a check holds
 //!   (`_hold_directory`, `directories_held`) and the global attributes
 //!   file (`_global_attributes_path`). Built.
+//! - [`root`], unit 4: the per-stamp memo of config facts
+//!   (`_config_facts`), whether a repository's config may move its
+//!   working tree (`_config_moves_worktree`), the root read from the files
+//!   where `git rev-parse` exited non-zero (`refused_worktree_root`) and
+//!   the once-per-path memo (`first_not_a_directory`). Built.
 //!
 //! Texts are Python `str` values as code points ([`PyStr`]), since a
 //! caller's text may hold a lone surrogate, which the reference's UTF-8
@@ -23,6 +28,7 @@
 
 pub mod facts;
 pub mod machine;
+pub mod root;
 
 use crate::pyvalue::PyStr;
 

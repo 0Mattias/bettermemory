@@ -67,6 +67,7 @@ from . import (
     gen_origin_gitfiles,
     gen_origin_gitfiles_facts,
     gen_origin_gitfiles_machine,
+    gen_origin_gitfiles_root,
     gen_gitconfig_wildmatch,
     gen_origin_remote,
     gen_location_remotes,
@@ -292,6 +293,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "origin_gitfiles_darwin": gen_origin_gitfiles_machine.generate_darwin,
     "origin_gitfiles_facts": gen_origin_gitfiles_facts.generate,
     "origin_gitfiles_facts_posix": gen_origin_gitfiles_facts.generate_posix,
+    "origin_gitfiles_root_posix": gen_origin_gitfiles_root.generate_posix,
     "ulid": gen_ulid.generate,
     "durability": gen_durability.generate,
     "durability_unicode": gen_durability.generate_unicode,
@@ -773,7 +775,9 @@ PLATFORM_GATED = frozenset(
 #: and spells a v8 folder's path as the host's ``Path`` does
 #: (`gen_store_schema`);
 #: ``log_keyfiles_posix`` and ``log_keyfiles_darwin`` drive the key ring
-#: over links, mode-000 files and folders (`gen_log_keyfiles`).
+#: over links, mode-000 files and folders (`gen_log_keyfiles`);
+#: ``origin_gitfiles_root_posix`` makes links, a FIFO and a mode-000 file
+#: and spells a root as the host's ``Path`` does (`gen_origin_gitfiles_root`).
 POSIX_ONLY = frozenset(
     {
         "attestation_paths_posix",
@@ -825,6 +829,7 @@ POSIX_ONLY = frozenset(
         "origin_gitfiles_machine_python",
         "origin_gitfiles_darwin",
         "origin_gitfiles_facts_posix",
+        "origin_gitfiles_root_posix",
         "gitsystem_record",
         "gitsystem_record_python",
         "gitsystem_probe",

@@ -63,7 +63,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
-| `origin_gitfiles` | units 1 to 3 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`), the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) and the config facts (`facts`: `_facts_of`, `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies`, `_config_entries`, `_config_variable_names`, `_hold_directory`, `directories_held`, `_global_attributes_path`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl`, `origin_gitfiles_facts.jsonl`, `origin_gitfiles_facts_posix.jsonl` |
+| `origin_gitfiles` | units 1 to 3 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`), the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) and the config facts (`facts`: `_facts_of`, `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies`, `_config_entries`, `_config_variable_names`, `_hold_directory`, `directories_held`, `_global_attributes_path`) and unit 4 (`root`: `_CONFIG_LIMIT`, `_config_facts` and its memo, `_worktree_config_facts`, `_config_moves_worktree`, `refused_worktree_root`, `first_not_a_directory`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl`, `origin_gitfiles_facts.jsonl`, `origin_gitfiles_facts_posix.jsonl`, `origin_gitfiles_root_posix.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs`; unit githead-1, `githead::discovery`: `stamp`, `find_gitdir`, `gitdir_at`, `locate`, `probed`, `across_filesystems`, `discovery_moved`, `_entry_above`, `_located` and their helpers over `fsdata::Fs`, membership's `Rule`, an `Env` and the owners (`Owners`); unit githead-2, `githead::signature`: `entry_above`, `_stops_at`, `_would_be_git_directory`, `_Undetermined`, `_ref_stamps`, `signature`, and `CtxRefs`, a `RefFs` over a `gitdir::Ctx` | `githead.jsonl`, `githead_posix.jsonl`, `githead_discovery.jsonl`, `githead_signature.jsonl` |
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
 | `location_caller` | a caller's resolution (`location.py` 1420-1997), unit locstate: the per-process state around a resolution: `process_machine`, `_recorded`, `_clear_machine` (`ProcessMachine`), `_Held`, `_LOCKS`, `_location_lock` (`Locks`, `lock_name`), `_cwd_of`, `_Stand`, `_STANDS`, `_keep_stand`, `_stand_of`, `forget_session`, `_clear_stands` (`Stands`), `_with_file_errors`, `_same_namespace`; every read of the machine a closure | `location_caller_state.jsonl` |
@@ -4175,6 +4175,8 @@ that Unicode too.
 | `golden_origin_gitfiles_facts`: `origin_gitfiles_facts_every_case` | `origin_gitfiles_facts.jsonl` | i |
 | `golden_origin_gitfiles_facts_posix`: `origin_gitfiles_facts_posix_every_case` (POSIX only; `origin_gitfiles_facts_not_posix` records the gap as os) | `origin_gitfiles_facts_posix.jsonl` | i |
 | `origin_gitfiles_facts_kills` (9), `origin_gitfiles_facts_robustness` (4) | none | i |
+| `golden_origin_gitfiles_root_posix`: `origin_gitfiles_root_posix_every_case` (POSIX only; `origin_gitfiles_root_not_posix` records the gap as os) | `origin_gitfiles_root_posix.jsonl` | i |
+| `origin_gitfiles_root_kills` (8), `origin_gitfiles_root_robustness` (3) | none | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_every_case` | `capture_vocabulary.jsonl` | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_python_every_case` | `capture_vocabulary_python.jsonl` | ii (Python) |
 | `capture_vocabulary_robustness` (5) | none | i |
@@ -7907,6 +7909,74 @@ Prediction for this unit: at most 600 lines of Rust source outside tests
 the bound met; the estimate of 380 missed). The second prediction, that
 the independent review finds an input on which the port and the
 reference differ, is met: the long integer value above.
+
+### Unit 4, built (`origin_gitfiles::root`)
+
+Lines 42 (`_CONFIG_LIMIT`), 95-259 (the memo, `_fd_stamp`, `_read_flags`,
+`_config_facts`, `_WORKTREE_CONFIG_EXTENSION`, `_worktree_config_facts`,
+`_config_moves_worktree`) and 362-431 (`refused_worktree_root`, the
+not-a-directory memo and `first_not_a_directory`).
+
+- `config_facts` (`_config_facts`) stamps the path (`githead::discovery::
+  stamp`, links followed; an OSError or ValueError answers None, nothing
+  there answers `(None, no_config())`), reuses a kept read whose stamp
+  matches, else opens the file without blocking (`Fs::open_result`; a
+  FileNotFoundError that `path_missing` reads as absence answers
+  `(None, no_config())`), takes the full stamp of the open file
+  (`Fs::fstat_full`, added to the trait for this unit: `StdFs` and `MemFs`
+  answer, the default declines), refuses anything but a regular file,
+  reads with `Fs::read_once` up to one byte past `CONFIG_LIMIT`, and keeps
+  the facts only where the stamps before and after the read agree.
+  `_read_flags` is the trait's `open`, which already opens read only,
+  without blocking, not inherited and binary.
+- `ConfigMemo` is `_CONFIG_MEMO`: a value the caller holds, at most 64
+  paths, a hit moved last, the oldest dropped first. A hit needs the
+  stamp alone, as the reference keys it. Keying also on the git on PATH
+  (`GitFacts`) was considered and refused: `_facts_of` asks the release
+  (`_rev_parse_dies`), and the reference reads a git replaced under the
+  same PATH at once (`_git_is_at_least`), so a caller would see a
+  different answer. A config read under git 2.54 that sets
+  `branch.autosetupmerge = simple` is kept with `git_dies` false; with
+  the git on PATH then replaced by 2.30 and the file unchanged, the
+  reference answers the kept false where a fresh read answers true. The
+  port answers the kept false too (pinned in
+  `origin_gitfiles_root_kills.rs`). This is a reference finding: the memo
+  answers facts of a git no longer on PATH until the file's stamp changes
+  or `_caches` clears it.
+- `worktree_config_facts` and `config_moves_worktree` follow the
+  reference: config.worktree is read whether or not the extension is set,
+  and an unread file, names of None, `core.worktree`, `bare_moves` or
+  `git_dies` in either file answers true.
+- `refused_worktree_root` takes `darwin` (`sys.platform == "darwin"`, for
+  `spelled_as_git`) and answers `(root, indeterminate)`: `locate` finding
+  nothing is `(None, false)`; a config that may move the tree or an
+  unread spelling is `(None, true)`; else the spelling resolved with
+  `realpath` (an OSError keeps the spelling; a ValueError is
+  `RootFault::Value`, as the reference lets it out).
+- `NotADirectorySeen::first` is `first_not_a_directory`, keyed on the
+  caller's `str(path)`, at most 64 paths, a repeat not moved.
+
+The Windows flavour: `refused_worktree_root` answers `RootFault::NotPorted`
+there, since fsdata does not port `realpath` for it (the crate's stated
+Windows gap, ENG-124) and `locate` would otherwise read a repository as
+none. `config_facts` declines on Windows' `StdFs`, whose stat gives no
+change time or inode.
+
+Difference from the reference: the reference closes the file in a
+`finally` and lets an OSError of `os.close` out; the port ignores a
+failed close, since the read is already whole.
+
+Fixtures: `gen_origin_gitfiles_root.py` writes
+`origin_gitfiles_root_posix.jsonl` (POSIX only: links, a FIFO, a mode-000
+file, and a root spelled by the host's `Path`): 35 scenarios on a scratch
+tree, each step's answer of `_config_facts`, `_worktree_config_facts`,
+`_config_moves_worktree`, `refused_worktree_root` or the memo's keys,
+with the git on PATH patched to release 2.54. `origin_gitfiles_root_kills.rs`
+pins the memo's bound and order, the keying on the stamp alone, the size limit, the
+moves table over a memory file system, the Windows decline and the
+once-per-path memo. `origin_gitfiles_root_robustness.rs` reads a config
+of the limit's size, a memo churned far past its cap and a not-a-directory
+memo fed thousands of paths, with no panic and growth bounded.
 
 ## Design notes for the rest of the tree half
 
@@ -16140,8 +16210,8 @@ What the reference has and this build does not, by area:
   `_link_change_rows`, `HistoryRow` and `_RecordWalk` are built):
   `history.py`'s row MAC by chain segment and replaced detail,
   `record_history` and the renderers.
-- Reading a checkout: `origin_gitfiles.py` past its decoders, machine leaves
-  and config facts (`_config_facts` and its memo, units 4, 6 and 7), `checkout_token.py` past its text, reads and write (the
+- Reading a checkout: `origin_gitfiles.py` past its decoders, machine leaves,
+  config facts and the config memo with the refused root (units 6 and 7), `checkout_token.py` past its text, reads and write (the
   remint and the claim: unit 4), the origin's settling
   (`origin.py`), `location.py` past its view continuity and the
   capture's filesystem leaves (`continuity`, `view_state`, their helpers
