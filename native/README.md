@@ -34,7 +34,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record` | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
-| `verify_anchoring` | unit 1a of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`) | `verify_anchoring_sparse.jsonl` |
+| `verify_anchoring` | unit 1a of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_anchor.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
@@ -380,8 +380,9 @@ Stop hook) are not ported here.
 a record's cited paths are anchored in the working tree it names. It is
 cut into units. Unit verify_anchoring-1a (`verify_anchoring/sparse.rs`)
 holds the leaves of the sparse-checkout reading; the rest of that reading
-is unit verify_anchoring-1b, and the drift and anchoring readers are
-verify_anchoring-2.
+is unit verify_anchoring-1b. Unit verify_anchoring-2a
+(`verify_anchoring/report.rs`, `verify_anchoring/anchor.rs`) holds the
+report and the claim anchors; the drift readers are verify_anchoring-2.
 
 ### The map
 
@@ -396,6 +397,10 @@ verify_anchoring-2.
 | `_parts_below` | 624-651 | `realpath`, `normcase` (the flavour) | 1b |
 | `_SKIP_MEMO`, `_skip_index` | 790-844 | files, `githead.stamp`, `gitfile_rule.object_format` | 1b (a `SkipMemo` the caller owns, no lock) |
 | `_absent_by_sparsity` | 847-890 | discovery (`githead.locate`), `expanduser`, `isdir` | 1b |
+| `PathDriftReport` (`has_drift`, `has_claim_anchored_drift`, `should_report`, `to_dict`) | 68-296 | nothing | built (2a) |
+| `CONVICTING_ANCHORS`, `UNANCHORED`, `SPARSE_CHECKOUT`, `UNCONFIRMED_COMMIT`, `GLOBAL_RECORD` | 298-317 | nothing | built (2a) |
+| `ClaimAnchor` (`convicting`, `declared_root`, `absolute`, `commit_root`) | 319-410 | `expected_home`, `relative_under` (a trait), `holds_commit` (a closure) | built (2a) |
+| `_HELD_COMMIT_MEMO_CAP`, `Anchoring` (`prime`, `home`, `caller_root`, `for_record`, `_recorded_checkout`, `_commit_standin`, `holds`, `translate`, `_view_paths`) | 413-571 | the membership model (a trait), `inside`, `expanduser` | built (2a) |
 | `holds_commit` | 574-595 | discovery and the object reader | 2 |
 | `detect_path_drift`, `_detect_unanchored` and the rest | 893 on | | 2 |
 
@@ -451,6 +456,53 @@ Rows from indexes a real git wrote (cone, non-cone, split) and rows of
 Tests: `golden_verify_anchoring_sparse`, `verify_anchoring_sparse_kills`,
 `verify_anchoring_sparse_robustness` (no panic at the integer bounds,
 linear time in the number of entries).
+
+### What 2a reproduces
+
+- `PathDriftReport` is a struct of owned lists in the reference's field
+  order. `to_dict` answers its keys in the reference's insertion order as
+  (key, `DictField`) pairs: the six buckets always, then `anchor`,
+  `unconfirmed` (path and reason pairs) and `present_but_attested_absent`
+  only when `anchor` is set, an empty anchor included. Unequal
+  `unconfirmed` and `unconfirmed_reasons` under an anchor answer
+  `ZipLengthError` where the reference's strict `zip` raises
+  `ValueError`; without an anchor they are not read.
+- `ClaimAnchor` keeps every field. `translate` and `holds` are shared
+  closures (`Rc<dyn Fn>`); `commit_root` takes `holds_commit` as the
+  closure used when the anchor has no memo, and `absolute` takes the
+  path rules as the trait `AnchorPaths`. An empty origin root is not
+  counted (Python truthiness), and an empty cited commit is not None: it
+  skips the caller's store and is asked of a stand-in root, as the
+  reference asks it.
+- `Anchoring` takes the model as the trait `MembershipModel` (exactly the
+  calls the reference makes, `checkout`'s `KeyError` as
+  `UnknownCheckout`, the attribute `machine` as a call made once per
+  view compared), the caller as `Option<CallerView>`, and `holds_commit`,
+  `AnchorPaths` and `expanduser` at construction. The calls reach the
+  model in the reference's order and number: `for_record` asks the
+  anchor, then the recorded checkout, then the caller's root, then the
+  stand-in witness; `prime` passes an id given twice twice. The
+  translation and held-commit memos live in a shared part the anchors'
+  closures hold, so an anchor never holds its `Anchoring` and no
+  reference cycle forms. The held memo is a least recently asked map of
+  `HELD_COMMIT_MEMO_CAP` (4,096) answers, a hit moved to the end, a False
+  answer kept as a True one is.
+- No pattern of `re` is used by 2a.
+
+`tests/contract/gen_verify_anchoring_anchor.py` writes
+`verify_anchoring_anchor.jsonl` (not gated): reports over every bucket and
+the strict zip, anchors over every rule with and without a root, the
+absolute reading over recorded, origin and empty origin roots, the commit
+root over None, empty and held commits with and without a memo, and
+`Anchoring` over a stub world whose every call (model, path rules,
+`expanduser`, `holds_commit`) is logged in order; two rows fill the held
+memo to its cap and past it, the `holds_commit` calls pinned by count.
+The path rules and `expanduser` there are stand-ins the row states, not
+the reference's own, which are ported by their own units.
+
+Tests: `golden_verify_anchoring_anchor`, `verify_anchoring_anchor_kills`,
+`verify_anchoring_anchor_robustness` (megabyte paths, 50,000 records, the
+memo past its cap; linear time in the number of asks).
 
 ## Limits and key material
 

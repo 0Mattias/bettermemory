@@ -151,6 +151,7 @@ from . import (
     gen_verify_status,
     gen_witness_questions,
     gen_verify_anchoring_sparse,
+    gen_verify_anchoring_anchor,
     gen_store_provenance,
     gen_store_bulk,
 )
@@ -278,6 +279,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "verify_status": gen_verify_status.generate,
     "witness_questions": gen_witness_questions.generate,
     "verify_anchoring_sparse": gen_verify_anchoring_sparse.generate,
+    "verify_anchoring_anchor": gen_verify_anchoring_anchor.generate,
     "githead": gen_githead.generate,
     "githead_discovery": gen_githead_discovery.generate,
     "githead_signature": gen_githead_signature.generate,

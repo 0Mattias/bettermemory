@@ -138,7 +138,7 @@
 //!   Windows branch `_flock_windows`);
 //! - [`verify_anchoring`]: whether cited paths are anchored, its first
 //!   unit (the sparse-checkout switch, git's varint, the index's
-//!   skip-worktree reader);
+//!   skip-worktree reader; the drift report and the claim anchors);
 //! - [`verify_status`] and [`attribution`]: a memory's verification
 //!   staleness, and phrase-match attribution of memories to a reply;
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
