@@ -1,6 +1,6 @@
-//! `history.py`, its first unit: the log rows that name a record, with
+//! `history.py`, its first two units: the log rows that name a record, with
 //! the versions of the records that link to it and the rows that say the
-//! store's history was replaced.
+//! store's history was replaced, and the check of a row's MAC.
 //!
 //! - [`read_snapshot`]: one read transaction around a report's queries;
 //! - [`rows_naming`]: every log row whose payload text contains an id;
@@ -9,7 +9,9 @@
 //! - [`with_restores`] and [`replaced_rows`]: the `store_restored` and
 //!   `history_accepted` rows past the first row found, merged in;
 //! - the readers of one row's payload: [`payload`], [`mapping`],
-//!   [`subject`], [`names_as_event`], [`link_types`].
+//!   [`subject`], [`names_as_event`], [`link_types`];
+//! - [`RowVerifier`]: a row's MAC checked under the key of the chain
+//!   segment it sits in (`_RowVerifier`), and [`set`] (`_set`).
 //!
 //! The store is its connection ([`rusqlite::Connection`]): the read-only
 //! one of [`crate::store::StoreFile`], or a writing open's. The file was
@@ -30,9 +32,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::Connection;
 
 use crate::json;
-use crate::log::LogRow;
+use crate::log::{row_verifies, Key, KeyRing, LogRow};
 use crate::pyvalue::{py_str, repr, PyError, PyStr, PyValue};
-use crate::store::{log_row, StoreError, LOG_SELECT};
+use crate::store::{log_row, sql_value, SqlValue, StoreError, LOG_SELECT};
 use crate::unicode;
 
 /// `_CHANGE_EVENTS`: the telemetry kinds of the tool calls that change a
@@ -426,4 +428,129 @@ fn text_of(value: &PyValue) -> Result<PyStr, PyError> {
         _ => return py_str(value),
     }
     Ok(out)
+}
+
+/// `_RowVerifier`: checks a row's MAC under the key of the chain segment
+/// it sits in. The segments are read off the `rekey` rows once: the first
+/// segment's key is the one the earliest parsed rekey row says it
+/// replaced (`store_fingerprint` when there is none), and each parsed
+/// rekey row starts a segment at its seq under the key it names.
+pub struct RowVerifier<'a> {
+    ring: &'a KeyRing,
+    segments: Vec<(i64, PyStr)>,
+    keys: BTreeMap<PyStr, Option<Key>>,
+}
+
+impl<'a> RowVerifier<'a> {
+    /// `_RowVerifier.__init__`. A payload that is not a JSON object
+    /// naming both fingerprints is skipped (ValueError, KeyError and
+    /// TypeError are caught): a blob is its `b'...'` spelling, which is
+    /// not JSON. A text payload that is not UTF-8 is the fetch's
+    /// OperationalError; RecursionError is not caught and is raised.
+    pub fn new(
+        conn: &Connection,
+        ring: &'a KeyRing,
+        store_fingerprint: &str,
+    ) -> Result<RowVerifier<'a>, StoreError> {
+        let mut first = unicode::cps(store_fingerprint);
+        let mut starts: Vec<(i64, PyStr)> = Vec::new();
+        let mut statement =
+            conn.prepare("SELECT seq, payload FROM log WHERE kind = ? ORDER BY seq")?;
+        let mut rows = statement.query(["rekey"])?;
+        while let Some(row) = rows.next()? {
+            let seq = sql_value(row.get_ref(0)?)?;
+            let payload = sql_value(row.get_ref(1)?).map_err(|e| match e {
+                StoreError::NotUtf8 { .. } => StoreError::NotUtf8 {
+                    table: "log",
+                    column: "payload",
+                },
+                other => other,
+            })?;
+            let Some((old, new)) = rekey_names(&payload.py_str())? else {
+                continue;
+            };
+            // `int(raw[0])`: seq is the rowid alias, an INTEGER.
+            let SqlValue::Integer(seq) = seq else {
+                return Err(StoreError::Type {
+                    table: "log",
+                    column: "seq",
+                    found: "NULL",
+                });
+            };
+            if starts.is_empty() {
+                first = old;
+            }
+            starts.push((seq, new));
+        }
+        // The reference's first segment starts at seq 1. No answer reads
+        // that start: `verified` begins at the first segment's key, so any
+        // start gives the same verdict (an equivalent mutant).
+        let mut segments = vec![(1, first)];
+        segments.extend(starts);
+        Ok(RowVerifier {
+            ring,
+            segments,
+            keys: BTreeMap::new(),
+        })
+    }
+
+    /// `_RowVerifier.verified(row)`: None when the key of the row's
+    /// segment is not held, current or retired; else whether its MAC
+    /// verifies. The segment is the last in list order whose first seq is
+    /// at most the row's; a row before every segment is the first's.
+    pub fn verified(&mut self, row: &LogRow) -> Option<bool> {
+        let mut name = &self.segments[0].1;
+        for (first_seq, fingerprint) in &self.segments {
+            if row.seq >= *first_seq {
+                name = fingerprint;
+            }
+        }
+        let ring = self.ring;
+        let key = self.keys.entry(name.clone()).or_insert_with(|| {
+            unicode::to_string(name).and_then(|name| ring.key_for_fingerprint(&name))
+        });
+        key.as_ref().map(|key| row_verifies(key.bytes(), row))
+    }
+}
+
+/// The `old_fingerprint` and `new_fingerprint` of a rekey payload, each
+/// through `str()`, or None when the reference skips the row.
+fn rekey_names(text: &str) -> Result<Option<(PyStr, PyStr)>, PyError> {
+    // The Dict pattern mirrors the reference's `isinstance(names, dict)`.
+    // Dropping it gives the same answers, since `PyValue::get` is None on
+    // anything but a Dict. Likewise the non-recursion error of `text_of`
+    // below is unreachable from parsed JSON (`json::loads` refuses an
+    // `int` past 4,300 digits); it is kept to mirror the reference.
+    let names = match json::loads(&unicode::cps(text)) {
+        Ok(value @ PyValue::Dict(_)) => value,
+        Err(PyError::RecursionError) => return Err(PyError::RecursionError),
+        _ => return Ok(None),
+    };
+    let mut out = Vec::with_capacity(2);
+    for field in ["old_fingerprint", "new_fingerprint"] {
+        let Some(value) = names.get(field) else {
+            return Ok(None);
+        };
+        match text_of(value) {
+            Ok(text) => out.push(text),
+            Err(PyError::RecursionError) => return Err(PyError::RecursionError),
+            Err(_) => return Ok(None),
+        }
+    }
+    let new = out.pop().unwrap_or_default();
+    let old = out.pop().unwrap_or_default();
+    Ok(Some((old, new)))
+}
+
+/// `_set(detail, **values)`: `detail` with each value that is not None
+/// inserted in order; a name already present keeps its place and takes
+/// the new value.
+pub fn set(detail: &mut Vec<(String, PyValue)>, values: Vec<(&str, Option<PyValue>)>) {
+    for (name, value) in values {
+        let Some(value) = value else { continue };
+        match detail.iter_mut().find(|(key, _)| key == name) {
+            Some(slot) => slot.1 = value,
+            None => detail.push((name.to_owned(), value)),
+        }
+    }
 }

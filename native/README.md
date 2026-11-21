@@ -44,7 +44,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
-| `history` | `history.py`'s first unit: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection | `history_rows.jsonl`, `history_rows_python.jsonl` |
+| `history` | `history.py`'s first two units: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection; `_RowVerifier` and `_set` | `history_rows.jsonl`, `history_rows_python.jsonl`, `history_rows_mac.jsonl` |
 | `history_rows` | `history.py`'s third unit: `HistoryRow` with `to_dict`, `_changed` (with `py_ne`, Python's `!=` over payload values), `_body_diff` (through `difflib::body_diff`), `_set`, `_event_detail`, `_RecordWalk`, `_record_row`, `_link_change_rows` | `history_detail.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
@@ -4309,6 +4309,7 @@ that Unicode too.
 | `golden_origin_history`: `origin_history_every_case`; `origin_history_kills` (12), `origin_history_robustness` (5) | `origin_history.jsonl` (the last two none) | i |
 | `golden_history_rows`: `every_history_rows_answer_is_the_reference_s`; `history_rows_kills` (13), `history_rows_robustness` (5) | `history_rows.jsonl` (the last two none) | i |
 | `golden_history_rows`: `every_nested_history_rows_answer_is_the_reference_s` | `history_rows_python.jsonl` | ii |
+| `golden_history_mac`: `every_history_mac_answer_is_the_reference_s`; `history_mac_kills` (7), `history_mac_robustness` (4) | `history_rows_mac.jsonl` (the last two none) | i |
 | `golden_log_chain`: `log_chain_every_row_and_variant` | `log_chain.jsonl` | i |
 | `golden_log_keyring`: `log_keyring_every_case` | `log_keyring.jsonl` | i |
 | `golden_log_keyfiles`: `log_keyfiles_every_case`; `log_keyfiles_kills` (6), `log_keyfiles_robustness` (2) | `log_keyfiles.jsonl` (the last two none) | i |
@@ -16493,11 +16494,11 @@ What the reference has and this build does not, by area:
   reclaim, a restore's rows, re-spelling the index. Of `store.py`'s
   reads, the memoised branch of `document_frequencies`,
   `ranking_statistics` and `store_orphans` (store-3).
-- A record's history past the rows that name it and what each row did
+- A record's history past the rows that name it, their MAC under each
+  chain segment's key (`_RowVerifier`, `_set`) and what each row did
   (`_changed`, `_body_diff`, `_event_detail`, `_record_row`,
   `_link_change_rows`, `HistoryRow` and `_RecordWalk` are built):
-  `history.py`'s row MAC by chain segment and replaced detail,
-  `record_history` and the renderers.
+  `history.py`'s `record_history` and the renderers.
 - Reading a checkout: `origin_gitfiles.py` past its decoders, machine leaves,
   config facts and the config memo with the refused root (units 6 and 7), `checkout_token.py` past its text, reads and write (the
   remint and the claim: unit 4), the origin's settling
@@ -16592,7 +16593,7 @@ of the read (it catches only ValueError and RecursionError).
 
 `history.py` (1,050 lines) answers `memory history ID`. It needs more
 than 600 lines of Rust, so it is cut into units, leaves first. The
-first is built (`src/history.rs`, 393 lines); the rest are cut below.
+first two are built (`src/history.rs`); the rest are cut below.
 
 | function | lines | what it needs from the machine | status |
 | --- | --- | --- | --- |
@@ -16601,8 +16602,9 @@ first is built (`src/history.rs`, 393 lines); the rest are cut below.
 | `_with_linking_versions` | 349-376 | the connection | unit 1, built |
 | `_with_restores`, `_replaced_rows` | 379-412 | the connection (`log_by_kind`) | unit 1, built |
 | `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` | 462-518 | nothing | unit 1, built |
-| `_RowVerifier` | 269-318 | the connection, the key ring (`key_for_fingerprint`) | unit 2 |
-| `history_replaced`, `replaced_detail`, `_set` | 415-459, 545-550 | the connection | unit 2 |
+| `_RowVerifier` | 269-318 | the connection, the key ring (`key_for_fingerprint`) | unit 2, built |
+| `_set` | 545-550 | nothing | unit 2, built |
+| `history_replaced`, `replaced_detail` | 415-459 | the connection | built as `Store::history_replaced` (`store/mod.rs`) |
 | `_changed`, `_body_diff`, `_event_detail` | 521-568 | nothing (`difflib.unified_diff`) | unit 3 |
 | `_record_row`, `_link_change_rows` | 592-778 | nothing | unit 3 |
 | `HistoryRow`, `RecordHistory` | 165-266 | nothing | unit 4 |
@@ -16687,6 +16689,61 @@ record whose id merely contains the linking record's id comes too (the
 `links` case of `history_rows.jsonl`, record D and the row of record
 `xDy`). Whether a report shows it is `_link_change_rows`'s to decide, in
 unit 3; the port reproduces the merge.
+
+### Unit 2: a row's MAC under its segment's key, and `_set`
+
+`history_replaced` and `replaced_detail` were already built as
+`Store::history_replaced`, so this unit is `_RowVerifier` and `_set`
+(`src/history.rs`, about 130 lines).
+
+- `RowVerifier::new(conn, ring, store_fingerprint)`: the store's sides
+  are arguments (its connection, its `KeyRing`, its `key_fingerprint`),
+  so `record_history` (unit 4) passes the `Store`'s. The statement is the
+  reference's, bound to `rekey`. Each payload is `str()` of the cell
+  (`SqlValue::py_str`): a blob is its `b'...'` spelling and a number or
+  NULL its spelling, none of them a JSON object, so the row is skipped;
+  a text cell that is not UTF-8 is the fetch's OperationalError naming
+  `payload`. The payload is read by `json::loads`; a value that is not a
+  dict (a list or a str is TypeError, any scalar too), a missing name
+  (KeyError), JSON that does not parse and an integer past 4,300 digits
+  (ValueError) skip the row, the old name read before the new one so a
+  row missing either is skipped whole. RecursionError is not caught and
+  is raised. Each name is `str()` of the value (`text_of`, the module's
+  own, which writes one level more than `repr` as `str` does). The
+  first parsed row names the first segment's key; the store's
+  fingerprint names it only when no rekey row parses.
+- `verified(row)`: the segment is the last in list order whose first
+  seq is at or below the row's. The list is `(1, first)` then the rekey
+  rows in seq order, so a rekey at seq 1 wins over the first segment
+  for row 1, a rekey at seq 0 or below follows `(1, first)` in the list
+  and wins for every row at or past its seq, and a row below every
+  segment takes the first. The key is looked up once per name
+  (`KeyRing::key_for_fingerprint`); a name holding a lone surrogate is
+  no fingerprint and names no key. A key not held is None, else the
+  answer of `log::row_verifies`.
+- `set(detail, values)`: `_set` over a detail held as ordered pairs; a
+  value that is None is left out, a name already present keeps its place
+  and takes the new value.
+
+Pinned by `history_rows_mac.jsonl` (class i), written by
+`gen_history_rows.generate_mac`: the log table cut out of
+`store_schema.SCHEMA` in memory, rows MACed with `log.compute_mac` under
+three keys (SHA-256 of `k1`, `k2`, `k3`), and a duck-typed store whose
+key ring is `KeyRing.key_for_fingerprint` without files. It covers no
+rekey row, one and several, the store's fingerprint ignored, a key held
+only as retired, a key absent, a tampered MAC, the wrong key, rekeys at
+seq 0 and at seq 1, bad JSON, a blob, a list, a str, an int, null,
+missing names, an over-long integer, names that are not `str`, an
+uppercase fingerprint, duplicate names, a payload that is not UTF-8 in
+a rekey row and in another row, and `_set`. Two rekeys at one seq cannot
+sit in the table (seq is its key). No RecursionError row is written;
+`history_mac_robustness` raises one from a payload nested 100,000 deep.
+`history_mac_kills` holds seven cases a plausible wrong port fails;
+`history_mac_robustness` also shows the constructor growing linearly
+with the rekey rows (20,000 against 2,000).
+
+No regular expression is used (`is_fingerprint` is `log.rs`'s). No crate
+is added.
 
 ### Unit 3: what one row of a record's history says
 

@@ -67,9 +67,10 @@
 //!   episode, origin, actor, link) validated from a payload or a row and
 //!   written back, with pydantic's errors, and the result models
 //!   (`records::summaries`: the search hit and the two listings' rows);
-//! - [`history`]: one record's history read off the log, its first unit
-//!   (the rows that name a record, with the linking records' versions and
-//!   the rows that say the store's history was replaced);
+//! - [`history`]: one record's history read off the log, its first two
+//!   units (the rows that name a record, with the linking records'
+//!   versions and the rows that say the store's history was replaced; a
+//!   row's MAC checked under its chain segment's key, and `_set`);
 //! - [`history_rows`]: `history.py`'s third unit, what one log row of a
 //!   record's history says (`HistoryRow`, `_changed`, `_event_detail`,
 //!   `_record_row`, `_link_change_rows`);

@@ -1,5 +1,6 @@
 """Fixtures: `history`'s first unit, the rows that name a record
-(``history_rows.jsonl``, ``history_rows_python.jsonl``).
+(``history_rows.jsonl``, ``history_rows_python.jsonl``), and its
+second, `_RowVerifier` and `_set` (``history_rows_mac.jsonl``).
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/history.rs``. This pins it to
@@ -55,12 +56,14 @@ interpreter).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 import types
 from typing import Any
 
 from bettermemory import history as h
-from bettermemory.log import LogRow
+from bettermemory.log import LogRow, compute_mac, fingerprint, is_fingerprint
 from bettermemory.store_schema import SCHEMA
 
 from ._common import has_surrogate, jsonl, neutral, text_field
@@ -592,3 +595,300 @@ def generate() -> dict[str, bytes]:
 
 def generate_python() -> dict[str, bytes]:
     return {"history_rows_python.jsonl": _file(_python_cases())}
+
+
+# ---------------------------------------------------------------------------
+# `_RowVerifier` and `_set` (``history_rows_mac.jsonl``)
+# ---------------------------------------------------------------------------
+#
+# Each case's ``t`` is a log table as above, with ``mk`` naming the key
+# whose `compute_mac` over the row is its ``mac`` (``m`` stays literal
+# when ``mk`` is absent). The keys are ``KEYS`` by name: SHA-256 of the
+# name's bytes. The store is duck-typed: ``conn``, ``key_fingerprint``
+# (``fp``: a key's fingerprint by name, or literal text under ``fp_text``)
+# and a ``keyring`` holding ``current`` and ``retired`` keys by name,
+# whose ``key_for_fingerprint`` is `KeyRing.key_for_fingerprint` without
+# files: a fingerprint-shaped name, then the current key and the retired
+# key filed under the name's 16-character prefix, matched by fingerprint.
+# ``r`` is ``[[seq, verified], ...]`` for each row of ``check`` (every row
+# when absent), or ``raised``. ``set`` cases hold ``d`` (the detail's
+# pairs) and ``v`` (the values' pairs, null meaning None) and ``r`` the
+# pairs `_set` leaves.
+
+KEYS = {name: hashlib.sha256(name.encode()).digest() for name in ("k1", "k2", "k3")}
+
+
+def _fp(name: str) -> str:
+    return fingerprint(KEYS[name])
+
+
+class _Ring:
+    def __init__(self, current: str | None, retired: list[str]) -> None:
+        self.current = KEYS[current] if current else None
+        self.retired = {_fp(n)[:16]: KEYS[n] for n in retired}
+
+    def key_for_fingerprint(self, name: str) -> bytes | None:
+        if not is_fingerprint(name):
+            return None
+        for key in (self.current, self.retired.get(name[:16])):
+            if key is not None and fingerprint(key) == name:
+                return key
+        return None
+
+
+def _rekey(old: Any, new: Any) -> str:
+    return json.dumps({"old_fingerprint": old, "new_fingerprint": new})
+
+
+def _macked(row: dict[str, Any]) -> dict[str, Any]:
+    if "mk" not in row:
+        return row
+    out = dict(row)
+    out["m"] = compute_mac(
+        KEYS[row["mk"]],
+        seq=row["s"],
+        ts=row.get("ts", "t"),
+        session=row.get("se"),
+        kind=row["k"],
+        payload=row["p"],
+        prev_mac=row.get("pm", "pm"),
+    )
+    return out
+
+
+def _mac_case(name: str, table: list[dict[str, Any]], **kw: Any) -> dict[str, Any]:
+    case: dict[str, Any] = {"name": name, "t": table, **kw}
+    store = _store([_macked(row) for row in table])
+    store.key_fingerprint = (
+        kw["fp_text"] if "fp_text" in kw else _fp(kw.get("fp", "k1"))
+    )
+    store.keyring = _Ring(kw.get("current", "k1"), kw.get("retired", []))
+    try:
+        verifier = h._RowVerifier(store)
+    except (sqlite3.Error, RecursionError) as e:
+        case.update(_raised(e))
+        return case
+    rows = {row.seq: row for row in h._rows_naming(store, "{")}
+    seqs = kw.get("check", sorted(rows))
+    case["r"] = [[s, verifier.verified(rows[s])] for s in seqs]
+    return case
+
+
+def _mac_cases() -> list[dict[str, Any]]:
+    F1, F2, F3 = _fp("k1"), _fp("k2"), _fp("k3")
+    w = {"k": "write", "p": "{}"}
+    return [
+        _mac_case("no rekey", [{"s": 1, **w, "mk": "k1"}, {"s": 2, **w, "mk": "k1"}]),
+        _mac_case("no rekey, key absent", [{"s": 1, **w, "mk": "k1"}], current="k2"),
+        _mac_case("tampered", [{"s": 1, **w, "mk": "k1"}, {"s": 2, **w}]),
+        _mac_case(
+            "wrong key",
+            [{"s": 1, **w, "mk": "k2"}],
+            current="k1",
+            retired=["k2"],
+        ),
+        _mac_case(
+            "one rekey",
+            [
+                {"s": 1, **w, "mk": "k1"},
+                {"s": 2, "k": "rekey", "p": _rekey(F1, F2), "mk": "k2"},
+                {"s": 3, **w, "mk": "k2"},
+                {"s": 4, **w, "mk": "k1"},
+            ],
+            fp="k2",
+            current="k2",
+            retired=["k1"],
+        ),
+        _mac_case(
+            "one rekey, old key only retired, store fingerprint ignored",
+            [
+                {"s": 1, **w, "mk": "k1"},
+                {"s": 5, "k": "rekey", "p": _rekey(F1, F2), "mk": "k2"},
+                {"s": 6, **w, "mk": "k2"},
+            ],
+            fp="k3",
+            current="k2",
+            retired=["k1"],
+        ),
+        _mac_case(
+            "old key absent",
+            [
+                {"s": 1, **w, "mk": "k1"},
+                {"s": 2, "k": "rekey", "p": _rekey(F1, F2), "mk": "k2"},
+                {"s": 3, **w, "mk": "k2"},
+            ],
+            current="k2",
+        ),
+        _mac_case(
+            "several rekeys",
+            [
+                {"s": 1, **w, "mk": "k1"},
+                {"s": 2, "k": "rekey", "p": _rekey(F1, F2), "mk": "k2"},
+                {"s": 3, **w, "mk": "k2"},
+                {"s": 4, "k": "rekey", "p": _rekey(F2, F3), "mk": "k3"},
+                {"s": 5, **w, "mk": "k3"},
+                {"s": 6, **w, "mk": "k2"},
+            ],
+            current="k3",
+            retired=["k1", "k2"],
+        ),
+        _mac_case(
+            "rekey at seq 0 and below",
+            [
+                {"s": -2, **w, "mk": "k1"},
+                {"s": 0, "k": "rekey", "p": _rekey(F1, F2), "mk": "k2"},
+                {"s": 1, **w, "mk": "k2"},
+                {"s": 2, **w, "mk": "k1"},
+            ],
+            current="k2",
+            retired=["k1"],
+        ),
+        _mac_case(
+            "rekey at seq 1 after the first segment",
+            [
+                {"s": 1, "k": "rekey", "p": _rekey(F1, F2), "mk": "k2"},
+                {"s": 2, **w, "mk": "k2"},
+            ],
+            current="k2",
+        ),
+        _mac_case(
+            "skipped rows: bad JSON, blob, list, str, int, null, missing keys",
+            [
+                {"s": 1, **w, "mk": "k1"},
+                {"s": 2, "k": "rekey", "p": "{not json"},
+                {"s": 3, "k": "rekey", "p": {"b": _rekey(F1, F2).encode().hex()}},
+                {"s": 4, "k": "rekey", "p": json.dumps([F1, F2])},
+                {"s": 5, "k": "rekey", "p": json.dumps("old_fingerprint")},
+                {"s": 6, "k": "rekey", "p": "7"},
+                {"s": 7, "k": "rekey", "p": "null"},
+                {"s": 8, "k": "rekey", "p": json.dumps({"old_fingerprint": F1})},
+                {"s": 9, "k": "rekey", "p": json.dumps({"new_fingerprint": F2})},
+                {"s": 10, "k": "rekey", "p": "1" * 4301},
+                {"s": 11, **w, "mk": "k1"},
+            ],
+            check=[1, 11],
+        ),
+        _mac_case(
+            "non-str fingerprints through str()",
+            [
+                {"s": 1, **w, "mk": "k1"},
+                {"s": 2, "k": "rekey", "p": _rekey(None, [F2])},
+                {"s": 3, **w, "mk": "k2"},
+                {"s": 4, "k": "rekey", "p": _rekey(1.0, True)},
+                {"s": 5, **w, "mk": "k2"},
+                {"s": 6, "k": "rekey", "p": _rekey({"a": [1, None]}, F2)},
+                {"s": 7, **w, "mk": "k2"},
+            ],
+            current="k2",
+            retired=["k1"],
+        ),
+        _mac_case(
+            "first segment named by an unusable fingerprint",
+            [
+                {"s": 1, **w, "mk": "k1"},
+                {"s": 2, "k": "rekey", "p": _rekey(F1.upper(), F2)},
+                {"s": 3, **w, "mk": "k2"},
+            ],
+            current="k2",
+            retired=["k1"],
+        ),
+        _mac_case(
+            "duplicate keys in a payload: the last wins",
+            [
+                {"s": 1, **w, "mk": "k1"},
+                {
+                    "s": 2,
+                    "k": "rekey",
+                    "p": '{"new_fingerprint":"x","old_fingerprint":"%s","new_fingerprint":"%s"}'
+                    % (F1, F2),
+                },
+                {"s": 3, **w, "mk": "k2"},
+            ],
+            current="k2",
+            retired=["k1"],
+        ),
+        _mac_case(
+            "store fingerprint not a fingerprint",
+            [{"s": 1, **w, "mk": "k1"}],
+            fp_text="k1",
+        ),
+        _mac_case(
+            "store fingerprint empty",
+            [{"s": 1, **w, "mk": "k1"}],
+            fp_text="",
+        ),
+        _mac_case(
+            "payload not UTF-8",
+            [
+                {"s": 1, **w, "mk": "k1"},
+                {"s": 2, "k": "rekey", "p": {"x": "ff"}},
+            ],
+        ),
+        _mac_case(
+            "a non-UTF-8 payload of another kind is not read",
+            [{"s": 1, **w, "mk": "k1"}, {"s": 2, "k": "write", "p": {"x": "ff"}}],
+            check=[1],
+        ),
+        _mac_case(
+            "session and fields in the MAC",
+            [
+                {
+                    "s": 1,
+                    "k": "write",
+                    "p": "{}",
+                    "se": "s",
+                    "ts": "x",
+                    "pm": "",
+                    "mk": "k1",
+                },
+                {"s": 2, "k": "write", "p": "{}", "se": "", "mk": "k1"},
+            ],
+        ),
+    ]
+
+
+def _two_at_one_seq() -> dict[str, Any]:
+    """Two rekeys at one seq cannot sit in the table (seq is its key);
+    the nearest is two adjacent rekeys, the last at or before a row
+    winning."""
+    F1, F2, F3 = _fp("k1"), _fp("k2"), _fp("k3")
+    w = {"k": "write", "p": "{}"}
+    return _mac_case(
+        "adjacent rekeys",
+        [
+            {"s": 1, **w, "mk": "k1"},
+            {"s": 3, "k": "rekey", "p": _rekey(F1, F2)},
+            {"s": 4, "k": "rekey", "p": _rekey(F2, F3)},
+            {"s": 5, **w, "mk": "k3"},
+        ],
+        current="k3",
+        retired=["k1", "k2"],
+    )
+
+
+def _set_cases() -> list[dict[str, Any]]:
+    out = []
+    cases: list[tuple[list[list[Any]], list[list[Any]]]] = [
+        ([], []),
+        ([], [["a", 1], ["b", None], ["c", "x"]]),
+        ([["a", 0], ["b", 1]], [["a", 2], ["c", None], ["d", False]]),
+        ([["a", None]], [["a", None], ["b", 0]]),
+        ([["z", 1]], [["y", ""], ["z", []]]),
+    ]
+    for d, v in cases:
+        detail = {str(k): x for k, x in d}
+        out.append(
+            {
+                "name": "set",
+                "d": d,
+                "v": v,
+                "r": list(h._set(detail, **{str(k): x for k, x in v}).items()),
+            }
+        )
+    return out
+
+
+def generate_mac() -> dict[str, bytes]:
+    cases = _mac_cases() + [_two_at_one_seq()] + _set_cases()
+    header = {"cases": len(cases), "ddl": DDL, "keys": sorted(KEYS)}
+    return {"history_rows_mac.jsonl": jsonl([header, *cases])}

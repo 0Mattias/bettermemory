@@ -281,6 +281,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_rows_leaves_python": gen_store_rows.generate_python,
     "store_rows_columns": gen_store_rows.generate_columns,
     "history_detail": gen_history_detail.generate,
+    "history_rows_mac": gen_history_rows.generate_mac,
     "store_rows_written": gen_store_rows_written.generate,
     "gitconfig": gen_gitconfig.generate,
     "location_stamps": gen_location_stamps.generate,
