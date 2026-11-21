@@ -54,6 +54,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `location_stamps` | `location_stamps.py` whole: `in_ticks`, `kept_in_ticks`, `stat_each`, `capture_ticks`, `_device_name` (macOS's `os.major`/`os.minor`, and Linux's under a CPython built against glibc or musl), `_drvfs` (the mount table read through `Fs`), `_init_stamps`, `filetime_ns`, `basic_info_ns` (FILE_BASIC_INFO through `Fs::basic_info`, declined by `StdFs`) | `location_stamps.jsonl`, `location_stamps_python.jsonl`, `location_stamps_platform.jsonl` |
 | `location_view` | `location.py`'s view continuity: `_git_dir_at`, `continuity`, `_head_at`, `view_state`, `_carries_project_file`, `_same_number`, with `object_key`, `_at_dotgit`, the project file's parse and the history's `holds` as arguments | `location_view.jsonl`, `location_view_posix.jsonl` |
 | `location_git` | the readers of `location_git.py` that need neither discovery nor the object reader: `_Git`, `_resolve_head` (the peel a callback), `_ref_tips`, `_manifest`, `Reach`, `reachable_among`, `walk` | `location_git_readers.jsonl`, `location_git_readers_posix.jsonl` |
+| `location_cache` | `location.py`'s capture signature and capture cache: `_evicted`, `_stamp`, `signature`, `_masked`, `_Entry`, the cache, `forget`, `_fresh`, `capture`, `_capture_cached`, `capture_token` (unit loccache) | `location_cache.jsonl`, `location_cache_posix.jsonl` |
 | `location_witness` | the history half of `location_witness.py` (unit location_witness-1): `NeedWitnesses` with `joined`, `AnsweredHistory`, `AnsweredGit`, `answered_history`, `_independent_answers`, `independent_answer`, and the exchange keeping (`_NONCE`, `EXCHANGE_SECONDS`, `_EXCHANGES_CAP`, `_Kept`, `_EXCHANGES` as `Exchanges`, `_drop`, `ExchangeReads` with `carried`) | `location_witness.jsonl` |
 | `location` | `location.py`, unit 1: the capture's filesystem leaves: `_statx_birth`, `_birth`, `object_key`, `_evicted`, `_read_one`, `_fetch`, `_stamp`, `_local`, `_url_path` (3.13.13's `nturl2path`), `_file_url_path`, `kept_apart`, `record_working_tree`, `_real_git` | `location_leaves.jsonl`, `location_leaves_python.jsonl`, `location_leaves_posix.jsonl` |
 | `location_reads` | `location_reads.py` whole as a timed runtime: `READ_HANDOFF`, `READ_LANES`, `READ_SLOTS`, `_Flight`, `_Slots`, the board (`_FLIGHTS`, `_LANDED`, `_SLOTS`, `UNANSWERED`, `NOT_READ`) as a `Board` the caller holds, `_stalled`, `_board`, `_give_up`, `_fly`, `bounded_read`, `bounded_reads`, `_Lanes` | `location_reads.jsonl` |
@@ -9663,6 +9664,128 @@ Tests:
 lane lwask); the `HistoryReader` and `IndependentReader` adapters
 (membership resolution).
 
+## The capture signature and the capture cache (`location.py`)
+
+`location_cache.rs` holds the part of `location.py` that decides whether
+a kept capture still answers for a directory. The uncached capture, the
+working tree's record, git's discovery walk and the above-cache are other
+units' and reach it as closures.
+
+### Map of the module
+
+| Function | Reference lines | What it needs from the machine | Status |
+| --- | --- | --- | --- |
+| `_statx_birth`, `_birth`, `object_key`, `_read_one`, `_fetch` | 253-352 | stat, statx, a worker thread | unit location-1 |
+| `_evicted` | 321-326 | a stat's flags and attributes | built here (loccache) |
+| `_stamp` | 355-359 | stat (`githead::discovery::stamp`) | built here (loccache) |
+| `remote_key` and its patterns | 366-460 | none | built (`capture::remote`) |
+| `_walk_files`, `_file_tracked`, `_token_fields`, `_indeterminate`, `_capture_uncached`, `kept_apart`, `record_working_tree`, `_real_git` | 463-755 | the file system, git, the token | unit location-1 |
+| `signature`, `_masked`, `_Entry`, `_CACHE`, `_clear_cache`, `forget`, `_fresh`, `capture`, `_capture_cached`, `capture_token` | 758-1017 | stat, HEAD's bytes, discovery, both clocks | built here (loccache) |
+| `_git_dir_at`, `continuity`, `_head_at` | 1020-1103 | the file system | unit locview |
+| `view_state` to `_hooked` | 1104-1997 | the store, the daemon's state, locks | later units (location-4 wires this unit's closures) |
+
+### What each function reproduces
+
+- `evicted(st)`: `_SF_DATALESS` in `st_flags` or a recall attribute in
+  `st_file_attributes`, both read from `fsdata::StatResult` (0 where the
+  platform has no such field).
+- `stamp(ctx, path)`: `githead.stamp` with links followed; any OSError or
+  ValueError is `(-1, -1, -1, -1, -1)`. A stat field the Windows flavour
+  does not port declines (`Declined::NotPorted`).
+- `signature(ctx, cwd, read_head, moved, discover)`: `moved` is the
+  `_DISCOVERY_ENV` test, `discover` is `_discover(cwd, read_head=...)`
+  (an OSError or GitDies is `DiscoverFailed`). The tuple is the enum
+  `Signature` (`Outside` or `Repo`), whose derived equality is the
+  tuple's. HEAD is stat'ed, then config (a FileNotFoundError that
+  `path_missing` reads as gone is no config, any other error no
+  signature), each tested for eviction, then HEAD is read to
+  `_HEAD_LIMIT` bytes with a blocking open as `open(..., "rb")` is. A
+  HEAD `_headref_content` refuses sends the call to a second walk with
+  `read_head` True. The ref name is HEAD decoded with replacement,
+  stripped as `str.strip` strips (`str.isspace`), split at `/` and joined
+  as `os.path.join` joins; `refs/bisect/`, `refs/rewritten/` and
+  `refs/worktree/` are the git directory's. The project files are stamped
+  from the cwd (or the root, where the cwd is not inside it by
+  `gitconfig::stamped::inside`, which is location_git's `_inside`) up to
+  the root by `normpath`, or to the top. The token is
+  `checkout_token::token_path` of the git directory.
+- `masked(sig)`: the token's slot is None, and so is the cwd's part when
+  the cwd is spelled `token` (see the finding below).
+- `Cache` (`_CACHE`): entries in insertion order; `put` is the
+  reference's pop, set and evict-the-oldest while more than `CACHE_CAP`.
+  The caller holds it behind its lock; `Cache::clear` is `_clear_cache`.
+- `forget(cache, cwd, clear_above)`, `fresh(...)`: as written; `fresh`
+  is false for NaN as Python's chained comparison is.
+- `capture`, `capture_cached`, `capture_token`: `Effects` carries the
+  signature (read_head False), the clocks, `config_unchanged`, the
+  uncached capture and `record_working_tree`; `Asked` the switches. A kept
+  capture that wrote the token is kept with `token` set, `token_written`
+  None and `token_status` `present`; the answer is the capture as made.
+  "elsewhere" forgets the cwd's entries only (not the above-cache) and
+  reads again with the cache off.
+
+### Decisions
+
+- `CACHE_SECONDS`, `CACHE_CAP` (`location_git.py` 141, 148),
+  `FETCH_BUDGET` (127), `_HEAD_LIMIT` (238), `_DISCOVERY_ENV` (241) and
+  `_TOKEN_SLOT` (243) are defined here with their lines; no other module
+  defines them yet.
+- `config_unchanged` is a closure: `capture::Capture` does not carry the
+  stamped config files `gitconfig::stamped::config_unchanged` compares, so
+  the caller that holds them wires it.
+- The reference releases the cache's lock while it captures; here the
+  caller holds `&mut Cache` for the call. A single thread sees the same
+  answers; two threads that interleave a miss see the later one's entry
+  either way.
+- A ValueError the reference lets out of `signature` (a NUL in a path
+  discovery handed over, which discovery never hands over) is
+  `Declined::ValueError`, raised through `capture`.
+- No regular expression is used.
+- The Windows flavour declines every signature, outside a repository
+  too: the cwd's own stat answers no `st_dev` or `st_ino` there, so
+  `signature` declines before discovery runs, where the reference on
+  Windows answers (`_inside` and the stat fields are not ported there).
+  This is the crate's stated Windows gap (Linear ENG-124), recorded in
+  `location_cache_not_posix.rs`.
+
+### Reference findings
+
+- `_masked` blanks any tuple part whose first item equals `"token"`, not
+  only the token's slot: the cwd's part `(cwd, st_dev, st_ino)` of a cwd
+  spelled `token` (a relative path) is blanked too, so a capture that
+  wrote the token keeps its entry though the cwd's folder was replaced.
+  Reproduce: `os.chdir(parent); location._masked(("outside", ("token",
+  1, 2), None)) == location._masked(("outside", ("token", 3, 4), None))`
+  is True. The port reproduces it (`location_cache_kills`).
+
+### Fixtures and tests
+
+- `location_cache.jsonl` (ungated, scripted): hits, misses, a signature
+  that moved, None before or after, indeterminate and evicted captures,
+  use_cache off, both clocks' bounds and a clock that went back, a config
+  that changed, a written token compared masked and kept as present, the
+  key's parts, `forget` of one cwd and of all, the tree's record (first,
+  elsewhere, already, off, an empty git directory, no root), the budget,
+  `capture_token`, eviction past `CACHE_CAP` with a re-put, and
+  `_evicted` over flags and attributes.
+- `location_cache_posix.jsonl` (POSIX only: real stamps, a mode-000
+  HEAD): outside with and without a project file, a missing cwd, a
+  discovery variable, symbolic and detached HEAD, a trailing slash, nested
+  project files, a per-worktree ref, a missing bisect ref and an unborn
+  branch (the refs folders stamped), a packed branch, shallow, a token
+  file, no config, a HEAD git does not read (the second walk), a spaced
+  CRLF HEAD, a non-UTF-8 ref name, `refs//heads//main`, an unreadable
+  HEAD, a bare repository from inside it, a linked worktree. Discovery is
+  answered in the Rust test as the reference's walk answered; each stamp
+  is taken of the path the reference's stamp was of.
+- SF_DATALESS cannot be set on a file a generator makes, and `_evicted`
+  reads it through `getattr`, so its rows are scripted (ungated) and the
+  evicted HEAD and config of `signature` are tested over `MemFs` flags in
+  `location_cache_kills`, not in a macOS-gated file.
+- `golden_location_cache`, `golden_location_cache_posix`,
+  `location_cache_not_posix`, `location_cache_kills`,
+  `location_cache_robustness`.
+
 ## The git on PATH and what it reads (`gitsystem.py`)
 
 `gitsystem.py` (986 lines, read at 485d3980) answers what the git on PATH
@@ -16309,9 +16432,11 @@ What the reference has and this build does not, by area:
 - Reading a checkout: `origin_gitfiles.py` past its decoders, machine leaves,
   config facts and the config memo with the refused root (units 6 and 7), `checkout_token.py` past its text, reads and write (the
   remint and the claim: unit 4), the origin's settling
-  (`origin.py`), `location.py` past its view continuity and the
-  capture's filesystem leaves (`continuity`, `view_state`, their helpers
-  and unit 1's leaves in `location::leaves` are built; `path_liveness`,
+  (`origin.py`), `location.py` past its view continuity, the
+  capture's filesystem leaves and its capture signature and cache
+  (`continuity`, `view_state`, their helpers and unit 1's leaves in
+  `location::leaves`, and `_evicted`, `_stamp`, `signature` to
+  `capture_token` from unit loccache are built; `path_liveness`,
   `path_liveness_many` and `_liveness_read` are not; of the caller's
   resolution the per-process state is built in `location_caller`, and
   `capture_location`, `_model`, `Caller`, `resolve_caller`, `_caller`,
