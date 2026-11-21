@@ -42,6 +42,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `history` | `history.py`'s first unit: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection | `history_rows.jsonl`, `history_rows_python.jsonl` |
+| `history_rows` | `history.py`'s third unit: `HistoryRow` with `to_dict`, `_changed` (with `py_ne`, Python's `!=` over payload values), `_body_diff` (through `difflib::body_diff`), `_set`, `_event_detail`, `_RecordWalk`, `_record_row`, `_link_change_rows` | `history_detail.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
@@ -16031,11 +16032,11 @@ What the reference has and this build does not, by area:
   reclaim, a restore's rows, re-spelling the index. Of `store.py`'s
   reads, the memoised branch of `document_frequencies`,
   `ranking_statistics` and `store_orphans` (store-3).
-- A record's history past the rows that name it: `history.py`'s row
-  MAC by chain segment and replaced detail, the versions' changes
-  (`_changed` and `_event_detail`; the body diffs are `difflib`'s
-  `body_diff`), the record and link rows, `record_history` and the
-  renderers (units 2 to 5).
+- A record's history past the rows that name it and what each row did
+  (`_changed`, `_body_diff`, `_event_detail`, `_record_row`,
+  `_link_change_rows`, `HistoryRow` and `_RecordWalk` are built):
+  `history.py`'s row MAC by chain segment and replaced detail,
+  `record_history` and the renderers.
 - Reading a checkout: `origin_gitfiles.py` past its decoders, machine leaves
   and config facts (`_config_facts` and its memo, units 4, 6 and 7), `checkout_token.py` past its text, reads and write (the
   remint and the claim: unit 4), the origin's settling
@@ -16223,3 +16224,56 @@ record whose id merely contains the linking record's id comes too (the
 `links` case of `history_rows.jsonl`, record D and the row of record
 `xDy`). Whether a report shows it is `_link_change_rows`'s to decide, in
 unit 3; the port reproduces the merge.
+
+### Unit 3: what one row of a record's history says
+
+Built in `src/history_rows.rs` (one file beside `src/history.rs`, which
+unit 2 edits). The reference's lines, confirmed against the source as it
+is: the constants 121-144, `HistoryRow` and `to_dict` 165-197,
+`_changed` 521-532, `_body_diff` 534-543, `_set` 545-550,
+`_event_detail` 553-568, `_RecordWalk` 581-590, `_record_row` 592-738,
+`_link_change_rows` 741-778. `HistoryRow` moved here from unit 4 and
+`_RecordWalk` with it, since `_record_row` builds and carries them.
+
+- What later units own comes in as arguments: `verified` is unit 2's
+  `_RowVerifier.verified(row)`; `before` and `after` are unit 4's
+  `adjacent(index, -1)` and `adjacent(index, 1)`, already looked up.
+  `base` is the row's seq, ts, session and kind, read off the `LogRow`
+  as `_read_history` builds it.
+- `py_ne`: Python's `!=` over payload values. Bool, int and float
+  compare as numbers, exactly (2**53 + 1 differs from the float it
+  rounds to; -0.0 equals 0); a dict compares by keys and values, a list
+  in order, a list never equals a str. `json.loads` hands every `NaN` as
+  the one object `json.decoder.NaN`, and a container's comparison takes
+  the identity shortcut (`PyObject_RichCompareBool`) where the top-level
+  `!=` does not: a top-level `NaN` field reads as changed, a `NaN`
+  inside a list or dict does not. The walk keeps a work list, so a value
+  nested to `json::MAX_DEPTH` compares without recursion (the reference
+  compares 9,900 levels without RecursionError).
+- `changed`: the `str` keys both records carry, outside `_UNCOMPARED`,
+  sorted by code point. A payload record's keys are `str`.
+- `event_detail`: `value not in (None, "", [], {})` drops exactly those
+  four values (0, `False`, `0.0` and `[[]]` are kept); `forced` only when
+  it is `True` itself; `*_acknowledged` by truthiness (`machine::truthy`),
+  the names stripped and sorted.
+- `record_row`: the reference's branches kind by kind, the `detail` dict
+  in insertion order. A body equal to the empty text against no
+  previous body is still a change: the diff is the empty text, not None.
+  `_set` is a private helper here (`set`).
+- `link_change_rows`: `_link_types` from unit 1, its error carried.
+- `IMPORTED` and `UNACCOUNTED` (`store.IMPORTED`, `store.UNACCOUNTED`)
+  are private constants here; no crate constant held them.
+
+No regular expression is used. No crate is added. Nothing is read from
+the machine, so the file is ungated.
+
+Pinned by `history_detail.jsonl` (`gen_history_detail.py`): `_changed`
+and `_event_detail` over values that differ only across types and over
+`NaN`, walks of scripted rows through every kind branch (with a stub
+verifier and adjacency), and link sets added and dropped.
+`history_detail_kills` and `history_detail_robustness` hold the rest;
+the second compares values nested to the reader's limit and shows wide
+records comparing in linear time.
+
+Left for unit 4: `RecordHistory`, `record_history`, `_read_history`,
+`_table_kind`, `_state`; for unit 5: `render_text`, `render_json`.

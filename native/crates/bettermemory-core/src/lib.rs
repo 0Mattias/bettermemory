@@ -61,6 +61,9 @@
 //! - [`history`]: one record's history read off the log, its first unit
 //!   (the rows that name a record, with the linking records' versions and
 //!   the rows that say the store's history was replaced);
+//! - [`history_rows`]: `history.py`'s third unit, what one log row of a
+//!   record's history says (`HistoryRow`, `_changed`, `_event_detail`,
+//!   `_record_row`, `_link_change_rows`);
 //! - [`store`]: a store file read without writing to it: the version
 //!   contract, the tables, the key ring from a keys directory, the chain
 //!   verified on disk, the FTS5 prefilter, the additive schema steps
@@ -205,6 +208,7 @@ pub mod githead;
 pub mod gitobjects;
 pub mod gitsystem;
 pub mod history;
+pub mod history_rows;
 pub mod identity;
 pub mod in_force;
 pub mod json;
