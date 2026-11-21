@@ -20,9 +20,13 @@
 //! - [`lower`]: a parsed tree lowered to the engine's arena of nodes
 //!   threaded by `next`, each repeat classed as `re._compiler` classes it
 //!   (unit pyre-4b).
+//! - [`exec`]: a lowered program run on a text at one start and over
+//!   starts, as `_sre` answers `match`, `fullmatch` and `search` (unit
+//!   pyre-5a).
 
 pub mod atom;
 pub mod charset;
+pub mod exec;
 pub mod fold;
 pub mod lower;
 pub mod parse;

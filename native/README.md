@@ -26,7 +26,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
-| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl` |
+| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth; lookarounds refused (`supports`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
@@ -3522,6 +3522,10 @@ that Unicode too.
 | `golden_pyre_lower`: `pyre_lower_every_row` | `pyre_lower.jsonl` | i |
 | `golden_pyre_lower`: `pyre_lower_unicode_every_row` | `pyre_unicode.jsonl` (the `lower.` parts) | ii (Unicode) |
 | `pyre_lower_kills` (15), `pyre_lower_robustness` (4) | none | i |
+| `golden_pyre_exec`: `pyre_exec_every_row` | `pyre_exec.jsonl` | i |
+| `golden_pyre_exec`: `pyre_exec_unicode_every_row` | `pyre_unicode.jsonl` (the `exec.` parts) | ii (Unicode) |
+| `golden_pyre_exec`: `pyre_exec_python_every_row` | `pyre_python.jsonl` (the `exec.` parts) | ii (Python) |
+| `pyre_exec_kills` (17), `pyre_exec_robustness` (7) | none | i |
 | `golden_models_text`: `models_text_every_case`; `models_text_kills` (16), `models_text_robustness` (4) | `models_text.jsonl` (the last two none) | i |
 | `golden_models_text`: `models_text_unicode_every_case` | `models_text_unicode.jsonl` | ii (Unicode) |
 | `golden_models_text`: `models_text_platform_every_case` | `models_text_platform.jsonl` | iii |
@@ -3681,7 +3685,7 @@ Leaves first. A unit's lines are Rust source outside tests.
 | pyre-3c | `pyre/parse.rs` | the refusal predicate over the finished tree, the nesting bound of the matcher | none (the engine's subset) | pyre-3b | built, 103 lines |
 | pyre-4a | `pyre/charset.rs` | a class compiled as `_optimize_charset` compiles it, the opcode `_compile` chooses for it, the engine's refusals of a class, the test of one code point against it | `_compiler.py` 46-55, 85-97, 226-236, 241-399 | pyre-1, pyre-2a | built, 365 lines |
 | pyre-4b | `pyre/lower.rs` | nodes threaded by `next`, `_simple`, `_combine_flags`, group repeats unrolled, the arena cap, the lookbehind errors of `_compile`, the refusals that depend on flags | `_compiler.py` 31-35, 37-200, 401-408 | pyre-1, pyre-3 | built, 526 lines |
-| pyre-5 | `pyre/exec.rs` | one loop, one stack, one trail; anchors, lookarounds, the three acceptance rules, the scan over starts, the step count | `_sre` (by differential) | pyre-4 | not built |
+| pyre-5 | `pyre/exec.rs` | one loop, one stack, one trail; anchors, lookarounds, the `match` and `fullmatch` acceptance rules (the must-advance attempt is pyre-6), the scan over starts, the step count | `_sre` (by differential) | pyre-4 | pyre-5a built (all but lookarounds), 489 lines; pyre-5b (lookarounds) not built |
 | pyre-6 | `pyre/regex.rs` | `Regex`, `Match`, `finditer`, `findall`, `sub`, `subn`, `split`, `pos` and `endpos`, literal and function replacement | `_sre` (by differential) | pyre-5, pyre-2 | not built |
 | pyre-7 | tests only | every remaining pattern of the reference built from its own text; mutants; the inventory tripwire | the reference's patterns | pyre-6 | not built |
 | pyre-8 | tests only | the 94 hand-written matchers against the engine | the built units | pyre-6 | not built |
@@ -4935,6 +4939,95 @@ What is left for later units: the class compiler and its wiring
 or inside a lookaround, a choice inside a lookbehind, `\D` and `\W`),
 which the lowering does not repeat; the matcher (pyre-5), which reads
 `Rep1`, `Split` and `Look` as described here.
+
+### Unit pyre-5a, built (`pyre::exec`)
+
+`pyre/exec.rs` runs a lowered `Program` on a text as `_sre` runs the
+compiled pattern (CPython 3.13.13, `Modules/_sre/sre_lib.h`, `SRE(match)`
+and `SRE(search)`). The C source is not on the machine the unit was built
+on and no download was made, so the order of trial is reproduced by
+differential against `re` and the prototype's loop shape
+(`proto_small_backtracker.py`), not by reading the C text. It holds 484
+lines of Rust source.
+
+| function | reproduces | needs | status |
+| --- | --- | --- | --- |
+| `exec` | `Pattern.match`, `Pattern.fullmatch` and `Pattern.search` with `pos` and `endpos`: both clamped to `[0, len]`, one attempt at `pos` for the first two, an attempt at each start from `pos` to `endpos` for the third | `ClassTest`, `Text` | built |
+| `Run::attempt` | one attempt: the forward loop over `Op::Unit`, `At`, `Mark`, `Split`, `Rep1`, `Fail`, `Match`, and the backtrack loop over the choice points | `fold::Lit`, `unicode::is_word` | built |
+| `Run::at` | `SRE(at)` for the seven AT codes the lowering emits | `unicode::is_word` | built |
+| `supports` | which programs `exec` runs: none with a lookaround | nothing | built |
+
+Decisions and their reasons:
+
+- One loop, one heap stack of choice points (`Frame::Alt`, `Greedy`,
+  `Lazy`) and one trail of mark writes; nothing recurses per node or per
+  character, so a thread with a 64 KiB stack runs a text of 400,000 code
+  points. A single-unit repeat holds one choice point whatever its count.
+- Every buffer grows through `grow`, which calls `try_reserve` and
+  answers `MatchError::Memory`. The step count is kept on every call and
+  returned in `Found::steps`; `budget` is off when `None` and answered as
+  `MatchError::Budget` when passed. `Found::peak` is the most choice
+  points held at once, which the robustness tests pin.
+- Positions are `isize` Python indices. `endpos` may lie before `pos`:
+  `match` still makes its attempt there, a single-unit repeat fails
+  even with a minimum of 0 (its minimum is tested against a negative
+  room), an unrolled repeat and the empty pattern match empty, `$`
+  under MULTILINE reads the character at the position, and `\b` reads
+  the character before it and is false wherever `endpos` is 0.
+  `fullmatch` and `search` find nothing there.
+- Acceptance is tested inside the attempt: `fullmatch` refuses a `Match`
+  node short of `endpos` and goes on backtracking.
+- A mark write and the `lastindex` it sets are trailed and unwound with
+  the choice point, and an attempt that fails unwinds the whole trail,
+  so a path that failed leaves neither behind, also across the starts
+  of `search` (`(.|(b))[^a]` searched in `bab` has group 2 unset).
+  `re` 3.13.13 agrees on every case pinned (`(?:(a)x|a)(b)` on `ab`
+  has group 1 unset and `lastindex` 2).
+- Class membership is a trait over the `Class` itself (`ClassTest`), since
+  the arena holds classes inline and pyre-4a is not built; the tests use
+  a naive test over the members (`tests/pyre_exec_support`), and no
+  fixture holds a class under IGNORECASE.
+- Text is a two-method trait (`Text`) with one impl for `[u32]` and one
+  for `[u8]`: one loop runs both. A code unit past U+10FFFF is matched
+  by `.`, is in no category and is not a word character.
+- A program with `Op::Look` or `Op::LookEnd` is refused by `supports`
+  (`Unsupported::Lookaround`); `exec` answers those nodes as a failure,
+  so a caller checks `supports` first.
+
+Patterns: this unit matches no pattern of the reference. The engine's
+inventory gains nothing; the fixtures' patterns are its own.
+
+#### Fixtures and tests of pyre-5a
+
+`tests/contract/gen_pyre_exec.py` writes, per pattern, the tree as
+`gen_pyre_tree._item` writes it, the flags `_compile` reads and the
+group count, and a digest of `match`, `fullmatch` and `search` over every
+text of at most `long` code points over an alphabet of two to four
+symbols: every `(pos, endpos)` in `[-1, n + 1]` for a text of at most
+`short` code points, and four windows for a longer one. `long` is 12 for
+an alphabet of two symbols and 6 or 8 for one of three or four; `short`
+is 3 to 6. The sweep does not take every window of every text of up to
+12 code points: that is about 25 times the calls, which the Rust tests
+in debug do not finish in minutes. Written-out calls (`exec.kill`) cover `\b` at
+`endpos`, `$` under MULTILINE, `fullmatch` backtracking past a shorter
+match, the first start that matches, marks of a failed path, lazy
+against greedy, clamped and reversed windows.
+
+| file | rows |
+| --- | --- |
+| `pyre_exec.jsonl` | the ordered windows of the patterns without IGNORECASE, and their calls |
+| `pyre_unicode.jsonl` (`exec.`, unit `pyre-5a`) | the ordered windows of the patterns under IGNORECASE |
+| `pyre_python.jsonl` (`exec.`, unit `pyre-5a`) | the reversed windows of every pattern, and the reversed calls: their answers are 3.13.13's (decision section 3, item 1, and section 8, item 9) |
+
+| test | cases | what |
+| --- | --- | --- |
+| `golden_pyre_exec` | 3 | every row of the three files; each sweep regenerated by the generator's rule |
+| `pyre_exec_kills` | 18 | the reversed-window rules, anchors at `endpos`, `fullmatch` backtracking, the first start, marks and `lastindex` of a failed path (in `match` and across the starts of `search`), lazy and greedy bounds, DOTALL, clamping, bytes, the budget, the step count, the lookaround refusal |
+| `pyre_exec_robustness` | 7 | steps on linear patterns at `n` and `2n` within 2.2 times, a 64 KiB thread on 400,000 code points, one choice point per single-unit repeat, an exponential shape under a budget, code units past U+10FFFF, empty texts and extreme windows, time of a failing search at ten times the text |
+
+Left for later units: lookarounds (pyre-5b, which deletes
+`Unsupported::Lookaround`); the attempt that must advance after an empty
+match, `Regex` and its methods (pyre-6); the failure memo (pyre-9).
 
 ### Left for later units
 
@@ -14960,8 +15053,9 @@ What the reference has and this build does not, by area:
   parser (its tree, state, tokenizer, atoms, repeats, widths, groups,
   lookarounds, inline flags, alternatives and `parse`, and the refusal
   predicate over the finished tree with the matcher's nesting bound),
-  the class compiler and the lowering: the matcher and the methods (pyre-5
-  to pyre-6), the inventory proof, the cross-check of the hand-written
+  the class compiler, the lowering and the matcher's match, fullmatch and
+  search (pyre-5a): the matcher's lookarounds (pyre-5b), the methods
+  (pyre-6), the inventory proof, the cross-check of the hand-written
   matchers and the memo (pyre-7 to pyre-9).
 - This machine's id past its record, clone rule, facts and file reads:
   `machine.py`'s `_write_record` and `open_machine` (unit 3), the std

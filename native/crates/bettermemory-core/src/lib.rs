@@ -30,7 +30,8 @@
 //!   compiled as `_optimize_charset` compiles it, with its opcode and the
 //!   test of one code point against it; a parsed
 //!   tree lowered to the engine's arena, its repeats classed as
-//!   `re._compiler` classes them;
+//!   `re._compiler` classes them; a lowered program run as `_sre` answers
+//!   `match`, `fullmatch` and `search`;
 //! - [`models_text`]: the text helpers of `models.py`: a memory's slug
 //!   and file name, its summary line, the truncation heuristic and the
 //!   search snippets;
