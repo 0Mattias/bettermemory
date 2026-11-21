@@ -65,6 +65,9 @@
 //! - [`membership_rows`]: the membership table rows read into records and
 //!   written back, the object-key and stamp codecs, `_jsonable`,
 //!   `_signature`, `_unwritten` and `_Tally`;
+//! - [`membership`]: the membership model over its store trait, unit 1
+//!   (its state and plumbing, the projects with merges followed, the
+//!   members index, the witness, file-binding and checkout reads);
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
 //! - [`events`]: the telemetry recorder's rows, its first unit (the
 //!   event kinds, their row classes and the fields a state row keeps);
@@ -175,6 +178,7 @@ pub mod location_view;
 pub mod location_witness;
 pub mod log;
 pub mod machine;
+pub mod membership;
 pub mod membership_lines;
 pub mod membership_records;
 pub mod membership_rows;

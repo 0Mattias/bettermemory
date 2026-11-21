@@ -68,6 +68,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
+| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore` | `membership_core.jsonl`, `membership_core_unicode.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
@@ -1781,6 +1782,120 @@ bound).
 
 Left for later units: `store_membership`'s puts, deletes and reads, and
 every `Membership` method.
+
+## The membership model (`membership.py`)
+
+`membership.py` (1,996 lines) holds the `Membership` class: the model of
+one machine over one store. Its method groups that live in
+`membership_resolve`, `membership_declare`, `membership_queries`,
+`membership_portable` and `membership_shared` are bound by name and are
+their own modules. The Rust model is `src/membership/`: `mod.rs` holds the
+struct, the plumbing and the two seams, and each unit adds files that are
+further `impl<S: MembershipStore> Membership<S>` blocks over the
+`pub(crate)` state.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_PATH_LIVENESS`, `__init__`, `reads_here`, `open` | 251, 268-337 | the location's liveness (a seam) | built (membership-1) |
+| `_call`, `_stamp`, `_put`, `_delete`, `_event` | 338-369 | the store (a seam), the clock | built (membership-1) |
+| `record_machine`, `machines` | 370-424 | the store | membership-2b (membprop) |
+| `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project` | 425-578 | the store | built (membership-1) |
+| `merge` (binds `membership_declare._merge`) | 579-588 | the store | membership-2 |
+| `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses` | 589-636 | the store | built (membership-1) |
+| `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes` | 637-720 | the store, the history reader | membership-2 |
+| `file_binding`, `_file_binding` | 721-730 | the store | built (membership-1) |
+| `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary` | 731-842 | the store | membership-2 |
+| `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout` | 843-884 | the store | built (membership-1) |
+| `_refresh_object`, `_put_view`, `_register` | 885-971 | the store | membership-2 |
+| `view_state`, `live_view`, `_live_state`, `liveness_held`, `_touch_view`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer` | 972-1207 | the liveness, `location.continuity` | membership-3 (membview) |
+| `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent` | 1208-1348 | the history reader | membership-3 |
+| `_open_proposals` to `settle_legacy_questions` | 1349-1558 | the store | membership-2b (membprop) |
+| `below_root`, `_declared_below`, `_checkout_name`, `_give_token`, `token_written` | 1559-1674 | the token writer | membership-3 |
+| `_record_counts`, `_records_by_project`, `_home_from`, `why` | 1675-1826 | `Store.membership_log` | membership-4 (deferred) |
+| `portable_export`, `_foreign`, `_decides`, `__all__` | 1827-1996 | nothing beyond the above | membership-4 (deferred) |
+
+The cut, leaves first: membership-1 (this unit) is the state and the reads
+every other group calls; membership-2 (membwrite) the evidence and
+checkout writes and `merge`; membership-2b (membprop) the machine rows and
+the proposals; membership-3 (membview) the views, liveness, history and
+tokens; membership-4 waits for `membership_log` in the store trait,
+which membership-4 adds and the store's membership unit (store_membership-1)
+implements.
+
+### Unit membership-1
+
+`src/membership/mod.rs`, `projects.rs`, `reads.rs` and `vocab.rs`.
+
+- The store is the trait `MembershipStore` (`in_batch`, `batch`,
+  `put_membership`, `delete_membership`, `record_membership`,
+  `membership_rows` with `Query { where_, column_in, order_by }` in the
+  reference's keyword order, `next_membership_id`,
+  `next_membership_number`, and an associated `Error`). Its methods take
+  `&self` and the model holds the store in an `Rc`, so `call` can hold a
+  batch while the closure it runs uses the model. `batch` is atomic: an
+  error inside rolls back every put, and `call` relies on that, as `_call`
+  relies on `store_membership.batch`. `membership_log` is not in the trait
+  yet. Nothing here touches `src/store/`; store_membership-1 implements
+  the trait.
+- `_witness_query` also passes `order_by`, so `Query` carries it.
+- The liveness is a seam: `LivenessSeam::Default { one, many }` stands for
+  `location.path_liveness` with `path_liveness_many` (283-285) and
+  `LivenessSeam::Given` for any other liveness; `reads_here` is whether the
+  default was given. The reference tests `liveness is _PATH_LIVENESS`, so
+  `liveness=location.path_liveness` passed explicitly also reads here and
+  gets the batch reader; a closure has no identity in the port, so a
+  caller holding the location's own liveness passes it as `Default`, and
+  `Given` never reads here. The location unit supplies the two readers later; the
+  location module is not a build dependency.
+- `open` takes the machine row's writer as an argument (`record_machine`
+  is membership-2b's).
+- `now` is a boxed function. `_stamp` is `to_utc` and `isoformat_utc`;
+  a naive `now`, read by the reference as local time, answers NotPorted.
+- `_members_index` is kept while the projects are the ones it was built
+  from: a generation counter is bumped each time `_all_projects` reads
+  the projects anew, as the reference binds a new dict, so every reset of
+  `_projects` (`_call`, `file_binding`, later `why`) invalidates it; the
+  field is private to the membership module and reset through
+  `forget_projects`. `_put_project` clears the index, as the reference
+  sets `_index = None`. `_projects` keeps the reference's
+  dict order (`ProjectMap`).
+- `_checkouts_by_project` answers a `BTreeMap`. The reference builds its
+  dict in the order of a set of str, which follows the interpreter's hash
+  seed, so no order of its keys is the reference's own; the sorted order
+  is one it can produce. Its callers, by grep of `src/bettermemory`:
+  `membership_resolve.py` 585 iterates `.values()` into `add` (a dict of
+  candidates by checkout), 1163 and `membership_alias.py` 351 read it by
+  key, `membership_alias.py` 308 builds a dict by checkout id from
+  `.values()`, and `membership_shared.py` 769 builds a list from
+  `.values()` in that seed-dependent order, which the unit that ports it
+  must sort or show not to matter. (`cli/project_cmd.py` 490 and 544 call
+  a function of its own by that name.) The read of the checkouts names the
+  members in sorted order, where the reference names them in set order;
+  the store's answer does not depend on that order.
+- `_FULL_SHA` (`membership_records.py` 115,
+  `[0-9a-f]{40}(?:[0-9a-f]{24})?`, used with `fullmatch` at 607) is a
+  fixed class, matched by hand as the regex decision's rule 3 allows:
+  40 or 64 lowercase hex digits after `str.lower`. It joins the engine's
+  inventory as a hand-matched fixed class.
+- `WITNESS_BOUND` (64) is a constant of `vocab.rs` until lane mrecid's
+  fold, which keeps one definition.
+- `project` and `checkout` raise KeyError with the id's repr.
+- A row a conversion refuses answers what `membership_rows` answers.
+- The helpers the later units call are `pub`, so the tests reach them.
+
+Reference findings, reproduced: a `_call` that fails keeps the rows it
+collected in `_rows` and its read of the projects, so a project minted in
+the rolled-back call is still answered by `project` until the next call
+or `file_binding`; and a witness row whose commit is an int of 40 digits
+reads as a full id, since `str()` of it is all hex digits.
+
+Fixtures: `tests/contract/gen_membership_core.py` drives the reference
+model over a recording store (`_Stub`) through scripted sequences and
+writes `membership_core.jsonl` (not gated; the digest of `canonical`,
+`chain_of`, `_members` and `named` over 400 seeded merge graphs) and
+`membership_core_unicode.jsonl` (`named` over names past ASCII, gated on
+the Unicode version). Tests: `golden_membership_core`,
+`membership_core_kills`, `membership_core_robustness`.
 
 ## The fold check
 
