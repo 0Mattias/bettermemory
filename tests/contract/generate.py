@@ -31,6 +31,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from . import (
+    gen_argparse,
     gen_attribution,
     gen_hook_leaf,
     gen_caller_admission,
@@ -225,6 +226,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "search_dedup_unicode": gen_search_dedup.generate_unicode,
     "store_path": gen_store_path.generate,
     "datetime": gen_time.generate,
+    "argparse": gen_argparse.generate,
+    "argparse_python": gen_argparse.generate_python,
     "origin_history": gen_origin_history.generate,
     "origin_dates_reads": gen_origin_dates_reads.generate,
     "origin_history_located": gen_origin_history_located.generate,
@@ -579,8 +582,13 @@ PYTHON_VERSION = "3.13.13"
 #: ``location_probe_python`` probes link loops, which 3.11's `realpath`
 #: walks otherwise, and paths holding a NUL, whose ValueError text 3.11
 #: words otherwise (`gen_location_probe`).
+#: ``argparse_python`` holds `argparse`'s error texts, usage lines, help and
+#: version output and its prefix, ``=``, cluster and ``--`` readings as
+#: 3.13.13 gives them; 3.12 words the choices and wraps the usage line
+#: otherwise, and ``--`` is read otherwise across releases (`gen_argparse`).
 PYTHON_GATED = frozenset(
     {
+        "argparse_python",
         "models_text_platform",
         "location_stamps_platform",
         "location_stamps_python",

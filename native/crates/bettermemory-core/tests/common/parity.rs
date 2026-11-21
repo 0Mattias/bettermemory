@@ -187,6 +187,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // NFC, `str.lower`, `str.isspace` and `re`'s `\w` past ASCII.
         "attribution_unicode.jsonl" => &[Unicode],
         "datetime_edges.jsonl"
+        // `argparse` of 3.13.13: its texts and readings (`gen_argparse`).
+        | "argparse_python.jsonl"
         | "json_edges.jsonl"
         | "toml.jsonl"
         | "settings_python.json"

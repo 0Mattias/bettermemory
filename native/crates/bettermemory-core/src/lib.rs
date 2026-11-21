@@ -20,6 +20,9 @@
 //!   the supersession head, the newest extender, the held slot;
 //! - [`float_repr`]: Python's `float.__repr__`;
 //! - [`datetime`]: the datetime spellings and readings;
+//! - [`argparse`]: the flat-parser subset of `argparse` the hook mains
+//!   parse through, its first unit (optionals and positionals of one
+//!   argument, the error exits and the usage line);
 //! - [`origin_history`]: how `origin` reads a repository's history: the
 //!   leaves and the memo of author dates, and (`origin_history::located`)
 //!   the repository's key, the history guard and the shallow cuts;
@@ -224,6 +227,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod argparse;
 pub mod attestation_paths;
 pub mod attribution;
 pub mod audit;

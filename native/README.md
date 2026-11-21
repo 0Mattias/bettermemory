@@ -24,6 +24,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `in_force` | `in_force.py` whole: `InForce` (with `history`), `in_force` and its inner `newest`, `newest_head`, `admitted_sources`, `head`; the store's reads and the admission are traits (`LinkReader`, `RecordView`) | `in_force.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
+| `argparse` | unit argparse-1a: the flat-parser subset of CPython 3.13.13's `argparse` the hook mains use: `ArgumentParser(prog, description, add_help)`, `add_argument` (`store`, `store_true`, `help`, `version`; positionals of one argument with `choices`), `parse_args` (`_parse_known_args` with `_parse_optional`, `_get_option_tuples`, `consume_optional`, `consume_positionals`, `_match_argument`, `_match_arguments_partial`, the negative-number matcher), `error` and `_format_usage` with its wrapping, as an `Outcome` without a process exit | `argparse.jsonl`, `argparse_python.jsonl` |
 | `native_text`, `caches`, `daemon_client`, `install_hints` | `native_text.py` 15-40 (`has_surrogates`, `utf8_text`, `encoded_json`, `origin_projection`), `_caches.py` whole (`register` under a key, `clear_all`), `_daemon_client.py` 149-172 (`STORE_FILENAME` re-exported, `START_TIMEOUT_SECONDS`, `HOOK_TIMEOUT_SECONDS`, `HOOK_HARNESS_TIMEOUT_SECONDS`, `HOOK_MARGIN_SECONDS`, `hook_budget_seconds`), `_install_hints.py` 41-130 (every spelling) | `native_text.jsonl`, `daemon_client.jsonl`, `install_hints.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks; its second unit (`src/origin_history/located.rs`): `located_key`, `history_guard`, `cuts`, `shallow_file`, `cuts_in` | `origin_history.jsonl`, `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` |
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves | `origin_dates_reads.jsonl` |
@@ -6535,6 +6536,109 @@ scope filter and the hit's defaults; `standing_robustness` (3) feeds ints
 of 100,000 digits and a list nested 100,000 deep, and holds `record_text`,
 the held lines and the scope filter to `timing::TENFOLD` at ten times the
 input.
+
+## The hook mains' argument parser (`argparse`, unit argparse-1a)
+
+`hook.main` (`hook.py` 1251-1352) and `hook.prompt_main` (984-1063)
+parse their argv through the standard library's `argparse`. The reference
+is `Lib/argparse.py` of CPython 3.13.13, the release the contract
+generators run; no line of `src/bettermemory` is ported here, and the two
+mains' parsers are built again in the generator from the same calls.
+
+The map, by function of `argparse.py`, with what each needs from the
+machine and its status:
+
+| function | lines | needs | status |
+| --- | --- | --- | --- |
+| `ArgumentParser.__init__` (`prog`, `description`, `add_help`) | 1793-1871 | nothing | argparse-1a (`ArgumentParser::new`) |
+| `add_argument`, `_get_positional_kwargs`, `_get_optional_kwargs`, the conflict check | 1468-1560, 1599-1697 | nothing | argparse-1a for `store`, `store_true`, `version`, `help`; the `ValueError`, `ArgumentError`, `IndexError` and `TypeError` of a bad spec (an empty name, `dest=` beside a positional name, `required=` on a positional, `help` or `version` as a positional) are classes (`SpecError`) only |
+| `parse_args`, `_parse_known_args2`, `_parse_known_args` with `consume_optional` and `consume_positionals` | 1925-2282 | nothing | argparse-1a (`parse::parse_known`) |
+| `_parse_optional`, `_get_option_tuples`, `_negative_number_matcher` | 2352-2441, 1427 | Unicode's decimal digits | argparse-1a |
+| `_match_argument`, `_match_arguments_partial`, `_get_nargs_pattern` | 2313-2350, 2442-2482 | nothing | argparse-1a for `nargs` None and 0; PARSER is argparse-1b |
+| `_get_values`, `_check_value`, `_get_action_name`, `ArgumentError.__str__` | 2520-2610, 728-768 | nothing | argparse-1a without type converters |
+| `HelpFormatter._format_usage` with `get_lines`, `_get_actions_usage_parts_with_split`, `format_help`'s last pass | 286-497 | the terminal width (an argument) | argparse-1a without groups |
+| `_VersionAction.__call__`, `_format_text`, `_fill_text` | 1175-1182, 500-504, 646-651 | the width | argparse-1a for a text that fits; `textwrap.fill` of a longer one is the `HelpText` hook's |
+| `error`, `exit`, `_print_message` | 2658-2685 | stdout, stderr, the exit | argparse-1a, as an `Outcome` |
+| `add_subparsers`, `add_parser`, `_SubParsersAction` | 1185-1290, 1873-1903 | nothing | argparse-1b (`Kind::Parsers` answers `NotPorted`) |
+| `format_help`, `_format_action`, `_split_lines`, `textwrap` | 500-660, 2618-2640 | the width | argparse-2, through `HelpText::format_help` and `HelpText::fill` |
+| `nargs` `?`, `*`, `+`, integers, REMAINDER; `type=`; mutually exclusive groups; `fromfile_prefix_chars`; intermixed parsing; deprecation warnings | | | not needed by the two mains; not built |
+
+**What each reproduces.** `ArgumentParser::new` adds `-h/--help` as
+`add_help` does. `add_argument` derives `dest` as the reference does (the
+first long option string, else the first, prefix dashes stripped and `-`
+made `_`), marks a positional of one argument required, gives `store` a
+default of None and `store_true` False unless one is given, and makes the
+help and version actions' `dest` and default SUPPRESS; an option string
+that looks like a negative number sets `_has_negative_number_optionals`.
+`parse_args` returns the namespace (each dest in the order it was first
+set, a later action of the same dest keeping the first one's place and
+default) or an `Outcome`: what `SystemExit` would leave, its status,
+stdout and stderr. Its parse follows `_parse_known_args` line by line:
+the `A`/`O`/`-` pattern with everything after the first `--` an argument,
+exact option strings, `--opt=value`, every prefix match in the order the
+option strings were added (one is taken, two or more is the ambiguous
+error naming them all), the single-dash cluster loop of
+`consume_optional` with its `ignored explicit argument` errors, an
+argument that looks like a negative number read as a positional, an
+argument with a space read as a positional, the positionals matched
+greedily up to each option and the first `--` of their run removed, the
+required check before the unrecognized-arguments check. `error` prints
+`format_usage()` and `prog: error: message`, status 2. The usage line is
+`_format_usage` of 3.13.13 at the width given (the reference takes it
+from `shutil.get_terminal_size` less two), wrapped by its `get_lines`
+when the line runs past the width, with `prog` on its own line when the
+prefix and `prog` take more than three quarters of it. The version action
+prints its text with ASCII whitespace runs made one space and the ends
+stripped by `str.strip`, as `_fill_text` does, then exits 0.
+
+**Decisions.**
+
+- The help text, and the fill of a version text longer than the width,
+  are the help formatter's, which argparse-2 ports. They reach the parser
+  through the `HelpText` trait, whose default (`Unfilled`) declines, and a
+  declined text makes `parse_args` answer `NotPorted`. A version text
+  naming `%(prog)` is declined the same way (the reference applies `%`
+  formatting to it).
+- The width is an argument and may be any `i64`; the three-quarters test
+  is computed in `i128`.
+- Subparsers: `Kind::Parsers` is the PARSER variant. `match_argument` and
+  `consume_positionals` answer `NotPorted` for it, so argparse-1b fills
+  those arms without changing `parse.rs`'s shape.
+- Texts are code points (`PyStr`), so argv may hold the surrogates
+  `sys.argv` carries for undecodable bytes.
+- An option string of one character with an explicit argument, which
+  makes the reference raise IndexError (`option_string[1]`), answers
+  `NotPorted`.
+
+**Regular expressions.** `argparse` is not under `src/bettermemory`, so
+its patterns are outside the inventory `gen_pyre_atom` scans, and none is
+added to it. Each is matched by hand under rule 3 of the regular
+expression decision (a leaf that starts before pyre-6, no nested choice),
+and named here for pyre-8's cross-check:
+`_negative_number_matcher`, `^-\d+$|^-\d*\.\d+$` under `match`
+(`looks_negative`: a `-`, then decimal digits, or digits, a dot and at
+least one digit; `$` also before a final newline, so `-1\n` is a
+negative number); the `nargs` patterns `([A])`, `([AO]{0})` and
+`(-*A-*)` over the private `A`/`O`/`-` alphabet (`match_argument`,
+`match_partial`, greedy, which is the only match each can make); and
+`_long_break_matcher`, `\n\n\n+` under `sub` (`usage::finish`). The
+help formatter's `_whitespace_matcher`, `\s+` under ASCII, is matched by
+hand in `format_version` over the six ASCII whitespace code points.
+
+**Fixtures.** `gen_argparse.py` writes `argparse.jsonl` (not gated: the
+cases that end in a namespace and use only exact option strings and
+arguments that do not start with `-`; 3.11.15, 3.12.13, 3.13.13 and
+3.14.10 write it alike) and `argparse_python.jsonl` (gated on the Python
+release: every error text, usage line at widths from -5 to 78, `--`,
+`=`, prefix, cluster, negative-number, help and version case, and a
+sweep of 3,000 seeded argv vectors over 36 tokens pinned by count and
+SHA-256). `golden_argparse` checks both, the help text handed to the
+parser by a test `HelpText` that returns the case's stdout;
+`argparse_kills` holds inputs a plausible wrong port misreads;
+`argparse_robustness` holds every width an `i64` holds, arguments of
+100,000 code points and surrogates, and ten times the argv within
+`TENFOLD` times the time. `argparse_not_posix` is not needed: nothing
+here reads the platform.
 
 ## The store's writes: the reference's order (N3a design)
 
@@ -17269,7 +17373,10 @@ What the reference has and this build does not, by area:
   `settle_interrupted` (settleint).
 - The daemon, the MCP tools, the hooks past the pure leaves of `hook.py`
   (hook-1a, in `hook.rs`) and the Stop audit's front half (hook-2a, a
-  sequence over `StopSide` in `hook_stop.rs`), and the command line.
+  sequence over `StopSide` in `hook_stop.rs`), and the command line. Of
+  the hook mains' argument parsing, the flat parser (argparse-1a) is
+  built; the subparsers (argparse-1b) and the help formatter
+  (argparse-2) are not.
 - `datetime.astimezone` of a naive value (the reference reads it as the
   machine's local time).
 
