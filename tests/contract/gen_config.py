@@ -53,11 +53,13 @@ is the same under every Python, SQLite and platform the suite runs on.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import logging
 import os
 import posixpath
+import stat
 import sys
 from collections.abc import Iterator
 from dataclasses import fields
@@ -70,7 +72,8 @@ from bettermemory import claude_paths
 from bettermemory import config as bconfig
 from bettermemory.cli import config_cmd
 
-from ._common import json_doc
+from ._common import json_doc, jsonl
+from .gen_fs_realpath import refuse_root
 from ._sandbox import PLACEHOLDERS, Scrubber, World, world
 
 #: The name every coercion probe locates its errors with.
@@ -1048,3 +1051,208 @@ def generate_paths_python() -> dict[str, bytes]:
         {},
     )
     return {"settings_paths_python.json": data}
+
+
+#: How to read ``settings_create.jsonl`` and ``settings_create_posix.jsonl``.
+_READ_CREATE = (
+    "load_config(path, create=True), the first-run write (unit config-2). "
+    "The default row holds DEFAULT_CONFIG's length and sha256 (its text is "
+    "native/crates/bettermemory-core/src/config/default_config.toml). Each "
+    "case names a path under <scratch>, relative to the working directory "
+    "<scratch>, with / between its parts (the generator writes the host's "
+    "separator and records the notice with / again); before is the file's "
+    "bytes before the call (absent: no file), dirs the directories and files the empty files "
+    "made first. The answer: notice, the stderr line printed (none: nothing); "
+    "file_sha256, the file's digest after the call; cwd_store, what the "
+    "loaded config holds for [storage] cwd_store; raised, the class of what "
+    "escaped load_config, and message its text where the case keeps it; "
+    "mode, the new file's permission bits; parent_mode, the bits the "
+    "file's parent is given before the call."
+)
+
+
+def _create_case(
+    w: World,
+    scrub: Scrubber,
+    name: str,
+    path: str,
+    before: str | None,
+    dirs: tuple[str, ...] = (),
+    *,
+    files: tuple[str, ...] = (),
+    keep_message: bool = True,
+    parent_mode: int | None = None,
+    record_mode: bool = False,
+) -> dict[str, Any]:
+    base = w.root / "create" / name
+    base.mkdir(parents=True)
+    for d in dirs:
+        (base / d).mkdir(parents=True)
+    for f in files:
+        (base / f).write_bytes(b"")
+    target = Path(*path.split("/"))
+    if before is not None:
+        (base / target).parent.mkdir(parents=True, exist_ok=True)
+        (base / target).write_bytes(before.encode("utf-8"))
+    row: dict[str, Any] = {"case": name, "path": path, "dirs": list(dirs)}
+    if files:
+        row["files"] = list(files)
+    if parent_mode is not None:
+        row["parent_mode"] = oct(parent_mode)
+    if before is not None:
+        row["before"] = before
+    saved = os.getcwd()
+    err = io.StringIO()
+    os.chdir(base)
+    locked = base / target.parent if parent_mode is not None else None
+    if locked is not None:
+        locked.chmod(parent_mode or 0)
+    try:
+        with (
+            patch.object(
+                managed, "managed_config_path", lambda: w.root / "no-managed.toml"
+            ),
+            contextlib.redirect_stderr(err),
+            _warnings(),
+        ):
+            try:
+                cfg = bconfig.load_config(target, create=True)
+            except Exception as exc:  # noqa: BLE001 - what escapes is the answer
+                row["raised"] = type(exc).__name__
+                if keep_message:
+                    row["message"] = scrub(str(exc)).replace(os.sep, "/")
+                cfg = None
+    finally:
+        if locked is not None:
+            locked.chmod(0o700)
+        os.chdir(saved)
+    notice = err.getvalue()
+    row["notice"] = notice.replace(os.sep, "/") if notice else None
+    if cfg is not None:
+        row["cwd_store"] = cfg.storage.cwd_store
+    full = base / target
+    if full.is_file():
+        row["file_sha256"] = hashlib.sha256(full.read_bytes()).hexdigest()
+        if record_mode:
+            row["mode"] = oct(stat.S_IMODE(full.stat().st_mode))
+    return row
+
+
+def generate_create() -> dict[str, bytes]:
+    """``settings_create.jsonl``, ungated: DEFAULT_CONFIG, and the first-run
+    write over a missing file, a missing parent chain and a file that is
+    there (read, never rewritten)."""
+    data = bconfig.DEFAULT_CONFIG.encode("utf-8")
+    rows: list[Any] = [
+        {"fixture": "settings_create", "read": _READ_CREATE},
+        {
+            "default": {
+                "length": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+        },
+    ]
+    with world() as w:
+        scrub = Scrubber(w.root, now=w.now)
+        rows.append(_create_case(w, scrub, "missing_file", "config.toml", None))
+        rows.append(
+            _create_case(w, scrub, "missing_parents", "a/b/c/config.toml", None)
+        )
+        rows.append(
+            _create_case(w, scrub, "parent_there", "a/config.toml", None, ("a",))
+        )
+        rows.append(
+            _create_case(
+                w,
+                scrub,
+                "file_there",
+                "a/config.toml",
+                "[storage]\ncwd_store = false\n",
+            )
+        )
+        rows.append(_create_case(w, scrub, "empty_file_there", "config.toml", ""))
+        rows.append(
+            _create_case(
+                w,
+                scrub,
+                "malformed_file_there",
+                "config.toml",
+                "[storage\n",
+                keep_message=False,
+            )
+        )
+        # The class only: the message is the release's (3.11 says
+        # "embedded null byte", 3.12 on "open: embedded null character in
+        # path").
+        rows.append(
+            _create_case(
+                w, scrub, "nul_in_the_name", "d/config.toml\0", None, keep_message=False
+            )
+        )
+    return {"settings_create.jsonl": jsonl(rows)}
+
+
+def generate_create_posix() -> dict[str, bytes]:
+    """``settings_create_posix.jsonl``, POSIX only: the new file's mode, a
+    directory at the path, a parent that is a file, and a parent this
+    account cannot search. `Path.exists` raises PermissionError there on
+    3.11 to 3.13 and answers False on 3.14, where the write then fails, so
+    the row keeps only that load_config raises. Refused as root, which
+    searches a mode-0600 folder."""
+    refuse_root()
+    rows: list[Any] = [{"fixture": "settings_create_posix", "read": _READ_CREATE}]
+    with world() as w:
+        scrub = Scrubber(w.root, now=w.now)
+        rows.append(
+            _create_case(
+                w, scrub, "new_file_mode", "config.toml", None, record_mode=True
+            )
+        )
+        rows.append(
+            _create_case(
+                w,
+                scrub,
+                "new_file_mode_in_new_parents",
+                "a/b/config.toml",
+                None,
+                record_mode=True,
+            )
+        )
+        rows.append(
+            _create_case(
+                w, scrub, "directory_at_path", "config.toml", None, ("config.toml",)
+            )
+        )
+        rows.append(
+            _create_case(
+                w, scrub, "parent_is_a_file", "f/config.toml", None, files=("f",)
+            )
+        )
+        rows.append(
+            _create_case(
+                w, scrub, "grandparent_is_a_file", "f/a/config.toml", None, files=("f",)
+            )
+        )
+        rows.append(
+            _create_case(
+                w,
+                scrub,
+                "unsearchable_parent",
+                "locked/config.toml",
+                None,
+                ("locked",),
+                keep_message=False,
+                parent_mode=0o600,
+            )
+        )
+        rows.append(
+            _create_case(
+                w,
+                scrub,
+                "nul_in_the_name_over_a_file_parent",
+                "f/config.toml\0",
+                None,
+                files=("f",),
+            )
+        )
+    return {"settings_create_posix.jsonl": jsonl(rows)}

@@ -234,6 +234,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "settings_paths": gen_config.generate_paths,
     "settings_paths_python": gen_config.generate_paths_python,
     "difflib": gen_difflib.generate,
+    "settings_create": gen_config.generate_create,
+    "settings_create_posix": gen_config.generate_create_posix,
     "identity_caller": gen_identity_caller.generate,
     "identity_caller_unicode": gen_identity_caller.generate_unicode,
     "session": gen_session.generate,
@@ -701,6 +703,9 @@ PLATFORM_GATED = frozenset(
 #: ``settings_paths`` and ``settings_paths_python`` expand, resolve and
 #: print paths by POSIX rules (`~name`, the root, `//`, a NUL), which the
 #: native tests' world reproduces; on Windows the reference's paths differ.
+#: ``settings_create_posix`` reads a new config's mode bits and makes the
+#: first-run write fail over a file parent and a mode-0600 parent
+#: (`gen_config.generate_create_posix`), which Windows answers otherwise.
 #: ``store_open`` reads modes and writes the key ring's binding as a
 #: resolved POSIX path under a POSIX ``flock``; ``store_write`` records the
 #: same state after each write, ``store_tx`` after each transaction,
@@ -792,6 +797,7 @@ POSIX_ONLY = frozenset(
         "store_schema_posix",
         "settings_paths",
         "settings_paths_python",
+        "settings_create_posix",
         "store_open",
         "store_write",
         "store_tx",

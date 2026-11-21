@@ -10,6 +10,9 @@
 //!   user's file read (`read_config_file`: `utf-8-sig`, then
 //!   [`crate::toml::loads`]) and the organisation's managed file pinned
 //!   over it (`_apply_managed`, `managed.read_managed`).
+//! - [`create::load_config_creating`] is `load_config(path, create=True)`:
+//!   the parent directories made and [`create::DEFAULT_CONFIG`] written
+//!   when no file is there, then the same read.
 //! - [`report`] holds the three commands' documents and the audit's
 //!   findings, each returned as the text the CLI prints and its exit code.
 //!
@@ -26,6 +29,7 @@
 //! the caller, so two commands run in one process share it as the
 //! reference's do.
 
+pub mod create;
 pub mod decode;
 pub mod difflib;
 pub mod report;
@@ -1477,12 +1481,23 @@ pub fn read_config_file(fs: &dyn Fs, path: &str) -> Result<Table, FileError> {
 
 /// `config.load_config(path, create=False)`.
 pub fn load_config(world: &World, path: &str, ctx: &mut Ctx) -> Result<Config, Raised> {
-    let mut data = match read_config_file(world.fs, path) {
+    let data = match read_config_file(world.fs, path) {
         Ok(data) => data,
         Err(FileError::NotFound) => Table::new(),
         Err(FileError::Os(failure)) => return Err(Raised::os(&failure, path)),
         Err(FileError::Raised(raised)) => return Err(raised),
     };
+    overlay_managed(world, data, path, ctx)
+}
+
+/// `config._overlay_managed`: the managed file's pins over one parsed user
+/// file.
+fn overlay_managed(
+    world: &World,
+    mut data: Table,
+    path: &str,
+    ctx: &mut Ctx,
+) -> Result<Config, Raised> {
     let user = Source::file(world.fs, path);
     let Some(mut managed_data) = read_managed(world)? else {
         return config_from_data(&mut data, &user, ctx);

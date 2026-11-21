@@ -31,6 +31,7 @@ pub mod repository_history;
 pub mod rows;
 pub mod schema_steps;
 pub mod session;
+pub mod settings_create;
 pub mod stores;
 pub mod txs;
 pub mod written;

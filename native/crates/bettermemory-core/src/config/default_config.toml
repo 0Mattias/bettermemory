@@ -1,0 +1,218 @@
+# bettermemory config
+#
+# See: https://github.com/0Mattias/bettermemory
+#
+# Nothing in this file is set. Every setting is commented out, so the
+# built-in default applies to each, and a later release that changes a
+# default reaches you. To choose a value, remove the "# " in front of its
+# line, under its [section] header, and edit it. Most lines show the
+# default; a few show the value that changes it, and the comment above
+# such a line says what the default is. Every setting here is one a
+# person decides; the first sentence above each line names the decision.
+
+[storage]
+# Decide where your memories live when the default home store will not do.
+# The resolution rule:
+#   1. $BETTERMEMORY_DIR
+#   2. this key, when set
+#   3. ./.claude-memory if cwd has one
+#   4. ~/.claude-memory
+# directory = "~/.claude-memory"
+
+# Decide whether a repository's own .claude-memory/ may be your store.
+# Rule 3 lets the directory a client starts in supply the store, and a
+# cloned repository that commits a .claude-memory/ directory then becomes
+# your store: its memories reach the session brief and the prompt recall,
+# and your own writes in that checkout land inside its working tree. Set
+# false to skip rule 3, so only $BETTERMEMORY_DIR, `directory` above or
+# ~/.claude-memory can be the store. Default true.
+# cwd_store = false
+
+[behavior]
+# Decide whether a write that says a value changed may mark the stored
+# claim superseded on its own; false removes that lever from the writer
+# (SECURITY.md, "Write-time supersession is a lever").
+# Write-time supersession. When a claim-sized memory_write carries a
+# change cue (moved, switched, renamed, raised, no longer, the previous,
+# ...) and diverges on a value from a stored claim about the same
+# subject, the new memory gets a `supersedes` link to the stored one,
+# which memory_search renders as `superseded_by` on the stale hit and
+# on nothing else. The same divergence with no cue files the pair for
+# memory_conflicts instead of guessing which side is current. Measured
+# on bench/integrity's sealed corpus: 27 of the 40 update statements
+# link to the statement they replace and nothing links a distractor,
+# a hard negative or a cross-topic pair (bench/integrity/results/). Set
+# false to leave links to the writer's explicit `supersedes=` list.
+# write_supersession = true
+
+# Decide how much memory reaches the model unasked at each prompt.
+# Recall at prompt time. The plugin's UserPromptSubmit hook probes every
+# submitted prompt with the production ranker (the pool and ranking the
+# silent-miss audit uses) and puts up to three pointers in front of the
+# model before the turn starts: an id, a relevance label, an 80-character
+# summary and the matched snippet, never a body, so the read path's
+# verify-before-relying discipline still runs through memory_show. A
+# pointer is one of the probe's top three hits, written or imported here
+# (never a synced or unaccounted one), with no open contradiction, that
+# this session segment has not already been shown, retrieved, written or
+# updated; a superseded hit yields its slot to its head. No relevance
+# label and no count holds a delivery; a compact or a clear opens a new
+# segment. "project" (default) delivers only memories of the project the
+# prompt comes from (inside a project only); "everywhere" delivers as an
+# unscoped search reaches: every project's memories and the ones written
+# outside any project, inside a project or outside one, never a memory
+# across a boundary (`boundary = true`) and never one whose location
+# could not be read; "off" returns to purely opt-in retrieval. Each delivery is recorded as
+# a `prompt_recall` event, product state kept whatever [telemetry] says,
+# so nothing is injected off the books. true / false in an older config
+# read as "project" / "off".
+# prompt_recall = "project"
+
+# Decide whether a session opens with pointers to the project's records.
+# The session brief: on SessionStart inside a project, two lists of
+# pointers (id and an 80-character summary): the project's standing records
+# in force, each marked in force, and the records the conversation so far
+# bears on, ranked by the owner's words in the session's transcript, eight
+# of each at most; a superseded record is never shown, and an open
+# contradiction holds a record out of the second list. Pointers, not
+# instructions; recorded as a `session_brief` event, with telemetry off
+# too. Set false to open sessions with nothing.
+# session_brief = true
+
+# Decide how long deleted memories' tombstones are kept by default.
+# Default retention for `bettermemory tombstones prune` (days). Tombstones
+# are never auto-pruned; this is just the default for the CLI subcommand,
+# which still requires an explicit invocation. 0 means "no default" — the
+# CLI requires --older-than to be passed. Set this to e.g. 365 if you want
+# `bettermemory tombstones prune` with no flag to default to one-year
+# retention. Active memories are unaffected.
+# tombstone_retention_days = 0
+
+[scopes]
+# Decide which scopes a write may carry.
+# If non-empty, writes with caller-supplied scopes outside this list fail.
+# Empty = anything. One narrow exemption, and it is not a property of
+# the scopes themselves: `memory_update`, whose `scopes` argument REPLACES
+# the stored list. Keeping a scope means resubmitting it, so the check
+# runs over what an edit ADDS. A scope already on the record passes
+# because it was already accepted; one that is not is still checked by
+# name, so the exemption cannot be borrowed to plant an unallowed scope.
+# allowed = []
+
+# Decide which look-alike scopes are yours on purpose.
+# Singleton scopes the `fix_typo_scopes` health check must stop flagging.
+# That check looks for a one-memory scope that resembles a more common one
+# ("projct:foo" against "projects:foo") and recommends folding it with
+# memory_admin's rename_scope action. When two projects legitimately share
+# a name stem it
+# is a FALSE POSITIVE, and it had no off switch: the recommendation
+# re-fired on every curation pass, so every pass had to re-adjudicate the
+# same question, and the cost of getting it wrong is asymmetric. On
+# 2026-09-15 a client folded a scope this way that the memory it was
+# folding forbids in bold on the owner's confirmation, after several
+# earlier passes had each declined it. Its siblings (`dead_weight`,
+# `cold_endorsement`) already carry suppression flags; this is that.
+# Name the scope exactly as it appears; entries that are not currently
+# flagged are simply inert.
+# typo_exceptions = []
+
+[policy]
+# The write gates' escape hatches are parameters the agent sets itself:
+# `force` on memory_write skips the duplicate gates, and each
+# `acknowledge_*` flag passes one gate. These switches take them away. A
+# call that passes a forbidden flag as true is refused whole, naming the
+# switch, and writes nothing. Both are off by default.
+#
+# Decide whether the agent may skip the duplicate gates.
+# Refuse memory_write calls with force=true.
+# forbid_force = true
+#
+# Decide which gates the agent may not wave a write past.
+# Refuse calls that pass any of these acknowledge flags as true. Names:
+# credential, transient, scope_mismatch and user_claim (memory_write),
+# credential, transient, user_claim and truncation (memory_update). An
+# unknown name stops the config from loading.
+# forbid_acknowledge = ["credential"]
+
+[daemon]
+# Decide the port when 7397 is taken or barred on this machine.
+# The port the local daemon binds on 127.0.0.1. `bettermemory up` falls
+# back to an ephemeral port when this one is held by something else and
+# records the port it got in the state file, which is how the stdio
+# shim and the hook commands find it.
+# port = 7397
+
+[telemetry]
+# Decide whether usage is measured in your store's log.
+# Telemetry events are rows of the store's own signed log: one per tool
+# call (search queries redacted to a hash and a short preview, returned
+# ids, write, update and remove events). The health report and
+# `bettermemory eval` read them. Same file, same trust boundary, no new
+# permissions story. Set `enabled = false` to opt out of measurement:
+# the held recalls, grades and conflict scans are not recorded. The rows
+# the product reads back (the shows and searches, the writes, the uses,
+# the Stop's audit, the recall's and the review's rows) and the audit
+# trail are kept either way, with only the ids, statuses, counts and
+# stamps their readers read: no query, prompt or body text, note or
+# quoted word (docs/operations.md lists each kind's). The brief and the
+# recall still work.
+# enabled = true
+
+[security]
+# Decide whether a store from elsewhere is trusted as written here.
+# Which rows of the signed log this machine trusts. A record reads
+# `unaccounted` when the log row behind it does not verify under a key
+# this machine holds. Rows added to the log after this machine's own
+# under a key it never held read `unaccounted`: only someone writing
+# into the file without the key leaves that shape, and
+# `bettermemory log verify` reports it as tampering. Rows from before
+# this machine first signed the store (a store copied here from another
+# machine without its key) keep the labels they arrived with. Where this
+# machine's own rows begin is kept beside the key (`<store_id>.origin`),
+# written at the store's first writing open under this release; an edit
+# made before that open, or one that gives the store a fresh id, can
+# still pass an editor's rows off as such a copy's. With
+# `strict_provenance = true` those read `unaccounted` too, and only what
+# this machine's own keys verify is trusted: the setting for a managed
+# deployment, or wherever a store may arrive from somewhere else or be
+# written to by someone else. Off by default.
+# strict_provenance = true
+
+[capture]
+# Decide whether the Stop hook asks the model to save what a stretch of
+# the conversation established, how long a stretch is, and how many asks
+# a day may make.
+# Session capture at a turn end, Claude Code only, and off by default.
+# With `stop_checkpoint = true`, once the conversation since the last
+# capture holds `checkpoint_tokens` of your prompts and the assistant's
+# text, the Stop hook asks the chat model in the session to save what the
+# stretch established, with memory_write. No other model and no API key
+# is involved, and only a session a person is attending is ever asked.
+# Each capture is a batch: `bettermemory capture review` lists them and
+# `bettermemory capture undo <batch>` takes one back.
+# stop_checkpoint = false
+# checkpoint_tokens = 12000
+# At most this many capture requests per store per UTC day.
+# daily_cap = 12
+
+[membership]
+# Decide whether bettermemory may write its token into your repositories
+# (`write_token`), and whether a join by shared history asks first
+# (`strict`).
+# Which project a session belongs to is decided from what its checkout
+# shows: its git directory, its commits, its remotes, its
+# bettermemory.toml, and a checkout token. The token is the one file
+# bettermemory writes into a repository: `info/bettermemory` inside the git
+# directory (`.git/info/bettermemory`), never in the working tree. git does
+# not track it, `git clone` does not copy it, and a moved or copied checkout
+# carries it. It is never written into a bare repository, another user's
+# repository or a read-only one. With `write_token = false` it is written
+# nowhere and the other evidence decides alone: a moved or copied checkout
+# with no commits, which its token would have recognised, is asked about.
+# write_token = true
+# With `strict = true`, a checkout that would join a project because it
+# holds the project's commits asks once instead. Joins by a
+# bettermemory.toml, by your own `bettermemory project join`, by the same
+# git directory or object store, or by a restore at the project's old path
+# stay silent.
+# strict = false

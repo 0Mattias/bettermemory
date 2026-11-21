@@ -1356,13 +1356,35 @@ pub(super) fn replace_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
         f.write_all(data)?;
         bettermemory_sys::fsync(&f)
     })();
-    if let Err(e) = staged.and_then(|()| fs::rename(&tmp, path)) {
+    if let Err(e) = staged.and_then(|()| rename_retrying(&tmp, path)) {
         let _ = fs::remove_file(&tmp);
         return Err(e);
     }
     sync_dir(&parent_of(path));
     Ok(())
 }
+
+/// `_fsutil.replace_atomic`: `os.replace`, which on Windows tries a
+/// rename a reader holds open again (PermissionError only), at most
+/// `_REPLACE_ATTEMPTS` (5) times with a pause doubling from 10 ms.
+fn rename_retrying(from: &Path, to: &Path) -> io::Result<()> {
+    let attempts = if cfg!(windows) { REPLACE_ATTEMPTS } else { 1 };
+    let mut delay = std::time::Duration::from_millis(10);
+    let mut attempt = 1;
+    loop {
+        match fs::rename(from, to) {
+            Err(e) if attempt < attempts && e.kind() == io::ErrorKind::PermissionDenied => {
+                attempt += 1;
+                std::thread::sleep(delay);
+                delay = delay.saturating_mul(2);
+            }
+            out => return out,
+        }
+    }
+}
+
+/// `_fsutil._REPLACE_ATTEMPTS`.
+pub(crate) const REPLACE_ATTEMPTS: u32 = 5;
 
 /// `require_current_writer` inside a transaction: meta's minimum writer
 /// read again under the lock; above this build's, the connection is held

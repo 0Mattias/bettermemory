@@ -2,7 +2,7 @@
 //! reference that need no database, reproduced exactly.
 //!
 //! - [`config`]: the settings: the config file's loader, the managed
-//!   file's pins, and `config check|show|path --json`;
+//!   file's pins, the first-run write, and `config check|show|path --json`;
 //! - [`difflib`]: `difflib.unified_diff` as `history._body_diff` calls it
 //!   (the matcher with autojunk, the grouped opcodes) and `str.splitlines`;
 //! - [`identity`]: a request's caller as the reference resolves it, its

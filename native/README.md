@@ -71,7 +71,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`); unit 4, `gitobjects::files::reader`: `ObjectReader`'s `has`, `has_many`, `name_length`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `_raw`, `_places`, `_object`, `_take_loose`, `_loose`, `_packed` | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl`, `gitobjects_reader.jsonl`, `gitobjects_reader_zlib.jsonl`, `gitobjects_reader_posix.jsonl` |
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text`; its write (`checkout_token::write`): `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_fs_now`, `_sweep`, `_place`, `_after_race`, `_failed`, `_unlink_quietly`, `TokenWrite` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only), `checkout_token_write.jsonl`, `checkout_token_write_posix.jsonl` (POSIX only) |
-| `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
+| `config` | `config._config_from_data`, `load_config(create=False)`, `load_config(create=True)`'s first-run write (`config::create`: `DEFAULT_CONFIG`, the parents made, the atomic write, the notice), the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json`, `settings_create.jsonl`, `settings_create_posix.jsonl` |
 | `difflib` | `history._body_diff` (`body_diff`), `str.splitlines`, and CPython 3.13.13's `difflib.unified_diff` as it calls it: `SequenceMatcher` with autojunk (`__chain_b`, `find_longest_match`, `get_matching_blocks`, `get_opcodes`, `get_grouped_opcodes`), `_format_range_unified`, `unified_diff` with `lineterm=""` and no dates (`unified_diff_lines` joined with newlines) | `difflib.jsonl` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
@@ -3548,7 +3548,7 @@ Accidents of the reference reproduced and pinned (the settings fixtures):
 Not ported: reading the Windows registry value (`ManagedSource::Registry`
 takes its text, or its error, from the caller; no crate here reads the
 registry), Cygwin's and MSYS2's planted-file refusal (`_refuse_planted`),
-`load_config`'s first-run write, the text (non-`--json`) renderings, and
+the text (non-`--json`) renderings, and
 argument parsing. `report::SystemFs` is not for use until a later unit
 compares it with `pathlib` on a real tree (a symlinked home, `..` through
 a symlink, `~user`, relative paths, a config path that is a directory, an
@@ -3556,6 +3556,102 @@ unreadable file, prefixes that differ in case): its `resolve` pops `..`
 after canonicalising, `expanduser` takes only `~` and `~/`, `under` is
 case-sensitive and `is_dir` follows symlinks. No entry point uses it by
 default; every compared case goes through the test's world.
+
+### The first-run write (unit config-2)
+
+`config::create::load_config_creating` is `config.load_config(path,
+create=True)` (`config.py` 1319-1367 at 606ebe94): `parent.mkdir(parents=True,
+exist_ok=True)`, then `Path.exists`, and where it says no file,
+`_fsutil.atomic_write_bytes(path, DEFAULT_CONFIG.encode())` with neither
+mode, the notice `[bettermemory] created default config at {path}` on
+stderr, and `_overlay_managed(read_config_file(path), path)`, the same
+overlay `load_config` (create=False) uses, now `config::overlay_managed`.
+It returns whether it wrote and the load; the caller prints
+`create::created_notice(path)` when it wrote, and the notice stands even
+when the read then fails (the reference prints before reading). A file
+gone between the write and the read is FileNotFoundError, not the
+defaults `create=False` reads a missing file as.
+
+| function | reference | needs from the machine | status |
+|---|---|---|---|
+| `create::DEFAULT_CONFIG` | `DEFAULT_CONFIG`, 67-286 | none (`default_config.toml`, `include_str!`, 11,870 bytes, checked by sha256) | built |
+| `create::load_config_creating` | `load_config` with `create=True`, 1340-1367 | `create::Create` and `config::Fs` | built |
+| `create::SystemCreate::mkdir_parent` | `Path.parent.mkdir(parents=True, exist_ok=True)` | `std::fs::create_dir`, `is_dir` | built |
+| `create::SystemCreate::exists` | `Path.exists` (3.13) | `std::fs::metadata` | built |
+| `create::SystemCreate::write_atomic` | `atomic_write_bytes(path, data)` | `store::write::replace_retrying` | built |
+
+The effects go through a trait of their own, `config::create::Create`
+(make the parents, `exists`, the atomic write), so `config::Fs`, `World`
+and every test world are unchanged. `SystemCreate` is the real one; the
+golden tests run it in a scratch directory under the system's temporary
+directory, reading through `report::SystemFs`, which for a plain file
+under that directory reads as `Path.read_bytes` does. Decisions:
+
+- `mkdir_parent` is `pathlib.Path.mkdir` ported step for step (a
+  FileNotFoundError makes the parent first, any other error stands only
+  where the path is not a directory), not `create_dir_all`, so the class
+  of a failure is the reference's: a parent that is a file is
+  FileExistsError naming it, a grandparent that is a file is
+  NotADirectoryError naming the parent's parent. A path with no parent
+  text makes `.`.
+- `exists` is CPython 3.13's: a stat error other than a missing entry,
+  ENOTDIR, ELOOP, EBADF (on Windows the winerrors 2, 3 and 6, which CPython
+  maps to ENOENT and EBADF, and 21, 123 and 1921) raises, EINVAL and
+  Windows' ERROR_DIRECTORY (267) among them; a NUL answers false. 3.14 answers false for a file in a directory this
+  account cannot search, and its write then fails; 3.11 to 3.13 raise
+  PermissionError from `exists`. Both end in a PermissionError out of
+  `load_config`, which is all the fixture keeps.
+- The new file's mode is the temporary file's, 0o600 whatever the umask
+  (`tempfile.mkstemp` there, `store::create::new_private_file` here), recorded on
+  POSIX as the reference produced it, not assumed. `replace_retrying` adds
+  the reference's Windows retry of a rename a reader holds open: as
+  `_fsutil.replace_atomic`, only the rename is tried again, on
+  PermissionError, at most 5 attempts with a pause doubling from 10 ms.
+- A NUL in the final name passes `mkdir` (the parents are made, and an
+  error on the way raises as there) and raises
+  `ValueError('open: embedded null character in path')` from the write (the
+  3.12 to 3.14 text; 3.11 says `embedded null byte`, so the fixture keeps
+  the class only); a NUL in a parent raises from `mkdir`.
+- On Windows an error reads `[WinError N] text: 'path'`, as Python's
+  `str()` of an OSError with a winerror does, with the system text's
+  trailing spaces and dots removed as `PyErr_SetExcFromWindowsErr` removes
+  them (`winerror_text`); no fixture holds one.
+- `mkdir` recurses once per missing level, as `Path.mkdir` does; CPython
+  stops at about 1,000 levels with RecursionError, which POSIX's PATH_MAX
+  never reaches. On Windows a long path can, and the port then recurses on.
+- The write takes no lock, as the reference's does not.
+- An error of the write itself names the destination here; the
+  reference's names its random temporary file (`tempfile`'s
+  `NamedTemporaryFile`), which no row holds.
+- The path is text already spelled as `str(Path(...))` spells it: an
+  empty text, which `Path` reads as `.`, is not an input, nor is
+  `config.toml/`, `./x` or `a//b`. A debug build asserts it on POSIX
+  (`create::is_posix_spelled`).
+
+Fixtures (`gen_config.generate_create` and `generate_create_posix`):
+`settings_create.jsonl` (ungated) holds `DEFAULT_CONFIG`'s length and
+sha256 and the write over a missing file, a missing parent chain, a
+parent that is there, and a file that is there (unchanged, read: a
+setting, an empty file, a malformed one whose `tomllib` text is left out
+because it follows the release). The reference runs each with a relative
+path in its scratch directory and records the notice and messages with
+`/` between parts, so the bytes are the same on Windows.
+`settings_create_posix.jsonl` (POSIX only; `settings_create_posix_not_posix.rs`
+records the gap elsewhere) holds the mode of a new file and of one in new
+parents, a directory at the path (IsADirectoryError from the read), a
+file parent and grandparent, and a parent of mode 0o600 (the class only).
+The Rust tests run each row with an absolute path and compare after
+taking the scratch prefix off. `settings_create_kills` checks the order
+of the effects, that a file there is never written, that an `exists`
+error writes nothing, that a failed write makes no notice and that a file
+gone after the write is FileNotFoundError; `settings_create_robustness`
+gives a NUL, a 100,000-byte name, the root, a 100-level chain and a file
+of 100,000 lines (linear by the wall clock).
+
+No regular expression is involved.
+
+Left for later units: `default_config_path` (the caller passes the path),
+`report::SystemFs` for use beyond the tests, the registry, the renderings.
 
 ## Body diffs and `str.splitlines` (`difflib`)
 

@@ -522,26 +522,8 @@ fn open_lock(path: &Path) -> io::Result<fs::File> {
     options.open(path)
 }
 
-/// `atomic_write_bytes`: on Windows its `replace_atomic` tries a rename a
-/// reader holds open again, with a doubling pause.
-#[cfg(not(windows))]
+/// `atomic_write_bytes`: the temporary file written and renamed into
+/// place; `replace_atomic` retries only the rename, on Windows.
 pub(crate) fn replace_retrying(path: &Path, data: &[u8]) -> io::Result<()> {
     replace_atomic(path, data)
-}
-
-#[cfg(windows)]
-pub(crate) fn replace_retrying(path: &Path, data: &[u8]) -> io::Result<()> {
-    let mut delay = std::time::Duration::from_millis(10);
-    let mut tries = 0;
-    loop {
-        match replace_atomic(path, data) {
-            Ok(()) => return Ok(()),
-            Err(e) if tries < 6 && e.kind() == io::ErrorKind::PermissionDenied => {
-                tries += 1;
-                std::thread::sleep(delay);
-                delay = delay.saturating_mul(2);
-            }
-            Err(e) => return Err(e),
-        }
-    }
 }
