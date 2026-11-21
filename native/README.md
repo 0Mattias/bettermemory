@@ -30,7 +30,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
-| `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report | `log_chain.jsonl`, `log_keyring.jsonl` |
+| `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store` | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_darwin.jsonl` |
 | `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone` | `machine_identity.jsonl`, `machine_identity_python.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
@@ -402,6 +402,113 @@ and no error type carries key bytes. The bytes sit in a `Zeroizing` buffer,
 wiped on drop. The store unit, when it reads key files, must keep their
 bytes in such a zeroize-on-drop wrapper from the read on (`Key::new` takes
 the `Vec` without copying it), not in a plain `Vec<u8>` or `String`.
+
+## The key ring's files (`log.py`, unit log-1)
+
+`log::ring` reads and writes the files a keys directory holds for one
+store, as `log.KeyRing` does (reference `src/bettermemory/log.py` at
+wt/integ). `KeyFiles` is the ring over a directory; the in-memory
+`log::KeyRing` answers what a file says once read.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `KeyUnreadableError` | 409-432 | `strerror` | built (`KeyUnreadable`) |
+| `_link_target`, `_dangling_link` | 448-469 | `lstat`, `stat`, `readlink` | built |
+| `_same_file` | 472-482 | `stat` | not needed yet (goes with `bind_store`) |
+| `KeyRing.__post_init__` | 498-510 | nothing | built (`KeyFiles::new`) |
+| the paths, `ensure_dir` | 512-538 | `mkdir`, `chmod` | built |
+| `load_current` | 540-562 | read | built |
+| `retire_current` | 564-578 | read, `stat`, `unlink`, `rename` | built |
+| `read_origin` | 652-659 | read | built (over `KeyRing::read_origin`) |
+| `write_origin`, `name_origin_key`, `replace_origin`, `_write_origin_file` | 661-728 | lock, read, atomic write, `unlink` | built |
+| `read_binding` | 730-755 | read | built |
+| `rebind_store`, `_write_binding` | 817-837 | `realpath`, lock, atomic write | built |
+| `chain_segments` | 1269-1283 | nothing | deferred (log-2) |
+| `history_replaced_kind`, `history_replaced_row` | 1456-1481 | nothing | deferred (log-2) |
+| `append_history_replaced` | 1484-1514 | a store transaction | later, with the restore and accept-history writer |
+| `create_key`, `write_head`, `bind_store`, `bound_elsewhere` | | | built in `store/create.rs`, `store/write.rs`, `store/open.rs` |
+
+**What each reproduces.** `KeyFiles::new` refuses an id that is not a
+`str` of 32 lowercase hex digits with the reference's ValueError text,
+`str(id)[:40]` shown by `repr` (`STORE_ID_PATTERN.fullmatch`, matched by
+hand: a class repeated a fixed count, no choice; the pattern is in the
+engine's inventory already, which the `ast` scan of `gen_pyre_atom`
+finds). The keys directory is parsed as `Path()` parses it.
+`load_current` reads the key into a `Key` (zeroized on drop); only
+not-found is a missing key, unless the key file or the keys directory
+is a link to nothing, which is `KeyUnreadable` with the module's own
+reason; any other read error is `KeyUnreadable` with `strerror`'s text,
+and the message ends `; the store is not rekeyed over it`.
+`retire_current` removes the current key when the retired name is taken
+(by anything `Path.exists` sees, 3.13's: ENOENT, ENOTDIR, EBADF and ELOOP
+read as absent, any other error raises) and renames it there otherwise.
+`write_origin` holds the anchor's lock, writes nothing over an anchor
+that parses, and after a file that does not parse reads it again, so an
+unreadable anchor raises and stays. `name_origin_key` writes the key's
+name only on an anchor at the same seq and MAC that names none (an
+ill-shaped name reads as none). `replace_origin` installs or removes the
+anchor and returns the one it replaced. `read_binding` raises an OSError
+other than not-found and RecursionError, and reads anything else that is
+not a non-empty absolute string `path` without NUL as no binding; of two
+`path` keys the last wins, as `json.loads` keeps it. `rebind_store`
+resolves the store file (3.13's non-strict `realpath`, the working
+directory an argument), reads the binding with every OSError as none,
+and writes it only when it names another file.
+
+**Decisions.** Files are written by `store::write::replace_retrying`, whose
+`replace_atomic` (`store/open.rs`) creates its temporary file 0600 with
+`create_new` before the rename; `write_private` then sets the file 0600,
+so the umask cannot narrow it, as `mode_before_rename=0o600` does; the
+POSIX fixture pins every written file's mode, the lock files' too.
+`retire_current`'s rename is `rename_retrying` in `ring.rs`: on Windows a
+PermissionError is tried again, five attempts in all from 10 ms doubling,
+which is `_fsutil.replace_atomic`'s `_REPLACE_ATTEMPTS = 5` (the store's
+`replace_retrying` makes seven). The keys directory's locks go through
+the `RingLock` trait; its default, `FileLock`, is `store::write`'s
+`open_lock` (created 0600 or opened, kept, `File::lock`), which is
+`flock_excl`'s POSIX branch. On Windows the reference locks byte 0 with
+`msvcrt.locking` and `File::lock` the whole file, the gap `open_lock` has
+today; no test claims Windows lock interop. A follow-up after fsutil2
+folds moves `RingLock`'s default and `open_lock` onto
+`fsutil::flock_excl`.
+
+`store/open.rs` keeps private copies of `load_current`, `read_binding`,
+`same_file`, `is_link_loop` and `binding_text` until a later store unit
+moves it onto `log::ring`; the copies in `ring.rs` are deliberate, and
+`binding_text`'s Windows prefix stripping is kept in `ring.rs`'s Windows
+`resolve`. Until then `open.rs`'s `KeyUnreadable` text lacks the tail
+`; the store is not rekeyed over it`, its `read_binding` takes the first
+of two `path` keys where the reference takes the last, and it reads a
+binding nested past the JSON limit as none where the reference raises
+RecursionError.
+
+**Stated differences.** A binding whose `path` holds a lone surrogate
+reads as none (the reference returns that `Path`); a store path or link
+target that is not UTF-8 is refused or shown lossily. On Windows,
+`rebind_store` resolves as non-strict `ntpath.realpath` does, with
+`fs::canonicalize` over the longest head that is there (a link inside
+the missing tail is not followed), and compares the two spellings
+lowered with Rust's `to_lowercase` where `WindowsPath` uses `str.lower`;
+the Windows `strerror` is the C runtime's, not asked here. `retire_current`
+reads a missing retired name as `Path.exists` does under 3.13, the
+pinned interpreter: an OSError other than not-found raises, where 3.14
+reads any OSError as absent. No fixture row holds any of these.
+
+**Fixtures.** `gen_log_keyfiles.py` writes `log_keyfiles.jsonl` (the id
+check over 21 ids, no file system), `log_keyfiles_posix.jsonl` (POSIX
+only: 94 scenarios over a scratch keys directory with links, mode-000
+files, folders where files are expected and files nested past the JSON
+limit; each the answer or the error class and errno name, then every
+entry under the scratch folder with its bytes and mode) and
+`log_keyfiles_darwin.jsonl` (platform gated: the message of each
+`KeyUnreadableError` whose reason is `strerror`'s, since glibc words some
+errnos otherwise; a Linux runner writes and compares its own). A
+dangling link's message is the module's own and sits in the POSIX file.
+
+**Left for log-2:** `chain_segments` and the two history leaves, cut
+from this unit at 616 lines of source (the bound is 600); then
+`append_history_replaced` with the restore writer, and `open.rs` moved
+onto `log::ring`.
 
 ## This machine's id (`machine.py`)
 
@@ -2711,6 +2818,9 @@ that Unicode too.
 | `golden_history_rows`: `every_nested_history_rows_answer_is_the_reference_s` | `history_rows_python.jsonl` | ii |
 | `golden_log_chain`: `log_chain_every_row_and_variant` | `log_chain.jsonl` | i |
 | `golden_log_keyring`: `log_keyring_every_case` | `log_keyring.jsonl` | i |
+| `golden_log_keyfiles`: `log_keyfiles_every_case`; `log_keyfiles_kills` (6), `log_keyfiles_robustness` (2) | `log_keyfiles.jsonl` (the last two none) | i |
+| `golden_log_keyfiles_posix`: `log_keyfiles_posix_every_case` (POSIX only; `log_keyfiles_not_posix` records the gap) | `log_keyfiles_posix.jsonl` | os |
+| `golden_log_keyfiles_posix`: `log_keyfiles_posix_every_case` | `log_keyfiles_darwin.jsonl` | iii |
 | `golden_search`: `search_ranker_tables` | `search_ranker.jsonl` header (word lists) | i |
 | `parity_provenance`: both tests | `generate.py`, the manifest | i |
 | `golden_toml`: `toml_every_document` | `toml.jsonl` | ii (Python) |
@@ -12412,9 +12522,8 @@ What the reference has and this build does not, by area:
   `credentials.secret_spans`), the suppression, the hook deadline and the
   id-list readers (unit 3), and the `Recorder` (unit 4).
 - The daemon, the MCP tools, the hooks and the command line.
-- Reading and writing the key ring's files on disk (the ring here holds
-  their bytes); `datetime.astimezone` of a naive value (the reference
-  reads it as the machine's local time).
+- `datetime.astimezone` of a naive value (the reference reads it as the
+  machine's local time).
 
 ## Records and their errors
 

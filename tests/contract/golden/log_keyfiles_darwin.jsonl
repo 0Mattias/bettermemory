@@ -1,0 +1,6 @@
+{"cases":5,"fixture":"log_keyfiles_darwin"}
+{"case":"lc_unreadable","message":"the key file <root>/keys/0123456789abcdef0123456789abcdef.key is there and cannot be read (Permission denied); the store is not rekeyed over it"}
+{"case":"lc_directory","message":"the key file <root>/keys/0123456789abcdef0123456789abcdef.key is there and cannot be read (Is a directory); the store is not rekeyed over it"}
+{"case":"lc_keys_is_file","message":"the key file <root>/keys/0123456789abcdef0123456789abcdef.key is there and cannot be read (Not a directory); the store is not rekeyed over it"}
+{"case":"lc_loop","message":"the key file <root>/keys/0123456789abcdef0123456789abcdef.key is there and cannot be read (Too many levels of symbolic links); the store is not rekeyed over it"}
+{"case":"rc_unreadable","message":"the key file <root>/keys/0123456789abcdef0123456789abcdef.key is there and cannot be read (Permission denied); the store is not rekeyed over it"}

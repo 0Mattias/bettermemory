@@ -89,6 +89,7 @@ from . import (
     gen_lexicon,
     gen_verify_candidates,
     gen_log,
+    gen_log_keyfiles,
     gen_machine,
     gen_log_ring,
     gen_mcp,
@@ -140,6 +141,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "canonical_json": gen_json.generate,
     "in_force": gen_in_force.generate,
     "log_chain": gen_log.generate,
+    "log_keyfiles": gen_log_keyfiles.generate,
+    "log_keyfiles_posix": gen_log_keyfiles.generate_posix,
+    "log_keyfiles_darwin": gen_log_keyfiles.generate_darwin,
     "machine_identity": gen_machine.generate,
     "machine_identity_python": gen_machine.generate_python,
     "log_keyring": gen_log_ring.generate,
@@ -523,11 +527,14 @@ def pydantic_core_version() -> str:
 #: ``LCMapStringEx`` (U+0130 kept, no final sigma) and `ntpath.abspath`
 #: reads the process's folder through ``_getfullpathname``, where on a
 #: POSIX host both are Python (`gen_membership_records`).
+#: ``log_keyfiles_darwin`` holds `KeyUnreadableError` messages whose reason
+#: is the C library's ``strerror`` (`gen_log_keyfiles`).
 PLATFORM = "darwin-arm64"
 PLATFORM_GATED = frozenset(
     {
         "models_text_platform",
         "location_stamps_platform",
+        "log_keyfiles_darwin",
         "search_ranker",
         "store",
         "store_path",
@@ -607,7 +614,9 @@ PLATFORM_GATED = frozenset(
 #: folder (`gen_origin_gitfiles_facts`);
 #: ``store_schema_posix`` runs the schema steps on a mode-0444 store file
 #: and spells a v8 folder's path as the host's ``Path`` does
-#: (`gen_store_schema`).
+#: (`gen_store_schema`);
+#: ``log_keyfiles_posix`` and ``log_keyfiles_darwin`` drive the key ring
+#: over links, mode-000 files and folders (`gen_log_keyfiles`).
 POSIX_ONLY = frozenset(
     {
         "checkout_token_read",
@@ -634,6 +643,8 @@ POSIX_ONLY = frozenset(
         "gitconfig_file",
         "location_stamps",
         "location_stamps_python",
+        "log_keyfiles_posix",
+        "log_keyfiles_darwin",
         "gitconfig_tree",
         "gitconfig_legacy",
         "gitconfig_legacy_python",

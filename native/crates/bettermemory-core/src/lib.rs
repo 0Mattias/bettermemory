@@ -28,7 +28,9 @@
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
 //! - [`verify_candidates`]: the path candidates verification reads, its
 //!   first unit (one candidate validated);
-//! - [`log`]: the row MAC, the key ring and `verify_chain`;
+//! - [`log`]: the row MAC, the key ring and `verify_chain`, and the key
+//!   ring's files (`log::ring`: the current key, the origin anchor, the
+//!   binding);
 //! - [`machine`]: this machine's id, its first unit (the identity
 //!   record, the id minted from given bytes, the clone rule);
 //! - [`search`]: `search.search` over records in memory, bit for bit;

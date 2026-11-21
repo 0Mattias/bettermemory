@@ -22,6 +22,8 @@ use crate::lexicon::hex;
 use crate::pyvalue::{py_int, py_str, PyError, PyStr, PyValue};
 use crate::unicode;
 
+pub mod ring;
+
 /// The `prev_mac` of the first row.
 pub const GENESIS_MAC: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 pub const STORE_CREATED: &str = "store_created";
