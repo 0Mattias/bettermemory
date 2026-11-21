@@ -145,6 +145,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "membership_records_paths": gen_membership_records.generate,
     "membership_records_paths_python": gen_membership_records.generate_python,
     "membership_records_paths_platform": gen_membership_records.generate_platform,
+    "membership_records_records": gen_membership_records.generate_records,
     "search_ranker": gen_search_ranker.generate,
     "search_dedup": gen_search_dedup.generate,
     "search_dedup_unicode": gen_search_dedup.generate_unicode,

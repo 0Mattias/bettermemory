@@ -44,8 +44,10 @@
 //!   contract, the tables, the key ring from a keys directory, the chain
 //!   verified on disk, the FTS5 prefilter;
 //! - [`membership_records`]: the vocabulary and records of the membership
-//!   model, its first unit (the legacy ask rule and the helpers that
-//!   compare, join and rebase recorded paths in either spelling);
+//!   model, units 1 to 3 (the legacy ask rule and the helpers that
+//!   compare, join and rebase recorded paths in either spelling; the
+//!   manifest's JSON and match, the reader traits and the checkout,
+//!   view, project and proposal records);
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
 //! - [`events`]: the telemetry recorder's rows, its first unit (the
 //!   event kinds, their row classes and the fields a state row keeps);

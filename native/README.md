@@ -60,7 +60,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
-| `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`) | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl` |
+| `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
@@ -1145,17 +1145,17 @@ Several of its parts are already ported where other units read them.
 | the vocabulary constants | 40-176, 201-284 | nothing | partly ported (`membership_lines::WORDS`, `capture`'s kinds); the rest with the records that read them |
 | `legacy_asks` | 177-200 | nothing | built (unit 1) |
 | `ObjectKey`, `compare`, `on_any_device` | 288-318 | nothing | ported in `capture::location` |
-| `InitStamp`, `ProjectFileRef` | 321-348 | nothing | `ProjectFileRef` ported in `capture::location`; `InitStamp` unit 3 |
-| `Manifest`, `to_json`, `from_json`, `manifest_match` | 350-380 | nothing | unit 2 |
-| `HistoryReader`, `IndependentReader`, `NeedIndependent`, `Specific` | 383-445 | git, through the caller's reader | unit 3 (protocols as traits) |
+| `InitStamp`, `ProjectFileRef` | 321-348 | nothing | `ProjectFileRef` ported in `capture::location`; `InitStamp` is `capture::Stamp` |
+| `Manifest`, `to_json`, `from_json`, `manifest_match` | 350-380 | nothing | built (units 2 and 3); `Manifest` is `capture::Manifest` |
+| `HistoryReader`, `IndependentReader`, `NeedIndependent`, `Specific` | 383-445 | git, through the caller's reader | built (units 2 and 3; protocols as traits) |
 | `Location` and its properties | 447-539 | nothing | ported in `capture::location` |
-| `Machine`, `View`, `Checkout` and its methods, `_live_key`, `Project`, `ProjectFile` | 540-680 | nothing (`checkout_token.Lineage`, ported) | unit 3 |
-| `Home`, `Proposal`, `Declaration`, `Resolution`, `Declared`, `Why`, `UnresolvedProject`, `Health`, `EpisodeRef`, `Handoff`, `RecallAdmission` | 682-888 | nothing | `Home` and `Resolution` in `store::caller`; the rest unit 4 |
-| `_strings`, `_flag`, `PortableIdentity` (`to_json`, `from_json`, `digest`), `ImportedProject` | 890-996 | nothing | unit 2 |
+| `Machine`, `View`, `Checkout` and its methods, `_live_key`, `Project`, `ProjectFile` | 540-679 | nothing (`checkout_token.Lineage`, ported) | built (units 2 and 3) |
+| `Home`, `Proposal`, `Declaration`, `Resolution`, `Declared`, `Why`, `UnresolvedProject`, `Health`, `EpisodeRef`, `Handoff`, `RecallAdmission` | 682-888 | nothing | `Home` and `Resolution` in `store::caller`; `Proposal` built (units 2 and 3); the rest unit 4 (membership_records-3b) |
+| `_strings`, `_flag`, `PortableIdentity` (`to_json`, `from_json`, `digest`), `ImportedProject` | 890-996 | nothing | later (membership_records-3b) |
 | `Liveness`, `relation`, `admitted` | 998-1080 | nothing | ported in `store::caller` |
 | `_norm`, `_inside` | 1083-1089 | nothing | ported as `capture::paths` |
 | `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_same_number`, `_common_by_pointer`, `_dir_key`, `_dir_below` | 1091-1195 | the working directory (`_rebase`); the host's `os.path` (`_common_by_pointer`, `_dir_key`, `_dir_below`) | built (unit 1) |
-| `_found_token` | 1152-1156 | nothing | unit 3 (reads `Checkout` and `Location`) |
+| `_found_token` | 1152-1156 | nothing | built (units 2 and 3) |
 
 The whole module is past 600 lines of Rust, so it is cut, leaves first:
 unit 1 the path helpers and the legacy rule; unit 2 the manifest and the
@@ -1270,6 +1270,95 @@ fastest of three runs at 2n within six times the run at n plus 50 ms,
 and the bounds of the code space).
 
 Left for later units: units 2 to 4 above, and `_found_token`.
+
+### Units 2 and 3, built (`membership_records::records`)
+
+Built together, without the portable identity (`_strings`, `_flag`,
+`PortableIdentity`, `ImportedProject`), which moves with unit 4's
+records to membership_records-3b. Line ranges as at a0b86dc3.
+
+- The vocabulary these read (40-176): the checkout kinds, `UNRESOLVED`,
+  `SUPERSEDED`, the proposal kinds and states, as `&str` constants.
+  The witness words stay `membership_lines::WORDS`.
+- `InitStamp` (321-335) is `capture::Stamp` and `Manifest` (350-357) is
+  `capture::Manifest`, the records `capture::location::Location` holds;
+  `location_stamps::Stamp` is the stamp as read from disk and converts
+  into `capture::Stamp`. A size is canonical decimal text, so any Python
+  int fits.
+- `Manifest.to_json` (359-360) and `Manifest.from_json` (362-368) are
+  `manifest_to_json` and `manifest_from_json`, free functions over
+  `capture::Manifest`. `from_json` answers None for a non-dict or a
+  `name` that is no `str`. `raw.get("entries") or ()` reads a falsy value
+  (None, False, 0, 0.0, -0.0, "", [], {}) as no entries and iterates a
+  truthy one: a dict yields its keys, a `str` its characters, any other
+  scalar raises TypeError (NaN is truthy). Each element unpacks into two
+  the same way: a two-character `str` into its characters, a dict of two
+  keys into its keys, another length ValueError, a non-iterable
+  TypeError. Then `str(path)` (`pyvalue::py_str`: `True`, `None`,
+  `1e+16`, a list's repr) and `int(size)` (`pyvalue::py_int`: a bool, a
+  float truncated toward zero, text with surrounding Unicode spaces and
+  single underscores, Unicode digits, at most 4,300 digits; inf
+  OverflowError, NaN ValueError). The generator is lazy, so the first
+  raise in element order is the answer; its class is returned
+  (`PyError`), its text, which follows the release, is not.
+- `manifest_match` (371-380): 0.0 for a missing manifest, another name or
+  two empty sets; else the intersection's size over the union's as
+  `f64`. Both counts are below 2**53, so the division rounds once as
+  Python's `int / int` does; the fixtures pin the IEEE bits.
+- `HistoryReader` (383-409) and `IndependentReader` (412-419) are
+  traits. `reachable_among` returns the relation and `Option<bool>`, the
+  reader's own word on whether a bound cut it short; `bounded(None)` is
+  true, as the reference reads a reader that does not say.
+  `location_git.Reach` implements the trait in a later unit.
+- `NeedIndependent` (422-430) carries its commits and its message as a
+  constant; `Specific` (433-445) is a plain record.
+- `Machine` (540-548), `View` (550-562), `Project` (656-670),
+  `ProjectFile` (673-679) and `Proposal` (707-724) are plain records. A
+  mapping (`facts`, `evidence`) is kept as the `PyValue` read; a view's
+  `order` is an `i64`, the store's integer. `Proposal` leaves
+  `membership_lines::RestatedRow` as it is; membership_rows-1 reconciles
+  the two.
+- `Checkout` (564-633): `kind` and `token_status` are text, since
+  `unresolved` is no capture kind. `token_superseded` compares the
+  status to `superseded` exactly. `lineage` is
+  `checkout_token::lineage(token, (device, inode))`. `token_refutes`
+  answers false for a missing or empty token; for a superseded one
+  whether the found token is missing or empty; else whether it is
+  neither the own token nor `checkout_token::succeeds` of it, whose raise
+  passes through as `checkout_token::Raised`. No raise is reachable
+  through a checkout: `lineage` admits only a valid token and ASCII
+  decimal device and inode, so `_link` encodes only ASCII. `views_on`
+  filters by machine and sorts stably by order; `newest_view` keeps the
+  first of equal orders, as `max` does.
+- `_live_key` (636-653) is `live_key`, a `LiveKey` record compared field
+  by field as the reference's tuple is: the checkout's id, kind, both
+  object keys, token, whether it is superseded, last HEAD and stamps,
+  and the view's machine and path.
+- `_found_token` (1152-1156): for a superseded token the location's
+  token; else the token where it is non-empty, otherwise the one
+  written.
+
+No regular expression is read by these functions.
+
+Fixtures: `gen_membership_records.py`'s records part writes
+`membership_records_records.jsonl` (not gated, 191 rows): `from_json`
+over hostile values (every unpacking shape, every conversion of path and
+size, the digit limit, lone surrogates), `manifest_match` over pairs
+(duplicates, other names, empty trees, IEEE bits), the checkout's
+token rules over five tokens, five statuses and seven object keys
+against eleven found tokens (re-mints in and out of the lineage
+included), views with tied and extreme orders, `_live_key` against
+each field it reads and some it does not, `_found_token` over every
+combination of found and written tokens, and a digest of 3,000 seeded
+manifest pairs (the 64-bit LCG of unit 1). A dict is spelled with
+sorted keys, and the answer is the reference's on that spelling.
+
+Tests: `golden_membership_records_records` (every row counted),
+`membership_records_records_kills` (13), `membership_records_records_robustness`
+(5: 200,000 entries read and matched within the tenfold growth bound,
+a path nested 100,000 deep (RecursionError, as `str` raises) and a
+size nested as deep (TypeError), the 4,300-digit limit and
+`float.max`, 100,000 views at the `i64` bounds).
 
 ## The fold check
 
@@ -2528,6 +2617,7 @@ that Unicode too.
 `relpath` on a Windows host, through a stub `_getfullpathname` whose
 answers were checked against 3.13.13's `ntpath` loaded with a stub `nt`
 module), `membership_records_robustness` (5) | none | i |
+| `golden_membership_records_records`: `every_case_answers_as_the_reference`; `membership_records_records_kills` (13), `membership_records_records_robustness` (5) | `membership_records_records.jsonl` (the last two none) | i |
 | `golden_store_files`: `the_reference_written_file_reads_the_same` | `store_real.json`, `store_real.sqlite` | iii |
 | `golden_store_files`: `the_crates_schema_texts_are_the_references` | `store_admission.json` (compiled-in copy pinned to the committed file) | iii (by its generator; its text is platform-independent) |
 | `bench_search`, `bench_tokenize`, `search_differential_files`, `cases_from_env`, `answers_of_env_store`, `time_reads_of_env_store` | files an environment variable names | tools, `#[ignore]`d, not part of parity |
@@ -12078,9 +12168,8 @@ What the reference has and this build does not, by area:
   `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit`), `_git`,
   `RepositoryHistory` and `_clear_above`.
 - `membership_records.py` past its path helpers and legacy ask rule
-  (the manifest, the portable identity, the checkout, view and project
-  records, `_found_token` and the remaining frozen records: units 2 to
-  4). Membership's writes, and of the caller's resolution its file roots
+  (the portable identity and the remaining frozen records: unit 4).
+  Membership's writes, and of the caller's resolution its file roots
   and workspace declaration (`identity` resolves the rest; its
   admission is `store::caller`).
 - Each hit's signals and drift report: `claims.py` past its leaves (the

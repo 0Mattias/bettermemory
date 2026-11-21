@@ -6,15 +6,20 @@
 //! - unit 1, built: the legacy ask rule and the comparison of two object
 //!   numbers (here), and [`paths`], the helpers that compare, join and
 //!   rebase recorded paths in either spelling.
+//! - units 2 and 3, built: [`records`], the manifest's JSON and match,
+//!   the reader protocols as traits, the machine, view, checkout,
+//!   project, project file and proposal records, `_live_key` and
+//!   `_found_token`.
 //!
 //! Parts of the module other units ported live where they are read:
 //! `ObjectKey`, `ProjectFileRef` and `Location` in `capture::location`,
 //! `_paths` in `capture::paths`, `relation`, `admitted`, `Home` and
-//! `Resolution` in `store::caller`, `WORDS` in `membership_lines`. The
-//! manifest, the portable identity and the remaining records are later
-//! units.
+//! `Resolution` in `store::caller`, `WORDS` in `membership_lines`,
+//! `InitStamp` and `Manifest` as `capture::{Stamp, Manifest}`. The
+//! portable identity and the remaining records are later units.
 
 pub mod paths;
+pub mod records;
 
 use crate::capture::location::ObjectKey;
 

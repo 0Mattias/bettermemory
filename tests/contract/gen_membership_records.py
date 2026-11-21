@@ -65,9 +65,10 @@ import hashlib
 import json
 import ntpath
 import posixpath
+import struct
 import types
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
 from bettermemory import membership_records as mr
@@ -495,3 +496,433 @@ def generate_python() -> dict[str, bytes]:
 
 def generate_platform() -> dict[str, bytes]:
     return {"membership_records_paths_platform.jsonl": _lines(None)}
+
+
+# ---------------------------------------------------------------------------
+# Units 2 and 3: the manifest's JSON and match, and the checkout records.
+#
+# ``membership_records_records.jsonl``, not gated: one JSON object per
+# line, keys sorted, ASCII (a lone surrogate written as JSON's escape).
+#
+# - ``{"f": "from_json", "a": raw, "o": out}``: `Manifest.from_json(raw)`,
+#   ``out`` its `to_json()`, null, or ``{"raised": class}`` (the class
+#   alone: the text follows the release).
+# - ``{"f": "match", "a": [a, b], "o": bits, "r": repr}``:
+#   `manifest_match` of two manifests (their `to_json()` or null), the
+#   answer's IEEE bits in hex and its repr.
+# - ``{"f": "checkout", "a": {"token", "status", "key"}, "o": {...}}``:
+#   `token_superseded`, `lineage` and `token_refutes` of each found token.
+# - ``{"f": "views", "a": [[machine, order], ...], "m": machine, "o":
+#   {"on": [index], "newest": index}}``: `views_on` and `newest_view`.
+# - ``{"f": "live_key", "a": [checkout, view, checkout, view], "o":
+#   bool}``: whether `_live_key` of the two pairs is equal.
+# - ``{"f": "found_token", "a": [status, token, written], "o": text}``.
+# - ``{"f": "match_sweep", "seed", "n", "o"}``: `_RECORDS_SWEEP` pairs of
+#   manifests drawn by `_Rng` (`_manifest`), each answer's bits as 16 hex
+#   digits, one per line, and ``o`` the SHA-256 of the lines.
+# ---------------------------------------------------------------------------
+
+from bettermemory import checkout_token as ct  # noqa: E402
+
+_RECORDS_SEED = 20261121
+_RECORDS_SWEEP = 3000
+_NONCE = "0123456789ABC"
+_TOKEN = "0123456789ABCDEFGHJKMNPQRS"
+_OTHER = "ZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+
+
+def _remint(token: str, device: str, inode: str) -> str:
+    return _NONCE + ct._link(ct.Lineage(token, device, inode), _NONCE)
+
+
+def _bits(x: float) -> str:
+    return struct.pack(">d", x).hex()
+
+
+def _from_json_cases() -> list[Any]:
+    big = "9" * 4300
+    return [
+        None,
+        1,
+        "m",
+        [],
+        ["name", "m"],
+        {},
+        {"name": 1},
+        {"name": None},
+        {"name": ["m"]},
+        {"Name": "m"},
+        {"name": "m"},
+        {"name": ""},
+        {"name": "m", "entries": None},
+        {"name": "m", "entries": False},
+        {"name": "m", "entries": 0},
+        {"name": "m", "entries": 0.0},
+        {"name": "m", "entries": -0.0},
+        {"name": "m", "entries": ""},
+        {"name": "m", "entries": []},
+        {"name": "m", "entries": {}},
+        {"name": "m", "entries": True},
+        {"name": "m", "entries": 1},
+        {"name": "m", "entries": 2.5},
+        {"name": "m", "entries": float("nan")},
+        {"name": "m", "entries": "ab"},
+        {"name": "m", "entries": "a"},
+        {"name": "m", "entries": {"a1": 0, "b2": 1}},
+        {"name": "m", "entries": {"ab": 0}},
+        {"name": "m", "entries": {"abc": 0}},
+        {"name": "m", "entries": [["a", 1]]},
+        {"name": "m", "entries": [["a", 1], ["a", 1], ["b", 2]]},
+        {"name": "m", "entries": [["a"]]},
+        {"name": "m", "entries": [[]]},
+        {"name": "m", "entries": [["a", 1, 2]]},
+        {"name": "m", "entries": ["a7"]},
+        {"name": "m", "entries": ["a"]},
+        {"name": "m", "entries": ["abc"]},
+        {"name": "m", "entries": [""]},
+        {"name": "m", "entries": ["ab"]},
+        {"name": "m", "entries": [{"p": 1, "3": 2}]},
+        {"name": "m", "entries": [{"p": 1}]},
+        {"name": "m", "entries": [1]},
+        {"name": "m", "entries": [None]},
+        {"name": "m", "entries": [1.5]},
+        {"name": "m", "entries": [True]},
+        {"name": "m", "entries": [["a", 1], 5, ["b", "x"]]},
+        {"name": "m", "entries": [["a", "x"], 5]},
+        {"name": "m", "entries": [[1, 2]]},
+        {"name": "m", "entries": [[2.5, 2]]},
+        {"name": "m", "entries": [[1e16, 2]]},
+        {"name": "m", "entries": [[True, 2]]},
+        {"name": "m", "entries": [[None, 2]]},
+        {"name": "m", "entries": [[[1, "a"], 2]]},
+        {"name": "m", "entries": [[{"k": [None, True]}, 2]]},
+        {"name": "m", "entries": [[float("nan"), 2]]},
+        {"name": "m", "entries": [[float("-inf"), 2]]},
+        {"name": "m", "entries": [["p", True]]},
+        {"name": "m", "entries": [["p", False]]},
+        {"name": "m", "entries": [["p", 2.9]]},
+        {"name": "m", "entries": [["p", -2.9]]},
+        {"name": "m", "entries": [["p", -0.0]]},
+        {"name": "m", "entries": [["p", 1e300]]},
+        {"name": "m", "entries": [["p", float("inf")]]},
+        {"name": "m", "entries": [["p", float("nan")]]},
+        {"name": "m", "entries": [["p", None]]},
+        {"name": "m", "entries": [["p", [1]]]},
+        {"name": "m", "entries": [["p", {}]]},
+        {"name": "m", "entries": [["p", " 1_0 "]]},
+        {"name": "m", "entries": [["p", "1__0"]]},
+        {"name": "m", "entries": [["p", "_1"]]},
+        {"name": "m", "entries": [["p", "+5"]]},
+        {"name": "m", "entries": [["p", "-0"]]},
+        {"name": "m", "entries": [["p", "007"]]},
+        {"name": "m", "entries": [["p", ""]]},
+        {"name": "m", "entries": [["p", " "]]},
+        {"name": "m", "entries": [["p", "1.0"]]},
+        {"name": "m", "entries": [["p", "0x10"]]},
+        {"name": "m", "entries": [["p", "٣٤"]]},
+        {"name": "m", "entries": [["p", " 12　"]]},
+        {"name": "m", "entries": [["p", "²"]]},
+        {"name": "m", "entries": [["p", big]]},
+        {"name": "m", "entries": [["p", big + "9"]]},
+        {"name": "m", "entries": [["p", "-" + big]]},
+        {"name": "m", "entries": [["p", 10**40]]},
+        {"name": "m", "entries": [["p", -(10**40)]]},
+        {"name": "\ud800", "entries": [["\udfff", 1]]},
+        {"name": "m", "entries": [["\U0001f600", 1]]},
+        {"name": "m", "entries": ["\U0001f6001"]},
+        {"name": "m", "name2": "x", "entries": [["a", 1]], "other": [1]},
+    ]
+
+
+def _manifest_json(name: str, entries: list[tuple[str, int]]) -> dict[str, Any]:
+    return mr.Manifest(name, tuple(entries)).to_json()
+
+
+def _match_cases() -> list[tuple[Any, Any]]:
+    m = _manifest_json
+    e3 = [("a", 1), ("b", 2), ("c", 3)]
+    return [
+        (None, None),
+        (None, m("x", e3)),
+        (m("x", e3), None),
+        (m("x", []), m("x", [])),
+        (m("x", e3), m("y", e3)),
+        (m("x", e3), m("x", e3)),
+        (m("x", e3), m("x", [])),
+        (m("x", []), m("x", e3)),
+        (m("x", e3), m("x", e3[:1])),
+        (m("x", e3), m("x", [("a", 1), ("b", 3)])),
+        (m("x", e3), m("x", [("d", 1)])),
+        (m("x", e3 + e3), m("x", e3[:2])),
+        (m("x", [("a", 1)] * 5), m("x", [("a", 1), ("b", 1)])),
+        (
+            m("x", [(str(i), i) for i in range(10)]),
+            m("x", [(str(i), i) for i in range(3, 10)]),
+        ),
+        (
+            m("x", [(str(i), 0) for i in range(49)]),
+            m("x", [(str(i), 0) for i in range(1, 50)]),
+        ),
+        (m("x", [("a", 10**30)]), m("x", [("a", 10**30)])),
+        (m("x", [("a", 1)]), m("x", [("a", -1)])),
+        (m("", [("a", 1)]), m("", [("a", 1)])),
+    ]
+
+
+def _checkout(**kw: Any) -> mr.Checkout:
+    base: dict[str, Any] = {
+        "id": "k1",
+        "project": "p1",
+        "machine": "m1",
+        "kind": "primary",
+        "object_key": mr.ObjectKey("10", "20", "30"),
+        "common_object_key": None,
+        "git_dir": "/r/.git",
+        "token": _TOKEN,
+        "token_status": "own",
+        "stamps": (),
+        "last_head": "h1",
+        "branch": "main",
+        "remotes": (),
+        "manifest": None,
+        "legacy": False,
+        "retired": False,
+        "registered": "t0",
+    }
+    base.update(kw)
+    return mr.Checkout(**base)
+
+
+def _key_json(key: mr.ObjectKey | None) -> Any:
+    return None if key is None else [key.device, key.inode, key.birth]
+
+
+def _checkout_cases() -> list[dict[str, Any]]:
+    k = mr.ObjectKey
+    re1 = _remint(_TOKEN, "10", "20")
+    found = [
+        None,
+        "",
+        _TOKEN,
+        _OTHER,
+        re1,
+        _remint(_TOKEN, "10", "21"),
+        _remint(_OTHER, "10", "20"),
+        re1.lower(),
+        re1[:-1],
+        "x",
+        "\ud800",
+    ]
+    cases = []
+    for token in [None, "", _TOKEN, "not a token", _TOKEN.lower()]:
+        for status in ["own", "superseded", "Superseded", "written", ""]:
+            for key in [
+                k("10", "20", "30"),
+                None,
+                k("10", "x"),
+                k("-1", "007"),
+                k("١", "2"),
+                k("1\n", "2"),
+                k("", "2"),
+            ]:
+                if (token, status) != (_TOKEN, "own") and key != k("10", "20", "30"):
+                    continue
+                cases.append(
+                    {
+                        "token": token,
+                        "status": status,
+                        "key": _key_json(key),
+                        "found": found,
+                    }
+                )
+    return cases
+
+
+def _checkout_row(case: dict[str, Any]) -> dict[str, Any]:
+    key = case["key"]
+    ck = _checkout(
+        token=case["token"],
+        token_status=case["status"],
+        object_key=None if key is None else mr.ObjectKey(*key),
+    )
+    lin = ck.lineage
+    refutes = []
+    for f in case["found"]:
+        try:
+            out: Any = ck.token_refutes(f)
+        except Exception as e:  # noqa: BLE001
+            out = {"raised": type(e).__name__}
+        refutes.append([f, out])
+    return {
+        "f": "checkout",
+        "a": {"token": case["token"], "status": case["status"], "key": key},
+        "o": {
+            "superseded": ck.token_superseded,
+            "lineage": None if lin is None else list(lin),
+            "refutes": refutes,
+        },
+    }
+
+
+def _views_cases() -> list[tuple[list[tuple[str, int]], str]]:
+    return [
+        ([], "m1"),
+        ([("m1", 1)], "m1"),
+        ([("m1", 1)], "m2"),
+        ([("m1", 3), ("m2", 1), ("m1", 1), ("m1", 2)], "m1"),
+        ([("m1", 2), ("m1", 2), ("m2", 2)], "m1"),
+        ([("m2", 5), ("m1", 5), ("m1", 4), ("m2", 5)], "m2"),
+        ([("m1", -1), ("m1", -(2**63)), ("m1", 2**63 - 1), ("m1", 2**63 - 1)], "m1"),
+        ([("m1", 0), ("M1", 0), ("m1 ", 1)], "m1"),
+    ]
+
+
+def _views_row(views: list[tuple[str, int]], machine: str) -> dict[str, Any]:
+    vs = tuple(
+        mr.View("k1", m, f"/p{i}", "t0", "t1", o) for i, (m, o) in enumerate(views)
+    )
+    ck = _checkout(views=vs)
+    on = [next(i for i, w in enumerate(vs) if w is v) for v in ck.views_on(machine)]
+    nv = ck.newest_view
+    newest = None if nv is None else next(i for i, w in enumerate(vs) if w is nv)
+    return {
+        "f": "views",
+        "a": [list(v) for v in views],
+        "m": machine,
+        "o": {"on": on, "newest": newest},
+    }
+
+
+def _ck_json(ck: mr.Checkout) -> dict[str, Any]:
+    return {
+        "id": ck.id,
+        "project": ck.project,
+        "machine": ck.machine,
+        "kind": ck.kind,
+        "object_key": _key_json(ck.object_key),
+        "common_object_key": _key_json(ck.common_object_key),
+        "token": ck.token,
+        "token_status": ck.token_status,
+        "last_head": ck.last_head,
+        "stamps": [list(s) for s in ck.stamps],
+        "branch": ck.branch,
+        "registered": ck.registered,
+    }
+
+
+def _view_json(v: mr.View) -> list[Any]:
+    return [v.checkout, v.machine, v.path, v.first_seen, v.last_seen, v.order]
+
+
+def _live_key_rows() -> list[dict[str, Any]]:
+    st = mr.InitStamp
+    s1 = (st("description", 1, 2, 3, 4),)
+    base = _checkout(stamps=s1)
+    v = mr.View("k1", "m1", "/p", "t0", "t1", 1)
+    variants: list[tuple[mr.Checkout, mr.View]] = [
+        (base, v),
+        (_checkout(stamps=s1), mr.View("k2", "m1", "/p", "t9", "t9", 9)),
+        (
+            _checkout(
+                stamps=s1,
+                project="p2",
+                machine="m9",
+                git_dir="/x",
+                branch="b",
+                remotes=("r",),
+                legacy=True,
+                retired=True,
+                registered="t5",
+            ),
+            v,
+        ),
+        (_checkout(stamps=s1, id="k2"), v),
+        (_checkout(stamps=s1, kind="linked"), v),
+        (_checkout(stamps=s1, object_key=mr.ObjectKey("10", "20", None)), v),
+        (_checkout(stamps=s1, object_key=None), v),
+        (_checkout(stamps=s1, common_object_key=mr.ObjectKey("10", "20", "30")), v),
+        (_checkout(stamps=s1, token=None), v),
+        (_checkout(stamps=s1, token_status="superseded"), v),
+        (_checkout(stamps=s1, token_status="written"), v),
+        (_checkout(stamps=s1, last_head=None), v),
+        (_checkout(stamps=()), v),
+        (_checkout(stamps=(st("description", 1, 2, 3, 5),)), v),
+        (_checkout(stamps=s1 + s1), v),
+        (base, mr.View("k1", "m2", "/p", "t0", "t1", 1)),
+        (base, mr.View("k1", "m1", "/p/", "t0", "t1", 1)),
+    ]
+    rows = []
+    for k2, v2 in variants:
+        rows.append(
+            {
+                "f": "live_key",
+                "a": [_ck_json(base), _view_json(v), _ck_json(k2), _view_json(v2)],
+                "o": mr._live_key(base, v) == mr._live_key(k2, v2),
+            }
+        )
+    return rows
+
+
+def _found_token_rows() -> list[dict[str, Any]]:
+    rows = []
+    for status in ["own", "superseded", "written"]:
+        for token in [None, "", "T"]:
+            for written in [None, "", "W"]:
+                loc = types.SimpleNamespace(token=token, token_written=written)
+                ck = _checkout(token_status=status)
+                rows.append(
+                    {
+                        "f": "found_token",
+                        "a": [status, token, written],
+                        "o": mr._found_token(ck, cast("mr.Location", loc)),
+                    }
+                )
+    return rows
+
+
+def _manifest(rng: _Rng) -> mr.Manifest | None:
+    if rng.next(16) == 0:
+        return None
+    name = "ab"[rng.next(2)] if rng.next(8) == 0 else "n"
+    entries = tuple(("pqrs"[rng.next(4)], rng.next(3)) for _ in range(rng.next(9)))
+    return mr.Manifest(name, entries)
+
+
+def _match_sweep() -> str:
+    rng = _Rng(_RECORDS_SEED)
+    lines = []
+    for _ in range(_RECORDS_SWEEP):
+        a, b = _manifest(rng), _manifest(rng)
+        lines.append(_bits(mr.manifest_match(a, b)))
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
+def generate_records() -> dict[str, bytes]:
+    rows: list[dict[str, Any]] = []
+    for given in _from_json_cases():
+        # The answer is the reference's on the value the file spells:
+        # keys sorted, as the reader meets them.
+        raw = json.loads(json.dumps(given, sort_keys=True))
+        try:
+            m = mr.Manifest.from_json(raw)
+            out: Any = None if m is None else m.to_json()
+        except Exception as e:  # noqa: BLE001
+            out = {"raised": type(e).__name__}
+        rows.append({"f": "from_json", "a": raw, "o": out})
+    for a, b in _match_cases():
+        x = mr.manifest_match(mr.Manifest.from_json(a), mr.Manifest.from_json(b))
+        rows.append({"f": "match", "a": [a, b], "o": _bits(x), "r": repr(x)})
+    rows.extend(_checkout_row(c) for c in _checkout_cases())
+    rows.extend(_views_row(v, m) for v, m in _views_cases())
+    rows.extend(_live_key_rows())
+    rows.extend(_found_token_rows())
+    rows.append(
+        {
+            "f": "match_sweep",
+            "seed": _RECORDS_SEED,
+            "n": _RECORDS_SWEEP,
+            "o": _match_sweep(),
+        }
+    )
+    text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
+    return {"membership_records_records.jsonl": text.encode()}
