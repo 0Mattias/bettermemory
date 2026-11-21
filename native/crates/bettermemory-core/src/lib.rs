@@ -38,6 +38,10 @@
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
 //! - [`verify_candidates`]: the path candidates verification reads, its
 //!   first unit (one candidate validated);
+//! - [`attestation_paths`]: explicit path attestations compiled beside
+//!   the legacy reference grammar (`attestation_paths.py` whole);
+//! - [`project_file`]: the project file, its first unit (the vocabulary,
+//!   `mint_id`, `render` and the id and name checks);
 //! - [`log`]: the row MAC, the key ring and `verify_chain`, and the key
 //!   ring's files (`log::ring`: the current key, the origin anchor, the
 //!   binding);
@@ -167,6 +171,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod attestation_paths;
 pub mod attribution;
 pub mod capture;
 pub mod checkout_token;
@@ -214,6 +219,7 @@ pub mod origin_gitfiles;
 pub mod origin_history;
 pub mod origin_remote;
 pub mod printable;
+pub mod project_file;
 pub mod pyre;
 pub mod pysyntax;
 pub mod pyvalue;

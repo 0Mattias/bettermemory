@@ -4,6 +4,7 @@
 
 #![allow(dead_code)]
 
+pub mod attestation_paths;
 pub mod bulk;
 pub mod created;
 pub mod dedup;

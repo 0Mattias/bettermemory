@@ -187,7 +187,7 @@ fn find(p: &[u32], what: u32, from: usize) -> Option<usize> {
 }
 
 /// `ntpath.splitroot`: drive, root and tail.
-fn splitroot(p: &[u32]) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+pub(crate) fn splitroot(p: &[u32]) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
     let normp: Vec<u32> = p.iter().map(|&u| alt(u)).collect();
     let empty = Vec::new;
     if normp.first() == Some(&SEP) {

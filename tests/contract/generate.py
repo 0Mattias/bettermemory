@@ -98,6 +98,8 @@ from . import (
     gen_in_force,
     gen_lexicon,
     gen_verify_candidates,
+    gen_attestation_paths,
+    gen_project_file,
     gen_log,
     gen_log_keyfiles,
     gen_machine,
@@ -162,6 +164,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "lexicon": gen_lexicon.generate,
     "verify_candidates": gen_verify_candidates.generate,
     "verify_candidates_unicode": gen_verify_candidates.generate_unicode,
+    "attestation_paths": gen_attestation_paths.generate,
+    "attestation_paths_posix": gen_attestation_paths.generate_posix,
+    "project_file": gen_project_file.generate,
     "canonical_json": gen_json.generate,
     "in_force": gen_in_force.generate,
     "log_chain": gen_log.generate,
@@ -741,7 +746,8 @@ PLATFORM_GATED = frozenset(
 #: folder, the last raising POSIX errno numbers (`gen_location_probe`);
 #: ``origin_gitfiles_facts_posix`` joins with the host's ``os.path``
 #: (``ntpath`` on Windows) and holds trees with links and a mode-000
-#: folder (`gen_origin_gitfiles_facts`);
+#: folder (`gen_origin_gitfiles_facts`); ``attestation_paths_posix`` reads
+#: a tree with links and a mode-000 folder (`gen_attestation_paths`);
 #: ``store_schema_posix`` runs the schema steps on a mode-0444 store file
 #: and spells a v8 folder's path as the host's ``Path`` does
 #: (`gen_store_schema`);
@@ -749,6 +755,7 @@ PLATFORM_GATED = frozenset(
 #: over links, mode-000 files and folders (`gen_log_keyfiles`).
 POSIX_ONLY = frozenset(
     {
+        "attestation_paths_posix",
         "checkout_token_read",
         "checkout_token_read_posix",
         "checkout_token_write",

@@ -30,6 +30,8 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
+| `attestation_paths` | `attestation_paths.py` whole: `LiteralPaths`/`ReferencePaths` (`Paths` and its `Kind`), `path_mode`, `interpret_path`, `_may_be_literal`, `joined_path`, `_REFERENCE_ROOT`, `absolute_spelling`, `literal_path`, `reference_path`, `placeholder_spelling`, `target_path`, `record_paths`, `commit_paths`, `compile_targets`, `unverifiable_inputs`, with `ntpath.splitdrive` and both `commonpath`s; the host (`os.name`, `expanduser`, `lstat`, `ntpath.normcase` on Windows) a trait | `attestation_paths.jsonl`, `attestation_paths_posix.jsonl` |
+| `project_file` | unit 1 of `project_file.py`: the constants, `ErrorReason`, `ProjectFile`, `ProjectFileError` (`directory`, `line`), `Found`, `Above`, `mint_id`, `render`, `_ID_RE` (`id_text`), `_bad_name`, `_bad_char`, `_toml_string` | `project_file.jsonl` |
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store` | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_darwin.jsonl` |
 | `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record` | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
@@ -247,6 +249,132 @@ ranges `str.islower` holds over every code point, go in
 depends on the Python release or the platform. Exhaustive runs record
 only the texts whose answer is not the default, and the test enumerates
 the same texts in `itertools.product`'s order, so a missing hit fails.
+## Path attestations (`attestation_paths.py`)
+
+`attestation_paths.rs` is the whole Python module (290 lines of
+reference), built in one unit.
+No regular expression is in it.
+
+| function | reference lines | what it needs of the machine | status |
+| --- | --- | --- | --- |
+| `LiteralPaths`, `ReferencePaths` (`Paths`, `Kind`), `path_mode` | 29-44 | nothing | built |
+| `interpret_path` | 45-72 | `os.name`, `os.lstat`, `os.path.expanduser` (through `target_path`) | built |
+| `_may_be_literal` | 73-87 | `os.lstat` | built |
+| `joined_path` | 88-100 | as `interpret_path` | built |
+| `_REFERENCE_ROOT`, `absolute_spelling`, `literal_path`, `reference_path` | 101-146 | nothing (`str.isalpha` and `str.strip` from the crate's Unicode tables) | built |
+| `placeholder_spelling` | 147-172 | as `interpret_path` | built |
+| `target_path` | 173-200 | `os.path.expanduser`, the host's `os.path.normpath`; `ntpath.normcase` on a Windows host | built |
+| `record_paths`, `commit_paths` | 201-233 | nothing | built |
+| `compile_targets` | 234-278 | as `interpret_path` | built |
+| `unverifiable_inputs` | 279-290 | the probe, a closure | built |
+
+**The host is a trait** (`Host`): `nt()` is `os.name == "nt"` and picks
+the flavour of `os.path` (`normpath` after `expanduser`); `expanduser`
+answers text or what it raised; `lstat` answers whether `os.lstat`
+raised and what. `FsHost` asks a `fsdata::Fs` (`lstat_result`), the path
+encoded as `os.fsencode` does on POSIX (a code point it refuses is the
+ValueError `os.lstat` raises); under `nt` a lone surrogate is not ported.
+`nt_normcase` is `ntpath.normcase`: Python's own (`/` to `\`, then
+`str.lower`) off Windows, and on a Windows host `LCMapStringEx`, which is
+not ported, so by default it declines there (`Raised::NotPorted`, caught
+by no clause). With `fsdata`'s Windows flavour this is the crate's stated
+Windows gap (ENG-124); `attestation_paths_not_posix` records it.
+
+**Raises.** `Raised` holds what a call raises: `Index` (the IndexError
+`_normalize_candidate` raises, caught by none of the module's clauses),
+`Value`, `Os` (each caught by `except (OSError, ValueError,
+RuntimeError)`), `Other` (any other class the host raises, such as the
+KeyError of an `expanduser`; not caught) and `NotPorted`.
+
+**What is written here.** `nt_splitdrive` (`ntpath.splitdrive`, over the
+crate's `splitroot`, now `pub(crate)`) and `commonpath` for both flavours,
+None where the reference raises ValueError (absolute beside relative,
+rooted beside not, two drives). `ntpath.commonpath` compares lowered
+parts and returns the first path's own spelling, as 3.13 does.
+
+**Decisions.** The record helpers take a `Record` with the four fields
+they read, the two maps ordered (`Targets`), since no record model of
+`models.py` exists yet. `compile_targets` keeps a dict's order: a repeated
+input keeps its first place and its last value, through an index of the
+keys so that many inputs cost what a dict costs; the legacy list may
+repeat. `Mode::parse` is the ValueError `compile_targets` raises for a
+mode it does not know; the other functions take a `Mode`. An empty root
+holds nothing: `commonpath((".", "x"))` is the empty text, which is not
+`.`, so every relative target under `root=""` raises; the port
+reproduces it.
+
+**Fixtures.** `gen_attestation_paths` replaces the module's `os` with a
+scripted one (`name`, a `path` with the module's `normpath` and a scripted
+`expanduser`, a scripted `lstat` by the path's last character), so
+`attestation_paths.jsonl` is the same on every host and not gated: named
+spellings under both hosts with every function, long and surrogate
+spellings by digest, the record helpers, `compile_targets` over lists,
+roots and modes, and a seeded sweep (1,200 spellings of 1 to 6 pieces
+under both hosts, every function, eight roots, three modes, by count and
+SHA-256). `attestation_paths_posix.jsonl` (POSIX only) runs the real `os`
+over a scratch tree with a file, a folder, a dangling link, a link loop
+and a mode-000 folder; `golden_attestation_paths_posix` runs `FsHost` over
+`StdFs` there.
+
+## The project file (`project_file.py`)
+
+`project_file.rs` is unit 1. The module's map:
+
+| function | reference lines | what it needs of the machine | status |
+| --- | --- | --- | --- |
+| constants, `ErrorReason`, `ProjectFile`, `ProjectFileError` (`directory`, `line`), `Found`, `Above` | 46-138 | nothing | built (unit 1) |
+| `Walk` | 140-233 | nothing | unit 3 |
+| `mint_id` | 236-239 | random bytes (an argument) | built (unit 1) |
+| `parse` | 242-260 | `os.path.abspath` (a `Process`), `os.stat` | unit 2 |
+| `above_start`, `find` | 263-314 | the walk | unit 3 |
+| `write` | 317-361 | the file system's writes | unit 3 |
+| `render` | 364-378 | nothing | built (unit 1) |
+| `_absolute` | 384-385 | `os.path.abspath` (`hostpath::text::abspath`) | unit 2 |
+| `_walk`, `_look` | 388-410 | `os.stat`, `path_missing` | unit 3 |
+| `_evicted`, `_parse_stat` | 413-437 | `sys.platform == "darwin"` (an argument), `StatResult.flags` and `file_attributes` | unit 2 |
+| `_read_bounded` | 440-460 | `fsdata`'s non-blocking `open_result`, `fstat_result`, `read_once`, `close` | unit 2 |
+| `_from_table` | 463-499 | `toml::loads` | unit 2 |
+| `_bad_name`, `_bad_char`, `_toml_string` | 502-523 | nothing | built (unit 1) |
+| `_os_text` | 526-527 | `exc.strerror` (`Fs::strerror`; none: decline) | unit 2 |
+
+**The cut.** The lane's plan built `parse` with unit 1 unless the two
+modules of the lane passed 600 lines of Rust source; `attestation_paths`
+alone is 560, so `parse` and the reads under it are unit 2
+(`project_file-2`: `parse`, `_absolute`, `_evicted`, `_parse_stat`,
+`_read_bounded`, `_from_table`, `_os_text`, with their fixtures: every
+error reason over scratch files, sizes 65,535 to 65,537, bytes that are
+not UTF-8, `tomllib`'s messages in a Python-gated sibling, and a FIFO,
+links and modes with `strerror` texts in a POSIX-only file gated on the
+platform). The walk, `find` and `write` are unit 3.
+`capture::location`'s `ProjectFileRef` and the membership records stay as
+they are.
+
+**As built.** `ProjectFile` and `ProjectFileError` hold their path as the
+text of the reference's `Path`; `directory` is `dirname` of it, and `.`
+where that is empty, as `Path.parent` gives for one relative component. `line`
+quotes the path (`printable::quoted`). `mint_id` takes the random bytes
+`secrets.randbits` reads (17) and writes them through
+`checkout_token::random_crockford`. `render` answers None where
+`.encode("utf-8")` raises (a lone surrogate in the id or the name).
+`_toml_string` escapes `"` and `\` with a backslash and every C0
+character and DEL as `\u` and four capital hex digits; nothing past
+DEL is escaped (U+0085 and U+2028 pass), which `_bad_name` refuses in a
+name read back.
+
+**`_ID_RE`.** The pattern `bmp_[<CROCKFORD>]{26}` under `fullmatch` has no
+choice; it is matched by hand (`id_text`: the prefix, then
+`checkout_token::token_text`), under rule 3 of the regular expression
+decision as the lane names it, with the engine's cross-check (pyre-8)
+once pyre-6 is in the crate. It is built by an f-string, so the pyre
+inventory's scan of literal patterns does not hold it; pyre-7 builds it
+from the module's own text.
+
+**Fixtures.** `project_file.jsonl` (not gated): the error's line over
+paths with quotes, line breaks and an escape sequence, `render` with every
+C0 character, DEL and past ASCII and with a lone surrogate, `mint_id` over
+three byte strings, `_ID_RE.fullmatch` over ids one step from valid, and
+every code point `_bad_char` refuses.
+
 ## Verification staleness and phrase-match attribution
 
 `src/bettermemory/verify_status.py` (247 lines) and
@@ -15510,6 +15638,8 @@ What the reference has and this build does not, by area:
   store id reissue (store_membership-2), and of the caller's resolution its file roots
   and workspace declaration (`identity` resolves the rest; its
   admission is `store::caller`).
+- `project_file.py` past its vocabulary and render: `parse` and its
+  reads (unit 2), then the walk, `find` and the write (unit 3).
 - Each hit's signals and drift report: `claims.py` past its leaves and
   its literal reader (the drift index, the declare-time oracle),
   `verify_candidates.py` past the validation of one candidate, and

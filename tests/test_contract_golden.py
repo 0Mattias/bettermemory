@@ -693,7 +693,8 @@ def test_golden_files_stay_small() -> None:
     # of its own (a quarter of a megabyte at most) when its unit is cut.
     # 12.4 MB once seven more units landed together (2026-11-19): the
     # bound moves with the units built, the budget per file does not.
-    assert total < 16 * 1024 * 1024
+    # 16.1 MB once the next wave of units landed (2026-11-21).
+    assert total < 20 * 1024 * 1024
 
 
 def test_no_fixture_line_is_shaped_like_a_key() -> None:
