@@ -23,7 +23,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `json` | `json.dumps` as each call site spells values (`log.canonical_payload` and nine more forms, `review.canonical_json`), `json.loads` | `canonical_json.jsonl`, `json_edges.jsonl` |
 | `in_force` | `in_force.py` whole: `InForce` (with `history`), `in_force` and its inner `newest`, `newest_head`, `admitted_sources`, `head`; the store's reads and the admission are traits (`LinkReader`, `RecordView`) | `in_force.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
-| `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns, pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
+| `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d` | `unicode.jsonl`, `unicode_sequences.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape` | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl` |
@@ -2422,7 +2422,7 @@ that Unicode too.
 | `golden_pyre_atom`: `pyre_atom_every_row` | `pyre.jsonl` (the `atom.` parts) | i |
 | `golden_pyre_atom`: `pyre_atom_python_every_row` | `pyre_python.jsonl` (the `atom.` parts) | ii (Python) |
 | `pyre_atom_kills` (16), `pyre_atom_robustness` (6) | none | i |
-| `golden_models_text`: `models_text_every_case`; `models_text_kills` (15), `models_text_robustness` (4) | `models_text.jsonl` (the last two none) | i |
+| `golden_models_text`: `models_text_every_case`; `models_text_kills` (16), `models_text_robustness` (4) | `models_text.jsonl` (the last two none) | i |
 | `golden_models_text`: `models_text_unicode_every_case` | `models_text_unicode.jsonl` | ii (Unicode) |
 | `golden_models_text`: `models_text_platform_every_case` | `models_text_platform.jsonl` | iii |
 | `golden_search`: `search_every_query_every_mode` | `search.jsonl` | iii |
@@ -3268,9 +3268,16 @@ and its helpers, 1154 on) is left for a later unit.
   `unicode::is_space`. The zone `[+\-]\d{2}:?\d{2}` tries the colon first
   and then none, as `:?` does; a zone that matches neither way is left
   in the text (`+02:0` stays).
-- **`build_filename`.** `<YYYY-MM-DD>-<slug>.md` with the year padded to
-  four digits, as macOS's C library writes `%Y` for a year before 1000.
-  Those years go in the platform-gated file.
+- **`build_filename`.** `<YYYY-MM-DD>-<slug>.md` with the year spelt as
+  the host's C library writes `%Y` for a year before 1000, as the
+  reference's `strftime` does: unpadded on Linux with glibc
+  (`cfg(all(target_os = "linux", target_env = "gnu"))`), padded to four
+  digits everywhere else (macOS, Windows, and musl, which pads by its
+  source). `datetime::year_field(year, pads)` spells it and
+  `datetime::STRFTIME_PADS_YEAR` says what this target's C library does;
+  `DateTime::strftime`'s `%Y` uses the same two, so the two never
+  disagree. Those years go in the platform-gated file, made on each
+  system and compared there.
 - **`_SENTENCE_END_RE`, by hand.** One of `.!?` followed by a code point
   `str.isspace` holds or by the end. `$` would also match before a final
   newline, but `first_summary_line` replaced every newline with a space
@@ -3309,8 +3316,10 @@ hand as described, and no crate was added.
   outside ASCII is a separator: `make_slug("Ünïcödé façade")` is
   `"n-c-d-fa-ade"`.
 - `build_filename` of a year before 1000 depends on the C library's
-  `strftime`: macOS pads it to four digits, and so does the port on every
-  platform; `models_text_kills` pins the port's padding.
+  `strftime`: macOS's and Windows' pad it to four digits, glibc writes it
+  unpadded (`999-01-02-y.md`). The port follows the host's C library, as
+  it does for `strerror`'s texts; `models_text_kills` pins both spellings
+  and which one this target uses.
 
 ### Fixtures and tests
 
@@ -3323,14 +3332,15 @@ on Unicode) and `models_text_platform.jsonl` (years before 1000, gated on
 the platform and the Python release). A digest row records the rule, the
 count and the SHA-256 of the answers as 4-byte code points; the Rust test
 regenerates the inputs by the same rule. Together the files hold 17 KB.
-`golden_models_text` checks every case; `models_text_kills` (15) pins
+`golden_models_text` checks every case; `models_text_kills` (16) pins
 inputs a plausible wrong port answers otherwise (the date only at the
 start, Unicode `\s` and `\d` in the date pattern, the short zone, the
 `str.splitlines` boundary, a negative word bound, the `-1` slice, the
 ellipsis charged to the budget, the abbreviations' case and the space
 after a boundary, the scan stopping at the first long sentence, a
 superscript as alnum, the terminals, `IndexError`, only `.` read as an
-abbreviation's end, the year padded below 1000);
+abbreviation's end, the year below 1000 padded or not as the C library
+writes it);
 `models_text_robustness` (4) shows the summary scan, the slug and the
 snippets linear (the fastest of five runs at 2,000,000 code points
 within four times the fastest at 1,000,000 plus 200 ms) and feeds the `i64` extremes and

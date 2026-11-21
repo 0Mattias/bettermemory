@@ -1,7 +1,7 @@
 //! Inputs a plausible wrong port of `models_text` answers otherwise. Each
 //! expected value is the reference's (CPython 3.13.13).
 
-use bettermemory_core::datetime::DateTime;
+use bettermemory_core::datetime::{year_field, DateTime, STRFTIME_PADS_YEAR};
 use bettermemory_core::models_text::{
     build_filename, first_summary_line, looks_truncated, make_slug, snippet_window,
     truncate_at_word, word_ending_at,
@@ -109,7 +109,26 @@ fn only_a_full_stop_is_read_as_an_abbreviation() {
 }
 
 #[test]
-fn a_year_before_1000_is_padded_to_four_digits() {
+fn the_year_is_spelt_padded_or_not_as_the_c_library_writes_it() {
+    for (year, unpadded, padded) in [
+        (1, "1", "0001"),
+        (9, "9", "0009"),
+        (99, "99", "0099"),
+        (999, "999", "0999"),
+        (1000, "1000", "1000"),
+        (9999, "9999", "9999"),
+    ] {
+        assert_eq!(year_field(year, false), unpadded);
+        assert_eq!(year_field(year, true), padded);
+    }
+}
+
+#[test]
+fn build_filename_spells_the_year_as_this_targets_c_library() {
+    assert_eq!(
+        STRFTIME_PADS_YEAR,
+        !cfg!(all(target_os = "linux", target_env = "gnu"))
+    );
     let created = DateTime {
         year: 999,
         month: 1,
@@ -120,5 +139,10 @@ fn a_year_before_1000_is_padded_to_four_digits() {
         microsecond: 0,
         offset_us: None,
     };
-    assert_eq!(s(build_filename(&created, &cps("x"))), "0999-01-02-x.md");
+    let want = format!("{}-01-02-x.md", year_field(999, STRFTIME_PADS_YEAR));
+    assert_eq!(s(build_filename(&created, &cps("x"))), want);
+    assert_eq!(
+        created.strftime("%Y-%m-%d").expect("ported directives"),
+        want[..want.len() - 5]
+    );
 }

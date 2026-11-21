@@ -11,6 +11,27 @@ use crate::unicode;
 
 const MAX_YEAR: i64 = 9999;
 
+/// Whether this target's C library pads `strftime`'s `%Y` of a year before
+/// 1000 to four digits. glibc writes such a year unpadded, as `%d` would;
+/// macOS's and Windows' C libraries pad it (and so does musl's, by its
+/// source), so every target but Linux with glibc pads.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub const STRFTIME_PADS_YEAR: bool = false;
+/// Whether this target's C library pads `strftime`'s `%Y` of a year before
+/// 1000 to four digits: it does on every target but Linux with glibc.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub const STRFTIME_PADS_YEAR: bool = true;
+
+/// `strftime`'s `%Y` for `year`: zero-padded to four digits when `pads`,
+/// else the decimal digits alone. The two differ only below 1000.
+pub fn year_field(year: i32, pads: bool) -> String {
+    if pads {
+        format!("{year:04}")
+    } else {
+        year.to_string()
+    }
+}
+
 /// A `datetime.datetime`, naive (`offset_us == None`) or with a fixed
 /// UTC offset in microseconds (strictly within one day either way).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -354,8 +375,9 @@ impl DateTime {
     }
 
     /// `strftime` with the `%Y %m %d %H %M %S` fields the reference uses
-    /// (and `%%`). `%Y` is zero-padded to four digits, as macOS's C library
-    /// pads it; glibc writes a year below 1000 unpadded. Any other
+    /// (and `%%`). `%Y` follows this target's C library
+    /// ([`STRFTIME_PADS_YEAR`]): a year below 1000 is padded to four digits
+    /// except on Linux with glibc, which writes it unpadded. Any other
     /// directive is not ported: ValueError.
     pub fn strftime(&self, pattern: &str) -> Result<String, DateError> {
         let mut out = String::new();
@@ -366,7 +388,7 @@ impl DateTime {
                 continue;
             }
             match chars.next() {
-                Some('Y') => out.push_str(&format!("{:04}", self.year)),
+                Some('Y') => out.push_str(&year_field(self.year, STRFTIME_PADS_YEAR)),
                 Some('m') => out.push_str(&format!("{:02}", self.month)),
                 Some('d') => out.push_str(&format!("{:02}", self.day)),
                 Some('H') => out.push_str(&format!("{:02}", self.hour)),

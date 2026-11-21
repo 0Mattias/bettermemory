@@ -11,7 +11,7 @@
 //! `i128`, so no value of an `i64` overflows, and slices follow Python's
 //! rules for a negative bound.
 
-use crate::datetime::DateTime;
+use crate::datetime::{year_field, DateTime, STRFTIME_PADS_YEAR};
 use crate::pyvalue::PyStr;
 use crate::unicode;
 
@@ -158,11 +158,15 @@ pub fn make_slug(content: &[u32], max_words: i64, max_chars: i64) -> PyStr {
 }
 
 /// `build_filename(created, slug)`: `<YYYY-MM-DD>-<slug>.md`, the year
-/// zero-padded to four digits as macOS's `strftime` writes it.
+/// spelt as this target's C library writes `strftime`'s `%Y`
+/// ([`STRFTIME_PADS_YEAR`]): a year before 1000 padded to four digits,
+/// except on Linux with glibc, where it is unpadded.
 pub fn build_filename(created: &DateTime, slug: &[u32]) -> PyStr {
     let mut out = unicode::cps(&format!(
-        "{:04}-{:02}-{:02}-",
-        created.year, created.month, created.day
+        "{}-{:02}-{:02}-",
+        year_field(created.year, STRFTIME_PADS_YEAR),
+        created.month,
+        created.day
     ));
     out.extend_from_slice(slug);
     out.extend(unicode::cps(".md"));
