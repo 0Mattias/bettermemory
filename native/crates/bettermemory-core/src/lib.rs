@@ -22,6 +22,9 @@
 //! - [`datetime`]: the datetime spellings and readings;
 //! - [`origin_history`]: how `origin` reads a repository's history, its
 //!   first unit (the leaves and the memo of author dates);
+//! - [`origin_dates`]: the author dates a drift count is read off, its
+//!   git-asking leaves (the log reads, why `git log HEAD` was refused,
+//!   the extension of a remembered history);
 //! - [`unicode`]: normalization, case mapping and the character classes,
 //!   XID_Start and XID_Continue (`unicode::xid`, `str.isidentifier`),
 //!   over tables generated from the reference Python's Unicode 15.1.0;
@@ -247,6 +250,7 @@ pub mod membership_records;
 pub mod membership_rows;
 pub mod models_text;
 pub mod native_text;
+pub mod origin_dates;
 pub mod origin_gitfiles;
 pub mod origin_history;
 pub mod origin_remote;

@@ -26,6 +26,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `native_text`, `caches`, `daemon_client`, `install_hints` | `native_text.py` 15-40 (`has_surrogates`, `utf8_text`, `encoded_json`, `origin_projection`), `_caches.py` whole (`register` under a key, `clear_all`), `_daemon_client.py` 149-172 (`STORE_FILENAME` re-exported, `START_TIMEOUT_SECONDS`, `HOOK_TIMEOUT_SECONDS`, `HOOK_HARNESS_TIMEOUT_SECONDS`, `HOOK_MARGIN_SECONDS`, `hook_budget_seconds`), `_install_hints.py` 41-130 (every spelling) | `native_text.jsonl`, `daemon_client.jsonl`, `install_hints.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
+| `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves | `origin_dates_reads.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth; lookarounds refused (`supports`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
@@ -4307,6 +4308,7 @@ that Unicode too.
 | `golden_canonical_json`: `canonical_json_every_case` | `canonical_json.jsonl` | i |
 | `golden_datetime`: `datetime_every_case` | `datetime.jsonl` | i |
 | `golden_origin_history`: `origin_history_every_case`; `origin_history_kills` (12), `origin_history_robustness` (5) | `origin_history.jsonl` (the last two none) | i |
+| `golden_origin_dates_reads`: `every_row`; `origin_dates_kills` (7), `origin_dates_robustness` (3) | `origin_dates_reads.jsonl` (the last two none) | i |
 | `golden_history_rows`: `every_history_rows_answer_is_the_reference_s`; `history_rows_kills` (13), `history_rows_robustness` (5) | `history_rows.jsonl` (the last two none) | i |
 | `golden_history_rows`: `every_nested_history_rows_answer_is_the_reference_s` | `history_rows_python.jsonl` | ii |
 | `golden_history_mac`: `every_history_mac_answer_is_the_reference_s`; `history_mac_kills` (7), `history_mac_robustness` (4) | `history_rows_mac.jsonl` (the last two none) | i |
@@ -11085,6 +11087,75 @@ Left for unit 2: `git_counts` (with the runner's counters),
 `located_key`, `history_guard`, `cuts`, `shallow_file` and `cuts_in`, over
 the `fsdata` file system trait and the `githead` and `gitfile_rule`
 readers already ported.
+
+## The author dates a drift count is read off (`origin_dates.py`)
+
+`origin_dates.py` (line numbers at v9) is ported in two units, leaves
+first. The first is built (`src/origin_dates.rs`): the leaves that ask
+git. Every git process is the caller's `OriginGit` (`git` is
+`origin._git`, `git_result` is `origin._git_result`, `counts` is
+`origin_history.git_counts` over the thread's tally, `note_failed` is
+`_git.note_failed`), and every read of the files or of git's discovery is
+the caller's `DateFiles`. `RefLeaves` answers `head_unborn` and
+`packed_names` through `githead::head_unborn` and `githead::packed_names`
+over a `RefFs`, and takes `gitdir_at`, `locate`, `discovery_refusal` and
+`entry_above` as closures (`githead::discovery::{gitdir_at, locate,
+any_entry_above}`, `gitfile_rule::discovery::discovery_refusal`), which
+the caller builds over its rule and environment.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_read_author_timestamps` | 251-297 | git (`OriginGit`) | unit 1, built |
+| `_hashed_seconds` | 300-309 | nothing | unit 1, built |
+| `_HEAD_PROBES` | 312 | nothing | unit 1, built |
+| `_refused_head` | 315-341 | git, the leaves | unit 1, built |
+| `_unborn_or_broken` | 344-376 | git, the files (`DateFiles`) | unit 1, built |
+| `_unread_entry` | 379-392 | discovery (`DateFiles`) | unit 1, built |
+| `_extended_author_timestamps` | 395-429 | git | unit 1, built |
+| `_marked_seconds` | 432-439 | nothing | unit 1, built |
+| the memoised readers (`commit_author_timestamps` and the pathspec readers) | 31-248, 442 on | the memo, git, the clock | unit 2 (datememo) |
+
+What unit 1 reproduces:
+
+- `read_author_timestamps` answers `Ok(dates)` or `Err(why)`, `Err(None)`
+  where no history applies. Text (revisions, hashes, git's output) is
+  code points (`PyStr`), so a lone surrogate is one more value.
+  `is_full_commit_sha` is `origin.is_full_commit_sha` over text (40 or 64
+  lowercase hex digits).
+- `hashed_seconds` and `marked_seconds` split at the first space, as
+  `str.partition` does, and read the stamp with `datetime::git_seconds`
+  (saturating past the last second a datetime holds). An empty line passes
+  `_marked_seconds`' mark test (`"" in "-<>"` is true) and declines on its
+  empty hash; the port declines it the same.
+- `refused_head` runs `HEAD_PROBES` with `verbatim` and `empty_ok` false
+  and a 5 second timeout, as every call here; a probe's count change
+  answers `unanswered(named=False)` before any leaf is read.
+- `unborn_or_broken` asks `locate` only where `gitdir_at` answers none,
+  and `packed_names` only where a git directory was found.
+- `extended_author_timestamps` answers `Ok(None)` where the caller reads
+  the history whole, `Err(SHALLOW)` (counted as a failure) where an added
+  commit is in the cut. The merged list sorts by instant (stable, as
+  `sorted` is); `base` holds aware dates, as the reference's caller gives.
+- `WALK_MARK` is `origin._WALK_MARK` (origin.py 1339), copied for the
+  units that read the walk.
+
+Decisions. `entry_above` and `discovery_refusal` are `bool` leaves: the
+reference reads `githead.entry_above` as a truth value and
+`discovery_refusal` only against None. A raise inside a leaf is the
+leaf's: the closures answer what the caller makes of it. No regular
+expression is involved.
+
+Pinned by `origin_dates_reads.jsonl` (class i, every platform: git and the
+leaves are scripted, so no row follows the git release, the platform or
+the Python release): 136 rows over `read` (good, malformed, hashed,
+out-of-range, empty, timed-out and missing answers, with and without a
+cut), `refused`, `unborn`, `entry`, `extended` and the two line readers,
+each with the calls in order and the failures noted. The leaves are
+pinned by their own units, so the file scripts them rather than laying
+out repositories. `origin_dates_kills` and `origin_dates_robustness` hold
+the rest.
+
+Left for unit 2 (datememo): lines 31-248 and the readers from 442 on.
 
 ## HEAD and refs from a git directory's files
 

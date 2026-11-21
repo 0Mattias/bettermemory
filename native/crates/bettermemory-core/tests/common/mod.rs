@@ -24,6 +24,7 @@ pub mod membership_rows;
 pub mod membership_views;
 pub mod membership_writes;
 pub mod opened;
+pub mod origin_dates;
 pub mod parity;
 pub mod provenance;
 pub mod record_calls;
