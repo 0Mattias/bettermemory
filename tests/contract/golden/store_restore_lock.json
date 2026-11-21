@@ -1,4 +1,1560 @@
 {
+ "admit": [
+  {
+   "admit": {
+    "admission": "shared",
+    "refused": false
+   },
+   "confirm": {
+    "refused": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": null,
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "none",
+   "record_mode": false,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "admission": "shared",
+    "refused": false
+   },
+   "confirm": {
+    "refused": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "empty",
+   "record_mode": false,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "admission": "shared",
+    "refused": false
+   },
+   "confirm": {
+    "refused": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "20090a0d0b0c",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "whitespace",
+   "record_mode": false,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "admission": "shared",
+    "refused": false
+   },
+   "confirm": {
+    "refused": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "0b",
+     3
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "vt_only",
+   "record_mode": false,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "c2a0",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "nbsp_not_space",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "bundle",
+     "pid",
+     "stage",
+     "started_at"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (started 2026-01-01T00:00:00Z, by process 42, from b.tar, stopped at swap; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore b.tar --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b2262756e646c65223a2022622e746172222c2022706964223a2034322c20227374616765223a202273776170222c2022737461727465645f6174223a2022323032362d30312d30315430303a30303a30305a227d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "full",
+   "record_mode": false,
+   "restore_state": {
+    "described": "started 2026-01-01T00:00:00Z, by process 42, from b.tar, stopped at swap",
+    "marker_keys": [
+     "bundle",
+     "pid",
+     "stage",
+     "started_at"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "pid"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (by process 7; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b22706964223a20377d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "pid_only",
+   "record_mode": false,
+   "restore_state": {
+    "described": "by process 7",
+    "marker_keys": [
+     "pid"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "pid"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b22706964223a20747275657d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "pid_bool",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [
+     "pid"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "pid"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b22706964223a20372e307d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "pid_float",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [
+     "pid"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "pid"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (by process 123456789012345678901234567890; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b22706964223a203132333435363738393031323334353637383930313233343536373839307d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "pid_big",
+   "record_mode": false,
+   "restore_state": {
+    "described": "by process 123456789012345678901234567890",
+    "marker_keys": [
+     "pid"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "bundle",
+     "pid",
+     "stage",
+     "started_at"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b2262756e646c65223a205b2278225d2c2022706964223a202237222c20227374616765223a206e756c6c2c2022737461727465645f6174223a20317d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "wrong_types",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [
+     "bundle",
+     "pid",
+     "stage",
+     "started_at"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "bundle",
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (from a\\nb\\u200b\\u2028, stopped at x\ty\\x7f; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore a\\nb\\u200b\\u2028 --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b2262756e646c65223a2022615c6e625c75323030625c7532303238222c20227374616765223a2022785c74795c7530303766227d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "unprintable",
+   "record_mode": false,
+   "restore_state": {
+    "described": "from a\\nb\\u200b\\u2028, stopped at x\ty\\x7f",
+    "marker_keys": [
+     "bundle",
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at \\ud800; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b227374616765223a20225c7564383030227d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "lone_surrogate",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at \\ud800",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at \\ud800; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b227374616765223a2022eda080227d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "utf8_surrogate",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at \\ud800",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at b; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b227374616765223a202261222c20227374616765223a202262227d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "dup_keys",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at b",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b7d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "empty_object",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "5b315d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "list",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "227822",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "string",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "35",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "number",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "6e756c6c",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "null",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b22706964223a2034",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "truncated",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "0b7b22706964223a20317d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "vt_around_json",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b227374616765223a2022ff227d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "bad_utf8",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at le; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b0022007300740061006700650022003a00200022006c00650022007d00",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "utf16_le_no_bom",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at le",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at le; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "fffe7b0022007300740061006700650022003a00200022006c00650022007d00",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "utf16_bom_le_mark",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at le",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at be; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "feff007b0022007300740061006700650022003a00200022006200650022007d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "utf16_bom_be",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at be",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at be; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "007b0022007300740061006700650022003a00200022006200650022007d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "utf16_be_no_bom",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at be",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at 32; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b000000220000007300000074000000610000006700000065000000220000003a00000020000000220000003300000032000000220000007d000000",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "utf32_le_no_bom",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at 32",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at 32; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "0000007b000000220000007300000074000000610000006700000065000000220000003a00000020000000220000003300000032000000220000007d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "utf32_be_no_bom",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at 32",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at 32; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "fffe00007b000000220000007300000074000000610000006700000065000000220000003a00000020000000220000003300000032000000220000007d000000",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "utf32_bom",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at 32",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b0022007300740061006700650022003a0020002200780022007d0000",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "utf16_odd",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at sig; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "efbbbf7b227374616765223a2022736967227d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "utf8_sig",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at sig",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "efbbbfefbbbf7b227374616765223a2022736967227d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "utf8_sig_twice",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "admission": "shared",
+    "refused": false
+   },
+   "confirm": {
+    "refused": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "20",
+     65536
+    ],
+    [
+     "7b22706964223a20317d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "past_cap_blank",
+   "record_mode": false,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b227374616765223a20227822",
+     1
+    ],
+    [
+     "20",
+     65536
+    ],
+    [
+     "7d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "past_cap_cut",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at x; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b227374616765223a20227822",
+     1
+    ],
+    [
+     "20",
+     65522
+    ],
+    [
+     "7d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "at_cap",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at x",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RecursionError",
+    "refused": true
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "5b",
+     70000
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "deep",
+   "record_mode": false,
+   "restore_state": {
+    "error": "RecursionError"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "admission": "shared",
+    "refused": false
+   },
+   "confirm": {
+    "refused": false
+   },
+   "helper": "shared",
+   "lock_dir": false,
+   "marker": null,
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "held_shared",
+   "record_mode": false,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "bundle",
+     "pid",
+     "stage",
+     "started_at"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (started 2026-01-01T00:00:00Z, by process 42, from b.tar, stopped at swap; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore b.tar --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": "shared",
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b2262756e646c65223a2022622e746172222c2022706964223a2034322c20227374616765223a202273776170222c2022737461727465645f6174223a2022323032362d30312d30315430303a30303a30305a227d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "held_shared_marker",
+   "record_mode": false,
+   "restore_state": {
+    "described": "started 2026-01-01T00:00:00Z, by process 42, from b.tar, stopped at swap",
+    "marker_keys": [
+     "bundle",
+     "pid",
+     "stage",
+     "started_at"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": null,
+    "message": "<store> is not opened: a restore of it is running (its record is <lock>); open it again when the restore has finished",
+    "refused": true,
+    "running": true
+   },
+   "helper": "exclusive",
+   "lock_dir": false,
+   "marker": null,
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "held_exclusive",
+   "record_mode": false,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "running"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "bundle",
+     "pid",
+     "stage",
+     "started_at"
+    ],
+    "message": "<store> is not opened: a restore of it is running (its record is <lock>); open it again when the restore has finished",
+    "refused": true,
+    "running": true
+   },
+   "helper": "exclusive",
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b2262756e646c65223a2022622e746172222c2022706964223a2034322c20227374616765223a202273776170222c2022737461727465645f6174223a2022323032362d30312d30315430303a30303a30305a227d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "held_exclusive_marker",
+   "record_mode": false,
+   "restore_state": {
+    "described": "started 2026-01-01T00:00:00Z, by process 42, from b.tar, stopped at swap",
+    "marker_keys": [
+     "bundle",
+     "pid",
+     "stage",
+     "started_at"
+    ],
+    "state": "running"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "unreadable"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (no record of it reads; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": true,
+   "marker": null,
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "unreadable",
+   "record_mode": false,
+   "restore_state": {
+    "described": "no record of it reads",
+    "marker_keys": [
+     "unreadable"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "admission": "none",
+    "refused": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": null,
+   "marker_after": false,
+   "missing_dir": true,
+   "name": "missing_dir",
+   "record_mode": false,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "admission": "record",
+    "refused": false
+   },
+   "confirm": {
+    "refused": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": null,
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "record_absent",
+   "record_mode": true,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "admission": "record",
+    "refused": false
+   },
+   "confirm": {
+    "refused": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "record_empty",
+   "record_mode": true,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "bundle",
+     "pid",
+     "stage",
+     "started_at"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (started 2026-01-01T00:00:00Z, by process 42, from b.tar, stopped at swap; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore b.tar --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "7b2262756e646c65223a2022622e746172222c2022706964223a2034322c20227374616765223a202273776170222c2022737461727465645f6174223a2022323032362d30312d30315430303a30303a30305a227d",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "record_marker",
+   "record_mode": true,
+   "restore_state": {
+    "described": "started 2026-01-01T00:00:00Z, by process 42, from b.tar, stopped at swap",
+    "marker_keys": [
+     "bundle",
+     "pid",
+     "stage",
+     "started_at"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "error": "RestoreLockedError",
+    "marker_keys": null,
+    "message": "<store> is not opened: a restore of it is running (its record is <lock>); open it again when the restore has finished",
+    "refused": true,
+    "running": true
+   },
+   "helper": "exclusive",
+   "lock_dir": false,
+   "marker": [
+    [
+     "",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "record_held",
+   "record_mode": true,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "running"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "admission": "record",
+    "refused": false
+   },
+   "confirm": {
+    "refused": false
+   },
+   "helper": "shared",
+   "lock_dir": false,
+   "marker": [
+    [
+     "",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "record_held_shared",
+   "record_mode": true,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "admission": "none",
+    "refused": false
+   },
+   "helper": null,
+   "lock_dir": true,
+   "marker": null,
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "record_lock_dir",
+   "record_mode": true,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "admission": "record",
+    "refused": false
+   },
+   "confirm": {
+    "error": "RestoreLockedError",
+    "marker_keys": null,
+    "message": "<store> is not opened: a restore replaced the store file while it was being opened (its record is <lock>); open it again",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": null,
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "record_swapped",
+   "record_mode": true,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": true
+  },
+  {
+   "admit": {
+    "admission": "record",
+    "refused": false
+   },
+   "confirm": {
+    "error": "RestoreLockedError",
+    "marker_keys": null,
+    "message": "<store> is not opened: a restore replaced the store file while it was being opened (its record is <lock>); open it again",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "",
+     1
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "record_empty_swapped",
+   "record_mode": true,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": true
+  },
+  {
+   "admit": {
+    "admission": "record",
+    "refused": false
+   },
+   "confirm": {
+    "error": "RestoreLockedError",
+    "marker_keys": [
+     "stage"
+    ],
+    "message": "<store> is not opened: a restore of it did not finish (stopped at late; <lock> keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore BUNDLE --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+    "refused": true,
+    "running": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": null,
+   "marker_after": true,
+   "missing_dir": false,
+   "name": "record_marker_after",
+   "record_mode": true,
+   "restore_state": {
+    "described": "stopped at late",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  },
+  {
+   "admit": {
+    "admission": "shared",
+    "refused": false
+   },
+   "confirm": {
+    "refused": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": null,
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "dir_swapped",
+   "record_mode": false,
+   "restore_state": {
+    "described": null,
+    "marker_keys": null,
+    "state": "clear"
+   },
+   "swap": true
+  },
+  {
+   "admit": {
+    "admission": "shared",
+    "refused": false
+   },
+   "confirm": {
+    "refused": false
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": null,
+   "marker_after": true,
+   "missing_dir": false,
+   "name": "dir_marker_after",
+   "record_mode": false,
+   "restore_state": {
+    "described": "stopped at late",
+    "marker_keys": [
+     "stage"
+    ],
+    "state": "unfinished"
+   },
+   "swap": false
+  }
+ ],
  "cases": [
   {
    "error": "RestoreRunningError",

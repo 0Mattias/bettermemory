@@ -20,3 +20,15 @@ fn the_restore_lock_fixture_has_no_case_here() {
         &["the fixture drives a POSIX directory flock; Windows has no case".to_owned()],
     );
 }
+
+#[test]
+fn the_writing_open_rows_have_no_case_here() {
+    common::parity::record(
+        "golden_restore_lock_admit",
+        "store_restore_lock.json",
+        "os",
+        0,
+        &["every admit row of the fixture".to_owned()],
+        &["the rows drive a POSIX directory flock; Windows has no case".to_owned()],
+    );
+}

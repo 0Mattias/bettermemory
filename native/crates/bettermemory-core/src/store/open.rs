@@ -32,7 +32,7 @@ use zeroize::Zeroizing;
 use super::admission::{self, AdmitError};
 use super::create::{
     self, new_private_file, owner_only_dir, parent_of, store_path, sweep_temps, sync_dir,
-    unfinished_restore, with_suffix, Provider, PAGE_SIZE,
+    with_suffix, Provider, PAGE_SIZE,
 };
 use super::digest::{self, DigestError};
 use super::restore_lock;
@@ -201,8 +201,11 @@ pub enum OpenError {
     NotFound(PathBuf),
     /// `RestoreRunningError`.
     RestoreRunning,
-    /// `RestoreLockedError` for an unfinished restore's marker: its text.
-    RestoreUnfinished(String),
+    /// `RestoreLockedError` (`restore_lock.admit`, `confirm`): its text.
+    RestoreLocked(String),
+    /// RecursionError out of reading a restore's marker nested past the
+    /// decoder's depth (`restore_lock.admit` lets it through).
+    MarkerRecursion,
     /// `StoreRefusedError` / `LaterStoreError` (`admit_store`).
     Admission(admission::Refusal),
     /// `ValueError` from `_open_connected`'s opening checks: the message.
@@ -232,7 +235,8 @@ impl OpenError {
         match self {
             OpenError::NotFound(_) => "FileNotFoundError",
             OpenError::RestoreRunning => "RestoreRunningError",
-            OpenError::RestoreUnfinished(_) => "RestoreLockedError",
+            OpenError::RestoreLocked(_) => "RestoreLockedError",
+            OpenError::MarkerRecursion => "RecursionError",
             OpenError::Admission(r) => {
                 if r.later.is_some() {
                     "LaterStoreError"
@@ -267,7 +271,8 @@ impl std::fmt::Display for OpenError {
         match self {
             OpenError::NotFound(p) => write!(f, "no store at {}", p.display()),
             OpenError::RestoreRunning => write!(f, "{}", restore_lock::RESTORE_RUNNING_WHY),
-            OpenError::RestoreUnfinished(m) | OpenError::Refused(m) => write!(f, "{m}"),
+            OpenError::RestoreLocked(m) | OpenError::Refused(m) => write!(f, "{m}"),
+            OpenError::MarkerRecursion => write!(f, "{}", restore_lock::RECURSION_TEXT),
             OpenError::Admission(r) => write!(f, "is not opened: {}", r.why),
             OpenError::Version(e) => write!(f, "{}", e.message),
             OpenError::KeyUnreadable { path, error } => write!(
@@ -304,6 +309,15 @@ impl From<StoreError> for OpenError {
             },
             StoreError::RestoreRunning => OpenError::RestoreRunning,
             _ => OpenError::NotPorted(NotPorted::Unreadable("the store's meta")),
+        }
+    }
+}
+
+impl From<restore_lock::AdmitError> for OpenError {
+    fn from(e: restore_lock::AdmitError) -> Self {
+        match e {
+            restore_lock::AdmitError::Locked(l) => OpenError::RestoreLocked(l.to_string()),
+            restore_lock::AdmitError::Recursion => OpenError::MarkerRecursion,
         }
     }
 }
@@ -471,14 +485,9 @@ pub fn open_for_writing_with(
         return Err(OpenError::NotFound(file));
     }
     // `restore_lock.admit`, held from before SQLite opens the file until
-    // the connection is made (`_connect`'s `held.close()`).
-    let held = match restore_lock::reading(&file, restore_lock::OPEN_WAIT) {
-        Ok(held) => held,
-        Err(restore_lock::Refused::Running) => return Err(OpenError::RestoreRunning),
-    };
-    if let Some(message) = unfinished_restore(&file) {
-        return Err(OpenError::RestoreUnfinished(message));
-    }
+    // the connection is made (`_connect`'s `held.close()`), and dropped
+    // on every return before that.
+    let held = restore_lock::admit(&file, restore_lock::OPEN_WAIT, |_| false)?;
     // A `-wal` with frames beside the file (a writer has it open, or died
     // with it open): until the open decides to write, its close must not
     // checkpoint those frames into the file and remove the `-wal`, so a
@@ -502,6 +511,9 @@ pub fn open_for_writing_with(
         Err(AdmitError::Sqlite(e)) => return Err(e.into()),
         Err(AdmitError::Store(e)) => return Err((*e).into()),
     }
+    // `_connect`'s `held.confirm()`: the connection has read the store,
+    // and nothing of its meta or keys is read yet.
+    held.confirm()?;
     let plan = decide(&conn, &deadline, &file, keys_dir, provider)?;
     if had_wal {
         // Decided to write: the close checkpoints as the reference's does.

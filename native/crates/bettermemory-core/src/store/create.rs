@@ -309,9 +309,12 @@ pub enum CreateError {
     },
     /// The reference's `sqlite3` error.
     Sqlite(rusqlite::Error),
-    /// `restore_lock.RestoreLockedError`: a restore holds the store's
-    /// directory.
-    RestoreRunning,
+    /// `restore_lock.RestoreLockedError` (`admit`, `confirm`): its text
+    /// (a restore running, one that did not finish, or the file replaced).
+    RestoreLocked(String),
+    /// RecursionError out of reading a restore's marker nested past the
+    /// decoder's depth (`restore_lock.admit` lets it through).
+    MarkerRecursion,
     /// A key ring file for the drawn store id is already there (`<id>.key`,
     /// `.head`, `.origin`, `.path`): never written over. The reference's
     /// `create_key` replaces a key file; with a random id this never meets
@@ -321,10 +324,6 @@ pub enum CreateError {
     /// follows it and creates the store at the link's target; this build
     /// refuses.
     DanglingStoreLink { path: PathBuf, target: String },
-    /// `restore_lock.RestoreLockedError` for a marker an unfinished restore
-    /// left beside the store (`<store>.restore-lock` not blank): the
-    /// reference's whole message.
-    RestoreUnfinished(String),
     /// The provider gave a store id of another shape (`KeyRing` refuses it
     /// with ValueError), or a key of another length.
     Provider(&'static str),
@@ -350,8 +349,18 @@ impl CreateError {
                 _ => "OSError",
             },
             CreateError::Sqlite(_) => "OperationalError",
-            CreateError::RestoreRunning | CreateError::RestoreUnfinished(_) => "RestoreLockedError",
+            CreateError::RestoreLocked(_) => "RestoreLockedError",
+            CreateError::MarkerRecursion => "RecursionError",
             CreateError::Provider(_) => "ValueError",
+        }
+    }
+}
+
+impl From<restore_lock::AdmitError> for CreateError {
+    fn from(e: restore_lock::AdmitError) -> Self {
+        match e {
+            restore_lock::AdmitError::Locked(l) => CreateError::RestoreLocked(l.to_string()),
+            restore_lock::AdmitError::Recursion => CreateError::MarkerRecursion,
         }
     }
 }
@@ -370,10 +379,8 @@ impl std::fmt::Display for CreateError {
             ),
             CreateError::Io { step, error } => write!(f, "{step}: {error}"),
             CreateError::Sqlite(e) => write!(f, "{e}"),
-            CreateError::RestoreRunning => {
-                write!(f, "{}", restore_lock::RESTORE_RUNNING_WHY)
-            }
-            CreateError::RestoreUnfinished(m) => write!(f, "{m}"),
+            CreateError::RestoreLocked(m) => write!(f, "{m}"),
+            CreateError::MarkerRecursion => write!(f, "{}", restore_lock::RECURSION_TEXT),
             CreateError::KeyRingExists(p) => write!(
                 f,
                 "{} is already there: a new store's key ring is never written over another's",
@@ -510,16 +517,15 @@ pub fn create_with(
     io_step("make the store's directory", owner_only_dir(&dir))?;
     hook(Boundary::DirMade);
     let orphans = orphans_beside(&file);
-    let _held = match restore_lock::reading(&file, restore_lock::OPEN_WAIT) {
-        Ok(held) => held,
-        Err(restore_lock::Refused::Running) => return Err(CreateError::RestoreRunning),
-    };
-    if let Some(message) = unfinished_restore(&file) {
-        return Err(CreateError::RestoreUnfinished(message));
-    }
+    let held = restore_lock::admit(&file, restore_lock::OPEN_WAIT, |_| false)?;
     sweep_temps(&dir);
     let temp = io_step("create the temporary store", take_temp(&dir))?;
     hook(Boundary::TempLocked);
+    // `_connect`'s `held.confirm()`, before the schema is written.
+    if let Err(e) = held.confirm() {
+        temp.remove();
+        return Err(e.into());
+    }
     let mut written = Vec::new();
     let made =
         build(&temp.path, keys_dir, provider, &orphans, &mut written, hook).and_then(|made| {
@@ -559,99 +565,6 @@ pub fn create_with(
         first,
         synchronous,
     })
-}
-
-/// `restore_lock.admit`'s marker check: a `<store>.restore-lock` that
-/// holds anything but whitespace (its first 64 KiB) is a restore that did
-/// not finish, refused with the reference's message (`describe`, through
-/// `printable`). A marker that is not UTF-8 JSON holding an object reads
-/// as no record, as the reference reads one that does not parse.
-pub(super) fn unfinished_restore(file: &Path) -> Option<String> {
-    use std::io::Read;
-    let lock = restore_lock::lock_path(file);
-    let mut data = Vec::new();
-    let read = fs::File::open(&lock)
-        .ok()?
-        .take(1 << 16)
-        .read_to_end(&mut data);
-    let marker: Vec<(PyValue, PyValue)> = match read {
-        Err(_) => Vec::new(),
-        Ok(_) if data.iter().all(|b| b.is_ascii_whitespace()) => return None,
-        Ok(_) => {
-            let parsed = std::str::from_utf8(&data)
-                .ok()
-                .and_then(|t| json::loads(&unicode::cps(t)).ok());
-            match &parsed {
-                Some(PyValue::Dict(items)) => items.clone(),
-                _ => Vec::new(),
-            }
-        }
-    };
-    let get = |k: &str| {
-        marker
-            .iter()
-            .find(|(key, _)| *key == PyValue::str(k))
-            .map(|(_, v)| v)
-    };
-    let text = |k: &str| match get(k) {
-        Some(PyValue::Str(s)) => Some(s.clone()),
-        _ => None,
-    };
-    let mut parts: Vec<PyStr> = Vec::new();
-    if let Some(v) = text("started_at") {
-        parts.push([unicode::cps("started "), v].concat());
-    }
-    if let Some(PyValue::Int(n)) = get("pid") {
-        parts.push(unicode::cps(&format!("by process {n}")));
-    }
-    if let Some(v) = text("bundle") {
-        parts.push([unicode::cps("from "), v].concat());
-    }
-    if let Some(v) = text("stage") {
-        parts.push([unicode::cps("stopped at "), v].concat());
-    }
-    let described = if parts.is_empty() {
-        unicode::cps("no record of it reads")
-    } else {
-        parts.join(&unicode::cps(", ")[..])
-    };
-    let again = match text("bundle") {
-        Some(b) => [
-            unicode::cps("`bettermemory backup restore "),
-            b,
-            unicode::cps(" --yes`"),
-        ]
-        .concat(),
-        None => unicode::cps("`bettermemory backup restore BUNDLE --yes`"),
-    };
-    Some(format!(
-        "{} is not opened: a restore of it did not finish ({}; {} keeps its record), and \
-         the store may be part restored. Run the restore again to finish it ({}), or open \
-         the store as it stands after `bettermemory backup unlock --yes`",
-        file.display(),
-        printable(&described),
-        lock.display(),
-        printable(&again)
-    ))
-}
-
-/// `_printable.printable`: control and format characters, line and
-/// paragraph separators and lone surrogates as their Python escapes; a
-/// tab kept.
-fn printable(text: &[u32]) -> String {
-    let mut out = String::new();
-    for &cp in text {
-        let hide = cp != 9 && matches!(unicode::category(cp), "Cc" | "Cf" | "Zl" | "Zp" | "Cs");
-        match (hide, cp) {
-            (false, _) => out.push(char::from_u32(cp).unwrap_or('\u{fffd}')),
-            (true, 10) => out.push_str("\\n"),
-            (true, 13) => out.push_str("\\r"),
-            (true, c) if c < 0x100 => out.push_str(&format!("\\x{c:02x}")),
-            (true, c) if c < 0x10000 => out.push_str(&format!("\\u{c:04x}")),
-            (true, c) => out.push_str(&format!("\\U{c:08x}")),
-        }
-    }
-    out
 }
 
 pub(super) fn parent_of(file: &Path) -> PathBuf {

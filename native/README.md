@@ -72,6 +72,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `claims` | unit 1 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path` | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl` |
 | `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred | `pysyntax.jsonl`, `pysyntax_python.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
+| `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested) | `store_restore_lock.json` (POSIX only) |
 | `durability` | unit 1 of `durability.py`: `canonical_marker`, `quoted_spans`, `in_quoted_span`, `TransientMatch`, `_snippet_around`, `_at_sentence_start`, `_is_titlecase_name` with `str.istitle`, `sentence_around` | `durability.jsonl`, `durability_unicode.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
@@ -1243,6 +1244,100 @@ native release (sha2 0.11.1, which uses the aarch64 SHA instructions) 142.8,
 The prediction of at least ten times is missed: both are bound by
 HMAC-SHA256 on the CPU's SHA instructions (the reference's `hmac` is
 OpenSSL's), and walking the rows costs about 29 ms of the native time.
+
+## The restore lock, the writing open's side (`restore_lock.py`)
+
+The module map (`src/bettermemory/restore_lock.py` as it is now) and its
+cut. Status: built (reader), built (this unit, restore_lock-1), left.
+
+| function | lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `lock_path`, `_try_lock`, `_unlock`, `_lock_within`, `_open_record` (no create), `_store_handle`, `reading` | 239-243, 260-306, 330-344, 585-602, 855-922 | `flock`, a Windows handle | built (reader) |
+| `_file_key`, `_Target`, `_open_target` (no create), `_take` | 309-327, 347-418 | `fstat`, `flock` | restore_lock-1 |
+| `_read_marker`, `read_marker`, `describe` | 428-477 | one read of the record file | restore_lock-1 |
+| `RestoreLockedError` | 480-535 | none | restore_lock-1 |
+| `_SharedHold`, `_RecordCheck`, `_identity`, `_refuse_restored`, `_record_admission`, `admit` | 556-582, 640-734, 774-852 | `stat`, `flock` | restore_lock-1 |
+| `_holds_by_handle`, `_open_store_handle`, `_behind_handle`, `_pause` | 605-637, 737-771 | a Windows handle, the clock | restore_lock-1, `cfg(windows)`, untested |
+| `restore_state` | 1189-1222 | `flock` | restore_lock-1 |
+| `_this_thread_holds`, `_HELD`, `RestoreLock`, `mark`, `release`, `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding`, create mode of `_open_record` | the rest | `flock`, the record file written | restore_lock-2 |
+
+What restore_lock-1 reproduces (`store::restore_lock`):
+
+- `take` is `_take(create=False)`: the store's directory (the parent of the
+  path as given) opened and locked within the wait; a lock that cannot be
+  had at all (`_Unlockable`) falls to the record file, which, when it
+  cannot be locked either, counts as taken so that only a marker refuses.
+  An open or `fstat` that fails is the reference's OSError: `admit` then
+  admits with nothing held and `restore_state` answers clear. On Windows
+  the lock is always exclusive, as `msvcrt.locking` is.
+- `read_marker` is one read of at most 64 KiB (`_MARKER_CAP_BYTES`): None
+  when the file does not open or holds only `bytes.strip()` whitespace
+  (space, tab, LF, CR, VT, FF; the old create-side check used
+  `u8::is_ascii_whitespace`, which leaves out VT); the object's items when
+  `json.loads` of the bytes gives one; an empty marker for anything else
+  (a decode or parse failure, a non-object); `{"unreadable": str(exc)}`
+  when the read fails (a directory at the lock path), which `describe`
+  ignores but which refuses as unfinished. `json.loads` of bytes is
+  `json.detect_encoding` (UTF-32 and UTF-16 by BOM, then by the null bytes
+  of the first four, `utf-8-sig`) with a `surrogatepass` decode: the
+  helper `loads_bytes` takes the decode from
+  `store::provenance::decode_json_bytes`, which already reproduces it.
+  A marker nested past the decoder's depth raises RecursionError in the
+  reference, out of `admit` and `restore_state` alike: here
+  `AdmitError::Recursion`, `OpenError::MarkerRecursion` and
+  `CreateError::MarkerRecursion` (class `RecursionError`; the message is
+  not the reference's and is not pinned).
+- `describe` and `RestoreLocked`'s `Display` (`str(RestoreLockedError)`):
+  `<store> is not opened: ` and the running, unfinished or replaced text;
+  `describe` and the "again" command go through `printable`, the paths do
+  not, as in the reference. A `pid` that is a bool or a float is left out.
+- `admit` returns `Admission::Shared` (the directory held shared),
+  `Admission::Record` (`_RecordCheck`) or `Admission::None`; dropping it is
+  `close`. `confirm` repeats the check in record mode (`restore_state`,
+  then the store file's device and inode against those at `admit`: a
+  different file is the replaced refusal) and does nothing for a shared
+  hold. On Windows the record check holds the store file open and looks
+  again behind the handle (`_behind_handle`), as the reference; that path
+  is compiled only there and untested.
+- `_this_thread_holds` is the `mine` argument (a `fn(FileKey) -> bool`, so
+  a `RecordCheck` keeps it for `confirm`): no native restore exists, so
+  `store::open` and `store::create` pass one that names nothing;
+  restore_lock-2 supplies the registry. On Windows stable std gives no
+  file index, so no key is read and `mine` is never asked there.
+  For the same reason `_identity` answers None there, so when the store
+  file exists but no handle opens on it, a file replaced between `admit`
+  and `confirm` is admitted where the reference raises the replaced
+  wording of `RestoreLockedError` (part of the Windows gap).
+- Record mode is found again on each call, as the reader does: no
+  process-wide memory of record-mode directories and no log line. Tests
+  reach it through `admit_in_record_mode` and
+  `restore_state_in_record_mode`, as the generator puts the directory in
+  `_RECORD_MODE_DIRS` (no local file system here refuses `flock`).
+
+The writing open (`store::open`) and create (`store::create`) take
+`admit` where they took `reading` and the create-side marker check
+(`unfinished_restore`, removed with its private `printable`): a running
+restore is now the reference's `RestoreLockedError` with the running text
+(`OpenError::RestoreLocked`, `CreateError::RestoreLocked`), not the
+reader's `RestoreRunningError`, which stays for the read-only path only.
+`confirm` runs once the connection has read the store's schema
+(`admission::admit`) and before the open reads its meta or keys; create
+confirms once its temporary store is taken, before the schema is written.
+No pattern of `re` is involved.
+
+Pinned by the `admit` rows of `store_restore_lock.json` (54 cases: 37
+marker shapes, a helper holding the directory shared or exclusively with
+and without a marker, an unreadable marker, a missing directory, the
+record mode free, empty, marked, held exclusively and shared, a directory
+at the lock path, the store file swapped between `admit` and `confirm`,
+a marker left after `admit`, and the same two in directory mode, where
+neither refuses). Each row holds `admit`'s answer, `confirm`'s and then
+`restore_state`'s, with the store spelled `<store>` and the lock
+`<lock>`; an unreadable marker's `str(exc)` (C library text) is not
+recorded. Tests: `golden_restore_lock_admit` (the rows),
+`restore_lock_admit_kills` and `restore_lock_admit_robustness`. POSIX
+only, as the fixture; on Windows `restore_lock_not_posix.rs` records the
+gap, and under `fsdata`'s Windows flavour nothing here resolves a path.
 
 ## The additive schema steps (`store_schema.py`, unit store_schema-1)
 
@@ -4277,10 +4372,9 @@ uncopied. SQLite's `randomblob()` is not used.
 
 `CreateError`: `Exists` (anything at the store file's path, a dangling
 link included), `KeysDirUnreadable` (the reference's text), `Io { step }`,
-`Sqlite`, `RestoreRunning`, `RestoreUnfinished` (an unfinished restore's
-marker, `<store>.restore-lock` not blank, lies beside the store: the
-reference's `RestoreLockedError` text, as `restore_lock.admit` refuses it
-before its create opens the file), `Provider` (a store id not 32 lowercase
+`Sqlite`, `RestoreLocked` (`restore_lock::admit` or its `confirm`
+refused: a restore running, one that did not finish, or the file replaced;
+the reference's `RestoreLockedError` text), `MarkerRecursion`, `Provider` (a store id not 32 lowercase
 hex);
 `class()` names the reference's exception. Every refusal leaves nothing at
 the store path; the store's directory may have been made.
@@ -4654,14 +4748,9 @@ past an SQLite INTEGER is the reference's `OverflowError` out of
 rebuilt; a read-only open still verifies: a finding about the reference) (`OpenError::Overflow`, raised after step 2's writes and
 `engine_version`, as the reference's; fixture case `digest_seq_overflow`).
 
-Not ported on Windows (and on a POSIX directory `flock` cannot lock):
-the writing open's restore-lock admission there (`_RecordCheck`: a handle
-held on the store file, the lock read again behind it, and again at
-`confirm` once the connection has read the store, with the file's
-identity compared on POSIX). Native takes the reader's admission
-(`restore_lock::reading`) for the writing open; on macOS and Linux, where
-the directory `flock` is held shared until the connection is made, that is
-the reference's admission.
+The writing open's restore-lock admission is `restore_lock::admit`, with
+its `confirm` once the connection has read the store (see "The restore
+lock, the writing open's side").
 
 Not ported here, and found on the way: the CLI's and the daemon's
 `ensure_backfilled` after the open (`store_returned.py:371`), which is not
