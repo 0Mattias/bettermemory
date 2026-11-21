@@ -1,0 +1,67 @@
+{"cases":66,"tool_reinstall":"uv tool install --reinstall"}
+{"a":[],"f":"tool_reinstall_package","r":"uv tool install --reinstall bettermemory"}
+{"a":["ui"],"f":"extras_spec","r":"'bettermemory[ui]'"}
+{"a":[""],"f":"extras_spec","r":"'bettermemory[]'"}
+{"a":["dev,test"],"f":"extras_spec","r":"'bettermemory[dev,test]'"}
+{"a":["it's"],"f":"extras_spec","r":"'bettermemory[it's]'"}
+{"a":["\u00e9t\u00e9"],"f":"extras_spec","r":"'bettermemory[\u00e9t\u00e9]'"}
+{"a":["a]b[c"],"f":"extras_spec","r":"'bettermemory[a]b[c]'"}
+{"a":["\ud83d\ude00"],"f":"extras_spec","r":"'bettermemory[\ud83d\ude00]'"}
+{"a":[" x "],"f":"extras_spec","r":"'bettermemory[ x ]'"}
+{"a":["ui"],"f":"tool_reinstall","r":"uv tool install --reinstall 'bettermemory[ui]'"}
+{"a":[""],"f":"tool_reinstall","r":"uv tool install --reinstall 'bettermemory[]'"}
+{"a":["dev,test"],"f":"tool_reinstall","r":"uv tool install --reinstall 'bettermemory[dev,test]'"}
+{"a":["it's"],"f":"tool_reinstall","r":"uv tool install --reinstall 'bettermemory[it's]'"}
+{"a":["\u00e9t\u00e9"],"f":"tool_reinstall","r":"uv tool install --reinstall 'bettermemory[\u00e9t\u00e9]'"}
+{"a":["a]b[c"],"f":"tool_reinstall","r":"uv tool install --reinstall 'bettermemory[a]b[c]'"}
+{"a":["\ud83d\ude00"],"f":"tool_reinstall","r":"uv tool install --reinstall 'bettermemory[\ud83d\ude00]'"}
+{"a":[" x "],"f":"tool_reinstall","r":"uv tool install --reinstall 'bettermemory[ x ]'"}
+{"a":["ui"],"f":"pipx_force","r":"pipx install --force 'bettermemory[ui]'"}
+{"a":[""],"f":"pipx_force","r":"pipx install --force 'bettermemory[]'"}
+{"a":["dev,test"],"f":"pipx_force","r":"pipx install --force 'bettermemory[dev,test]'"}
+{"a":["it's"],"f":"pipx_force","r":"pipx install --force 'bettermemory[it's]'"}
+{"a":["\u00e9t\u00e9"],"f":"pipx_force","r":"pipx install --force 'bettermemory[\u00e9t\u00e9]'"}
+{"a":["a]b[c"],"f":"pipx_force","r":"pipx install --force 'bettermemory[a]b[c]'"}
+{"a":["\ud83d\ude00"],"f":"pipx_force","r":"pipx install --force 'bettermemory[\ud83d\ude00]'"}
+{"a":[" x "],"f":"pipx_force","r":"pipx install --force 'bettermemory[ x ]'"}
+{"a":["ui"],"f":"dev_clone_editable","r":"uv pip install -e \".[ui]\""}
+{"a":[""],"f":"dev_clone_editable","r":"uv pip install -e \".[]\""}
+{"a":["dev,test"],"f":"dev_clone_editable","r":"uv pip install -e \".[dev,test]\""}
+{"a":["it's"],"f":"dev_clone_editable","r":"uv pip install -e \".[it's]\""}
+{"a":["\u00e9t\u00e9"],"f":"dev_clone_editable","r":"uv pip install -e \".[\u00e9t\u00e9]\""}
+{"a":["a]b[c"],"f":"dev_clone_editable","r":"uv pip install -e \".[a]b[c]\""}
+{"a":["\ud83d\ude00"],"f":"dev_clone_editable","r":"uv pip install -e \".[\ud83d\ude00]\""}
+{"a":[" x "],"f":"dev_clone_editable","r":"uv pip install -e \".[ x ]\""}
+{"a":["ui"],"f":"install_extra_command","r":"`uv tool install --reinstall 'bettermemory[ui]'` (pipx: `pipx install --force 'bettermemory[ui]'`; from a development clone: `uv pip install -e \".[ui]\"`)"}
+{"a":[""],"f":"install_extra_command","r":"`uv tool install --reinstall 'bettermemory[]'` (pipx: `pipx install --force 'bettermemory[]'`; from a development clone: `uv pip install -e \".[]\"`)"}
+{"a":["dev,test"],"f":"install_extra_command","r":"`uv tool install --reinstall 'bettermemory[dev,test]'` (pipx: `pipx install --force 'bettermemory[dev,test]'`; from a development clone: `uv pip install -e \".[dev,test]\"`)"}
+{"a":["it's"],"f":"install_extra_command","r":"`uv tool install --reinstall 'bettermemory[it's]'` (pipx: `pipx install --force 'bettermemory[it's]'`; from a development clone: `uv pip install -e \".[it's]\"`)"}
+{"a":["\u00e9t\u00e9"],"f":"install_extra_command","r":"`uv tool install --reinstall 'bettermemory[\u00e9t\u00e9]'` (pipx: `pipx install --force 'bettermemory[\u00e9t\u00e9]'`; from a development clone: `uv pip install -e \".[\u00e9t\u00e9]\"`)"}
+{"a":["a]b[c"],"f":"install_extra_command","r":"`uv tool install --reinstall 'bettermemory[a]b[c]'` (pipx: `pipx install --force 'bettermemory[a]b[c]'`; from a development clone: `uv pip install -e \".[a]b[c]\"`)"}
+{"a":["\ud83d\ude00"],"f":"install_extra_command","r":"`uv tool install --reinstall 'bettermemory[\ud83d\ude00]'` (pipx: `pipx install --force 'bettermemory[\ud83d\ude00]'`; from a development clone: `uv pip install -e \".[\ud83d\ude00]\"`)"}
+{"a":[" x "],"f":"install_extra_command","r":"`uv tool install --reinstall 'bettermemory[ x ]'` (pipx: `pipx install --force 'bettermemory[ x ]'`; from a development clone: `uv pip install -e \".[ x ]\"`)"}
+{"a":["numpy"],"f":"pip_force_reinstall","r":"uv pip install --force-reinstall numpy"}
+{"a":[""],"f":"pip_force_reinstall","r":"uv pip install --force-reinstall "}
+{"a":["torch==2.0"],"f":"pip_force_reinstall","r":"uv pip install --force-reinstall torch==2.0"}
+{"a":["m\u00f6d"],"f":"pip_force_reinstall","r":"uv pip install --force-reinstall m\u00f6d"}
+{"a":["a'b"],"f":"pip_force_reinstall","r":"uv pip install --force-reinstall a'b"}
+{"a":["numpy","ui"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[ui]'` (pipx: `pipx install --force 'bettermemory[ui]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall numpy`)"}
+{"a":["numpy",""],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[]'` (pipx: `pipx install --force 'bettermemory[]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall numpy`)"}
+{"a":["numpy","dev,test"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[dev,test]'` (pipx: `pipx install --force 'bettermemory[dev,test]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall numpy`)"}
+{"a":["numpy","it's"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[it's]'` (pipx: `pipx install --force 'bettermemory[it's]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall numpy`)"}
+{"a":["","ui"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[ui]'` (pipx: `pipx install --force 'bettermemory[ui]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall `)"}
+{"a":["",""],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[]'` (pipx: `pipx install --force 'bettermemory[]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall `)"}
+{"a":["","dev,test"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[dev,test]'` (pipx: `pipx install --force 'bettermemory[dev,test]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall `)"}
+{"a":["","it's"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[it's]'` (pipx: `pipx install --force 'bettermemory[it's]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall `)"}
+{"a":["torch==2.0","ui"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[ui]'` (pipx: `pipx install --force 'bettermemory[ui]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall torch==2.0`)"}
+{"a":["torch==2.0",""],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[]'` (pipx: `pipx install --force 'bettermemory[]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall torch==2.0`)"}
+{"a":["torch==2.0","dev,test"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[dev,test]'` (pipx: `pipx install --force 'bettermemory[dev,test]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall torch==2.0`)"}
+{"a":["torch==2.0","it's"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[it's]'` (pipx: `pipx install --force 'bettermemory[it's]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall torch==2.0`)"}
+{"a":["m\u00f6d","ui"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[ui]'` (pipx: `pipx install --force 'bettermemory[ui]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall m\u00f6d`)"}
+{"a":["m\u00f6d",""],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[]'` (pipx: `pipx install --force 'bettermemory[]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall m\u00f6d`)"}
+{"a":["m\u00f6d","dev,test"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[dev,test]'` (pipx: `pipx install --force 'bettermemory[dev,test]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall m\u00f6d`)"}
+{"a":["m\u00f6d","it's"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[it's]'` (pipx: `pipx install --force 'bettermemory[it's]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall m\u00f6d`)"}
+{"a":["a'b","ui"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[ui]'` (pipx: `pipx install --force 'bettermemory[ui]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall a'b`)"}
+{"a":["a'b",""],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[]'` (pipx: `pipx install --force 'bettermemory[]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall a'b`)"}
+{"a":["a'b","dev,test"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[dev,test]'` (pipx: `pipx install --force 'bettermemory[dev,test]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall a'b`)"}
+{"a":["a'b","it's"],"f":"reinstall_extra_command","r":"`uv tool install --reinstall 'bettermemory[it's]'` (pipx: `pipx install --force 'bettermemory[it's]'`; inside the virtualenv that runs bettermemory: `uv pip install --force-reinstall a'b`)"}

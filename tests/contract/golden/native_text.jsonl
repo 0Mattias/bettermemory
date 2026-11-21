@@ -1,0 +1,38 @@
+{"cases":37}
+{"k":"has","r":false,"v":{"t":"str","v":""}}
+{"k":"has","r":false,"v":{"t":"str","v":"plain"}}
+{"k":"has","r":true,"v":{"t":"str","v_cps":[55296]}}
+{"k":"has","r":true,"v":{"t":"str","v_cps":[97,57343,98]}}
+{"k":"has","r":false,"v":{"t":"str","v":"\ud83d\ude00"}}
+{"k":"has","r":false,"v":{"t":"str","v":"\ue000\ud83d\ude00"}}
+{"k":"has","r":false,"v":{"t":"path","v":"/x/y"}}
+{"k":"has","r":false,"v":{"t":"list","v":[]}}
+{"k":"has","r":true,"v":{"t":"list","v":[{"t":"str","v":"a"},{"t":"tuple","v":[{"t":"str","v":"b"},{"t":"str","v_cps":[56448]}]}]}}
+{"k":"has","r":false,"v":{"t":"tuple","v":[{"t":"str","v":"x"},{"t":"int","v":"1"},{"t":"null"}]}}
+{"k":"has","r":true,"v":{"t":"dict","v":[[{"t":"str","v_cps":[55357]},{"t":"int","v":"1"}]]}}
+{"k":"has","r":true,"v":{"t":"dict","v":[[{"t":"str","v":"k"},{"t":"list","v":[{"t":"str","v":"v"},{"t":"dict","v":[[{"t":"str","v":"n"},{"t":"str","v_cps":[56575]}]]}]}]]}}
+{"k":"has","r":false,"v":{"t":"dict","v":[[{"t":"str","v":"k"},{"t":"str","v":"v"}],[{"t":"int","v":"1"},{"bits":"4004000000000000","repr":"2.5","t":"float"}]]}}
+{"k":"has","r":false,"v":{"t":"int","v":"1"}}
+{"k":"has","r":false,"v":{"t":"bool","v":true}}
+{"k":"utf8","r":"","t":""}
+{"k":"utf8","r":"plain ascii","t":"plain ascii"}
+{"k":"utf8","r":"caf\u00e9 \u65e5\u672c \ud83d\ude00","t":"caf\u00e9 \u65e5\u672c \ud83d\ude00"}
+{"k":"utf8","r":"\\ud800","t_cps":[55296]}
+{"k":"utf8","r":"\\udfff","t_cps":[57343]}
+{"k":"utf8","r":"\\udc80\\udcff","t_cps":[56448,56575]}
+{"k":"utf8","r":"a\ud83d\ude00b","t":"a\ud83d\ude00b"}
+{"k":"utf8","r":"\\ud800 already","t":"\\ud800 already"}
+{"k":"utf8","r":"\u0000\u007f\u0080","t":"\u0000\u007f\u0080"}
+{"k":"proj","legacy":{"t":"dict","v":[]},"native":null,"o":{"t":"dict","v":[]}}
+{"k":"proj","legacy":{"t":"dict","v":[[{"t":"str","v":"repo"},{"t":"str","v":"r"}],[{"t":"str","v":"path"},{"t":"str","v":"p"}],[{"t":"str","v":"n"},{"t":"int","v":"3"}]]},"native":null,"o":{"t":"dict","v":[[{"t":"str","v":"repo"},{"t":"str","v":"r"}],[{"t":"str","v":"path"},{"t":"str","v":"p"}],[{"t":"str","v":"n"},{"t":"int","v":"3"}]]}}
+{"k":"proj","legacy":{"t":"dict","v":[[{"t":"str","v":"repo"},{"t":"str","v":"r"}]]},"native":"{\"path\":\"/x/\\udc80y\",\"repo\":\"r\"}","o":{"t":"dict","v":[[{"t":"str","v":"path"},{"t":"str","v_cps":[47,120,47,56448,121]}],[{"t":"str","v":"repo"},{"t":"str","v":"r"}]]}}
+{"k":"proj","legacy":{"t":"dict","v":[[{"t":"str","v_cps":[56448,107,101,121]},{"t":"str","v":"clean"}],[{"t":"str","v":"repo"},{"t":"str","v":"r"}]]},"native":"{\"repo\":\"r\",\"\\udc80key\":\"clean\"}","o":{"t":"dict","v":[[{"t":"str","v_cps":[56448,107,101,121]},{"t":"str","v":"clean"}],[{"t":"str","v":"repo"},{"t":"str","v":"r"}]]}}
+{"k":"proj","legacy":{"t":"dict","v":[[{"t":"str","v":"b"},{"t":"str","v":"ok"}]]},"native":"{\"b\":\"ok\",\"\\udc80key\":\"\\udc81\"}","o":{"t":"dict","v":[[{"t":"str","v_cps":[56448,107,101,121]},{"t":"str","v_cps":[56449]}],[{"t":"str","v":"b"},{"t":"str","v":"ok"}]]}}
+{"k":"proj","legacy":{"t":"dict","v":[[{"t":"str","v":"m"},{"t":"null"}],[{"t":"str","v":"f"},{"bits":"3ff8000000000000","repr":"1.5","t":"float"}]]},"native":"{\"a\":{\"n\":\"\\udcff\"},\"f\":1.5,\"m\":null,\"z\":[\"a\",\"\\udc80\"]}","o":{"t":"dict","v":[[{"t":"str","v":"z"},{"t":"list","v":[{"t":"str","v":"a"},{"t":"str","v_cps":[56448]}]}],[{"t":"str","v":"a"},{"t":"dict","v":[[{"t":"str","v":"n"},{"t":"str","v_cps":[56575]}]]}],[{"t":"str","v":"m"},{"t":"null"}],[{"t":"str","v":"f"},{"bits":"3ff8000000000000","repr":"1.5","t":"float"}]]}}
+{"k":"proj","legacy":{"t":"dict","v":[[{"t":"str","v":"\ud83d\ude00"},{"t":"str","v":"astral"}],[{"t":"str","v_cps":[55296]},{"t":"str","v":"lone"}],[{"t":"str","v":"\uffff"},{"t":"str","v":"bmp"}]]},"native":"{\"a\":\"\\udc80\",\"\\ud800\":\"lone\",\"\\uffff\":\"bmp\",\"\\ud83d\\ude00\":\"astral\"}","o":{"t":"dict","v":[[{"t":"str","v":"\ud83d\ude00"},{"t":"str","v":"astral"}],[{"t":"str","v_cps":[55296]},{"t":"str","v":"lone"}],[{"t":"str","v":"\uffff"},{"t":"str","v":"bmp"}],[{"t":"str","v":"a"},{"t":"str","v_cps":[56448]}]]}}
+{"k":"proj","legacy":{"t":"dict","v":[[{"t":"str","v":"\ud800\udc00"},{"t":"int","v":"1"}],[{"t":"str","v":"\ud7ff"},{"t":"int","v":"2"}],[{"t":"str","v":"\ue000"},{"t":"int","v":"3"}]]},"native":"{\"\\ud7ff\":2,\"\\udfff\":\"\\udfff\",\"\\ue000\":3,\"\\ud800\\udc00\":1}","o":{"t":"dict","v":[[{"t":"str","v":"\ud800\udc00"},{"t":"int","v":"1"}],[{"t":"str","v":"\ud7ff"},{"t":"int","v":"2"}],[{"t":"str","v":"\ue000"},{"t":"int","v":"3"}],[{"t":"str","v_cps":[57343]},{"t":"str","v_cps":[57343]}]]}}
+{"k":"proj","legacy":{"t":"dict","v":[[{"t":"str","v":"p"},{"t":"path","v":"/clean"}],[{"t":"str","v":"q"},{"t":"str","v":"clean"}]]},"native":null,"o":{"t":"dict","v":[[{"t":"str","v":"p"},{"t":"path","v":"/clean"}],[{"t":"str","v":"q"},{"t":"str","v":"clean"}]]}}
+{"k":"proj","o":{"t":"dict","v":[[{"t":"str","v":"p"},{"t":"path","v":"/a"}],[{"t":"str","v":"q"},{"t":"str","v_cps":[56448]}]]},"raises":"TypeError"}
+{"k":"proj","legacy":{"t":"dict","v":[[{"bits":"7ff8000000000000","repr":"nan","t":"float"},{"bits":"3ff8000000000000","repr":"1.5","t":"float"}]]},"native":null,"o":{"t":"dict","v":[[{"bits":"7ff8000000000000","repr":"nan","t":"float"},{"bits":"3ff8000000000000","repr":"1.5","t":"float"}]]}}
+{"k":"proj","legacy":{"t":"dict","v":[[{"t":"str","v":"f"},{"bits":"7ff8000000000000","repr":"nan","t":"float"}],[{"t":"str","v":"g"},{"t":"list","v":[{"bits":"fff0000000000000","repr":"-inf","t":"float"}]}]]},"native":"{\"f\":NaN,\"g\":[-Infinity],\"s\":\"\\udc80\"}","o":{"t":"dict","v":[[{"t":"str","v":"f"},{"bits":"7ff8000000000000","repr":"nan","t":"float"}],[{"t":"str","v":"g"},{"t":"list","v":[{"bits":"fff0000000000000","repr":"-inf","t":"float"}]}],[{"t":"str","v":"s"},{"t":"str","v_cps":[56448]}]]}}
+{"count":1114112,"k":"sweep","sha":"b6ce4cb8bcd2103a6ceb1153fc9d23ea79e701a48b846583a3c3d59cc93ec891"}

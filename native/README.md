@@ -24,6 +24,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `in_force` | `in_force.py` whole: `InForce` (with `history`), `in_force` and its inner `newest`, `newest_head`, `admitted_sources`, `head`; the store's reads and the admission are traits (`LinkReader`, `RecordView`) | `in_force.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
+| `native_text`, `caches`, `daemon_client`, `install_hints` | `native_text.py` 15-40 (`has_surrogates`, `utf8_text`, `encoded_json`, `origin_projection`), `_caches.py` whole (`register` under a key, `clear_all`), `_daemon_client.py` 149-172 (`STORE_FILENAME` re-exported, `START_TIMEOUT_SECONDS`, `HOOK_TIMEOUT_SECONDS`, `HOOK_HARNESS_TIMEOUT_SECONDS`, `HOOK_MARGIN_SECONDS`, `hook_budget_seconds`), `_install_hints.py` 41-130 (every spelling) | `native_text.jsonl`, `daemon_client.jsonl`, `install_hints.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks | `origin_history.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth; lookarounds refused (`supports`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl` |
@@ -4064,6 +4065,74 @@ sequences from a splitmix64 seed. `golden_session`, `session_kills` and
 Left for later: the handler layer that emits `use_token_expired` and the
 auto-commit `record_use` events (`handlers/_shared`), and the
 pending-write sidecar that files rows under `client_key`.
+
+## Four import-free leaves: native text, the cache registry, the hook budget, the install spellings
+
+Each module is whole for the lines it names and needs nothing from the
+machine.
+
+| function | reference | status |
+| --- | --- | --- |
+| `native_text::has_surrogates` | `native_text.py` 15-22 | built |
+| `native_text::utf8_text` | 25-27 | built |
+| `native_text::encoded_json` | 30-32 | built |
+| `native_text::origin_projection` | 35-40 | built |
+| `mutation_payload` | 43-54 | left for the unit that writes log payloads (`store::write` keeps its own private `has_surrogates` and `native_origin` until then) |
+| `caches::register`, `clear_all` | `_caches.py` 26-43 | built |
+| `daemon_client` constants, `harness_timeout`, `hook_budget_seconds` | `_daemon_client.py` 149-172 | built; the rest of the module is left for later units |
+| `install_hints` (all eight spellings) | `_install_hints.py` 41-130 | built |
+
+`has_surrogates` answers true for a `str` holding a code point in
+U+D800..U+DFFF and walks dicts (keys and values), lists and tuples on an
+explicit work list, so every depth answers. This is a stated difference:
+the reference recurses in Python and raises RecursionError once the
+nesting nears the interpreter's recursion limit (about 498 lists from a
+shallow caller under 3.13, fewer from a deeper one), so the depth at
+which it raises follows the caller's own stack and no fixed limit
+reproduces it. There `has_surrogates` and `origin_projection` answer
+where the reference raises; the fixture holds no such origin. A `PurePosixPath` is not a
+`str` to the reference (`isinstance` is false), so a path holding a
+surrogate answers false. `utf8_text` is `backslashreplace` over UTF-8:
+only a surrogate is escaped, as `\udXXX` in lower-case hex.
+`encoded_json` is `json::dumps` with `SORTED_ASCII_COMPACT`, whose keys
+sort by code point (an astral key after U+FFFF, where UTF-16 units would
+put it before). `origin_projection` takes the origin's entries in
+insertion order: with no surrogate anywhere it returns them whole and no
+text; otherwise the entries whose value holds none (a surrogate key with
+a clean value stays) and the `encoded_json` of the whole origin, which
+raises `TypeError` where a value is not JSON (a path).
+
+`caches::register` takes a stable key with the clearer. The reference
+keeps a clearer once by equality (`clear not in _CLEARERS`); Rust does not
+promise one address per function, so the key is the Rust spelling of that
+equality and a second registration under a key already present is
+dropped. `clear_all` copies the list under the lock, releases it and runs
+each clearer in registration order, so a clearer may register another,
+which runs from the next call on. No cache is registered in this unit.
+
+`daemon_client` mirrors `config.STORE_FILENAME` by re-exporting
+`store::create::STORE_FILENAME`, and its harness timeouts mirror the
+plugin's `hooks.json`, which `tests/test_plugin.py` pins; the fixture
+pins every value. The event is Rust text, so an event holding a lone
+surrogate cannot be passed; the reference answers the fallback for it,
+which is what any event outside the table gets. Python's `min` and `max`
+keep the first argument on a tie; no value here tells the two apart.
+
+`install_hints` returns each f-string's text exactly, the argument
+inserted unescaped (an empty extra, a quote or a non-ASCII character
+included). Each argument is Rust text, so an extra or module holding a
+lone surrogate cannot be passed, where the reference's f-string accepts
+any `str`; callers pass only constant names, and the fixture has no
+surrogate row.
+
+No pattern here uses a regular expression. Fixtures:
+`tests/contract/gen_native_text.py`, `gen_daemon_client.py`,
+`gen_install_hints.py`, none gated (the answers follow neither the Python
+release, Unicode nor the platform); `native_text.jsonl` holds a digest row
+of `utf8_text` over every code point. Tests: `golden_native_text`,
+`golden_daemon_client`, `golden_install_hints`, `native_text_kills`,
+`native_text_robustness`, and the unit test of the registry in
+`caches.rs`.
 
 ## Running the tests (offline)
 

@@ -11,6 +11,11 @@
 //!   turn counter, use-tokens), the per-client registry and its LRU;
 //! - [`json`]: `json.dumps` as the reference's call sites spell values
 //!   (the log payload's canonical text among them) and `json.loads`;
+//! - [`native_text`]: exact native strings at UTF-8 boundaries (the
+//!   surrogate test, `utf8_text`, `encoded_json`, `origin_projection`);
+//! - [`caches`], [`daemon_client`] and [`install_hints`]: the registry of
+//!   module-level caches, the hook client's budget constants and
+//!   `hook_budget_seconds`, and the install-command spellings;
 //! - [`in_force`]: what is in force at delivery (`in_force.py` whole):
 //!   the supersession head, the newest extender, the held slot;
 //! - [`float_repr`]: Python's `float.__repr__`;
@@ -192,12 +197,14 @@
 
 pub mod attestation_paths;
 pub mod attribution;
+pub mod caches;
 pub mod capture;
 pub mod checkout_token;
 pub mod claims;
 pub mod config;
 pub mod control_tokens;
 pub mod credentials;
+pub mod daemon_client;
 pub mod datetime;
 pub mod difflib;
 pub mod durability;
@@ -217,6 +224,7 @@ pub mod history;
 pub mod history_rows;
 pub mod identity;
 pub mod in_force;
+pub mod install_hints;
 pub mod json;
 pub mod lexicon;
 pub mod location;
@@ -237,6 +245,7 @@ pub mod membership_lines;
 pub mod membership_records;
 pub mod membership_rows;
 pub mod models_text;
+pub mod native_text;
 pub mod origin_gitfiles;
 pub mod origin_history;
 pub mod origin_remote;

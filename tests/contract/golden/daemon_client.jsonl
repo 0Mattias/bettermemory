@@ -1,0 +1,11 @@
+{"cases":10,"harness":[["session-start","20.0"],["stop","30.0"],["prompt","10.0"]],"hook":"15.0","margin":"2.0","start":"8.0","store":"memory.sqlite"}
+{"budget":"13.0","e":"session-start","harness":"20.0"}
+{"budget":"13.0","e":"stop","harness":"30.0"}
+{"budget":"8.0","e":"prompt","harness":"10.0"}
+{"budget":"13.0","e":"","harness":null}
+{"budget":"13.0","e":"Stop","harness":null}
+{"budget":"13.0","e":"audit-turn","harness":null}
+{"budget":"13.0","e":"prompt-recall","harness":null}
+{"budget":"13.0","e":"session-start ","harness":null}
+{"budget":"13.0","e":"pr\u00f6mpt","harness":null}
+{"budget":"13.0","e_cps":[55296],"harness":null}
