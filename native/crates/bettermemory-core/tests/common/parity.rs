@@ -223,6 +223,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `str.isidentifier` over every code point and the `_` rule, which
         // is the same in every CPython 3 (`gen_unicode_xid`).
         "unicode_xid.jsonl" => &[Unicode],
+        // `re`'s `finditer` of three patterns past Latin-1, where `\w` and
+        // `\s` follow the Unicode data (`gen_verify_candidates`).
+        "verify_candidates_patterns_unicode.jsonl" => &[Unicode],
         // `_sre`'s lower case, upper case and cased test, `re`'s categories
         // and the extra cases of `re._casefix` over every code point
         // (`gen_pyre`).

@@ -1,5 +1,8 @@
 """Fixtures: one path candidate validated (``verify_candidates.jsonl``,
-``verify_candidates_unicode.jsonl``).
+``verify_candidates_unicode.jsonl``), and the extraction patterns under
+``finditer`` (``verify_candidates_patterns.jsonl``,
+``verify_candidates_patterns_unicode.jsonl``, described at
+``PATTERNS``).
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/verify_candidates/validate.rs``.
@@ -32,7 +35,9 @@ lowercase (``lower``, as ranges): its answers are the Unicode data's.
 
 from __future__ import annotations
 
+import hashlib
 import itertools
+import re
 import unicodedata
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -404,3 +409,198 @@ def generate_unicode() -> dict[str, bytes]:
     wide.append({"f": "lower", "r": _lower_ranges()})
     header = {"unicode": unicodedata.unidata_version}
     return {"verify_candidates_unicode.jsonl": jsonl([header, *wide])}
+
+
+# Unit 2: the three extraction patterns under ``finditer``
+# (``verify_candidates_patterns.jsonl``,
+# ``verify_candidates_patterns_unicode.jsonl``). A line is one of:
+#
+# - ``{"p", "t", "m"}``: ``finditer`` of pattern ``p`` (``backtick``,
+#   ``bare``, ``domain``) over the text ``t`` answers the matches ``m``,
+#   each ``[start, end, start(1), end(1)]``;
+# - ``{"p", "frags", "depth", "count", "sha256"}``: every text joined
+#   from zero to ``depth`` fragments (``itertools.product``'s order), its
+#   answer spelled ``s,e,gs,ge`` per match joined by ``;`` with a newline
+#   after each text, and the SHA-256 of those lines in order.
+#
+# ``re`` answers these three patterns alike under 3.11 to 3.14 and on
+# every platform: no row holds a path, an error text or a repr. A text or
+# fragment holding a code point past Latin-1 other than the four
+# typographic quotes (where `\w` and `\s` follow the Unicode data) goes
+# in ``_unicode``, gated on the Unicode data; the rest are ungated.
+
+PATTERNS: dict[str, re.Pattern[str]] = {
+    "backtick": vc._BACKTICK_RE,
+    "bare": vc._BARE_RE,
+    "domain": vc._DOMAIN_ROUTE_RE,
+}
+
+_QUOTES = "\u201c\u201d\u2018\u2019"
+
+PATTERN_TEXTS: dict[str, list[str]] = {
+    "backtick": [
+        "",
+        "`",
+        "``",
+        "`a`",
+        "`a`b`c`",
+        "`a``b`",
+        "x `a\nb` y `c`",
+        "`unclosed",
+        "`a\n`b`",
+        "`a` `b` `c`",
+        "``a``",
+        "`\u00e9\t\r`",
+        "`\u3042`",
+    ],
+    "bare": [
+        "/a",
+        " /a",
+        "x/a",
+        "/",
+        "x /a /b",
+        "/a /b",
+        "/a/b /c",
+        "~/a",
+        "$HOME/x",
+        "${HOME}/x",
+        "$HOME",
+        "~x",
+        "C:\\x",
+        "c:/x",
+        "C:x",
+        "\u00e9:/x",
+        "\u0141:/x",
+        "\u0161:/x",
+        "/a [b/c",
+        "/a @b/c",
+        "/a Zb/c",
+        "\u2019/a",
+        "=/a|/b(/c[/d{/e</f\"/g'/h,/i;/j",
+        "\u201c/a\u201d \u2018/b\u2019",
+        "\t/a\n/b\r/c\x0b/d\x0c/e\x1c/f\x85/g\xa0/h",
+        "~/Library/Application Support/x",
+        "~/Library/Application Support",
+        "~/a Bb Cc/d Ee",
+        "~/a Bb Cc/d Ee/f",
+        "/a B/c",
+        "/a Bc d/e",
+        "/a bc/d",
+        "/a Bc/ x",
+        "C:\\Program Files\\x y",
+        "/a@1+2%3~4_5.6-7\\8",
+        "/a Bc/d Ee/ Ff",
+        "x=/a",
+        "/a\u3000/b",
+        "/\u3042 \u0391\u03b2/c",
+    ],
+    "domain": [
+        "pypi.org/pypi/x/json",
+        "a.b/c",
+        "a/b",
+        ".a.b/c",
+        "x.a.b/c",
+        "-a.b/c",
+        "a-b.c/d.e-f/g",
+        "x a.b/c",
+        "a.b./c",
+        "a..b.c/d",
+        "see...example.com/x",
+        "a.b/",
+        "a.b/.",
+        "a.b/c a.b/d",
+        "1.2/3",
+        "_.x/y",
+        "\u00e9.f/g",
+        "a.b/c/d.e/f",
+        "a.b/c.d/e",
+        "\u3042.b/c",
+    ],
+}
+
+PATTERN_SWEEPS: list[tuple[str, list[str], int]] = [
+    ("backtick", ["`", "a", "\n", " "], 8),
+    ("domain", ["a", "-", ".", "/", "\u00e9", "_", " ", "b.c", "x/y", "..", "1"], 5),
+    (
+        "bare",
+        [
+            "/",
+            "~/",
+            "$HOME/",
+            "${HOME}/",
+            "C:\\",
+            "c:/",
+            "a",
+            ".",
+            " ",
+            " A",
+            " Ab",
+            "b/",
+            "\\",
+            "=",
+            "\u201c",
+            "\n",
+            "\u00e9",
+            "$",
+            "x y",
+        ],
+        4,
+    ),
+    ("bare", ["/", " ", "Ab", "a", "/b", " A", "\\", "~/"], 6),
+    ("backtick", ["`", "\u3042", "\u2028", "a"], 6),
+    ("domain", ["\u3042", ".", "/", "-", "\u3000", "a"], 6),
+    ("bare", ["/", "\u3000", "\u3042", " \u0391b", "\u2028", "A"], 5),
+]
+
+
+def _wide(text: str) -> bool:
+    return any(ord(c) > 0xFF and c not in _QUOTES for c in text)
+
+
+def _spans(name: str, text: str) -> list[list[int]]:
+    return [[*m.span(), *m.span(1)] for m in PATTERNS[name].finditer(text)]
+
+
+def _sweep(name: str, frags: list[str], depth: int) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    count = 0
+    for k in range(depth + 1):
+        for combo in itertools.product(frags, repeat=k):
+            spans = _spans(name, "".join(combo))
+            digest.update(
+                (";".join(",".join(map(str, s)) for s in spans) + "\n").encode()
+            )
+            count += 1
+    return {
+        "p": name,
+        "frags": [_t(f) for f in frags],
+        "depth": depth,
+        "count": count,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _pattern_rows(wide: bool) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = [
+        {"p": name, "t": _t(text), "m": _spans(name, text)}
+        for name, texts in PATTERN_TEXTS.items()
+        for text in texts
+        if _wide(text) == wide
+    ]
+    rows += [
+        _sweep(name, frags, depth)
+        for name, frags, depth in PATTERN_SWEEPS
+        if any(_wide(f) for f in frags) == wide
+    ]
+    return rows
+
+
+def generate_patterns() -> dict[str, bytes]:
+    rows = _pattern_rows(wide=False)
+    return {"verify_candidates_patterns.jsonl": jsonl([{"cases": len(rows)}, *rows])}
+
+
+def generate_patterns_unicode() -> dict[str, bytes]:
+    rows = _pattern_rows(wide=True)
+    header = {"cases": len(rows), "unicode": unicodedata.unidata_version}
+    return {"verify_candidates_patterns_unicode.jsonl": jsonl([header, *rows])}

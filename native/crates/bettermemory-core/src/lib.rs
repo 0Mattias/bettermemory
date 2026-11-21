@@ -37,7 +37,8 @@
 //!   search snippets;
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
 //! - [`verify_candidates`]: the path candidates verification reads, its
-//!   first unit (one candidate validated);
+//!   first two units (one candidate validated; `_BACKTICK_RE`,
+//!   `_BARE_RE` and `_DOMAIN_ROUTE_RE` as hand matchers);
 //! - [`attestation_paths`]: explicit path attestations compiled beside
 //!   the legacy reference grammar (`attestation_paths.py` whole);
 //! - [`project_file`]: the project file, its first unit (the vocabulary,

@@ -1,13 +1,16 @@
 //! `verify_candidates.py`: the candidate logic path verification stands
 //! on. Unit 1 (`validate`) holds the module's constants and the
 //! validation of one candidate spelling, the leaves that need nothing
-//! from the machine. The extraction scans, the body parse memo and the
+//! from the machine. Unit 2 (`patterns`) holds `_BACKTICK_RE`, `_BARE_RE`
+//! and `_DOMAIN_ROUTE_RE` as hand matchers with `finditer` semantics. The
+//! extraction scans, the body parse memo and the
 //! checks that read the home directory or the disk are later units
 //! (native/README.md, "Path candidates").
 //!
 //! Text is code points (`&[u32]`), as a Python `str` is: a body may hold
 //! a lone surrogate, and every length and index here counts code points.
 
+pub mod patterns;
 pub mod validate;
 
 /// `_MAX_PATHS_PER_BODY`.
