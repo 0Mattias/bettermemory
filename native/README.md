@@ -34,6 +34,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone` | `machine_identity.jsonl`, `machine_identity_python.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
+| `verify_anchoring` | unit 1a of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`) | `verify_anchoring_sparse.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
@@ -370,6 +371,84 @@ and pinned to the reference's set by the golden header.
 Nothing of either module is left for a later unit. The callers
 (`verify.py`'s re-export, `_response.ResponseBuilder.apply_trust`, the
 Stop hook) are not ported here.
+
+## Anchoring and the sparse checkout (`verify_anchoring.py`)
+
+`src/bettermemory/verify_anchoring.py`, read at 9b4a365a, decides whether
+a record's cited paths are anchored in the working tree it names. It is
+cut into units. Unit verify_anchoring-1a (`verify_anchoring/sparse.rs`)
+holds the leaves of the sparse-checkout reading; the rest of that reading
+is unit verify_anchoring-1b, and the drift and anchoring readers are
+verify_anchoring-2.
+
+### The map
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_config_switch` | 598-606 | nothing (`gitconfig.git_entries`, `git_bool`) | built (1a) |
+| `_CE_EXTENDED`, `_CE_SKIP_WORKTREE`, `_CE_EXTENDED_FLAGS`, `_INDEX_HASH_LEN`, `_IndexDeclined` | 654-663 | nothing | built (1a) |
+| `_SkipIndex`, `_SkipIndex.skips`, `_holds`, `_any_below` | 665-698 | nothing | built (1a) |
+| `_index_varint` | 700-715 | nothing | built (1a) |
+| `_parse_skip_index` | 718-788 | nothing | built (1a) |
+| `_sparse_enabled` | 609-621 | files (the config and `config.worktree`) | 1b |
+| `_parts_below` | 624-651 | `realpath`, `normcase` (the flavour) | 1b |
+| `_SKIP_MEMO`, `_skip_index` | 790-844 | files, `githead.stamp`, `gitfile_rule.object_format` | 1b (a `SkipMemo` the caller owns, no lock) |
+| `_absent_by_sparsity` | 847-890 | discovery (`githead.locate`), `expanduser`, `isdir` | 1b |
+| `holds_commit` | 574-595 | discovery and the object reader | 2 |
+| `detect_path_drift`, `_detect_unanchored` and the rest | 893 on | | 2 |
+
+The cut: the whole of 598-890 with its fixture world (a MemFs `Rule`
+for discovery, stamps that move during a read) is past one unit's
+budget, so 1a takes the pure leaves and 1b the parts that read the disk.
+
+### What 1a reproduces
+
+- `config_switch(text, section, key)` takes code points. The text is
+  encoded with `surrogateescape` first (a lone surrogate outside
+  U+DC80..U+DCFF raises `UnicodeEncodeError`); a text git refuses answers
+  None before the name is built, so a name that is not ASCII raises only
+  over a text git reads. The name is `str.lower` of `section.key`
+  (`unicode::lower`), which must be ASCII: U+212A lowers to `k` and
+  matches, U+0130 raises. The last assignment of that plain name wins; a
+  value git dies on (`git_bool` None) answers None, as unset does.
+- `index_varint(data, pos)` is git's `decode_varint`: each continuation
+  adds one before the shift, and a value past 57 bits before a shift
+  declines. The reference also accepts a negative `pos` (Python indexing
+  from the end); no caller passes one and the port takes `usize`.
+- `parse_skip_index(data, hash_len)` reads versions 2 to 4 as the
+  reference does: entries padded to eight bytes in versions 2 and 3, a
+  name of 0xFFF or more found by its NUL, version 4's prefix compression
+  (its varint read against the whole data, the trailer included, as the
+  reference reads it), stage 1 to 3 entries passed over but still the
+  previous name for version 4, an unknown second-word bit declined, and
+  the extensions walked to decline a `link` (split index). An extension
+  walk past the end on a 32-bit target saturates where Python's integer
+  would not wrap; both stop the walk.
+- `SkipIndex::skips(parts)`: the joined name, every directory prefix with
+  a trailing slash, then "some below skipped and none below kept", by
+  binary search over the sorted lists. The work per call is quadratic in
+  the depth of `parts`, as the reference's join per cut is.
+
+No pattern of `re` is used by 1a.
+
+### Fixtures
+
+`tests/contract/gen_verify_anchoring_sparse.py` writes
+`verify_anchoring_sparse.jsonl` (not gated): config texts over every
+branch of the switch, the varint over every bound, hand-built indexes
+(versions 2, 3 and 4, SHA-1 and SHA-256 lengths given explicitly and
+crossed, extended flags, an unknown extended bit, a sparse directory
+entry, long names at 4,094, 4,095 and 5,000 bytes, stated lengths that
+disagree, strips past the previous name, bad versions and signatures,
+counts past the data, extensions with and without `link`), `skips` over
+eight small worlds, and three sweep rows: every truncation and every
+byte set to 0x00 and 0xFF of a base index, pinned by count and SHA-256.
+Rows from indexes a real git wrote (cone, non-cone, split) and rows of
+`object_format` are left to 1b with its gated sibling.
+
+Tests: `golden_verify_anchoring_sparse`, `verify_anchoring_sparse_kills`,
+`verify_anchoring_sparse_robustness` (no panic at the integer bounds,
+linear time in the number of entries).
 
 ## Limits and key material
 

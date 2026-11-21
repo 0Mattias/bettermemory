@@ -122,6 +122,9 @@
 //! - [`fsutil`]: `_fsutil.py`, its first two units (`unlink_retrying` with
 //!   its Windows retry, `bounded_stream_read`, `flock_excl` and its
 //!   Windows branch `_flock_windows`);
+//! - [`verify_anchoring`]: whether cited paths are anchored, its first
+//!   unit (the sparse-checkout switch, git's varint, the index's
+//!   skip-worktree reader);
 //! - [`verify_status`] and [`attribution`]: a memory's verification
 //!   staleness, and phrase-match attribution of memories to a reply;
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
@@ -205,6 +208,7 @@ pub mod session;
 pub mod store;
 pub mod toml;
 pub mod unicode;
+pub mod verify_anchoring;
 pub mod verify_candidates;
 pub mod verify_status;
 pub mod witness_questions;
