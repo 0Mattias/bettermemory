@@ -51,6 +51,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
 | `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields` | `audit_fields.jsonl` |
+| `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`) | `recall_settle.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `git_read_budget`, `git_calls` | `git_read_budget.py` whole (`ReadBudget`, the scopes as a `Scope` value, `_progress` as `Progresses`, `call_scope`, `call`, `health_call`, `async_call`, `reading`, `expired`, `wait_for`, `unread`, `hit`, `allowance`, `exhausted`, `for_resume`); `_git.py`'s tallies, `run_git`'s counts around one call, `printed_path`, `subcommand`, the `log_nonzero_exit` message | `git_read_budget.jsonl` |
@@ -3825,7 +3826,7 @@ of `src/bettermemory/events.py` by function:
 | `NAMED_EVENT_FIELDS`, `named_event_fields`, `_named_inside`, `_named_entries`, `_redact_event_fields` | 758-821 | nothing | unit 2 |
 | `suppressed`, `deadline`, `StoreBusy`, `_store_busy`, `within_hook_budget`, `hook_body`, `_NOT_DONE` | 538-656 | the clock, the calling context, the store's busy timeout | unit 3 |
 | `Recorder` (`session_for_request`, `worktree_for_request`, `records`, `record`) | 824-951 | the store's writer, the clock | unit 4 |
-| `_event_id_items`, `_event_id_list` | 954-988 | nothing | unit 3 |
+| `_event_id_items`, `_event_id_list` | 954-990 | nothing | built (`event_id_items`, `event_id_list`, with `recall_settle` unit 1; see that section) |
 
 The cut: unit 1 is the leaves above (this build), unit 2 the redaction,
 which waits for `credentials` past its vendor-prefixed detectors (the
@@ -3942,6 +3943,98 @@ row follows the Unicode tables behind `str.isprintable`.
 `tests/audit_fields_robustness.rs` holds 2,000-hit reports, a 100,000
 code point refused text, a `settled_count` nested 200,000 deep, integer
 bounds, and the growth from 500 to 5,000 hits.
+
+## The Stop's settlement of what was shown (`recall_settle.py`)
+
+`recall_settle` reproduces `src/bettermemory/recall_settle.py`, unit by
+unit. The map by function:
+
+| Function | Lines | Needs from the machine | Status |
+|---|---|---|---|
+| `_used_in_segment` | 161-182 | nothing | built (unit 1) |
+| `settle_shown` | 185-269 | the store's event reads and record loads, the recorder, the recall state, the clock (an argument) | built (unit 1) |
+| `settle_unused` | 272-347 | the same, `sessions.joined_sessions`, the recorder it builds | built (unit 1) |
+| `previous_audit_at` | 350-365 | the store's event reads, the clock | built (unit 1) |
+| `review_unanswered` | 466-542 | the same, the recorder, the recall state, `review.find_chain` | built (unit 1) |
+| `_probe_message` | 48-153 | the probe (`audit.probe_for_miss`), the store, the config | unit 2 (settleint) |
+| `settle_interrupted` | 368-463 | the transcript (`interrupted_turns`), the probe | unit 2 (settleint) |
+
+Unit 1 also builds `events._event_id_items` and `_event_id_list`
+(`events.py` 954-990) as `events::event_id_items` and `event_id_list`,
+and `recall_state._str_ids` as `events::str_ids`, the one line over them
+that `recall_settle` imports.
+
+What unit 1 reproduces. An event is a `PyValue` dict as the log reads
+it; a field it lacks reads as None.
+
+- `event_id_items`: a `list` keeps its `str` elements with their original
+  indices, a lone non-empty `str` is one id at slot 0, and every other
+  value (a tuple included) is empty. Only the top level is read, so a
+  value nested to any depth costs one step.
+- `event_joined` (`sessions.py` 343-356) is ported here, not taken as a
+  trait: by the harness stamp when it equals a non-empty harness session,
+  else by `_session_of` (a true `session`, else `session_id`, kept only
+  when a `str`) among the sessions.
+- `used_in_segment`: the `use` events stamped at or after the segment's
+  start (`parse_event_ts`; a stamp that is not a `str` or does not parse
+  is skipped) and joined, their `ids` (else `memory_ids`, when `ids` is
+  false by Python's `bool`) read through `str_ids`.
+- `settle_shown`: the shown ids not settled and not excluded, nothing when
+  none or the reply is empty; the joined uses read from the segment's
+  start; each pending id in sorted order not used and loadable (a
+  missing or tombstoned record is skipped) goes to
+  `attribution::attribute_uses`; each match records one `use` row with
+  the reference's fields in its order, `prompt_id` only when non-empty
+  and `client_model` whenever given; `note_settled` when any settled. An
+  empty `harness` reads as `DEFAULT_HARNESS`.
+- `settle_unused`: the closed segment's unsettled ids, the sessions
+  `joined_sessions` names over the last `REAUDIT_DEDUP_WINDOW_SECONDS`
+  with the hook's own id, the joined `show` events with a `str` `id`
+  (opened) and the joined uses (attested); the recorder is built
+  (`make_recorder`, with the session, `telemetry`, the worktree and the
+  hook) after those reads, whether or not anything is recorded, and each
+  remaining id records one `unused` row. A clock less than an hour after
+  year 1 raises `OverflowError`, as `now - timedelta` does.
+- `previous_audit_at`: the session's `turn_audited` rows in the last
+  `STATE_IDLE_SECONDS`; the newest instant wins and of equal instants the
+  first read is kept, with its own offset. A session value compares by
+  equality, so only a `str` matches.
+- `review_unanswered`: nothing for an empty session set; the session
+  value of each `review_issued` row is looked up in the set, so a list or
+  dict there raises `TypeError` (`SettleError::TypeError`) as `x in set`
+  does, while an empty list is false and reads `session_id`; the root is
+  a valid ULID `parent_review_id`, else a valid ULID `review_id`; a root
+  the segment already counted or already taken is skipped; `find_chain`
+  is asked of every root in order and a root counts when open and not
+  refused for a standing record; one `review_unanswered` row and
+  `note_review_roots` when any count.
+
+Decisions. The store's reads (`SettleStore`), the recorder (`Recorder`),
+the recall state (`SettleState`, whose `segment` answers a plain
+`SegmentView` with `review_roots` beside the fields the task names, since
+`review_unanswered` reads them) and `joined_sessions` (`Sessions`) are
+traits; `find_chain` is a closure answering `(open, standing_refused)`
+and the recorder `settle_unused` builds is a factory closure. The
+`recall_state` unit takes `SegmentView` over. Every datetime handed in is
+aware, as the reference's callers make them. `RULE`, `DEFAULT_HARNESS`,
+`STATE_IDLE_SECONDS`, `REVIEW_UNANSWERED` (`recall_state.py`),
+`REAUDIT_DEDUP_WINDOW_SECONDS` (`audit.py`) and `REVIEW_ISSUED`
+(`review.py`) are local constants, each pinned by the golden header. No
+regular expression is used (the ULID check is `records::is_valid_ulid`).
+
+Fixtures: `gen_recall_settle.py` writes `recall_settle.jsonl` (not gated,
+48 KB): the constants, `event_id_items` over malformed values, four
+`_used_in_segment` answers over one list of edge events, and each
+function over scripted fakes, with every call the fakes saw in order
+(the store's reads with their kinds and bounds, the loads, the recorder's
+rows field by field, the state's calls, the recorder built, the join and
+the chains asked) and the answer or the error raised.
+`golden_recall_settle` checks every row; `recall_settle_kills` holds the
+cases a plausible wrong port fails; `recall_settle_robustness` holds id
+fields nested 100,000 deep and 200,000 long, clocks at the ends of the
+calendar, and the event scan's growth (20,000 events against 2,000).
+
+Left for unit 2 (settleint): `_probe_message` and `settle_interrupted`.
 
 ## Chat-template control tokens (`control_tokens.py`)
 
@@ -16996,10 +17089,12 @@ What the reference has and this build does not, by area:
   `machine.py`'s `_write_record` and `open_machine` (unit 3), the std
   `HardwareSource` (`gethostuuid` and the `ioreg` spawn), and
   `check_import_fork`.
-- The telemetry rows past their kinds and classes: `events.py`'s query
-  redaction and named event fields (unit 2, which reads
-  `credentials.secret_spans`), the suppression, the hook deadline and the
-  id-list readers (unit 3), and the `Recorder` (unit 4).
+- The telemetry rows past their kinds, classes and id-list readers:
+  `events.py`'s query redaction and named event fields (unit 2, which
+  reads `credentials.secret_spans`), the suppression and the hook
+  deadline (unit 3), and the `Recorder` (unit 4).
+- `recall_settle.py` past its settlement: `_probe_message` and
+  `settle_interrupted` (settleint).
 - The daemon, the MCP tools, the hooks and the command line.
 - `datetime.astimezone` of a naive value (the reference reads it as the
   machine's local time).

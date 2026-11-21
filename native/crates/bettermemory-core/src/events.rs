@@ -10,7 +10,7 @@
 //! query redaction `state_fields` applies to a `probe_query` still in text
 //! (`redact_query`) belongs to a later unit and is passed in.
 
-use crate::pyvalue::PyValue;
+use crate::pyvalue::{PyStr, PyValue};
 use crate::unicode::cps;
 
 /// What the reference raises out of this unit: `AttributeError`, from
@@ -414,4 +414,33 @@ pub fn state_fields(
         }
     }
     Ok(out)
+}
+
+/// `_event_id_items`: an event's id-list field as `(original_index, id)`
+/// pairs. A `list` keeps its `str` elements at their indices; a lone
+/// non-empty `str` is one id at slot 0; every other value is empty.
+pub fn event_id_items(value: &PyValue) -> Vec<(usize, PyStr)> {
+    match value {
+        PyValue::List(items) => items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| match v {
+                PyValue::Str(s) => Some((i, s.clone())),
+                _ => None,
+            })
+            .collect(),
+        PyValue::Str(s) if !s.is_empty() => vec![(0, s.clone())],
+        _ => Vec::new(),
+    }
+}
+
+/// `_event_id_list`: `event_id_items` without the indices.
+pub fn event_id_list(value: &PyValue) -> Vec<PyStr> {
+    event_id_items(value).into_iter().map(|(_, v)| v).collect()
+}
+
+/// `recall_state._str_ids` (`recall_state.py`), one line over
+/// `_event_id_items`; `recall_settle` imports it.
+pub fn str_ids(value: &PyValue) -> Vec<PyStr> {
+    event_id_list(value)
 }

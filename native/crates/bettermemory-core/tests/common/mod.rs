@@ -35,6 +35,7 @@ pub mod rows;
 pub mod schema_steps;
 pub mod session;
 pub mod settings_create;
+pub mod settle;
 pub mod stores;
 pub mod txs;
 pub mod written;

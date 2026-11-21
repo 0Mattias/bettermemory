@@ -111,10 +111,14 @@
 //!   time cannot decide;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
 //! - [`events`]: the telemetry recorder's rows, its first unit (the
-//!   event kinds, their row classes and the fields a state row keeps);
+//!   event kinds, their row classes and the fields a state row keeps)
+//!   and the id-list readers (`event_id_items`, `event_id_list`);
 //! - [`audit`]: the silent-miss audit, its first unit (the constants,
 //!   `MissHit`, `MissReport` and the `turn_audited`, `search_miss`,
 //!   `recall_held` and `prompt_recall` field builders);
+//! - [`recall_settle`]: the Stop's settlement of shown pointers
+//!   (`settle_shown`, `settle_unused`), `previous_audit_at` and
+//!   `review_unanswered`, over traits for the store, recorder and state;
 //! - [`control_tokens`]: the chat-template delimiters a stored text may
 //!   not carry, found, counted, refused and written by their bare names;
 //! - [`durability`]: the write gate's transient markers, its first unit
@@ -277,6 +281,7 @@ pub mod project_file;
 pub mod pyre;
 pub mod pysyntax;
 pub mod pyvalue;
+pub mod recall_settle;
 pub mod records;
 pub mod repository_history;
 pub mod response_links;
