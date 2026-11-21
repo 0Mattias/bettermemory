@@ -17,10 +17,14 @@
 //! - [`charset`]: a class compiled as `_optimize_charset` compiles it, the
 //!   opcode `_compile` chooses for it and the test of one code point
 //!   against it (unit pyre-4a).
+//! - [`lower`]: a parsed tree lowered to the engine's arena of nodes
+//!   threaded by `next`, each repeat classed as `re._compiler` classes it
+//!   (unit pyre-4b).
 
 pub mod atom;
 pub mod charset;
 pub mod fold;
+pub mod lower;
 pub mod parse;
 pub mod token;
 pub mod tree;

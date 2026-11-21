@@ -26,7 +26,9 @@
 //!   with alternatives, groups, lookarounds and inline flags, and the
 //!   refusal of what the matcher has no rule for; a class
 //!   compiled as `_optimize_charset` compiles it, with its opcode and the
-//!   test of one code point against it;
+//!   test of one code point against it; a parsed
+//!   tree lowered to the engine's arena, its repeats classed as
+//!   `re._compiler` classes them;
 //! - [`models_text`]: the text helpers of `models.py`: a memory's slug
 //!   and file name, its summary line, the truncation heuristic and the
 //!   search snippets;

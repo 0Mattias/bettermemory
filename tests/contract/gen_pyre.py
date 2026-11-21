@@ -17,7 +17,10 @@ and `getwidth`) writes its rows in `gen_pyre_parse`, under parts prefixed
 under parts prefixed ``charset.``: in ``pyre_unicode.jsonl`` the classes
 that fold and the sweeps that read a Unicode table, in
 ``pyre_python.jsonl`` the classes whose answer follows the release, the
-rest in ``pyre.jsonl``. A file's first line is its
+rest in ``pyre.jsonl``. Unit pyre-4b (the lowering) writes
+its rows in `gen_pyre_lower`, into ``pyre_lower.jsonl`` and, for a row
+under IGNORECASE, under parts prefixed ``lower.`` in
+``pyre_unicode.jsonl``. A file's first line is its
 header: the fixture's name and, under ``rows``, how many rows each unit
 wrote (the units of `_PARTS`). Three files, one JSON object per line, keys
 sorted, ASCII:
@@ -76,7 +79,13 @@ from array import array
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from . import gen_pyre_atom, gen_pyre_charset, gen_pyre_parse, gen_pyre_tree
+from . import (
+    gen_pyre_atom,
+    gen_pyre_charset,
+    gen_pyre_lower,
+    gen_pyre_parse,
+    gen_pyre_tree,
+)
 from ._common import jsonl
 
 #: The cap on ``pyre.jsonl`` for the whole engine (every unit's rows); the
@@ -499,6 +508,7 @@ def fold_python_rows() -> list[dict[str, Any]]:
 _PYRE_2 = "pyre-2"
 _PYRE_3 = "pyre-3"
 _PYRE_4A = "pyre-4a"
+_PYRE_4B = "pyre-4b"
 
 _PARTS: dict[str, tuple[tuple[str, Callable[[], list[dict[str, Any]]]], ...]] = {
     "pyre.jsonl": (
@@ -511,6 +521,7 @@ _PARTS: dict[str, tuple[tuple[str, Callable[[], list[dict[str, Any]]]], ...]] = 
     "pyre_unicode.jsonl": (
         (_FOLD, fold_unicode_rows),
         (_PYRE_4A, gen_pyre_charset.rows_unicode),
+        (_PYRE_4B, gen_pyre_lower.unicode_rows),
     ),
     "pyre_python.jsonl": (
         (_FOLD, fold_python_rows),
