@@ -1,0 +1,12 @@
+{"cases":11,"k":"unicode"}
+{"k":"fold","o":"ss i\u0307 \u03c3\u03c3 fi \u13a0 \u13a0","t":"\u1e9e \u0130 \u03a3\u03c2 \ufb01 \u13a0 \uab70"}
+{"k":"fold","o":"\ud801\udc28\ud83a\udd22","t":"\ud801\udc00\ud83a\udd00"}
+{"k":"fold","o":"a b c d e","t":"a\u2028b\u2029c\u0085d\u1680e"}
+{"k":"fold","o":"\u0565\u0582","t":"\u0587"}
+{"k":"bounded","o":false,"t":"\u0660\u0661\u0662","w":"\u0661\u0662"}
+{"k":"bounded","o":false,"t":"\u00b2ab","w":"ab"}
+{"k":"bounded","o":false,"t":"\u4e00ab","w":"ab"}
+{"k":"bounded","o":false,"t":"\ud801\udc00ab","w":"ab"}
+{"k":"bounded","o":true,"t":"ab\u0300","w":"ab"}
+{"k":"bounded","o":false,"t":"ab\u2160","w":"ab"}
+{"count":1114112,"k":"sweep","sha":"9c70491e7a0d9ebe5a8b111df6a82ac69b5e31c373e084c6b4145db75eb4fff2"}

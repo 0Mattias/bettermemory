@@ -55,6 +55,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields` | `audit_fields.jsonl` |
 | `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`) | `recall_settle.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
+| `recall` | `recall.py`'s first unit: the constants, `WordsSeen` (`remember`, `seen`, `holds`, `clear`), `_fold`, `_bounded`, `RecallPointer`, `_annotation`, `_core`, `_one_excerpt`, `_recall_line`, `render_recall_block`; `recall_admission.summarize` and `disputed_marks` | `recall_render.jsonl`, `recall_render_unicode.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `git_read_budget`, `git_calls` | `git_read_budget.py` whole (`ReadBudget`, the scopes as a `Scope` value, `_progress` as `Progresses`, `call_scope`, `call`, `health_call`, `async_call`, `reading`, `expired`, `wait_for`, `unread`, `hit`, `allowance`, `exhausted`, `for_resume`); `_git.py`'s tallies, `run_git`'s counts around one call, `printed_path`, `subcommand`, the `log_nonzero_exit` message | `git_read_budget.jsonl` |
 | `git_run` | `_git.py`'s `run_git` whole over a `GitProcess` (the command, `_environment`, stdin, the timeout given, both streams as text or bytes, the counts through `git_calls::run_git`, the logged lines as values) and `log_nonzero_exit` | `git_run.jsonl` |
@@ -4416,6 +4417,80 @@ growth, every code point, names past the bound and a value nested
 Nothing is left for a later unit. No reference defect was found: 300,000
 random texts gave no defanged text and no folded quote that still carries
 a listed token.
+## The prompt recall (`recall.py`)
+
+`recall.py` (1902 lines at 793bee47) is the session brief and the prompt
+recall: the store reads, the hold rules, the log rows and the two hooks'
+answers, over leaves that read nothing. The module is larger than one
+unit, so it is cut leaves first. Unit recall-render (the leaves of the
+planned recall-1 and recall-3) is built in `recall::words` and
+`recall::render`; the constants are in `recall`. Texts are code points,
+so every length and offset is a Python `str` one, and a lone surrogate is
+a character like any other.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `RECALL_MAX_POINTERS`, `RECALL_CAP_CHARS`, `SNIPPET_CHARS`, `_MIN_SNIPPET_CHARS`, `WORDS_PER_CHECKOUT`, `WORDS_CHECKOUTS` | 240-290 | nothing | built |
+| `WordsSeen` (`remember`, `seen`, `holds`, `clear`) | 291-347 | nothing (a lock) | built (`words::WordsSeen`) |
+| `MIN_QUOTE_CHARS` | 350 | nothing | built |
+| `_fold`, `_bounded` | 353-368 | Unicode data (`isspace`, `casefold`, `isalnum`) | built (`words::fold`, `words::bounded`) |
+| `_SEEN_KINDS`, `_RECALL_HEADER` | 374-381 | nothing | built (`SEEN_KINDS`, `RECALL_HEADER`) |
+| `RecallPointer`, `_annotation`, `_core`, `_one_excerpt`, `_recall_line`, `render_recall_block` | 1268-1372 | Unicode data (`isspace`) | built (`render`) |
+| `recall_admission.summarize`, `disputed_marks` | recall_admission.py 126-160 | Unicode data (`isspace`) | built (`render::summarize`, `render::disputed_marks`) |
+| `_select_brief`, `session_brief` and the brief's segment and log helpers | 388-1252 | the store, the log, the clock | not built |
+| `clean_prompt` | 1254-1265 | nothing | not built (it is `owner_prompt.probe_text`, a later unit) |
+| `_seen_in_log`, `prompt_recall`, `_caller_resolution`, `_prompt_turn`, `_seen_in_segment`, `_choose_hits`, `_deliver_recall` | 1375-1902 | the store, the log, the caller's resolution | not built |
+
+No pattern of `re` is used by the built functions.
+
+### Decisions
+
+- `WordsSeen` keeps its `OrderedDict` as a vector in recency order under
+  a `std::sync::Mutex` (a poisoned lock is taken as it stands): at most
+  500 keys, so a linear search costs less than hashing two texts. The
+  store path is the text `str(store_path)` gives; the caller passes it.
+  `held` lists a key's prompts for tests; the reference has no such
+  method.
+- `_bounded` walks every occurrence, overlapping ones included, from one
+  Knuth-Morris-Pratt pass: the same indexes `str.find(wanted, start + 1)`
+  visits, in linear time. An empty quote, which the reference never
+  passes, answers `None` where the reference raises `IndexError` (the
+  text's first character alphanumeric) and true otherwise.
+- `summarize` takes its limit as `i64`; a limit below one cuts to the
+  ellipsis alone, as `text[:0] + "…"` does.
+- `disputed_marks` returns the dict's items in its order (first naming
+  of each member), with a hash index where the reference's `not in` scans
+  the member's list; the answers are the same.
+- `render_recall_block` returns an empty text and no ids when nothing
+  fits, as `("", [])`.
+
+### Tests
+
+`recall_render.jsonl` (not gated) pins the constants, `_fold` and
+`_bounded` over ASCII, U+00A0, U+3000, U+00DF, U+00E9 and surrogates (the
+empty-quote raise included), `summarize` at and around each bound,
+`disputed_marks` grids (duplicates, self pairs, the cut at 15 and the cap
+at +99), `_core`, the line and excerpt rules over every annotation, and
+`render_recall_block` over pointer sets that cross the cap at each length
+step (summary and snippet lengths in runs), and `WordsSeen` sequences:
+the twenty-prompt bound, the 500-key eviction and its refresh on use,
+control tokens quoted by name, word boundaries. `recall_render_unicode.jsonl`
+(Unicode-gated) holds `_fold` and `_bounded` past the stable code points
+and a digest of every code point through `_fold` and `_bounded` on each
+side. `recall_render_kills.rs` holds the cases a wrong reading fails
+(overlapping occurrences, the quote's own edges, full case folding, the
+recency refresh, the name of a token, code point lengths, the mark's cut
+and cap, the ellipsis character alone, the order of the cap's cuts).
+`recall_render_robustness.rs` holds `_bounded` to linear growth on near
+misses and on a match at every index, megabyte prompts of surrogates,
+`summarize` at the integer bounds, 2,000 pointers, and `disputed_marks`
+to linear growth.
+
+What is left: the brief (`_select_brief`, `session_brief` and its
+helpers), `clean_prompt` with `owner_prompt`, and the prompt recall
+(`prompt_recall`, `_choose_hits` and their helpers), each over the store
+reads the crate holds.
+
 ## A request's caller (`identity.py`)
 
 `identity.py` (797 lines) resolves who is calling and where it works, from

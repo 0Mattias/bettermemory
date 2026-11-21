@@ -130,6 +130,8 @@
 //!   `review_unanswered`, over traits for the store, recorder and state;
 //! - [`control_tokens`]: the chat-template delimiters a stored text may
 //!   not carry, found, counted, refused and written by their bare names;
+//! - [`recall`]: the prompt recall, its first unit: the table of the
+//!   user's words (`WordsSeen`) and the recall block's renderer;
 //! - [`durability`]: the write gate's transient markers, its first unit
 //!   (the marker's canonical form, quoted spans, the snippet and sentence
 //!   helpers);
@@ -307,6 +309,7 @@ pub mod project_file;
 pub mod pyre;
 pub mod pysyntax;
 pub mod pyvalue;
+pub mod recall;
 pub mod recall_settle;
 pub mod records;
 pub mod repository_history;
