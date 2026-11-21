@@ -305,7 +305,7 @@ impl Checkout {
 
 /// `_live_key(k, v)`: what a view's liveness depends on, compared as the
 /// reference's tuple is.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LiveKey {
     pub id: PyStr,
     pub kind: PyStr,

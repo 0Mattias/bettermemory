@@ -137,7 +137,7 @@ pub struct FileSeen {
 
 /// One of `Capture.stamps`: a name and four Python ints (inode, mtime
 /// and ctime in ns, size), each as canonical decimal text.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Stamp {
     pub name: PyStr,
     pub numbers: [String; 4],

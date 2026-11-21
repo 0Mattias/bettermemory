@@ -30,7 +30,7 @@ impl Sameness {
 
 /// `membership_records.ObjectKey`: device, inode and birth time as text.
 /// It has no text form of its own; a token spells it as a three-item list.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ObjectKey {
     pub device: PyStr,
     pub inode: PyStr,

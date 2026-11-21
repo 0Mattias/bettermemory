@@ -71,7 +71,8 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
-| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore` | `membership_core.jsonl`, `membership_core_unicode.jsonl` |
+| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_views.jsonl` |
+| `location_continuity` | `location.continuity` (`location.py` 1040-1094) | `location_continuity.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
@@ -1982,8 +1983,9 @@ further `impl<S: MembershipStore> Membership<S>` blocks over the
 | `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary` | 731-842 | the store | membership-2 |
 | `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout` | 843-884 | the store | built (membership-1) |
 | `_refresh_object`, `_put_view`, `_register` | 885-971 | the store | membership-2 |
-| `view_state`, `live_view`, `_live_state`, `liveness_held`, `_touch_view`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer` | 972-1207 | the liveness, `location.continuity` | membership-3 (membview) |
-| `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent` | 1208-1348 | the history reader | membership-3 |
+| `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer` | 972-1028, 1079-1207 | the liveness, `location.continuity` | built (membership-3, membview) |
+| `_touch_view` | 1029-1078 | the store (`_put_view`) | membership-4 |
+| `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent` | 1208-1315 | the history reader | built (membership-3, membview) |
 | `_open_proposals` to `settle_legacy_questions` | 1349-1558 | the store | membership-2b (membprop) |
 | `below_root`, `_declared_below`, `_checkout_name`, `_give_token`, `token_written` | 1559-1674 | the token writer | membership-3 |
 | `_record_counts`, `_records_by_project`, `_home_from`, `why` | 1675-1826 | `Store.membership_log` | membership-4 (deferred) |
@@ -2071,6 +2073,72 @@ writes `membership_core.jsonl` (not gated; the digest of `canonical`,
 `membership_core_unicode.jsonl` (`named` over names past ASCII, gated on
 the Unicode version). Tests: `golden_membership_core`,
 `membership_core_kills`, `membership_core_robustness`.
+
+### Unit membership-3 (membview)
+
+`src/membership/views.rs`, `src/membership/history.rs` and
+`src/location_continuity.rs`. The line ranges were confirmed against
+`membership.py` as it is now: `view_state` 972-985, `live_view` 986-996,
+`_live_state` 997-1014, `liveness_held` 1015-1028, `_continuity`
+1079-1114, `_confirms` 1115-1134, `_by_common` 1135-1173, `_by_pointer`
+1174-1207, `_holds` 1208-1212, `_held` 1213-1232, `_rewritten`
+1233-1263, `_most_specific` 1264-1268, `_specific` 1269-1296,
+`_independent` 1297-1315; and `location.continuity` (`location.py`
+1040-1094), which this unit ports, so location-2 omits it.
+`_touch_view` (1029-1078) calls membwrite's `_put_view` and is left to
+membership-4.
+
+- `location_continuity::continuity` takes its readers as closures in
+  `Readers { holds, confirms, reminted }` and asks each only where the
+  reference asks it; an error of a reader passes through. The init
+  stamps are compared as sets of tuples: `T: Ord` puts one side in a
+  tree set (linear time over many stamps), and equality decides, as in
+  the reference's hashed sets. `holds` answers whether the reader held
+  anything, the truth the reference takes of its collection.
+- `_live` is a `HashMap` keyed by `LiveKey`, so `Stamp`, `ObjectKey` and
+  `LiveKey` derive `Eq` and `Hash` (`Stamp` also `Ord`). `liveness_held`
+  takes the span as a closure; a span inside another keeps the outer
+  one's. As the reference's `finally` does, an unwind out of the
+  closure clears the span before it goes on. `_ancestry` is the public field `ancestry`, which
+  membership_resolve-2 sets around its transaction.
+- `_shared_remint` is never named here: `continuity` and `by_common`
+  take it as `remint: &mut dyn FnMut(&Checkout, &Location,
+  Option<&PyStr>) -> Result2<bool, _>`, and membership_resolve-2 wires
+  `membership_shared::shared_remint` in. `checkout_token::succeeds` is
+  called directly; a raise of it carries its class and no text.
+- `loc.history` is an argument (`Option<&dyn HistoryReader>`): the
+  location record carries no reader. `isinstance(history,
+  IndependentReader)` is the caller passing the same reader again as
+  `git: Option<&dyn IndependentReader>`. `NeedIndependent` is the error
+  of `specific`, `most_specific` and `independent`, which touch no store.
+- `held` and `rewritten` take `exclude: Option<&PyStr>`: the reference's
+  callers pass `()` or one project. Their maps, and `_held`'s sets,
+  answer in key order where the reference's dicts follow the order of a
+  set; no caller reads them unsorted. `held` reads a row's project (and
+  canonicalises it) before its commit id, and `rewritten` its
+  fingerprint first, skipping a row without one, as the reference does.
+  `str.lower` of a commit id is `unicode::lower`; the fixtures hold
+  ASCII ids only, so no row is Unicode gated.
+- `_confirms` reads the file binding through `_file_binding` (no fresh
+  read of the projects), as the reference does.
+- `_by_pointer` splits a linked worktree's git directory with the host's
+  `os.path` (`Flavour::host()`); `by_pointer_in` takes it as an argument.
+  The fixtures spell POSIX paths, which `ntpath` splits the same way, so
+  no row is platform gated.
+- `WALK_LIMIT` (512, `membership_records.py` 120) is a constant of
+  `history.rs`.
+
+No regular expression is matched here. Fixtures:
+`tests/contract/gen_membership_views.py` drives the reference model over
+`gen_membership_core._Stub` with a stub liveness, history reader and
+`_shared_remint`, and writes `membership_views.jsonl` (each step's
+answer, store calls, liveness reads and history calls) and
+`location_continuity.jsonl` (rows written out, then the digest of an
+exhaustive sweep of 31,104 cases over ten small axes); neither is gated.
+Tests: `golden_membership_views`, `golden_location_continuity`,
+`membership_views_kills`, `membership_views_robustness`. Left for later
+units: `_touch_view` (membership-4), the wiring of `_shared_remint` and
+of `_ancestry` (membership_resolve-2).
 
 ## The fold check
 

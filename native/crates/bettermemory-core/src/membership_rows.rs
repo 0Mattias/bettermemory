@@ -541,7 +541,7 @@ pub fn jsonable(value: &PyValue) -> Result<PyValue, Raised> {
 
 /// `Location.root_file`: for a folder checkout its first file; else the
 /// file whose folder is the root (`_same_path`).
-fn root_file(loc: &Location) -> Option<&ProjectFileRef> {
+pub fn root_file(loc: &Location) -> Option<&ProjectFileRef> {
     if loc.kind == Some(Kind::Folder) {
         return loc.files.first();
     }

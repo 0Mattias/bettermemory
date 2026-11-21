@@ -76,7 +76,11 @@
 //!   `_signature`, `_unwritten` and `_Tally`;
 //! - [`membership`]: the membership model over its store trait, unit 1
 //!   (its state and plumbing, the projects with merges followed, the
-//!   members index, the witness, file-binding and checkout reads);
+//!   members index, the witness, file-binding and checkout reads), and
+//!   unit 3 (the views and their liveness, continuity, the checkout of an
+//!   object store, the history readings);
+//! - [`location_continuity`]: `location.continuity`, witness O where birth
+//!   time cannot decide;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
 //! - [`events`]: the telemetry recorder's rows, its first unit (the
 //!   event kinds, their row classes and the fields a state row keeps);
@@ -189,6 +193,7 @@ pub mod in_force;
 pub mod json;
 pub mod lexicon;
 pub mod location;
+pub mod location_continuity;
 pub mod location_discovery;
 pub mod location_git;
 pub mod location_probe;

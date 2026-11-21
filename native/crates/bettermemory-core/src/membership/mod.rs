@@ -9,17 +9,19 @@
 //! membprop, membview) add further `impl<S: MembershipStore>
 //! Membership<S>` blocks over the `pub(crate)` state and helpers here.
 
+pub mod history;
 pub mod projects;
 pub mod reads;
+pub mod views;
 pub mod vocab;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
 use crate::datetime::{DateError, DateTime};
 use crate::machine::MachineIdentity;
 use crate::membership_lines::Raised;
-use crate::membership_records::records::{Checkout, Project, View};
+use crate::membership_records::records::{Checkout, LiveKey, Project, View};
 use crate::membership_rows::jsonable;
 use crate::pyvalue::{repr_str, PyStr, PyValue};
 use crate::unicode::{cps, to_string};
@@ -179,6 +181,13 @@ pub struct Membership<S: MembershipStore> {
     pub(crate) index: Option<(u64, BTreeMap<PyStr, Vec<PyStr>>)>,
     pub(crate) rows: Vec<i64>,
     pub(crate) remint: Option<PyStr>,
+    /// `_live`: liveness read in a `liveness_held` span, by what each read
+    /// depends on; None outside one.
+    pub(crate) live: Option<HashMap<LiveKey, PyStr>>,
+    /// `_ancestry`: git's reading of tied witnesses, read before the write
+    /// transaction by the resolution that wanted it; None where no
+    /// resolution can read it outside its transaction.
+    pub ancestry: Option<BTreeMap<Vec<PyStr>, Option<BTreeSet<PyStr>>>>,
 }
 
 impl<S: MembershipStore> Membership<S> {
@@ -201,6 +210,8 @@ impl<S: MembershipStore> Membership<S> {
             index: None,
             rows: Vec::new(),
             remint: None,
+            live: None,
+            ancestry: None,
         }
     }
 
