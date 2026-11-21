@@ -45,6 +45,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `git_read_budget`, `git_calls` | `git_read_budget.py` whole (`ReadBudget`, the scopes as a `Scope` value, `_progress` as `Progresses`, `call_scope`, `call`, `health_call`, `async_call`, `reading`, `expired`, `wait_for`, `unread`, `hit`, `allowance`, `exhausted`, `for_resume`); `_git.py`'s tallies, `run_git`'s counts around one call, `printed_path`, `subcommand`, the `log_nonzero_exit` message | `git_read_budget.jsonl` |
 | `git_run` | `_git.py`'s `run_git` whole over a `GitProcess` (the command, `_environment`, stdin, the timeout given, both streams as text or bytes, the counts through `git_calls::run_git`, the logged lines as values) and `log_nonzero_exit` | `git_run.jsonl` |
 | `location_stamps` | `location_stamps.py` whole: `in_ticks`, `kept_in_ticks`, `stat_each`, `capture_ticks`, `_device_name` (macOS's `os.major`/`os.minor`, and Linux's under a CPython built against glibc or musl), `_drvfs` (the mount table read through `Fs`), `_init_stamps`, `filetime_ns`, `basic_info_ns` (FILE_BASIC_INFO through `Fs::basic_info`, declined by `StdFs`) | `location_stamps.jsonl`, `location_stamps_python.jsonl`, `location_stamps_platform.jsonl` |
+| `location_view` | `location.py`'s view continuity: `_git_dir_at`, `continuity`, `_head_at`, `view_state`, `_carries_project_file`, `_same_number`, with `object_key`, `_at_dotgit`, the project file's parse and the history's `holds` as arguments | `location_view.jsonl`, `location_view_posix.jsonl` |
 | `location_git` | the readers of `location_git.py` that need neither discovery nor the object reader: `_Git`, `_resolve_head` (the peel a callback), `_ref_tips`, `_manifest`, `Reach`, `reachable_among`, `walk` | `location_git_readers.jsonl`, `location_git_readers_posix.jsonl` |
 | `location_reads` | `location_reads.py` whole as a timed runtime: `READ_HANDOFF`, `READ_LANES`, `READ_SLOTS`, `_Flight`, `_Slots`, the board (`_FLIGHTS`, `_LANDED`, `_SLOTS`, `UNANSWERED`, `NOT_READ`) as a `Board` the caller holds, `_stalled`, `_board`, `_give_up`, `_fly`, `bounded_read`, `bounded_reads`, `_Lanes` | `location_reads.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
@@ -2937,6 +2938,8 @@ that Unicode too.
 | `golden_location_stamps_posix`: `every_case_answers_as_the_reference` (unix) | `location_stamps.jsonl` | i; os elsewhere (`location_stamps_not_posix`) |
 | `golden_location_stamps_posix`: `every_release_bound_case_answers_as_the_reference` (unix) | `location_stamps_python.jsonl` | ii (Python); os elsewhere (`location_stamps_not_posix`) |
 | `golden_location_stamps`: `device_names_answer_as_each_platform_that_made_them` | `location_stamps_platform.jsonl` | ii (Python, platform) |
+| `golden_location_view`: `location_view_every_case` | `location_view.jsonl` | i |
+| `golden_location_view_posix`: `location_view_posix_every_case` (unix) | `location_view_posix.jsonl` | i; os elsewhere (`location_view_not_posix`) |
 | `golden_membership_records`: `every_case_of_the_ungated_file` | `membership_records_paths.jsonl` | i |
 | `golden_membership_records`: `every_case_of_the_python_gated_file` | `membership_records_paths_python.jsonl` | ii (Python) |
 | `golden_membership_records`: `every_case_of_the_platform_file` | `membership_records_paths_platform.jsonl` | iii (Python, platform); os on a set made on Windows |
@@ -4990,6 +4993,109 @@ bounds.
 
 Nothing of the module is left for a later unit; `StdFs::basic_info` on
 Windows waits for a safe wrapper in `bettermemory-sys`.
+
+## The view continuity of location (`location.py` 1020-1185)
+
+`location_view` reproduces the witness exchange of `location.py`
+(1020-1185, read at 9b4a365a): `_git_dir_at` 1020-1037, `continuity`
+1040-1092, `_head_at` 1095-1101, `view_state` 1104-1174,
+`_carries_project_file` 1177-1180 and `_same_number` 1183-1185.
+`path_liveness`, `path_liveness_many` and `_liveness_read` (1188-1246)
+are left to a later unit (lane locanswer).
+
+### The module by function
+
+| function | lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_git_dir_at` | 1020-1037 | `lstat` (`Fs::lstat_result`, `StatResult::is_link`); `_at_dotgit` as an argument | ported (`git_dir_at`) |
+| `continuity` | 1040-1092 | nothing: `holds`, `confirms` and `reminted` are closures | ported |
+| `_head_at` | 1095-1101 | `RefFs` (`location_git::resolve_head`); the peel of a ref outside `refs/heads/` as an argument | ported (`head_at`) |
+| `view_state` | 1104-1174 | `_path_state` (`location_probe::path_state`), `_common_of` (`gitfile_rule::trust::common_of`), `checkout_token.read`, `_init_stamps`; `object_key`, `_at_dotgit`, `project_file.parse` and `RepositoryHistory(common).holds` as arguments | ported |
+| `_carries_project_file` | 1177-1180 | `project_file.parse` as an argument | ported (`carries_project_file`, `project_file_path`) |
+| `_same_number` | 1183-1185 | nothing | ported (`same_number`) |
+
+### What is reproduced, and why so
+
+- `continuity` takes the recorded side and the side read there as two
+  `Side`s (token, HEAD, init stamps) and its callables as `Asks`. `holds`
+  is asked with `[last_head]` and answers whether what the history
+  returns is truthy; `confirms` and `reminted` are optional as in the
+  reference, and each is called only where the reference calls it, in
+  its order (the golden rows record the calls). A token is truthy where
+  it is not empty: an empty recorded token is no token, and an empty one
+  read there counts as read for the re-mint test but not for the
+  superseded test, as the reference's `not in (None, token)` and
+  `not token_here` read it.
+- Init stamps compare as Python sets of tuples: `py_eq` takes `True`,
+  `1` and `1.0` as one value, an `int` by its exact decimal text (past
+  `i128` too), and a float only where it is a whole finite number equal
+  to the integer. A stamp holding a list or a dict is unhashable: the
+  reference raises TypeError building the set of the recorded stamps
+  first, then that of the stamps read there, and the port answers
+  `Declined::Unhashable` at the same point. A NaN read from two
+  different float objects compares unequal here; in the reference a set
+  holding the same NaN object would match itself. Stamps come from JSON
+  or from `_init_stamps`, so no row holds one object twice. The two sides
+  meet as the reference's set intersection does, through a hash set of
+  each stamp's canonical bytes (a number by its integer text where it is
+  one, else its float's bits), in time linear in the stamps. The walks
+  keep their own stack: a stamp of 200,000 nested tuples is answered,
+  where CPython 3.13 exhausts its C stack hashing it and dies, so the
+  reference has no answer there to compare.
+- `view_state` takes its machine as a `Machine` (the gitfile `Ctx`, the
+  `RefFs`, the host, the platform and mount table `_init_stamps` reads,
+  and `GIT_COMMON_DIR` as the environment holds it) and its unported
+  callees as `Effects`. `object_key`, `_at_dotgit`, the project file's
+  parse and the history's `holds` each answer a `Result`: `_git_dir_at`
+  catches only `GitDies` from `_at_dotgit` (that is `Ok(None)`), and
+  whatever else a callee raises (an OSError or a ValueError of `judge` or
+  `_common_of` inside `_at_dotgit`, for one) propagates out of the
+  reference's `view_state`, so the effect answers `Err`
+  (`Declined::Raised`) and the port declines with it rather than answer
+  "replaced". `continuity`'s `holds` declines the same way. It evaluates `continuity`'s arguments in the
+  reference's order: `_common_of`, `checkout_token.read`, the lineage,
+  `_head_at`, then `_init_stamps`. Where a callee raises in the
+  reference (a NUL in a stamped path, a token read that raises), the port
+  answers `Declined` with the callee's error. A git directory that is not
+  UTF-8 is declined (`Declined::NotText`): `checkout_token::read::read`
+  takes it as text. On Linux the reference holds such a path with
+  surrogateescape and answers live or replaced, so this is a stated gap
+  on POSIX (macOS's APFS refuses such a name); `golden_location_view_posix`
+  pins the decline.
+- `_git_dir_at` declines (`Declined::NotPorted`) where `.git` is a
+  directory whose reparse tag is not ported (Windows), since a junction
+  cannot be told apart there; everything else follows the reference.
+- `_carries_project_file` parses `str(Path(folder) / "bettermemory.toml")`:
+  `githead::discovery::pure` of the POSIX join, or `config::pure_path`
+  under the Windows flavour.
+- The Windows flavour: `_common_of` resolves a path, which `fsdata` does
+  not port there (Linear ENG-124), so `view_state` declines for a
+  repository under it where the reference answers. This is the crate's
+  stated Windows gap, recorded in `location_view_not_posix`.
+
+### Fixtures and tests
+
+`tests/contract/gen_location_view.py` writes `location_view.jsonl`
+(ungated: `continuity` rows written in full, a digest row over the
+27,648 argument lists of the cross product of `_AXES`, `_same_number`
+and the project file's path under both flavours) and
+`location_view_posix.jsonl` (POSIX only: 47 `view_state` cases over
+repositories built in scratch: primary, linked, bare, a folder with and
+without a project file, a re-minted and a superseded token, a moved,
+linked and pointed `.git`, a gone and an unreachable path, a recorded
+key on the same device with another inode and a last HEAD that would
+continue). Keys are not
+written: `object_key` is stubbed as the device and inode of `os.stat`
+with the case's birth, and the Rust test recomputes them on its own
+tree. `golden_location_view`, `golden_location_view_posix`,
+`location_view_kills` (mutants of `continuity`: superseded ignored, an
+empty token kept, `holds` asked eagerly, `reminted` or `confirms` never
+asked, a tuple holding a list taken as hashable) and
+`location_view_robustness` (many, deep and huge stamps, integers past
+`i128`, a linear growth claim on the stamp comparison) cover it, with
+`golden_location_view_posix`'s own tests of a raising `_at_dotgit` and a
+git directory that is not UTF-8.
+No Python regular expression is involved.
 
 ## The bounded reads of recorded paths as a runtime (`location_reads.py`)
 
@@ -12709,7 +12815,10 @@ What the reference has and this build does not, by area:
   files (the reader: unit 4), `origin_gitfiles.py` past its decoders, machine leaves
   and config facts (`_config_facts` and its memo, units 4, 6 and 7), `checkout_token.py` past its text, reads and write (the
   remint and the claim: unit 4), the origin's settling
-  (`origin.py`), `location.py` and of `location_git.py` the discovery (`GitDies`,
+  (`origin.py`), `location.py` past its view continuity (`continuity`,
+  `view_state` and their helpers are built; `path_liveness`,
+  `path_liveness_many` and `_liveness_read` are not), and of
+  `location_git.py` the discovery (`GitDies`,
   `DiscoveryDies`, `_from_env`, `_discover`, `_at_dotgit`), `_git`,
   `RepositoryHistory` and `_clear_above`.
 - `membership_records.py` past its path helpers and legacy ask rule

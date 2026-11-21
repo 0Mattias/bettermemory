@@ -16,6 +16,7 @@ pub mod gitobjects_files;
 pub mod location_git;
 pub mod location_reads;
 pub mod location_stamps;
+pub mod location_view;
 pub mod membership_rows;
 pub mod opened;
 pub mod parity;

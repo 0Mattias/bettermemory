@@ -70,6 +70,9 @@
 //!   and `log_nonzero_exit`, the logged lines returned as values;
 //! - [`location_stamps`]: a git directory's init stamps and whether its
 //!   file system keeps FILETIME's ticks (the whole module);
+//! - [`location_view`]: `location.py`'s view continuity (`continuity`,
+//!   `view_state` and their helpers), with `object_key`, `_at_dotgit`,
+//!   the project file's parse and the history's `holds` as arguments;
 //! - [`location_git`]: a repository's head, ref tips, content manifest
 //!   and bounded history walks, the readers of `location_git.py` that need
 //!   neither discovery nor the object reader;
@@ -139,6 +142,7 @@ pub mod location_git;
 pub mod location_probe;
 pub mod location_reads;
 pub mod location_stamps;
+pub mod location_view;
 pub mod log;
 pub mod machine;
 pub mod membership_lines;

@@ -72,6 +72,7 @@ from . import (
     gen_location_spellings,
     gen_location_stamped,
     gen_location_git_readers,
+    gen_location_view,
     gen_gitsystem_answers,
     gen_gitsystem_ask,
     gen_gitsystem_sources,
@@ -264,6 +265,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "location_stamped": gen_location_stamped.generate,
     "location_git_readers": gen_location_git_readers.generate,
     "location_git_readers_posix": gen_location_git_readers.generate_posix,
+    "location_view": gen_location_view.generate,
+    "location_view_posix": gen_location_view.generate_posix,
     "gitsystem_record": gen_gitsystem_record.generate,
     "gitsystem_record_python": gen_gitsystem_record.generate_python,
     "gitsystem_answers": gen_gitsystem_answers.generate,
@@ -598,7 +601,8 @@ PLATFORM_GATED = frozenset(
 #: ``gitobjects_files_posix`` walks alternates over links, FIFOs and modes,
 #: its directories spelled by ``posixpath.realpath`` (`gen_gitobjects_files`);
 #: ``location_git_readers_posix`` walks refs and trees with links and mode-000
-#: entries (`gen_location_git_readers`);
+#: entries (`gen_location_git_readers`); ``location_view_posix`` builds
+#: repositories with links and a mode-000 folder (`gen_location_view`);
 #: ``gitsystem_record`` reads and writes the record over links, modes and
 #: FIFOs (`gen_gitsystem_record`); ``gitsystem_probe`` builds, sweeps and
 #: clears the probe over links, modes and FIFOs (`gen_gitsystem_probe`);
@@ -662,6 +666,7 @@ POSIX_ONLY = frozenset(
         "location_spellings",
         "location_stamped",
         "location_git_readers_posix",
+        "location_view_posix",
         "origin_gitfiles_machine",
         "origin_gitfiles_machine_python",
         "origin_gitfiles_darwin",
