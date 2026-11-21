@@ -62,6 +62,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_gitfiles` | units 1 to 3 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`), the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) and the config facts (`facts`: `_facts_of`, `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies`, `_config_entries`, `_config_variable_names`, `_hold_directory`, `directories_held`, `_global_attributes_path`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl`, `origin_gitfiles_facts.jsonl`, `origin_gitfiles_facts_posix.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs`; unit githead-1, `githead::discovery`: `stamp`, `find_gitdir`, `gitdir_at`, `locate`, `probed`, `across_filesystems`, `discovery_moved`, `_entry_above`, `_located` and their helpers over `fsdata::Fs`, membership's `Rule`, an `Env` and the owners (`Owners`); unit githead-2, `githead::signature`: `entry_above`, `_stops_at`, `_would_be_git_directory`, `_Undetermined`, `_ref_stamps`, `signature`, and `CtxRefs`, a `RefFs` over a `gitdir::Ctx` | `githead.jsonl`, `githead_posix.jsonl`, `githead_discovery.jsonl`, `githead_signature.jsonl` |
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
+| `location_caller` | a caller's resolution (`location.py` 1420-1997), unit locstate: the per-process state around a resolution: `process_machine`, `_recorded`, `_clear_machine` (`ProcessMachine`), `_Held`, `_LOCKS`, `_location_lock` (`Locks`, `lock_name`), `_cwd_of`, `_Stand`, `_STANDS`, `_keep_stand`, `_stand_of`, `forget_session`, `_clear_stands` (`Stands`), `_with_file_errors`, `_same_namespace`; every read of the machine a closure | `location_caller_state.jsonl` |
 | `fsutil` | units 1 and 2 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads; `flock_excl` (`lock_path`, a guard held until dropped) and its Windows branch `_flock_windows` over an `Msvcrt` trait, with `FLOCK_TIMEOUT_SECONDS` and the process-wide `_FLOCK_WARNED` | `fsutil.jsonl`, `fsutil_python.jsonl`, `fsutil_flock.jsonl`, `fsutil_flock_python.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`); unit 4, `gitobjects::files::reader`: `ObjectReader`'s `has`, `has_many`, `name_length`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `_raw`, `_places`, `_object`, `_take_loose`, `_loose`, `_packed` | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl`, `gitobjects_reader.jsonl`, `gitobjects_reader_zlib.jsonl`, `gitobjects_reader_posix.jsonl` |
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
@@ -3871,6 +3872,8 @@ that Unicode too.
 | `location_probe_kills` (18 on unix, 14 elsewhere), `location_probe_robustness` (2) | none | i |
 | `golden_location_witness`: `location_witness_every_case` | `location_witness.jsonl` | i |
 | `location_witness_kills` (21), `location_witness_robustness` (6) | none | i |
+| `golden_location_caller_state`: `location_caller_state_every_case` | `location_caller_state.jsonl` | i |
+| `location_caller_kills` (15), `location_caller_robustness` (4) | none | i |
 | `golden_gitobjects`: `gitobjects_every_case` | `gitobjects.jsonl` | i |
 | `golden_gitobjects`: `gitobjects_python_every_case` | `gitobjects_python.jsonl` | ii (Python) |
 | `gitobjects_kills` (13), `gitobjects_robustness` (5) | none | i |
@@ -11609,6 +11612,82 @@ with `line_restated`; the local
 branch of `remote_key`, `_file_url_path`, the capture's discovery, its
 cache and `checkout_token`, which read files.
 
+## A caller's resolution (location.py 1420-1997)
+
+Read at e2837eff. The part of `location.py` that resolves a caller
+(lines 1420-1997) is cut into units, leaves first; unit locstate is
+built (`src/location_caller.rs`).
+
+| Function | Lines | Needs from the machine | Status |
+|---|---|---|---|
+| `_MACHINE_LOCK`, `_MACHINE`, `_RECORDED`, `_clear_machine` | 1439-1448 | nothing | built (locstate) |
+| `process_machine` | 1451-1460 | `machine.open_machine` (a closure) | built (locstate) |
+| `_recorded` | 1463-1478 | `Membership.record_machine` (a closure) | built (locstate) |
+| `_Held`, `_LOCKS_GUARD`, `_LOCKS`, `_location_lock` | 1481-1519 | threads | built (locstate) |
+| `_cwd_of` | 1522-1528 | `os.getcwd` (a closure) | built (locstate) |
+| `_Stand`, `_STANDS`, `STANDS_CAP`, `_clear_stands`, `_keep_stand`, `_stand_of`, `forget_session` | 1598-1654 | nothing | built (locstate) |
+| `_with_file_errors` | 1803-1815 | nothing (`printable`) | built (locstate) |
+| `_same_namespace` | 1879-1890 | `object_key` and `_hostname` (closures) | built (locstate) |
+| `capture_location`, `_model`, `Caller`, `resolve_caller`, `_caller`, `_resolved`, `resolve_here`, `resolve_hook`, `_hooked` | 1420-1435, 1531-1595, 1657-1768, 1818-1828, 1862-1876, 1893-1997 | the store, the capture | unit loccaller |
+| `_earlier_tree`, `_machineless` | 1770-1800, 1831-1859 | the store, the file system | unit locearly |
+
+What locstate reproduces:
+
+- Each module global and its `threading.Lock` is a value the caller
+  owns behind a `Mutex`: `ProcessMachine` (`_MACHINE`, `_RECORDED`),
+  `Locks` (`_LOCKS`) and `Stands` (`_STANDS`). A table is a `Vec` in
+  insertion order, as a `dict` keeps it: a key dropped and kept again
+  goes to the end. A poisoned mutex is read through, as a Python lock
+  has no poisoning.
+- `process_machine` opens once; an `open` that fails keeps nothing, so
+  the next call opens again. `_recorded` checks and keeps the (store
+  path, machine id) pair in two holds of the lock with the record
+  between them, as the reference does: two threads may both record,
+  and a record that raises is asked again next time.
+- `_location_lock`: `lock_name` is `machine:device:inode` where the
+  location has an object key (the birth is not in it), else `machine:`
+  and `loc.root or loc.cwd` (an empty root names the cwd). `Locks::take`
+  is the part under the guard: where the name is new and the table holds
+  `CACHE_CAP * 4` (1,024) or more, every lock whose users are zero is
+  dropped, in insertion order, then the new one is kept; a lock taken
+  but not yet acquired has users and stays (ENG-160). Where every lock
+  is in use the table grows past the cap, as the reference's does.
+  `give_back` is the `finally`; `with_location_lock` runs a closure
+  holding the lock and gives it back however the closure ends.
+- `_keep_stand` drops the session's stand in the store and keeps the new
+  one at the end only where the resolution has a checkout (an empty
+  checkout is one); the oldest stand goes first at `STANDS_CAP`.
+  `forget_session` drops the session in every store.
+- `_with_file_errors` writes each error through `printable` and keeps it
+  unless the resolution's own lines hold it: errors are not compared with
+  each other, so an error given twice is shown twice, and the
+  resolution's lines are not written through `printable`.
+- `_same_namespace` asks `object_key(cap_cwd)` only where the client gave
+  a key and `_hostname()` only where it named a host. A host name is
+  bytes, as `location_probe` spells one; a client that names the empty
+  host never matches, since `_hostname` answers None for an empty name.
+
+`CACHE_CAP` is a private constant here (256, `location_git.py` 148); the
+fold of the lane that builds `location_cache` replaces it with
+`location_cache::CACHE_CAP`. `NO_CWD` (186) and `NO_MACHINE` (192) belong
+to `_machineless` and are left for unit locearly. No pattern of `re` is
+read here.
+
+The fixtures (`gen_location_caller_state.py`, `location_caller_state.jsonl`,
+ungated) drive the reference's functions directly: `open_machine`,
+`record_machine`, `os.getcwd`, `object_key` and `_hostname` are the
+case's, and each `_Held`'s lock is one that never blocks, so one thread
+can take a location twice as two threads would. A table near its cap is
+pinned as its length, first and last three entries and the SHA-256 of
+its entries in order.
+
+`Stands` holds a hash map from (store path, session) to a sequence
+number and stand, beside the keys by sequence number, so `_stand_of` and
+`_keep_stand` take constant time near the cap as the reference's dict
+does. A stands row keeps one session's stand in two stores, and an errs_cp
+row holds lone surrogates as code points, which `printable` writes as
+`\ud800`.
+
 ## The checkout token (`checkout_token.py`)
 
 Read at 465bc600. The module is 1,015 lines; its write protocol stands on
@@ -15629,7 +15708,11 @@ What the reference has and this build does not, by area:
   (`origin.py`), `location.py` past its view continuity and the
   capture's filesystem leaves (`continuity`, `view_state`, their helpers
   and unit 1's leaves in `location::leaves` are built; `path_liveness`,
-  `path_liveness_many` and `_liveness_read` are not), and of
+  `path_liveness_many` and `_liveness_read` are not; of the caller's
+  resolution the per-process state is built in `location_caller`, and
+  `capture_location`, `_model`, `Caller`, `resolve_caller`, `_caller`,
+  `_resolved`, `resolve_here`, `resolve_hook` and `_hooked` (loccaller),
+  `_earlier_tree` and `_machineless` (locearly) are not), and of
   `location_git.py` the binding of `probed` to githead's discovery,
   `_sources_once`, `_SYMBOLIC_HEAD`, `_ABOVE` and `_clear_above`.
 - `membership_records.py` past its path helpers and legacy ask rule

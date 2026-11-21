@@ -132,6 +132,10 @@
 //! - [`witness_questions`]: the question half of `location_witness.py`:
 //!   the answered token and liveness readers, the client's re-mint answer
 //!   and its refusal, and the client's reading of a view question;
+//! - [`location_caller`]: a caller's resolution, its first unit (the
+//!   per-process state around a resolution: the machine opened once,
+//!   the per-location locks, where each session stands, the file
+//!   errors' lines and the namespace test);
 //! - [`gitobjects`]: git objects read from a repository's files, the
 //!   whole module in four units (the byte parsers; the zlib streams and
 //!   the delta chain over a file handle; the file reads, the object format
@@ -200,6 +204,7 @@ pub mod in_force;
 pub mod json;
 pub mod lexicon;
 pub mod location;
+pub mod location_caller;
 pub mod location_continuity;
 pub mod location_discovery;
 pub mod location_git;
