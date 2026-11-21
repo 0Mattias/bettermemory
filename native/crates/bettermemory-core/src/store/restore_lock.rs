@@ -102,6 +102,12 @@ pub fn record_file_taken(attempt: Try) -> bool {
     !matches!(attempt, Try::Held)
 }
 
+/// `restore_lock._WINDOWS_LOCK_OFFSET`: the byte `msvcrt.locking` locks,
+/// past any marker, so a marker reads through any handle while it is held.
+#[cfg(windows)]
+const WINDOWS_LOCK_OFFSET: u64 = 1 << 20;
+
+#[cfg(not(windows))]
 fn try_lock(file: &File, shared: bool) -> Try {
     let got = if shared {
         file.try_lock_shared()
@@ -114,6 +120,27 @@ fn try_lock(file: &File, shared: bool) -> Try {
         Err(std::fs::TryLockError::Error(e)) if e.kind() == io::ErrorKind::Interrupted => Try::Held,
         Err(std::fs::TryLockError::Error(_)) => Try::Unlockable,
     }
+}
+
+/// `_try_lock` on Windows: `msvcrt.locking(fd, LK_NBLCK, 1)` at
+/// `_WINDOWS_LOCK_OFFSET`, exclusive whatever `shared` says; any error is
+/// "held" (the reference returns False on every OSError there).
+#[cfg(windows)]
+fn try_lock(file: &File, shared: bool) -> Try {
+    let _ = shared;
+    match bettermemory_sys::lock_byte(file, WINDOWS_LOCK_OFFSET) {
+        Ok(()) => Try::Taken,
+        Err(_) => Try::Held,
+    }
+}
+
+/// `_unlock`: `flock(LOCK_UN)`, or on Windows `LK_UNLCK` of the byte
+/// [`try_lock`] locked; errors ignored as the reference suppresses them.
+fn unlock_file(file: &File) {
+    #[cfg(not(windows))]
+    let _ = file.unlock();
+    #[cfg(windows)]
+    let _ = bettermemory_sys::unlock_byte(file, WINDOWS_LOCK_OFFSET);
 }
 
 /// `_lock_within`: Taken, Held (past `wait`) or Unlockable.
@@ -139,11 +166,25 @@ fn parent_of(store_file: &Path) -> PathBuf {
 /// openable (the reference's `_open_record` returns None only when absent
 /// and raises otherwise, which `reading` turns into "nothing to hold").
 fn open_record(store_file: &Path) -> Option<File> {
-    std::fs::OpenOptions::new()
+    record_options()
         .read(true)
         .write(true)
         .open(lock_path(store_file))
         .ok()
+}
+
+/// Options for every open of the record file. On Windows the share mode is
+/// that of the reference's `os.open` (the CRT's `_SH_DENYNO`):
+/// FILE_SHARE_READ | FILE_SHARE_WRITE without FILE_SHARE_DELETE, so a
+/// release's unlink fails while any handle is open and leaves the empty
+/// file, where std's default share mode would let it go delete-pending and
+/// refuse the next open of the name.
+fn record_options() -> std::fs::OpenOptions {
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut options = std::fs::OpenOptions::new();
+    #[cfg(windows)]
+    std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 0x1 | 0x2);
+    options
 }
 
 /// `restore_lock.reading(store_file)` with `wait` for the reference's
@@ -182,7 +223,7 @@ pub fn record_mode_reading(store_file: &Path, wait: Duration) -> Result<Option<R
     match lock_within(&record, true, wait) {
         Try::Held => Err(Refused::Running),
         Try::Taken | Try::Unlockable => {
-            let _ = record.unlock();
+            unlock_file(&record);
             Ok(None)
         }
     }
@@ -196,7 +237,7 @@ fn record_running(store_file: &Path, wait: Duration) -> bool {
     match lock_within(&record, false, wait) {
         Try::Held => true,
         Try::Taken | Try::Unlockable => {
-            let _ = record.unlock();
+            unlock_file(&record);
             false
         }
     }
@@ -285,7 +326,7 @@ struct Target {
 
 /// The record file opened read-write, made (owner-only) when `create`.
 fn open_lock_file(lock: &Path, create: bool) -> io::Result<File> {
-    let mut options = std::fs::OpenOptions::new();
+    let mut options = record_options();
     options.read(true).write(true).create(create);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
@@ -442,7 +483,7 @@ fn os_error_text(e: &io::Error) -> String {
 /// `read_marker`: the marker beside the store, None when there is none,
 /// it cannot be opened, or it is blank.
 pub fn read_marker(store_file: &Path) -> Result<Option<Marker>, AdmitError> {
-    match File::open(lock_path(store_file)) {
+    match record_options().read(true).open(lock_path(store_file)) {
         Ok(mut f) => marker_of(&mut f),
         Err(_) => Ok(None),
     }
@@ -607,7 +648,7 @@ fn state_in(
     if !target.taken {
         return Ok((State::Running, read_marker(store_file)?));
     }
-    let _ = target.file.unlock();
+    unlock_file(&target.file);
     drop(target);
     Ok(match read_marker(store_file)? {
         None => (State::Clear, None),
@@ -794,11 +835,11 @@ fn admit_in(
         return Err(locked(store_file, State::Running, read_marker(store_file)?));
     }
     if let Some(marker) = read_marker(store_file)? {
-        let _ = target.file.unlock();
+        unlock_file(&target.file);
         return Err(locked(store_file, State::Unfinished, Some(marker)));
     }
     if target.record {
-        let _ = target.file.unlock();
+        unlock_file(&target.file);
         drop(target);
         return record_admission(store_file, wait, mine);
     }
@@ -984,7 +1025,7 @@ impl RestoreLock {
         if let Some(key) = self.key {
             registry().remove(&key);
         }
-        let _ = self.lock_file.as_ref().unwrap_or(&marker).unlock();
+        unlock_file(self.lock_file.as_ref().unwrap_or(&marker));
         drop(marker);
         self.lock_file = None;
         #[cfg(windows)]
@@ -1065,7 +1106,7 @@ fn acquire_in(
         match open_lock_file(&lock, true) {
             Ok(f) => (f, Some(target.file)),
             Err(e) => {
-                let _ = target.file.unlock();
+                unlock_file(&target.file);
                 return Err(HoldError::Os(e));
             }
         }
@@ -1207,7 +1248,7 @@ fn holder(store_file: &Path, record_mode: bool) -> Holder {
         record_mode,
     ) {
         Ok(Some(t)) if !t.record && !t.mine && t.taken => {
-            let _ = t.file.unlock();
+            unlock_file(&t.file);
             Holder::Reader
         }
         _ => Holder::Restore,
@@ -1354,5 +1395,58 @@ fn finding_in(store_file: &Path, record_mode: bool) -> Result<Finding, AdmitErro
             remedy: None,
             details,
         }),
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::{open_lock_file, try_lock, unlock_file, Try};
+    use std::path::PathBuf;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("bm-restore-unlock-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        dir.join("memory.sqlite.restore-lock")
+    }
+
+    /// `unlock_file` gives back the lock `try_lock` took while the holding
+    /// handle stays open: flock's LOCK_UN on POSIX, and on Windows the
+    /// UnlockFile of the same byte LockFile took (closing the handle would
+    /// free either, so only an open handle shows the unlock itself).
+    #[test]
+    fn an_unlock_frees_the_lock_while_the_handle_stays_open() {
+        let lock = scratch("open");
+        let holder = open_lock_file(&lock, true).expect("holder");
+        let other = open_lock_file(&lock, false).expect("other");
+        assert_eq!(try_lock(&holder, false), Try::Taken);
+        assert_eq!(try_lock(&other, false), Try::Held);
+        unlock_file(&holder);
+        assert_eq!(try_lock(&other, false), Try::Taken);
+        unlock_file(&other);
+        drop((holder, other));
+        let _ = std::fs::remove_dir_all(lock.parent().unwrap());
+    }
+
+    /// On Windows the record file opens without FILE_SHARE_DELETE, as the
+    /// reference's `os.open` does, so an unlink meeting an open handle
+    /// fails and leaves the file in place.
+    #[cfg(windows)]
+    #[test]
+    fn an_open_record_file_is_not_removed() {
+        let lock = scratch("share");
+        let open = open_lock_file(&lock, true).expect("open");
+        let removed = std::fs::remove_file(&lock);
+        assert_eq!(
+            removed.map_err(|e| e.kind()),
+            Err(std::io::ErrorKind::PermissionDenied)
+        );
+        let marker = super::read_marker(&lock.with_file_name("memory.sqlite"));
+        assert!(matches!(marker, Ok(None)), "{marker:?}");
+        assert!(std::fs::remove_file(&lock).is_err());
+        drop(open);
+        std::fs::remove_file(&lock).expect("removed once closed");
+        let _ = std::fs::remove_dir_all(lock.parent().unwrap());
     }
 }

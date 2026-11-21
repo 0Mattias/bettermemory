@@ -1781,6 +1781,60 @@ recorded. Tests: `golden_restore_lock_admit` (the rows),
 only, as the fixture; on Windows `restore_lock_not_posix.rs` records the
 gap, and under `fsdata`'s Windows flavour nothing here resolves a path.
 
+The Windows lock (fix unit winrestore). The reference's `_try_lock` on
+Windows seeks to `_WINDOWS_LOCK_OFFSET` (1 MiB) and calls
+`msvcrt.locking(fd, LK_NBLCK, 1)`, which is the CRT's `_locking` and so
+`LockFile(h, 1 MiB, 0, 1, 0)`: one byte, exclusive, failing at once;
+`_unlock` is `UnlockFile` of that byte, and every OSError of the take
+reads as held. The port first took std's `File::try_lock`, which is
+`LockFileEx(LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)` over
+the whole file. A range so locked refuses `ReadFile` through every other
+handle, this process's own included (ERROR_LOCK_VIOLATION), and
+`read_marker` opens its own handle (`CreateFileW` with GENERIC_READ and
+std's share mode READ | WRITE | DELETE): in `admit`, with the take's
+handle holding, the read failed and the marker read as the
+`{"unreadable": ...}` record, so the refusal said "no record of it
+reads" (CI, golden_store_create, case restore_marker_beside). The port
+now locks the reference's byte through `bettermemory_sys::lock_byte` and
+`unlock_byte` (`LockFile`, `UnlockFile`); a marker is at most 64 KiB
+read, so no read reaches the locked byte. A Python bettermemory and the
+port lock the same byte of the same file, so they exclude each other,
+and each reads the other's marker while it holds. The POSIX flavour is
+unchanged (`flock`). The Windows paths, each with its verdict after the
+fix: `reading`/`record_running` (record file opened read-write, locked
+and let go, no read): right. `admit` (take, then `read_marker` through a
+second handle while the take holds): was wrong, now reads. `restore_state`
+(running: `read_marker` while another holds; unfinished: after the
+unlock): was wrong while held, now reads. `acquire` (the marker read
+through the holding handle after a seek): right, and still right.
+`RestoreLock::mark` (truncate and write through the holding handle):
+right. `release` (truncate, `UnlockFile`, close, then remove): right.
+`unlock`'s held report (`read_marker` while a restore holds): was wrong,
+now reads. `_holder`/`probe` (take and let go; `probe` opens the store
+through SQLite, not the lock file): right. `_store_handle` (store file,
+GENERIC_READ, share READ | WRITE): right, it locks nothing. No path takes
+one lock twice through two handles of this process except where the
+reference does too (a second handle's take is refused, as its second
+descriptor's is). `restore_lock_byte_not_posix.rs` pins, on Windows, the
+marker read while `admit` takes and while `acquire` holds, a second
+handle's take refused (running), and the record read after release.
+None of this has run on Windows here; CI runs it.
+Every open of the record file (`open_record`, `open_lock_file`,
+`read_marker`) now shares READ | WRITE without DELETE on Windows, as the
+reference's `os.open` (the CRT's `_SH_DENYNO`) does. With std's default
+share mode a release's unlink met a port handle and left the file
+delete-pending, so the next restore's create and every opener's open of
+the name failed with access denied, where the reference's unlink fails
+and leaves the empty file. The module's `lock_tests` pin that an
+`unlock_file` frees the lock while its handle stays open (flock on
+POSIX, `UnlockFile` of the taken byte on Windows; a close frees either,
+so the call sites that close right after an unlock cannot show it) and,
+on Windows, that an open record file is not removed. Nothing of this has
+been compiled or run on Windows here (the MSVC check stops in
+libsqlite3-sys), and no test has a Python `msvcrt.locking` holder exclude
+a port take or the reverse; CI's Windows jobs compile and run the Rust
+side.
+
 
 ## The restore lock, a restore's own hold (`restore_lock.py`, restore_lock-2)
 

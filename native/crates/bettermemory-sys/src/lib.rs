@@ -544,6 +544,58 @@ pub fn file_index(file: &File) -> io::Result<(u64, u64)> {
     Ok((u64::from(info.volume_serial), index))
 }
 
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn LockFile(file: *mut core::ffi::c_void, lo: u32, hi: u32, len_lo: u32, len_hi: u32) -> i32;
+    fn UnlockFile(file: *mut core::ffi::c_void, lo: u32, hi: u32, len_lo: u32, len_hi: u32) -> i32;
+}
+
+/// `msvcrt.locking(fd, LK_NBLCK, 1)` with the file position at `offset`:
+/// `LockFile` on the one byte at `offset`, exclusive and failing at once
+/// when any handle (of this process or another) holds it. The CRT's
+/// `_locking` makes this same call.
+#[cfg(windows)]
+pub fn lock_byte(file: &File, offset: u64) -> io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    // SAFETY: `file` is borrowed, so its handle is open for the call; the
+    // call takes only integers besides it and touches no memory.
+    let ok = unsafe {
+        LockFile(
+            file.as_raw_handle().cast(),
+            offset as u32,
+            (offset >> 32) as u32,
+            1,
+            0,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// `msvcrt.locking(fd, LK_UNLCK, 1)` at `offset`: `UnlockFile` on the
+/// byte [`lock_byte`] locked.
+#[cfg(windows)]
+pub fn unlock_byte(file: &File, offset: u64) -> io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    // SAFETY: as for `lock_byte`.
+    let ok = unsafe {
+        UnlockFile(
+            file.as_raw_handle().cast(),
+            offset as u32,
+            (offset >> 32) as u32,
+            1,
+            0,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::fsync;
