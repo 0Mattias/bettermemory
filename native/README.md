@@ -42,6 +42,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
+| `git_read_budget`, `git_calls` | `git_read_budget.py` whole (`ReadBudget`, the scopes as a `Scope` value, `_progress` as `Progresses`, `call_scope`, `call`, `health_call`, `async_call`, `reading`, `expired`, `wait_for`, `unread`, `hit`, `allowance`, `exhausted`, `for_resume`); `_git.py`'s tallies, `run_git`'s counts around one call, `printed_path`, `subcommand`, the `log_nonzero_exit` message | `git_read_budget.jsonl` |
 | `location_stamps` | `location_stamps.py` whole: `in_ticks`, `kept_in_ticks`, `stat_each`, `capture_ticks`, `_device_name` (macOS's `os.major`/`os.minor`, and Linux's under a CPython built against glibc or musl), `_drvfs` (the mount table read through `Fs`), `_init_stamps`, `filetime_ns`, `basic_info_ns` (FILE_BASIC_INFO through `Fs::basic_info`, declined by `StdFs`) | `location_stamps.jsonl`, `location_stamps_python.jsonl`, `location_stamps_platform.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
@@ -6769,6 +6770,115 @@ each hand in:
   Which answer is kept on a tie therefore depends on whether another
   process rewrote the record during the ask, not on which answer is
   newer.
+
+## The shared Git-read deadline and the git call tallies (`git_read_budget.py`, `_git.py`)
+
+`git_read_budget.py` is built whole (`git_read_budget`), with the call
+tallies and text helpers of `_git.py` (`git_calls`). Golden file:
+`git_read_budget.jsonl` (`gen_git_read_budget.py`), not gated: no row
+holds a path spelled by the host, an errno or an interpreter's message.
+
+| function | reference lines | what it needs from the machine | status |
+| --- | --- | --- | --- |
+| `READ_SECONDS`, `ReadDeadline`, `_Progress` | 26-37 | nothing | built (`READ_SECONDS` is `gitsystem::ask`'s, re-exported) |
+| `ReadBudget.allowance`, `exhausted`, `finish` | 40-72 | the clock | built |
+| `_OWNER`, `_ACTIVE`, `_ROOT` | 75-79 | context variables | built: `Scope`, a value the caller threads |
+| `_PROGRESS`, `_LOCK`, `_progress` | 80-93 | a weak map under a lock | built: `Progresses`, a map the caller holds, under a mutex |
+| `call_scope`, `call`, `health_call`, `async_call` | 96-136, 180-189 | none | built: one function each around a closure |
+| `reading`, `expired`, `wait_for` | 139-177 | the clock, a lock | built; the lock is `WaitLock` |
+| `_unread`, `_read`, `unread`, `hit` | 192-227 | none | built; the error a body raises is `Raise` |
+| `allowance`, `exhausted`, `for_resume` | 230-254 | the clock | built |
+| `_WINDOWS`, `printed_path`, `subcommand` | `_git.py` 133, 226-252 | `os.name` | built; `_WINDOWS` is an argument |
+| `_unanswered`, `_Failed`, `_TimedOut`, `_Missing`, the readers, `note_failed`, `note_timed_out` | `_git.py` 136-223 | thread-locals, a global | built: `UNANSWERED` (an atomic) and `Tally` (a value each thread owns) |
+| `run_git`'s counts around one call | `_git.py` 270-375 | the spawn, `os.path.isdir` | built: `git_calls::run_git` over a `Spawn` outcome |
+| the message `log_nonzero_exit` logs | `_git.py` 378-396 | none | built: `nonzero_exit_line` |
+| `_environment`, `run_git`'s spawn, stdin, stderr, decoding, the log calls | `_git.py` | the process | not built: unit `_git-1` (wave 3) |
+
+Decisions:
+
+- The context variables are a `Scope` (`owner`, `active`, `root`) the
+  caller holds. Each function saves the previous value, sets its own,
+  runs the body and puts the previous value back, in the reference's
+  order (the root before the active budget). A budget is shared as
+  `Rc<RefCell<ReadBudget>>`, since the owner and the active variable hold
+  one object in the reference and a change through either is seen
+  through both. `call_scope` reuses an existing owner and finishes only
+  a budget it made; `reading` and `_read` take the active budget, else
+  the owner, else a new one, and `_read` sets the root only for a first
+  argument that has both `at_home` and `cwd` (the caller passes that
+  pair, `bool(at_home)` already taken).
+- A body's result runs through every reset and `finish`, so a body that
+  fails (an `Err`) still writes its resume, as the reference's `finally`
+  does. A panic is not an exception and runs no reset.
+- `_PROGRESS` is keyed by a store's identity: `Store::Keyed` is a key
+  with Rust's equality and hash, standing for the reference's hash and
+  equality. `Store::Absent` (None) and `Store::Refused` (a store
+  `WeakKeyDictionary` refuses: unhashable, or with no weak reference,
+  such as a `str` or a list: the TypeError branch) get no progress. The
+  weak map drops a store's entries with the store; here they stay until
+  the caller drops the `Progresses`, so a store keyed again by an equal
+  key after it is gone finds the old resume (a difference from the
+  reference only where a caller reuses keys).
+- The clock is `&dyn Fn() -> f64`, read wherever the reference reads
+  `_clock()`; the counts of reads are pinned. Floats compare as Python
+  compares them: `min(requested, remaining)` gives `requested` unless
+  `remaining < requested`, so a NaN request comes back as NaN, and a NaN
+  remaining time neither raises nor limits.
+- `wait_for` never asks the lock where no time is left. The lock is
+  `WaitLock` (`acquire` with an optional timeout, `release`).
+  `RLock.acquire` raises OverflowError for a timeout past
+  `threading.TIMEOUT_MAX`; that needs the clock to run backward by more
+  than that, and the trait's `acquire` answers a bool, so it is not
+  reproduced.
+- `unread` and `hit` turn `Raise::Deadline` into their fallback
+  (`HistoryUnread::CallBudget`, through `From`) and pass `Raise::Other`
+  through. The module-level `exhausted` answers `Exhausted`: the
+  deadline, or `AssertionError` where no budget is active.
+- `allowance` takes `str(cwd)` from the caller, and spells a missing
+  `cwd` and `git_dir` `None`, as `str(None)` does.
+- The ask (`gitsystem::ask`) keeps its own view of the budget,
+  `Budget::{Inactive, Active { deadline }}`, which carries the deadline
+  alone. No bridge from a `Scope` to that view is built: an ask that runs
+  out of time there neither records `last_root`, `first_home` nor
+  `deferred`, so a later unit that wires the ask to this budget routes
+  each Git call's allowance through `allowance` (and a timed-out shared
+  call through `exhausted`) on the `Scope`, as `_git.run_git` does;
+  `gitsystem`'s files are unchanged.
+- The counts (`Tally`, `UNANSWERED`) are `i64`, where Python's are
+  unbounded. Past `i64::MAX` calls a debug build panics and a release
+  build wraps; no reachable run makes that many Git calls.
+- `run_git`'s counts are a function of one call's outcome (`Spawn`):
+  the allowance raising (unanswered and failed +1, then raised); not
+  found (missing +1); timed out under a shared limit whose deadline
+  passed (unanswered, failed and timed out +1, then `exhausted` raises)
+  or otherwise (timed out +1); another OSError (missing +1 where `cwd`
+  is given and is not a folder); then, for each call that did not run,
+  unanswered and failed +1. Another exception (`Spawn::Other`, a NUL in
+  an argument) passes through uncounted. `os.path.isdir` is asked where
+  the reference asks it, also on the not-found branch where it only
+  chooses the log line.
+- `nonzero_exit_line` strips with `str.isspace` and cuts at the first of
+  `str.splitlines`' line ends; bytes are decoded `utf-8`/`replace` by
+  the caller (`String::from_utf8_lossy` replaces as CPython does).
+
+No pattern of `re` is used here.
+
+Reference findings:
+
+- `ReadBudget.allowance` records `last_root` before it raises, and
+  `exhausted` then defers that root, but it sets `first_home` only after
+  the raise: a home root whose first read already finds the deadline
+  passed is deferred as not the first home (`deferred = (root, False)`).
+  Reproduction: a budget with `deadline` 3.0, the clock at 3.0,
+  `allowance(1.0, "/r", True)`; `deferred` is `("/r", False)`.
+- `allowance` with neither `cwd` nor `git_dir` charges the root `"None"`
+  (`str(None)`), a home root, so a later `first_home` comparison can
+  match the text `None`.
+
+Tests: `golden_git_read_budget` (every row: programs over a scripted
+clock, run by the same interpreter as the generator's), the kills in
+`git_read_budget_kills` and `git_read_budget_robustness` (float extremes,
+2,000 nested scopes, linear time of `for_resume` and `subcommand`).
 
 ## A record id's text
 

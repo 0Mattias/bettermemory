@@ -52,6 +52,9 @@
 //!   (the marker's canonical form, quoted spans, the snippet and sentence
 //!   helpers);
 //! - [`gitconfig`]: the text of a git config file as the reference reads it;
+//! - [`git_read_budget`] and [`git_calls`]: the shared deadline of a
+//!   call's history reads (`git_read_budget.py` whole), and `_git.py`'s
+//!   call tallies, `printed_path`, `subcommand` and the nonzero-exit line;
 //! - [`location_stamps`]: a git directory's init stamps and whether its
 //!   file system keeps FILETIME's ticks (the whole module);
 //! - [`githead`]: HEAD and refs read from a git directory's files;
@@ -98,6 +101,8 @@ pub mod events;
 pub mod float_repr;
 pub mod fsdata;
 pub mod fsutil;
+pub mod git_calls;
+pub mod git_read_budget;
 pub mod gitconfig;
 pub mod gitfile_rule;
 pub mod githead;
