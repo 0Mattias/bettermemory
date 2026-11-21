@@ -35,6 +35,9 @@
 //! - [`models_text`]: the text helpers of `models.py`: a memory's slug
 //!   and file name, its summary line, the truncation heuristic and the
 //!   search snippets;
+//! - [`standing`]: the store-free half of `standing.py`: its constants,
+//!   the standing test, the probability check, the answer a put writes,
+//!   and the lines and questions the surfaces carry;
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
 //! - [`verify_candidates`]: the path candidates verification reads, its
 //!   first three units (one candidate validated; `_BACKTICK_RE`,
@@ -57,7 +60,8 @@
 //!   token cache;
 //! - [`records`]: the reference's record models (memory, tombstone,
 //!   episode, origin, actor, link) validated from a payload or a row and
-//!   written back, with pydantic's errors;
+//!   written back, with pydantic's errors, and the result models
+//!   (`records::summaries`: the search hit and the two listings' rows);
 //! - [`history`]: one record's history read off the log, its first unit
 //!   (the rows that name a record, with the linking records' versions and
 //!   the rows that say the store's history was replaced);
@@ -244,6 +248,7 @@ pub mod repository_history;
 pub mod search;
 pub mod search_dedup;
 pub mod session;
+pub mod standing;
 pub mod store;
 pub mod toml;
 pub mod unicode;

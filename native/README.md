@@ -28,6 +28,8 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth; lookarounds refused (`supports`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
+| `records::summaries` | unit 3 of `models.py`, the result models: `MemoryHit` (`MemoryHit::new` with the model's defaults), `MemorySummary` and `TombstonedSummary` (`of` a record, as `store_records.list_summaries` and `list_tombstones` build them), and the two listings' scope filters (`summaries`, `tombstone_summaries`) | `models_hits.jsonl` |
+| `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT` until the review unit), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint` | `standing.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl` |
 | `path_drift_steps` | `path_drift_steps.py`: `_check_body_candidates`, its checks and keys as closures | `path_drift_steps.jsonl` |
@@ -4285,6 +4287,8 @@ that Unicode too.
 | `golden_models_text`: `models_text_every_case`; `models_text_kills` (16), `models_text_robustness` (4) | `models_text.jsonl` (the last two none) | i |
 | `golden_models_text`: `models_text_unicode_every_case` | `models_text_unicode.jsonl` | ii (Unicode) |
 | `golden_models_text`: `models_text_platform_every_case` | `models_text_platform.jsonl` | iii |
+| `golden_models_hits`: `models_hits_every_case` | `models_hits.jsonl` | i |
+| `golden_standing`: `standing_every_case`; `standing_kills` (11), `standing_robustness` (3) | `standing.jsonl` (the last two none) | i |
 | `golden_search`: `search_every_query_every_mode` | `search.jsonl` | iii |
 | `golden_search_dedup`: `search_dedup_every_case` | `search_dedup.jsonl` | i |
 | `golden_search_dedup`: `search_dedup_unicode_every_case` | `search_dedup_unicode.jsonl` | ii (Unicode) |
@@ -5922,6 +5926,105 @@ snippets linear (the fastest of five runs at 2,000,000 code points
 within four times the fastest at 1,000,000 plus 200 ms) and feeds the `i64` extremes and
 every lone surrogate. The reference takes 0.63 s, 0.42 s and 0.14 s on
 the three linear texts at 2,000,000 (Apple M-series).
+
+## The result models of `models.py` and the store-free half of `standing.py`
+
+Two small leaves, built together (units models-3 and standing-1). Both
+need nothing from the machine; together they come to 461 lines of Rust
+source (`src/records/summaries.rs` 189, `src/standing.rs` 272), comments
+included. No pattern of `re` is involved.
+
+### `records::summaries` (models.py 509-618, 703-719)
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `MemoryHit` | 509-599 | nothing | built (`MemoryHit::new`) |
+| `MemorySummary` | 601-618 | nothing | built (`MemorySummary::of`) |
+| `TombstonedSummary` | 703-719 | nothing | built (`TombstonedSummary::of`) |
+| `SimilarHit` | 721-747 | nothing | built earlier as `search_dedup::SimilarHit` |
+| the scope filter of `list_summaries`, `list_tombstones` | store_records.py 1054-1112 | nothing | built (`summaries`, `tombstone_summaries`) |
+
+None of the three models is ever `model_dump`ed in the reference, and
+every construction site passes records already validated
+(`search._build_hit`, `store_records.list_summaries` and
+`list_tombstones`), so they are plain structs: no pydantic validation and
+no JSON spelling. `MemoryHit::new` takes the seven required fields and
+sets the rest to the model's defaults in its order (relevance `"medium"`,
+empty lists, zero counts, None, `query_unique` 0); the caller sets what
+`_build_hit` passes beyond them. `score` is the `f64` given. `of` fills
+`summary` with `models_text::first_summary_line(body, 80)` and copies
+the other fields as the listings do: `MemorySummary` carries `actor`,
+`TombstonedSummary` `removed`, `removed_reason` and `removed_session`.
+The filter is the reference's `if scopes`: None or an empty list keeps
+every record; otherwise a record is kept when it shares a scope with the
+list (a set, so the filter is linear), in the input's order. The store's
+listings themselves (reading every record) are the store's and are not
+in this unit.
+
+### `standing` (standing.py, unit 1)
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` | 104-126 | nothing | built (`CALL`, `ANSWER_FORMAT`) |
+| `asking` | 142-145 | `review.current_tau` | built, the switch an argument |
+| `is_standing` | 148-155 | nothing | built |
+| `check_probability` | 158-167 | nothing | built |
+| `answered_by` | 170-176 | `identity.current_actor` | built, the actor an argument |
+| `answer_of` | 179-187 | as `answered_by` | built |
+| `record_text` | 353-361 | `str.strip` | built |
+| `backlog_line` | 388-396 | nothing | built |
+| `held_lines`, `held_line` | 418-443 | nothing | built |
+| `question` | 446-456 | nothing | built (a `PyValue::Dict` in the reference's key order) |
+| `batch_hint` | 459-466 | nothing | built |
+| `_SHAS`, `_current`, `answers`, `backlog`, `Backlog`, `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids`, `refusal_rows`, `held_by_removal` | 128-140, 189-351, 363-386, 398-416 | the store, `in_force` | standing-2 |
+
+`review.py` is not built, so `RELATED_CAP` (11), `RELATED_TEXT_CHARS`
+(600) and `STANDING_STATEMENT` are copied into `standing` as public
+constants, with a comment naming `review.py`; the review unit moves them
+and re-exports them here. `asking(tau_set)` takes the review's switch
+(whether `current_tau()` is set) and `answered_by(actor)` the request's
+actor (`identity::Published::current_actor`); an empty client or model
+counts as none, as `or` reads it. `is_standing` compares the category to
+`"ambient"` as text.
+
+The errors are one local `StandingError { class, text }` (`ValueError`
+or `OverflowError`), which a later caller maps into the store's
+`WriteError`. `check_probability` takes a `PyValue`: a bool or any value
+but an int or a float is `ValueError` naming `type(value).__name__` as
+the reference spells each of `PyValue`'s variants (`NoneType`, `str`,
+`list`, `tuple`, `dict`, `datetime`, `PurePosixPath`); an int is
+converted as `float(int)` does, the text's nearest double rounding half
+to even (Rust's `f64` parse), so `OverflowError` exactly when its
+magnitude is at least 2**1024 - 2**970; a range failure prints the
+original value's repr (an int in full, a float by `float_repr`, so `nan`
+and `inf` as Python prints them; -0.0 passes). `answer_of` checks the
+source first (its repr), then the probability, then names who answered,
+and stores the probability as `PyValue::Float`. The line builders count
+with the id list's length and join ids with `", "`; `record_text` strips
+with Unicode whitespace and windows with `models_text::snippet_window(text,
+0, 597)`.
+
+`tests/contract/gen_models_hits.py` writes `models_hits.jsonl` (25 KB,
+class i): seven memories and five tombstones in its header (each its
+`model_dump(mode="json")`, which the Rust test validates again), the two
+listings under seven scope filters (None, empty, one, two, a repeated
+scope, an unknown one, another case), and four hits with their defaults.
+`tests/contract/gen_standing.py` writes `standing.jsonl` (51 KB, class
+i): the constants in its header, and every branch of each function
+(`check_probability` over None, bools, ints at and beside the overflow
+bound, floats including nan, inf, -0.0, 1.0000000000000002 and the
+subnormals, texts, containers, a datetime and a path; `answer_of` with a
+bad source and a bad probability together; the line builders at 0, 1,
+11, 12 ids; `record_text` at 599, 600, 601 code points and with
+surrounding whitespace). `golden_models_hits` and `golden_standing` check
+every case; `standing_kills` (11) pins the bool refusal, the overflow
+bound and its neighbour, -0.0 and nan, the order of `answer_of`'s
+checks, an empty client, the case of `ambient`, the 600 window, the
+counts and cap of the line builders, the question's key order, the empty
+scope filter and the hit's defaults; `standing_robustness` (3) feeds ints
+of 100,000 digits and a list nested 100,000 deep, and holds `record_text`,
+the held lines and the scope filter to `timing::TENFOLD` at ten times the
+input.
 
 ## The store's writes: the reference's order (N3a design)
 

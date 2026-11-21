@@ -24,6 +24,7 @@
 pub mod lax;
 pub mod rows;
 pub mod stored;
+pub mod summaries;
 
 use crate::datetime::DateTime;
 use crate::json::{self, DumpOptions};
