@@ -339,3 +339,490 @@ def generate_python() -> dict[str, bytes]:
     return {
         "machine_identity_python.jsonl": _file(_deep_rows(), "machine_identity_python")
     }
+
+
+# -- unit 2: the facts and the files (``machine_facts*.jsonl``) ----------------
+#
+# Rows, by ``f``:
+#
+# - ``rid``/``rrec``: `_read_id`/`_read_record` of a file holding the bytes
+#   ``b`` (hex), or of ``k``: ``missing`` (no file), ``dir`` (a folder),
+#   ``nul`` (a path holding a NUL); ``r`` the answer (``rrec`` in neutral
+#   form) or ``x`` the class raised;
+# - ``rrec_deep``: `_read_record` of ``n`` nested lists inside an object;
+# - ``dar``: `_darwin_hardware` with ``gethostuuid`` returning 0 and the
+#   bytes ``g`` (hex), returning 1 (``g`` ``"fail"``) or raising
+#   AttributeError (``"raise"``), and ``ioreg`` printing ``o`` (null: the
+#   spawn raises OSError); ``asked`` whether ``ioreg`` ran;
+# - ``lin``: `_linux_hardware` over files holding ``files`` (hex; null
+#   missing, ``"dir"`` a folder);
+# - ``win``: `_windows_hardware` with MachineGuid ``a`` (neutral; absent:
+#   OSError);
+# - ``host``: `current_hostname` with `socket.gethostname` giving ``a``
+#   (null: raising OSError);
+# - ``hw``: `read_hardware_id` under ``sys.platform`` ``p`` with each
+#   platform's read replaced by one naming the platform; ``r`` the answer;
+# - ``memo``: the memo: read, read, clear, read; ``fills`` the reads made;
+# - ``fo``: `_file_object` with `os.stat` giving ``st`` (``ns`` an
+#   ``st_birthtime_ns``, ``s`` an ``st_birthtime`` as `float.hex`) or
+#   raising ``x``.
+#
+# The platform file's header records whether `os.stat_result` has
+# ``st_birthtime_ns`` and ``st_birthtime``; its row ``real`` checks
+# `_file_object` of a real file against `os.stat`.
+
+import os  # noqa: E402
+import tempfile  # noqa: E402
+import types  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+_HEADER = (m._ID_HEADER + "\n").encode()
+_GOOD = "0123456789ABCDEFGHJKMNPQRS"
+
+_ID_FILES: list[bytes] = [
+    b"",
+    _HEADER,
+    _HEADER + _GOOD.encode(),
+    _HEADER + _GOOD.encode() + b"\n",
+    _HEADER + _GOOD.encode() + b"\r\n",
+    _HEADER + _GOOD.encode() + b"\nextra\n",
+    _HEADER.replace(b"\n", b"\r\n") + _GOOD.encode(),
+    _HEADER.replace(b"\n", b"\r") + _GOOD.encode(),
+    m._ID_HEADER.encode() + b"\r\r" + _GOOD.encode(),
+    _HEADER + b"\n" + _GOOD.encode(),
+    b"  \t" + m._ID_HEADER.encode() + b" \x0c\n \t" + _GOOD.encode() + b" \x1f",
+    b"\x1c" + m._ID_HEADER.encode() + b"\x1d\n" + _GOOD.encode(),
+    m._ID_HEADER.encode() + b"\x0b" + _GOOD.encode(),
+    m._ID_HEADER.encode() + b"\x0c" + _GOOD.encode(),
+    m._ID_HEADER.encode() + b"\x1c" + _GOOD.encode(),
+    m._ID_HEADER.encode() + b"\x1d" + _GOOD.encode(),
+    m._ID_HEADER.encode() + b"\x1e" + _GOOD.encode(),
+    m._ID_HEADER.encode() + b"\x1f" + _GOOD.encode(),
+    b"\xef\xbb\xbf" + _HEADER + _GOOD.encode(),
+    _HEADER + b"\xff" + _GOOD.encode(),
+    _HEADER + _GOOD.encode() + b"\n\xc3",
+    _HEADER + b"\xed\xa0\x80",
+    _HEADER + b"\xc0\xaf",
+    _HEADER + _GOOD.encode() + b"\x00",
+    _HEADER + b"\x00" + _GOOD.encode(),
+    _HEADER + _GOOD[:-1].encode(),
+    _HEADER + (_GOOD + "T").encode(),
+    _HEADER + b"Z" * 26,
+    _HEADER + b"0" * 26,
+    _HEADER + (_GOOD[:-1] + "I").encode(),
+    _HEADER + (_GOOD[:-1] + "L").encode(),
+    _HEADER + (_GOOD[:-1] + "O").encode(),
+    _HEADER + (_GOOD[:-1] + "U").encode(),
+    _HEADER + (_GOOD[:-1] + "a").encode(),
+    _HEADER + (_GOOD[:-1] + "@").encode(),
+    _HEADER + (_GOOD[:-1] + "[").encode(),
+    _HEADER + (_GOOD[:-1] + "/").encode(),
+    _HEADER + (_GOOD[:-1] + ":").encode(),
+    _HEADER + (_GOOD[:13] + " " + _GOOD[13:25]).encode(),
+    _HEADER + _GOOD.lower().encode(),
+    b"bettermemory machine id v2\n" + _GOOD.encode(),
+    b"bettermemory machine id v1x\n" + _GOOD.encode(),
+    b"Bettermemory machine id v1\n" + _GOOD.encode(),
+    m._ID_HEADER.encode(),
+    (_GOOD + "\n").encode() * 2,
+    _HEADER + "０".encode() + _GOOD[1:].encode(),
+]
+
+_ID_FILES_UNICODE: list[bytes] = [
+    m._ID_HEADER.encode() + "\x85".encode() + _GOOD.encode(),
+    m._ID_HEADER.encode() + " ".encode() + _GOOD.encode(),
+    m._ID_HEADER.encode() + " ".encode() + _GOOD.encode(),
+    "　".encode() + _HEADER + _GOOD.encode() + " ".encode(),
+    _HEADER + " ".encode() + _GOOD.encode() + " ".encode(),
+    _HEADER + _GOOD.encode() + "​".encode(),
+    _HEADER + _GOOD.encode() + "﻿".encode(),
+    _HEADER + _GOOD.encode() + "᠎".encode(),
+]
+
+_RECORDS: list[bytes] = [
+    b"",
+    b"{}",
+    b'{"id": "A", "facts": {}}',
+    b'{"a": 1}\r\n',
+    b'{"a": "x\ry"}',
+    b'{"a": "x\r\ny"}',
+    b'{"a": "\\r"}',
+    b"[]",
+    b"null",
+    b"1",
+    b'"s"',
+    b"{",
+    b'{"a": NaN, "b": -Infinity}',
+    b'{"a": 1, "a": 2}',
+    b"\xef\xbb\xbf{}",
+    b'{"a": "\xff"}',
+    b'{"a": "\xc3\xa9"}',
+    b'{"a": "\\ud800"}',
+    b'{"a": ' + b"9" * 4301 + b"}",
+    b'{"a": ' + b"9" * 4300 + b"}",
+    b" \t\n{} \n",
+    b"{} x",
+    b"\x0c{}",
+]
+
+
+def _call_x(fn: Callable[[], Any]) -> dict[str, Any]:
+    try:
+        return {"r": fn()}
+    except Exception as exc:  # noqa: BLE001 - the class is the answer
+        return {"x": type(exc).__name__}
+
+
+def _special(root: Path, kind: str) -> Path:
+    if kind == "dir":
+        folder = root / "folder"
+        folder.mkdir(exist_ok=True)
+        return folder
+    if kind == "nul":
+        return root / "a\x00b"
+    return root / "missing"
+
+
+def _read_rows(
+    root: Path, f: str, fn: Callable[[Path], Any], files: list[bytes]
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    path = root / "file"
+    for data in files:
+        path.write_bytes(data)
+        answer = _call_x(lambda: fn(path))
+        if f == "rrec" and "r" in answer and answer["r"] is not None:
+            answer = {"r": neutral(answer["r"])}
+        rows.append({"f": f, "b": data.hex(), **answer})
+    if files is not _ID_FILES_UNICODE:
+        for kind in ("missing", "dir", "nul"):
+            rows.append(
+                {"f": f, "k": kind, **_call_x(lambda: fn(_special(root, kind)))}
+            )
+    return rows
+
+
+def _deep_record_rows(root: Path) -> list[dict[str, Any]]:
+    rows = []
+    path = root / "deep"
+    for n in (50, 100_000):
+        path.write_text('{"a": ' + "[" * n + "]" * n + "}", encoding="utf-8")
+        answer = _call_x(lambda: m._read_record(path))
+        if "r" in answer:
+            answer = {"r": "ok" if answer["r"] is not None else None}
+        rows.append({"f": "rrec_deep", "n": n, **answer})
+    return rows
+
+
+class _Completed:
+    def __init__(self, stdout: str) -> None:
+        self.stdout = stdout
+
+
+def _darwin(g: str | None, out: str | None) -> dict[str, Any]:
+    asked: list[bool] = []
+
+    def gethostuuid(buffer: Any, wait: Any) -> int:
+        if g == "raise":
+            raise AttributeError("gethostuuid")
+        if g == "fail" or g is None:
+            return 1
+        for i, b in enumerate(bytes.fromhex(g)):
+            buffer[i] = b
+        return 0
+
+    def run(*_a: Any, **_k: Any) -> _Completed:
+        asked.append(True)
+        if out is None:
+            raise OSError("no ioreg")
+        return _Completed(out)
+
+    lib = types.SimpleNamespace(gethostuuid=gethostuuid)
+    with (
+        mock.patch("sys.platform", "darwin"),
+        mock.patch("ctypes.CDLL", lambda _name: lib),
+        mock.patch("subprocess.run", run),
+    ):
+        answer = m._darwin_hardware()
+    return {"f": "dar", "g": g, "o": out, "asked": bool(asked), "r": answer}
+
+
+_IOREG = '"IOPlatformUUID" = "'
+_DARWIN_CASES: list[tuple[str | None, str | None]] = [
+    (bytes(16).hex(), None),
+    (bytes(range(16)).hex(), None),
+    ((b"\xff" * 16).hex(), None),
+    (bytes(range(0xA0, 0xB0)).hex(), "unused"),
+    ("fail", None),
+    ("raise", None),
+    ("fail", ""),
+    ("fail", '  | "IOPlatformUUID" = "ab-cd"\n'),
+    ("raise", 'x "IOPlatformUUID" = "Z"'),
+    ("fail", _IOREG + '"'),
+    ("fail", _IOREG + '" ' + _IOREG + 'second"'),
+    ("fail", _IOREG + "unterminated"),
+    ("fail", _IOREG + 'a\nb"' + _IOREG + 'c"'),
+    ("fail", '"IOPlatformUUID"  = "x"'),
+    ("fail", '"IOPlatformuuid" = "x"'),
+    ("fail", '""IOPlatformUUID" = "x"'),
+    ("fail", _IOREG[:-1] + _IOREG + 'y"'),
+    ("fail", _IOREG + 'é\U0001f600"tail'),
+]
+
+
+def _dar_rows() -> list[dict[str, Any]]:
+    rows = []
+    for g, out in _DARWIN_CASES:
+        rows.append(_darwin(g, out))
+    return rows
+
+
+_LINUX_CASES: list[list[bytes | str | None]] = [
+    [None, None],
+    [b"abc\n", b"def\n"],
+    [None, b"def\n"],
+    [b"", b"def"],
+    [b" \t\n\x0b\x0c\r\x1c\x1d\x1e\x1f", b"def"],
+    [b"\xc3\xa9", b"def"],
+    [b"\x80", None],
+    ["dir", b" x y \n"],
+    [b"a\r\nb\r", None],
+    [b"\x00", None],
+    [b"\x85x", None],
+    [b"", b""],
+]
+
+
+def _lin_rows(root: Path) -> list[dict[str, Any]]:
+    rows = []
+    for i, files in enumerate(_LINUX_CASES):
+        paths = []
+        for j, data in enumerate(files):
+            path = root / f"lin{i}_{j}"
+            if data == "dir":
+                path.mkdir()
+            elif isinstance(data, bytes):
+                path.write_bytes(data)
+            paths.append(str(path))
+        with mock.patch.object(m, "_LINUX_MACHINE_ID", tuple(paths)):
+            answer = _call_x(m._linux_hardware)
+        spelled = [d.hex() if isinstance(d, bytes) else d for d in files]
+        rows.append({"f": "lin", "files": spelled, **answer})
+    with mock.patch.object(m, "_LINUX_MACHINE_ID", (str(root / "a\x00b"),)):
+        rows.append({"f": "lin", "files": ["nul"], **_call_x(m._linux_hardware)})
+    return rows
+
+
+_MISSING = object()
+_WIN_VALUES: list[Any] = [
+    _MISSING,
+    None,
+    "",
+    "8a1c2b3d-0000-4e5f-9a8b-7c6d5e4f3a2b",
+    " ",
+    0,
+    5,
+    -1,
+    True,
+    False,
+    [],
+    ["a", 1],
+    "\ud800",
+]
+
+
+def _win(value: Any) -> dict[str, Any]:
+    class _Key:
+        def __enter__(self) -> _Key:
+            return self
+
+        def __exit__(self, *_a: Any) -> None:
+            return None
+
+    def open_key(*_a: Any) -> _Key:
+        if value is _MISSING:
+            raise OSError("no key")
+        return _Key()
+
+    winreg = types.SimpleNamespace(
+        HKEY_LOCAL_MACHINE=0,
+        KEY_READ=1,
+        KEY_WOW64_64KEY=2,
+        OpenKey=open_key,
+        QueryValueEx=lambda _k, _n: (value, 1),
+    )
+    with (
+        mock.patch("sys.platform", "win32"),
+        mock.patch.dict(sys.modules, {"winreg": winreg}),
+    ):
+        answer = _call_x(m._windows_hardware)
+    row: dict[str, Any] = {"f": "win", **answer}
+    if "r" in answer and answer["r"] is not None:
+        row["r"] = neutral(answer["r"])
+    if value is not _MISSING:
+        row["a"] = neutral(value)
+    return row
+
+
+_HOSTS: list[str | None] = [None, "", "host", "h.local", "été", "a\udcff"]
+
+
+def _host(name: str | None) -> dict[str, Any]:
+    def gethostname() -> str:
+        if name is None:
+            raise OSError("no name")
+        return name
+
+    with mock.patch("socket.gethostname", gethostname):
+        answer = m.current_hostname()
+    return {"f": "host", "a": neutral(name), "r": neutral(answer)}
+
+
+def _hw_rows() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    fakes: dict[str, Any] = {
+        "_darwin_hardware": lambda: "D",
+        "_windows_hardware": lambda: "W",
+        "_linux_hardware": lambda: "L",
+    }
+    for platform in (
+        "darwin",
+        "win32",
+        "linux",
+        "linux2",
+        "linuxish",
+        "freebsd14",
+        "cygwin",
+        "Darwin",
+        "win",
+        "aix",
+        "",
+    ):
+        m._clear_hardware()
+        with (
+            mock.patch("sys.platform", platform),
+            mock.patch.multiple("bettermemory.machine", **fakes),
+        ):
+            rows.append({"f": "hw", "p": platform, "r": m.read_hardware_id()})
+    fills: list[str | None] = []
+
+    def counted() -> str | None:
+        fills.append(None)
+        return None
+
+    m._clear_hardware()
+    answers = []
+    with (
+        mock.patch("sys.platform", "linux"),
+        mock.patch.object(m, "_linux_hardware", counted),
+    ):
+        answers.append(m.read_hardware_id())
+        answers.append(m.read_hardware_id())
+        m._clear_hardware()
+        answers.append(m.read_hardware_id())
+    m._clear_hardware()
+    rows.append({"f": "memo", "r": answers, "fills": len(fills)})
+    return rows
+
+
+_STATS: list[dict[str, Any] | str] = [
+    "OSError",
+    "FileNotFoundError",
+    "ValueError",
+    {"dev": 1, "ino": 2},
+    {"dev": 0, "ino": 0, "ns": 0},
+    {"dev": 16777232, "ino": 2**64 - 1, "ns": 1_700_000_000_123_456_789},
+    {"dev": 2**64 - 1, "ino": 1, "ns": -1},
+    {"dev": 1, "ino": 2, "s": 1700000000.123456789},
+    {"dev": 1, "ino": 2, "s": 0.1},
+    {"dev": 1, "ino": 2, "s": 0.3},
+    {"dev": 1, "ino": 2, "s": 1e-10},
+    {"dev": 1, "ino": 2, "s": -1.5},
+    {"dev": 1, "ino": 2, "s": 1.8446744073709552e19},
+    {"dev": 1, "ino": 2, "s": 1e30},
+    {"dev": 1, "ino": 2, "s": 1234567890.000000001},
+    {"dev": 1, "ino": 2, "s": 0.0},
+    {"dev": 1, "ino": 2, "s": -0.0},
+]
+
+
+def _fo(st: dict[str, Any] | str) -> dict[str, Any]:
+    def stat(_path: Any) -> Any:
+        if isinstance(st, str):
+            raise {
+                "OSError": OSError,
+                "FileNotFoundError": FileNotFoundError,
+                "ValueError": ValueError,
+            }[st]("stat")
+        fields: dict[str, Any] = {"st_dev": st["dev"], "st_ino": st["ino"]}
+        if "ns" in st:
+            fields["st_birthtime_ns"] = st["ns"]
+        if "s" in st:
+            fields["st_birthtime"] = st["s"]
+        return types.SimpleNamespace(**fields)
+
+    with mock.patch("os.stat", stat):
+        answer = _call_x(lambda: m._file_object(Path("x")))
+    if "r" in answer and answer["r"] is not None:
+        answer = {"r": list(answer["r"])}
+    spelled: Any = st
+    if isinstance(st, dict) and "s" in st:
+        spelled = {**st, "s": float(st["s"]).hex()}
+    return {"f": "fo", "st": spelled, **answer}
+
+
+def _facts_rows() -> list[dict[str, Any]]:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        rows = _read_rows(root, "rid", m._read_id, _ID_FILES)
+        rows += _read_rows(root, "rrec", m._read_record, _RECORDS)
+        rows += _deep_record_rows(root)
+        rows += _lin_rows(root)
+    rows += _dar_rows()
+    rows += [_win(v) for v in _WIN_VALUES]
+    rows += [_host(h) for h in _HOSTS]
+    rows += _hw_rows()
+    rows += [_fo(st) for st in _STATS]
+    return rows
+
+
+def generate_facts() -> dict[str, bytes]:
+    return {"machine_facts.jsonl": _file(_facts_rows(), "machine_facts")}
+
+
+def generate_facts_unicode() -> dict[str, bytes]:
+    with tempfile.TemporaryDirectory() as tmp:
+        rows = _read_rows(Path(tmp), "rid", m._read_id, _ID_FILES_UNICODE)
+    return {"machine_facts_unicode.jsonl": _file(rows, "machine_facts_unicode")}
+
+
+def _real_row() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "machine-id"
+        path.write_bytes(b"x")
+        st = os.stat(path)
+        found = m._file_object(path)
+    assert found is not None
+    ns = getattr(st, "st_birthtime_ns", None)
+    seconds = getattr(st, "st_birthtime", None)
+    return {
+        "f": "real",
+        "dev": found[0] == str(st.st_dev),
+        "ino": found[1] == str(st.st_ino),
+        "birth": found[2] is not None,
+        "birth_from_ns": ns is not None and found[2] == str(ns),
+        "birth_from_s": ns is None
+        and seconds is not None
+        and found[2] == str(int(seconds * 1_000_000_000)),
+    }
+
+
+def generate_facts_platform() -> dict[str, bytes]:
+    rows = [_real_row()]
+    header = {
+        "fixture": "machine_facts_platform",
+        "count": len(rows),
+        "has_birthtime_ns": hasattr(os.stat_result, "st_birthtime_ns"),
+        "has_birthtime": hasattr(os.stat_result, "st_birthtime"),
+    }
+    return {"machine_facts_platform.jsonl": jsonl([header, *rows])}

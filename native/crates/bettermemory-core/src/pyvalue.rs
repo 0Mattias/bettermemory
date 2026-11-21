@@ -83,6 +83,7 @@ pub enum PyError {
     ValueError,
     OverflowError,
     UnicodeEncodeError,
+    UnicodeDecodeError,
     RecursionError,
 }
 
@@ -93,6 +94,7 @@ impl PyError {
             PyError::ValueError => "ValueError",
             PyError::OverflowError => "OverflowError",
             PyError::UnicodeEncodeError => "UnicodeEncodeError",
+            PyError::UnicodeDecodeError => "UnicodeDecodeError",
             PyError::RecursionError => "RecursionError",
         }
     }

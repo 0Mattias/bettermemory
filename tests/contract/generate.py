@@ -164,6 +164,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "log_keyfiles_darwin": gen_log_keyfiles.generate_darwin,
     "machine_identity": gen_machine.generate,
     "machine_identity_python": gen_machine.generate_python,
+    "machine_facts": gen_machine.generate_facts,
+    "machine_facts_unicode": gen_machine.generate_facts_unicode,
+    "machine_facts_platform": gen_machine.generate_facts_platform,
     "log_keyring": gen_log_ring.generate,
     "store": gen_store.generate,
     "store_schema_steps": gen_store_schema.generate,
@@ -385,6 +388,7 @@ UNICODE_GATED = frozenset(
         "credentials_prefixed_unicode",
         "credentials_gate_unicode",
         "control_tokens_unicode",
+        "machine_facts_unicode",
         "durability_unicode",
         "fold",
         "store_create",
@@ -494,6 +498,9 @@ PYTHON_VERSION = "3.13.13"
 #: file as well as release-stable ones (`gen_membership_records`).
 #: ``location_leaves_python`` holds `nturl2path.url2pathname`'s answers,
 #: whose text changed within 3.13 and again in 3.14 (`gen_location_leaves`).
+#: ``machine_facts_platform`` records which birth time attribute
+#: `os.stat_result` carries, which follows the release and the platform
+#: (`gen_machine`).
 #: ``location_probe_python`` probes link loops, which 3.11's `realpath`
 #: walks otherwise, and paths holding a NUL, whose ValueError text 3.11
 #: words otherwise (`gen_location_probe`).
@@ -542,6 +549,7 @@ PYTHON_GATED = frozenset(
         "gitfile_discovery_python",
         "gitobjects_python",
         "machine_identity_python",
+        "machine_facts_platform",
         "location_probe_python",
     }
 )
@@ -604,6 +612,9 @@ def pydantic_core_version() -> str:
 #: ``location_stamps_platform`` makes the running platform's device names
 #: and carries the others' as recorded (`gen_location_stamps`); on Windows
 #: it adds a section of its own.
+#: ``machine_facts_platform`` stats a real file: whether a birth time is
+#: given, and as ``st_birthtime_ns`` or ``st_birthtime``, is the
+#: platform's (`gen_machine`).
 #: ``location_probe_errno`` raises every errno number, whose meaning and
 #: whose text (the C library's `strerror`) are the platform's.
 #: ``membership_records_paths_platform`` holds the cases whose reference
@@ -629,6 +640,7 @@ PLATFORM_GATED = frozenset(
         "hooks",
         "location_probe_errno",
         "membership_records_paths_platform",
+        "machine_facts_platform",
     }
 )
 

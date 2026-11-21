@@ -12,6 +12,8 @@
 
 use crate::pyvalue::{self, PyError, PyStr, PyValue};
 
+pub mod facts;
+
 /// `MACHINE_ID_FILE`.
 pub const MACHINE_ID_FILE: &str = "machine-id";
 /// `MACHINE_FACTS_FILE`.

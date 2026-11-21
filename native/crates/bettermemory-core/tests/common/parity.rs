@@ -204,6 +204,11 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "capture_vocabulary_python.jsonl" => &[Python],
         // `str.isspace` and `str.isalnum` past ASCII (`gen_control_tokens`).
         "control_tokens_unicode.jsonl" => &[Unicode],
+        // `str.isspace` and `str.splitlines` past ASCII (`gen_machine`).
+        "machine_facts_unicode.jsonl" => &[Unicode],
+        // Which birth time `os.stat_result` carries is the release's and
+        // the platform's (`gen_machine`).
+        "machine_facts_platform.jsonl" => &[Python, Platform],
         // `str.isspace`, `str.istitle`, the general category and `\w`, `\d`
         // past ASCII (`gen_durability`).
         "durability_unicode.jsonl" => &[Unicode],

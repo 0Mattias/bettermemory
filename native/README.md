@@ -31,7 +31,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl` |
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store` | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_darwin.jsonl` |
-| `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone` | `machine_identity.jsonl`, `machine_identity_python.jsonl` |
+| `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record` | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
 | `verify_anchoring` | unit 1a of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`) | `verify_anchoring_sparse.jsonl` |
@@ -613,20 +613,20 @@ machine. `check_import_fork` decides when a store takes a new store id.
 | function | reference lines | what it needs from the machine | status |
 | --- | --- | --- | --- |
 | the constants (`MACHINE_ID_FILE`, `MACHINE_FACTS_FILE`, `_ID_HEADER`, `_CROCKFORD`) | 55-58 | nothing | unit 1, built |
-| `_ID_RE`, `_LINUX_MACHINE_ID` | 59-60 | nothing | unit 2 (with `_read_id`) |
+| `_ID_RE`, `_LINUX_MACHINE_ID` | 59-60 | nothing | unit 2, built |
 | `MachineFacts`, `to_dict`, `from_dict` | 63-97 | nothing | unit 1, built |
 | `MachineIdentity` | 99-114 | nothing | unit 1, built |
 | `_identity_from` | 117-133 | nothing | unit 1, built |
 | `identity_to_json` | 136-146 | nothing | unit 1, built |
 | `new_machine_id` | 149-152 | `secrets.token_bytes(17)` | unit 1, built (the bytes are an argument) |
 | `is_clone` | 155-162 | nothing | unit 1, built |
-| `_HARDWARE`, `_clear_hardware`, `read_hardware_id` | 167-174, 235-253 | a process-wide memo, `sys.platform` | unit 2 (the memo a value the caller holds) |
-| `_darwin_hardware` | 177-203 | `gethostuuid(3)`, else `ioreg` once | unit 2 (both answers arguments; `ioreg`'s output parsed here) |
-| `_linux_hardware` | 206-214 | two files | unit 2 (the file-system trait) |
-| `_windows_hardware` | 217-232 | the registry's MachineGuid | unit 2 (the value an argument) |
-| `current_hostname` | 256-261 | `socket.gethostname` | unit 2 (an argument) |
-| `_file_object` | 264-274 | `os.stat` (device, inode, birth time) | unit 2 (the file-system trait) |
-| `_read_id`, `_read_record` | 279-295 | two files | unit 2 |
+| `_HARDWARE`, `_clear_hardware`, `read_hardware_id` | 167-174, 235-253 | a process-wide memo, `sys.platform` | unit 2, built (the memo a value the caller holds) |
+| `_darwin_hardware` | 177-203 | `gethostuuid(3)`, else `ioreg` once | unit 2, built (both answers arguments; `ioreg`'s output parsed here) |
+| `_linux_hardware` | 206-214 | two files | unit 2, built (the file-system trait) |
+| `_windows_hardware` | 217-232 | the registry's MachineGuid | unit 2, built (the value an argument) |
+| `current_hostname` | 256-261 | `socket.gethostname` | unit 2, built (`location_probe::Host`) |
+| `_file_object` | 264-274 | `os.stat` (device, inode, birth time) | unit 2, built (`IdFileStat`) |
+| `_read_id`, `_read_record` | 279-295 | two files | unit 2, built |
 | `_write_record` | 298-311 | `atomic_write_bytes`, the clock | unit 3 |
 | `open_machine` | 314-383 | the state directory, both facts, randomness | unit 3 |
 | `check_import_fork` | 389-403 | a store open for writing | with the store's membership unit |
@@ -733,6 +733,100 @@ first 17 of SHA-256(`b"machine-id " + i` as four big-endian bytes); the
 facts are the product of four hardware ids, four hostnames and four id
 file objects. Texts spelled by `repr` in the ungated file are ASCII or
 lone surrogates, which no Unicode version spells differently.
+
+### Unit 2, as built (`machine::facts`)
+
+`native/crates/bettermemory-core/src/machine/facts.rs`. Every effect is an
+argument: files through `fsdata::Fs` (`open_waiting`, which blocks on a
+FIFO as `open()` does, then reads to the end), the id file's stat through
+the new trait `IdFileStat`, the host name through `location_probe::Host`,
+the platform's answers through `HardwareSource` (`gethostuuid`, `ioreg`'s
+output, MachineGuid), and the platform as the `sys.platform` text.
+
+- `read_text` is `Path.read_text`: UTF-8 strict (or ASCII for
+  `_linux_hardware`), then universal newlines (`\r\n` and a lone `\r`
+  become `\n`). A BOM is kept. A path holding a NUL is ValueError.
+- `read_id` is `_read_id`: `str.splitlines` (every boundary: `\n`, `\r`,
+  `\x0b`, `\x0c`, `\x1c` to `\x1e`, `\x85`, U+2028, U+2029), the header
+  compared after `str.strip()` (Python whitespace, `\x1c` to `\x1f`
+  among it), the second line stripped and held to `_ID_RE`. OSError and
+  UnicodeDecodeError give None; ValueError (a NUL in the path) is raised,
+  as the reference catches neither.
+- `read_record` is `_read_record`: `json::loads` of the text; any
+  ValueError (a decode error, an int past 4,300 digits, a NUL in the
+  path) and a value that is not an object give None; RecursionError is
+  returned as Err, as the reference does not catch it.
+- `darwin_hardware` takes `gethostuuid`'s 16 bytes (None where the call
+  fails or raises) and `ioreg`'s output as a closure asked only when
+  there are none. The closure answers the text as `subprocess.run(...,
+  text=True)` gives it (the locale's encoding, universal newlines), None
+  where the spawn raises, and Err(UnicodeDecodeError) where the output
+  does not decode, which the reference raises out of `read_hardware_id`; the bytes are spelled as `str(uuid.UUID(bytes=...))
+  .upper()`. `windows_hardware` is `str(value) if value else None` over
+  the registry's value (Python truthiness, `machine::py_text`).
+  `linux_hardware` reads the given paths (`LINUX_MACHINE_ID` in use) and
+  answers the first that reads as ASCII and is not blank after `strip()`.
+- `read_hardware_id` dispatches on `darwin`, `win32` and a platform
+  starting with `linux`, through `HardwareMemo`, a value the caller
+  holds: `get_or_fill` keeps a None answer too, `clear` is
+  `_clear_hardware`.
+- `current_hostname` decodes the host's bytes with `surrogateescape`
+  (`os.fsdecode`), None for an empty name or a failed call.
+- `file_object` is `_file_object`: (device, inode, birth time) as texts,
+  None where the stat raises OSError, ValueError raised for a NUL.
+  CPython 3.13.13 on macOS gives only the float `st_birthtime`, made as
+  `bsec + 1e-9 * bnsec` with `bsec` an `unsigned long`
+  (`birth_seconds`), and `_file_object` writes `int(seconds * 1e9)`
+  (`ns_of_seconds`, exact however large); Windows gives
+  `st_birthtime_ns`; Linux gives neither (`statx`'s birth time is not
+  read). `BIRTH_NS` (`cfg!(windows)`) follows the record of
+  `machine_facts_platform.jsonl`'s header, which the golden test checks.
+  `StdIdFileStat` reads `MetadataExt` and `Metadata::created`, the birth
+  time only on macOS. Under Windows it answers `NotPorted`: the crate's
+  stated Windows gap (ENG-124), checked under `cfg(windows)` in the
+  platform test and recorded as class os by `machine_facts_not_posix`.
+  `seconds_of_time` turns `Metadata::created` into the floor form of
+  `st_birthtimespec`. `ns_of_seconds` raises ValueError for NaN and
+  OverflowError for an infinity, as `int` does.
+
+Regular expressions: both are matched by hand under rule 3 of the regular
+expression decision (no choice, no nesting), each a literal of the
+reference that the inventory of `pyre.jsonl` already reads, and named here
+for pyre-8's cross-check against the engine. `_ID_RE` under `fullmatch`
+(`is_machine_id`): exactly 26 code points of `[0-9A-HJKMNP-TV-Z]`.
+`"IOPlatformUUID" = "([^"]+)"` under `search` (`ioreg_uuid`): each place
+the literal prefix starts is tried in order, and the first whose value
+runs one or more code points (a newline among them) to a closing quote
+answers; an empty value or an unclosed one moves to the next place.
+
+Left for unit 3: `_write_record`, `open_machine`, and the machine's own
+`HardwareSource` (the `gethostuuid` call and the `ioreg` spawn).
+`check_import_fork` stays with the store's membership unit.
+
+#### Findings about the reference (reproduced, pinned)
+
+- macOS's `st_birthtime` holds the seconds as `unsigned long`, so an id
+  file born before 1970 reads with a birth time near 2**64 seconds.
+  Reproduction: `birth_text(Some((-1, 0)), false)` is
+  `18446744073709551616000000000` (`machine_facts_kills`).
+- The birth time read from the float loses nanoseconds: a file born at
+  1700000000.123456789 s reads `1700000000123456768`, so two files born
+  within the same few hundred nanoseconds may read alike. Pinned in the
+  `fo` rows.
+- `_read_id` catches OSError and UnicodeDecodeError but not ValueError,
+  so a state directory whose path holds a NUL raises from `_read_id`
+  where `_read_record` answers None. Pinned in the `rid` and `rrec` rows.
+
+#### Tests
+
+| test (file: function) | golden file | class |
+| --- | --- | --- |
+| `golden_machine_facts`: `machine_facts_every_case` | `machine_facts.jsonl` (156 cases: `_read_id` over 46 files and three paths, `_read_record` over 23 files, three paths and two depths, `_linux_hardware`, `_darwin_hardware`, `_windows_hardware`, `current_hostname`, `read_hardware_id` per platform and its memo, `_file_object` over patched stats) | i |
+| `golden_machine_facts`: `machine_facts_unicode_every_case` | `machine_facts_unicode.jsonl` (8 cases: line breaks and whitespace past ASCII) | ii (Unicode) |
+| `golden_machine_facts`: `machine_facts_platform_every_case` | `machine_facts_platform.jsonl` (1 case: a real file's stat, the birth time attribute in the header) | ii (Python), iii (platform) |
+| `machine_facts_kills` (12) | none | i |
+| `machine_facts_robustness` (5): many line breaks, near misses and an unclosed value for the `ioreg` search (each tenfold within `TENFOLD`), JSON a million deep and 200,000 keys wide, `i64` birth bounds | none | i |
+| `machine_facts_not_posix` (1, Windows only): `_file_object` over a live file declines (ENG-124) | `machine_facts_platform.jsonl` | os |
 
 ## What is in force at delivery (`in_force.py`)
 
@@ -14869,9 +14963,10 @@ What the reference has and this build does not, by area:
   the class compiler and the lowering: the matcher and the methods (pyre-5
   to pyre-6), the inventory proof, the cross-check of the hand-written
   matchers and the memo (pyre-7 to pyre-9).
-- This machine's id past its record and clone rule: `machine.py`'s
-  hardware and hostname facts and the machine files (unit 2),
-  `_write_record` and `open_machine` (unit 3), and `check_import_fork`.
+- This machine's id past its record, clone rule, facts and file reads:
+  `machine.py`'s `_write_record` and `open_machine` (unit 3), the std
+  `HardwareSource` (`gethostuuid` and the `ioreg` spawn), and
+  `check_import_fork`.
 - The telemetry rows past their kinds and classes: `events.py`'s query
   redaction and named event fields (unit 2, which reads
   `credentials.secret_spans`), the suppression, the hook deadline and the
