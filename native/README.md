@@ -91,7 +91,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks` | `membership_shared.jsonl`, `membership_shared_python.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
-| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl` |
+| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal`; unit mqueries of `membership_queries.py` in `queries`: `home`, `homes`, `_home_from`, `admit_recall`, `restated`, `_written_afresh`, `_restatement`, `filed_elsewhere`, the trait `ScopeReader` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl`, `membership_queries.jsonl` |
 | `location_continuity` | `location.continuity` (`location.py` 1040-1094) | `location_continuity.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `entry`, `cli::common` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff` | `cli_common.jsonl`, `cli_common_python.jsonl` |
@@ -2897,7 +2897,8 @@ further `impl<S: MembershipStore> Membership<S>` blocks over the
 | `pending` | 1366-1370 | `membership_queries.restated` | membership-4 |
 | `settle_legacy_questions` and the rest to 1558 | 1488-1558 | the store, `membership_queries` | membership-4 |
 | `below_root`, `_declared_below`, `_checkout_name`, `_give_token`, `token_written` | 1559-1674 | the token writer | membership-3 |
-| `_record_counts`, `_records_by_project`, `_home_from`, `why` | 1675-1826 | `Store.membership_log` | membership-4 (deferred) |
+| `_record_counts`, `_records_by_project`, `why` | 1675-1699, 1730-1826 | `Store.membership_log` | membership-4 (deferred) |
+| `_home_from` | 1700-1729 | nothing beyond the above | built (mqueries) |
 | `portable_export`, `_foreign`, `_decides`, `__all__` | 1827-1996 | nothing beyond the above | membership-4 (deferred) |
 
 The cut, leaves first: membership-1 (this unit) is the state and the reads
@@ -3155,6 +3156,94 @@ No pattern of the reference is matched here. Fixtures:
 `proposal` kinds added and writes `membership_proposals.jsonl` (not
 gated). Tests: `golden_membership_proposals`,
 `membership_proposals_kills`, `membership_proposals_robustness`.
+
+### Unit mqueries (`membership_queries.py`, the read side)
+
+`src/membership/queries.rs`: further `impl Membership<S>` blocks over
+the state of membership-1.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `home`, `homes` | 69-86 | the store, its `declared_scopes` (`ScopeReader`) | built |
+| `_home_from` (`membership.py`) | 1700-1729 | the store | built |
+| `admit_recall` | 92-131 | the store | built |
+| `_QUOTED_LINE`, `restated`, `_written_afresh`, `_restatement` | 138-252 | the store, the project file (a closure) | built |
+| `filed_elsewhere` | 255-277 | the store, the project file (a closure) | built |
+| `first_output` | 280-292 | `_open_proposals` | lane mlegacy |
+| `handoff` to `health` | 295 on | the run-state and the health data | later units |
+
+- `_store.declared_scopes` is not a method of `MembershipStore`: it is the
+  trait `ScopeReader`, a supertrait of it, and `home`, `homes` and
+  `admit_recall` sit in an impl block bound on both. The other functions
+  need only `MembershipStore`, so lane mlegacy calls them on any store.
+- `_home_from` answers `HomeRow`: the row's own columns (`record_id`,
+  `kind`, `checkout` as stored, `rule`, `decided`, `recorded_project`)
+  and the part `relation` reads, `store::caller::Home`. Its columns are
+  read in the reference's order, so a row that lacks two of them raises
+  the KeyError the reference raises. `homes` answers the pairs in the
+  order of the reference's dict: a record id seen twice keeps its first
+  place and takes the later row.
+- `admit_recall` takes the admission as text, as the reference does: an
+  admission that names no surface raises ValueError (`unknown surface
+  ...`) at the first hit that has a home, inside the call, so the call
+  rolls back; with no such hit it is written in the event as given. The
+  suppression reasons are tried in the reference's order (`no_home`,
+  `unresolved`, then the relation), and the `recall_suppressed` payload
+  keeps the keys `surface`, `admission`, `checkout`, `caller_rule`,
+  `suppressed` in that order.
+- `filed_elsewhere` reads the root project file through a closure
+  `&dyn Fn(&[u32]) -> Result<Option<PyStr>, io::Error>` given the newest
+  view's path as stored. The closure joins `bettermemory.toml` as `Path`
+  does and answers in one call whether the file is present and parses to
+  a ProjectFile, with its id: None for a missing file or one that names
+  no project, an error of kind `InvalidData` for a ValueError of
+  `project_file.parse` (which `_restatement` catches and a direct call
+  raises), and any other error for an OSError of `exists` or `parse`
+  (False, 270-272). Lane leafpaths supplies the closure over
+  `project_file.parse` when it folds. The checkout's canonical project is
+  read only once a binding is found, as the reference's `and` reads it.
+- `restated` and `_restatement` catch by the class of `Raised`: a store
+  error and any other class pass through. `_written_afresh` raises the
+  reference's class at each step: IndexError for no candidate, KeyError
+  for a missing evidence key or unknown project, AttributeError where
+  `ev.get` or `codes.get` meets no mapping, TypeError for a code list
+  that is no iterable of str, ValueError and TypeError from `int()`
+  (`pyvalue::py_int`). `int(ev.get("held") or 0)` and
+  `int(ev.get("recorded") or 0)` read every falsy value as 0, so a
+  missing `recorded` writes 0 recorded commits, not `memories`.
+  OverflowError (an infinite float) is not in the caught list and
+  propagates, as in the reference.
+- The first-sight test of 170-172 is a suffix test of the stored line
+  against the old separate answer; a quoted line of any other kind but
+  the two contradictions is shown as stored.
+- No regular expression is used.
+
+Stated difference: `int()` of an evidence count past i64 (the lines of
+`membership_lines` take i64) answers `NotPorted` at the first such
+count, and `NotPorted` propagates out of `restated`, so out of any
+caller that shows a session's first output or a project's pending
+questions. The reference instead writes the line with the whole number.
+The decline covers more than that line: a float count of 2**63 or more
+(1e30) declines too; where the reference would have gone on to raise a
+caught error (KeyError for a missing `episodes` or an unknown candidate)
+and fallen back to `_restatement`'s line, the port declines; and where a
+later count is infinite the reference raises OverflowError and the port
+`NotPorted`. In every case the port declines and never shows a wrong
+line.
+
+Reference finding, reproduced: `_restatement` is documented as one that
+"does not fail", yet a subproject contradiction whose evidence is no
+mapping raises AttributeError from `evidence.get("dir")`, and an
+infinite float count in a legacy question's evidence raises
+OverflowError out of `restated`. Through `_proposal_from` the evidence is
+always a dict, so only the second is reachable from a stored row.
+
+Fixtures: `tests/contract/gen_membership_queries.py` runs the reference
+over the recording store of `gen_membership_core` with `declared_scopes`
+over a `scoped` table and the project file scripted per view path (the
+module's `Path` and `project_file.parse` replaced while it writes), and
+writes `membership_queries.jsonl` (not gated, ASCII only). Tests:
+`golden_membership_queries`, `membership_queries_kills`.
 
 ## The fold check
 
@@ -5023,6 +5112,8 @@ that Unicode too.
 | `golden_membership_lines`: `membership_lines_unicode_every_case` | `membership_lines_unicode.jsonl` | ii (Unicode) |
 | `golden_membership_lines`: `membership_lines_python_every_case` | `membership_lines_python.jsonl` | ii (Python) |
 | `membership_lines_robustness` (8) | none | i |
+| `golden_membership_queries`: `membership_queries_every_sequence` | `membership_queries.jsonl` | i |
+| `membership_queries_kills` (5) | none | i |
 | `golden_claims`: `claims_every_case` | `claims.jsonl` | i |
 | `golden_claims`: `claims_unicode_every_case` | `claims_unicode.jsonl` | ii (Unicode) |
 | `golden_claims`: `claims_python_every_case` | `claims_python.jsonl` | ii (Python) |

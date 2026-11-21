@@ -14,6 +14,7 @@ pub mod history;
 pub mod machines;
 pub mod projects;
 pub mod proposals;
+pub mod queries;
 pub mod reads;
 pub mod views;
 pub mod vocab;

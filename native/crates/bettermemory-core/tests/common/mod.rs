@@ -23,6 +23,7 @@ pub mod location_stamps;
 pub mod location_view;
 pub mod membership_core;
 pub mod membership_proposals;
+pub mod membership_queries;
 pub mod membership_rows;
 pub mod membership_views;
 pub mod membership_writes;
