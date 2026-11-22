@@ -213,6 +213,7 @@ from . import (
     gen_standing_reads,
     gen_mirror_format,
     gen_verify_status,
+    gen_response_write,
     gen_response_hits,
     gen_response_reason,
     gen_response_render,
@@ -436,6 +437,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "durability": gen_durability.generate,
     "durability_unicode": gen_durability.generate_unicode,
     "verify_status": gen_verify_status.generate,
+    "response_write": gen_response_write.generate,
+    "response_write_posix": gen_response_write.generate_posix,
     "response_hits": gen_response_hits.generate,
     "response_reason": gen_response_reason.generate,
     "response_render": gen_response_render.generate,
@@ -1093,6 +1096,8 @@ PLATFORM_GATED = frozenset(
 #: loop and a mode-000 file, worded by the C library (`gen_project_file`).
 POSIX_ONLY = frozenset(
     {
+        # `os.fsencode` encodes a surrogate with `surrogatepass` on Windows.
+        "response_write_posix",
         "attestation_paths_posix",
         "project_walk",
         # The gates resolve paths through `posixpath`; `ntpath` asks Windows.

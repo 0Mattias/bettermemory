@@ -52,6 +52,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
 | `response_rows` | `_response.py` unit resphit: `SIMILAR_HITS_SHOWN`, `ResponseBuilder.__init__`, `hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict` | `response_hits.jsonl` |
+| `response_write` | `_response.py` unit respwrite: `ResponseBuilder.committed`, `review`, `roster`, `similar_to_dict`, `add_similar`, `transient_to_dict`, `credential_to_dict`, `origin_to_dict`, `actor_to_dict` (free functions) | `response_write.jsonl`, `response_write_posix.jsonl` |
 | `handlers::verify` | unit h_verify-1 of `handlers/verify.py`: the caps, `_check_verify_args`, `_refuse_stale_stored_claims`, `_refuse_unverifiable_stored_attestations`, `_relative_to_root`, `_refuse_evidence_free_stamp`, `_record_root`, `_within`, `_is_callers_tree` | `handlers_verify_args.jsonl`, `handlers_verify_args_unicode.jsonl`, `handlers_verify_gates.jsonl`, `handlers_verify_gates_python.jsonl` |
 | `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations`; unit passes: `_relative_attestation_keys`, `_read_attestations`, `_AttestationRead`, `_attestation_read`, `_read_citations`, `_check_anchored_attestations`, `_is_checkable_citation`, `_check_anchored_citations`; unit detect: `holds_commit`, `detect_path_drift`, `_detect_unanchored`, `_AnchoredRead` (`report`), `_detect_anchored` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl`, `verify_anchoring_passes.jsonl`, `verify_anchoring_passes_unicode.jsonl`, `verify_anchoring_detect.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
@@ -921,6 +922,74 @@ negative zero) and texts with a lone surrogate (through `text_field`).
 Tests: `golden_response_hits`, `response_hits_kills` and
 `response_hits_robustness` (integer and calendar bounds, 200,000 paths
 per bucket, linear growth).
+
+### Unit respwrite: the write and review shapes (`response_write.rs`)
+
+`response_write.rs` (314 non-blank lines of source) ports the methods
+that shape a write's answer, confirmed against `_response.py` at
+bf7e17ac:
+
+| Function | Reference lines | Needs from the machine | Status |
+|---|---|---|---|
+| `committed` | 1106-1180 | nothing | built |
+| `review` | 1182-1203 | nothing | built |
+| `roster` | 1205-1230 | nothing | built |
+| `similar_to_dict` | 1232-1254 | nothing | built |
+| `add_similar` | 1256-1264 | nothing | built |
+| `transient_to_dict` | 1266-1268 | nothing | built |
+| `credential_to_dict` | 1270-1277 | nothing | built, over `(kind, snippet)` |
+| `origin_to_dict` | 1279-1307 | the host's `os.fsencode` | built, the encoding a parameter |
+| `actor_to_dict` | 1309-1322 | nothing | built |
+
+- None of these methods reads `stale_after_days`, so each is a free
+  function; `ResponseBuilder` may wrap them as methods. `SIMILAR_HITS_SHOWN`
+  is the one in `response_rows`, not a copy.
+- `committed` takes its eight optional arguments in `CommittedExtras`.
+  Each is omitted when None or empty, `hint` when None or the empty text,
+  as the reference's truth tests read them; the order of the keys is the
+  reference's (`warnings`, `supersedes`, `conflicts_filed`,
+  `update_suggested`, `extends`, then `hint`). `supersedes`,
+  `conflicts_filed` and `extends` are dicts the handler built, passed
+  through as `PyValue`s.
+- `add_similar` replaces a key already present in place, as a dict
+  assignment does, and appends it otherwise.
+- `credential_to_dict` takes the match's `kind` and `snippet`, since
+  `CredentialMatch` is not ported yet.
+- `actor_to_dict` takes `records::Actor`, which `Memory.actor` holds. The
+  reference annotates `identity.Actor`; `models.py` imports that very
+  class, and `records::Actor` and `identity::Actor` carry the same six
+  fields in the same order, so the two agree. `Actor.is_empty` ignores
+  `sources`, so an actor holding only `sources` answers None.
+- `origin_to_dict` reproduces `model_dump(mode="json", exclude_none=True)`
+  through `Origin::dump`, `setdefault("source", "process-cwd")` (an empty
+  `source` stays), and for each of `cwd`, `worktree_root`, `repo`,
+  `branch` holding a surrogate sets the field to None and appends
+  `<field>_bytes_base64`. `os.fsencode` is UTF-8 with `surrogateescape` on
+  POSIX and with `surrogatepass` on Windows: `FsEncoding` names the two,
+  `HOST_FS_ENCODING` is set by `cfg(windows)`, and `origin_to_dict_as`
+  takes it as a parameter so both branches are tested here. Under
+  `surrogateescape` a surrogate outside U+DC80-U+DCFF is the reference's
+  `UnicodeEncodeError`, answered as `Err(UnicodeEncodeError)`; under
+  `surrogatepass` nothing in range raises. A surrogate in `source` is left
+  as it is.
+- No regular expression is involved.
+
+Fixtures: `tests/contract/gen_response_write.py` writes
+`response_write.jsonl` (not gated): `committed` with each optional
+argument empty and filled, all of them, the actor shapes and naive
+stamps, `add_similar` through `related` and `removed_related` at 0, 5, 6
+and 12 hits; a digest row over all 256 combinations of the optional
+arguments; `similar_to_dict` with the removal keys, the floats `json`
+spells its own way and lone surrogates; `add_similar` alone; the transient,
+credential, review, roster and actor shapes; origins without surrogates.
+`response_write_posix.jsonl` (POSIX only: `os.fsencode` follows the
+system) holds the origins whose fields hold a surrogate, including the
+`UnicodeEncodeError`. Tests: `golden_response_write`,
+`golden_response_write_posix` (unix), `response_write_not_posix` (records
+the Windows gap, class os), `response_write_kills` (both encodings,
+base64 padding, the list bound, the key order) and
+`response_write_robustness` (a million hits, fields of a million code
+points, linear growth).
 
 ## The Stop and UserPromptSubmit hooks (`hook.py`)
 
@@ -22018,7 +22087,11 @@ What the reference has and this build does not, by area:
   `check_reason`, `verdict_and_reason`, the trust appliers,
   `verdict.with_objection`, `render_hit`, `render_show` and the search
   and list serializers (`SIMILAR_HITS_SHOWN`, `ResponseBuilder.__init__`,
-  `hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict`) are built; the memo's key and value types, its
+  `hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict`) and the
+  write and review shapes (`committed`, `review`, `roster`,
+  `similar_to_dict`, `add_similar`, `transient_to_dict`,
+  `credential_to_dict`, `origin_to_dict`, `actor_to_dict`) are built;
+  `ResponseBuilder`'s attach passes, the memo's key and value types, its
   one instance and its `_caches` registration (the drift pass) are not.
 - The write gates past the control tokens and the dedup: `credentials.py`
   after its vendor-prefixed detectors and its value gate (the generic and

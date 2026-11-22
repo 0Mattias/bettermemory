@@ -278,6 +278,9 @@
 //!   staleness, and phrase-match attribution of memories to a reply;
 //! - [`response_rows`]: `ResponseBuilder`'s search and list serializers
 //!   (`hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict`);
+//! - [`response_write`]: `ResponseBuilder`'s write and review shapes
+//!   (`committed`, `review`, `roster`, the similar and transient rows, the
+//!   origin and actor dicts);
 //! - [`response_links`], [`response_memo`] and [`verdict_signals`]: the
 //!   response layer's leaves (`candidate_link_rows`, the per-hit drift
 //!   memo as a generic bounded LRU, and the verdict ladder);
@@ -429,6 +432,7 @@ pub mod response_reason;
 pub mod response_render;
 pub mod response_rows;
 pub mod response_trust;
+pub mod response_write;
 pub mod search;
 pub mod search_dedup;
 pub mod session;

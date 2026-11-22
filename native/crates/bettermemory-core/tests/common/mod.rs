@@ -43,6 +43,7 @@ pub mod recall_prompt;
 pub mod record_calls;
 pub mod repository_history;
 pub mod response_leaf;
+pub mod response_write;
 pub mod rows;
 pub mod schema_steps;
 pub mod session;
