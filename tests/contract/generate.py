@@ -301,6 +301,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "argparse_subparsers_python": gen_argparse.generate_subparsers_python,
     "transcript": gen_transcript.generate,
     "transcript_python": gen_transcript.generate_python,
+    "transcript_turns": gen_transcript.generate_turns,
     "origin_history": gen_origin_history.generate,
     "origin_dates_reads": gen_origin_dates_reads.generate,
     "origin_dates_memo": gen_origin_dates_memo.generate,

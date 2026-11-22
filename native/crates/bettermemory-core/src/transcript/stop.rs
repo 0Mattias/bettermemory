@@ -8,14 +8,14 @@ use crate::json;
 use crate::pyvalue::{PyError, PyStr, PyValue};
 
 /// `dict.get(key)` of a row's string key.
-fn get<'v>(dict: &'v [(PyValue, PyValue)], key: &str) -> Option<&'v PyValue> {
+pub(super) fn get<'v>(dict: &'v [(PyValue, PyValue)], key: &str) -> Option<&'v PyValue> {
     dict.iter().find_map(|(k, v)| match k {
         PyValue::Str(s) if s.iter().copied().eq(key.chars().map(u32::from)) => Some(v),
         _ => None,
     })
 }
 
-fn is_str(value: Option<&PyValue>, text: &str) -> bool {
+pub(super) fn is_str(value: Option<&PyValue>, text: &str) -> bool {
     matches!(value, Some(PyValue::Str(s)) if s.iter().copied().eq(text.chars().map(u32::from)))
 }
 
@@ -62,13 +62,13 @@ pub struct StopTurn {
 /// `_Pending`: the newest text and model among the assistant rows read
 /// since the last user row.
 #[derive(Default)]
-struct Pending {
-    text: Option<PyStr>,
-    model: Option<PyStr>,
+pub(super) struct Pending {
+    pub(super) text: Option<PyStr>,
+    pub(super) model: Option<PyStr>,
 }
 
 impl Pending {
-    fn take<P: OwnerPrompt + ?Sized>(&mut self, row: &[(PyValue, PyValue)], owner: &P) {
+    pub(super) fn take<P: OwnerPrompt + ?Sized>(&mut self, row: &[(PyValue, PyValue)], owner: &P) {
         let Some(PyValue::Dict(message)) = get(row, "message") else {
             return;
         };

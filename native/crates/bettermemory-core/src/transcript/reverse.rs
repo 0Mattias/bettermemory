@@ -37,6 +37,10 @@ impl<F: Fs + ?Sized> Opener for FsOpener<'_, F> {
     fn read(&self, file: &mut F::File, n: usize) -> Result<Vec<u8>, OsFailure> {
         self.0.read(file, n).map_err(|_| OsFailure)
     }
+
+    fn is_file(&self, path: &[u8]) -> bool {
+        matches!(self.0.stat(path), Ok(stat) if stat.kind == Kind::Regular)
+    }
 }
 
 enum State<H> {

@@ -73,13 +73,19 @@ impl Opener for MemTranscript {
         file.at = end as u64;
         Ok(data[start..end].to_vec())
     }
+
+    fn is_file(&self, _path: &[u8]) -> bool {
+        self.refuse.is_none()
+    }
 }
 
 /// A call into `owner_prompt.py` and the answer the reference gave.
 #[derive(Clone, Debug)]
 pub enum Call {
     Submitted(bool),
-    Owner(Option<PyStr>),
+    /// `owner_prompt` with its `cut` and answer.
+    Owner(bool, Option<PyStr>),
+    Text(Option<PyStr>),
     Blocks(Option<PyStr>),
 }
 
@@ -105,7 +111,9 @@ impl Replay {
             .iter()
             .map(|c| match c[0].as_str().unwrap() {
                 "s" => Call::Submitted(c[1].as_bool().unwrap()),
-                "o" => Call::Owner(opt(&c[1])),
+                "o" => Call::Owner(true, opt(&c[1])),
+                "w" => Call::Owner(false, opt(&c[1])),
+                "x" => Call::Text(opt(&c[1])),
                 "t" => Call::Blocks(opt(&c[1])),
                 other => panic!("call {other}"),
             })
@@ -136,15 +144,20 @@ impl OwnerPrompt for Replay {
     }
 
     fn owner_prompt(&self, _row: &PyValue, cut: bool) -> Option<PyStr> {
-        assert!(cut, "stop_turn asks with the default cut");
         match self.next("owner_prompt") {
-            Call::Owner(answer) => answer,
+            Call::Owner(want, answer) => {
+                assert_eq!(cut, want, "owner_prompt's cut");
+                answer
+            }
             other => panic!("owner_prompt where the reference made {other:?}"),
         }
     }
 
     fn submitted_text(&self, _row: &PyValue) -> Option<PyStr> {
-        panic!("stop_turn makes no submitted_text call")
+        match self.next("submitted_text") {
+            Call::Text(answer) => answer,
+            other => panic!("submitted_text where the reference made {other:?}"),
+        }
     }
 
     fn text_blocks(&self, _content: &PyValue) -> Option<PyStr> {

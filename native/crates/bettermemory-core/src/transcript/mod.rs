@@ -1,14 +1,18 @@
 //! `transcript.py`: a Claude Code transcript read from its end, for the
 //! hooks. Unit transcript-1a: [`ReverseLines`] (the reader), `_row`,
-//! `_prompt_id` and [`stop_turn`] with [`StopTurn`]. The file is reached
+//! `_prompt_id` and [`stop_turn`] with [`StopTurn`]. Unit transcript-1b:
+//! [`interrupted_turns`] with [`InterruptedTurn`], [`owner_words`] and
+//! [`compact_marker`] with [`CompactMarker`]. The file is reached
 //! through [`Opener`] and the definition of the owner's words through
 //! [`OwnerPrompt`], so neither is an ambient call.
 
 pub mod reverse;
 pub mod stop;
+pub mod turns;
 
 pub use reverse::{FsOpener, ReverseLines};
 pub use stop::{prompt_id, row, stop_turn, StopTurn};
+pub use turns::{compact_marker, interrupted_turns, owner_words, CompactMarker, InterruptedTurn};
 
 use crate::pyvalue::{PyStr, PyValue};
 
@@ -40,6 +44,10 @@ pub trait Opener {
     /// `handle.read(n)` of a buffered binary file: `n` bytes, fewer only at
     /// the end.
     fn read(&self, file: &mut Self::File, n: usize) -> Result<Vec<u8>, OsFailure>;
+    /// `path.is_file()`: a regular file, links followed; False on any
+    /// error. Required, with no default, so an opener cannot answer
+    /// False by omission and make `owner_words` read no file.
+    fn is_file(&self, path: &[u8]) -> bool;
 }
 
 /// The calls `transcript.py` makes into `owner_prompt.py`. The module that

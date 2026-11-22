@@ -33,8 +33,11 @@
 //!   parse through, its first two units (optionals and positionals of one
 //!   argument, the error exits and the usage line; subparsers and the
 //!   PARSER `nargs`);
-//! - [`transcript`]: a transcript read from its end, its first unit
-//!   (`ReverseLines`, `_row`, `_prompt_id`, `stop_turn`), with the file
+//! - [`transcript`]: a transcript read from its end, whole: the reader,
+//!   the Stop turn, interrupted turns, the owner's words and the
+//!   compaction marker (`ReverseLines`, `_row`, `_prompt_id`,
+//!   `stop_turn`, `interrupted_turns`, `owner_words`, `compact_marker`),
+//!   with the file
 //!   and `owner_prompt.py` as traits;
 //! - [`owner_prompt`]: `owner_prompt.py` but `probe_text`, which callers
 //!   supply until the regular-expression engine reads its patterns;

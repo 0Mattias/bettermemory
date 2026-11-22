@@ -29,7 +29,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `argparse` | unit argparse-1a: the flat-parser subset of CPython 3.13.13's `argparse` the hook mains use: `ArgumentParser(prog, description, add_help)`, `add_argument` (`store`, `store_true`, `help`, `version`; positionals of one argument with `choices`), `parse_args` (`_parse_known_args` with `_parse_optional`, `_get_option_tuples`, `consume_optional`, `consume_positionals`, `_match_argument`, `_match_arguments_partial`, the negative-number matcher), `error` and `_format_usage` with its wrapping, as an `Outcome` without a process exit; unit argparse-1b: `add_subparsers(dest)` with its `prog` derived from the parent's positionals, `add_parser`, the PARSER `nargs` and `_SubParsersAction.__call__` with the child's namespace merged in the reference's order and its leftovers after the parent's | `argparse.jsonl`, `argparse_python.jsonl`, `argparse_subparsers.jsonl`, `argparse_subparsers_python.jsonl` |
 | `native_text`, `caches`, `daemon_client`, `install_hints` | `native_text.py` 15-40 (`has_surrogates`, `utf8_text`, `encoded_json`, `origin_projection`), `_caches.py` whole (`register` under a key, `clear_all`), `_daemon_client.py` 149-172 (`STORE_FILENAME` re-exported, `START_TIMEOUT_SECONDS`, `HOOK_TIMEOUT_SECONDS`, `HOOK_HARNESS_TIMEOUT_SECONDS`, `HOOK_MARGIN_SECONDS`, `hook_budget_seconds`), `_install_hints.py` 41-130 (every spelling) | `native_text.jsonl`, `daemon_client.jsonl`, `install_hints.jsonl` |
-| `transcript` | `transcript.py`'s first unit: `CHUNK_BYTES`, `WALK_BYTES`, `ReverseLines`, `_row`, `_prompt_id`, `StopTurn`, `_Pending`, `stop_turn`; the file (`Opener`) and `owner_prompt.py` (`OwnerPrompt`) are traits | `transcript.jsonl`, `transcript_python.jsonl` |
+| `transcript` | `transcript.py` whole: `CHUNK_BYTES`, `WALK_BYTES`, `ReverseLines`, `_row`, `_prompt_id`, `StopTurn`, `_Pending`, `stop_turn`, `InterruptedTurn`, `interrupted_turns`, `owner_words`, `CompactMarker`, `compact_marker`; the file (`Opener`) and `owner_prompt.py` (`OwnerPrompt`) are traits | `transcript.jsonl`, `transcript_python.jsonl`, `transcript_turns.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks; its second unit (`src/origin_history/located.rs`): `located_key`, `history_guard`, `cuts`, `shallow_file`, `cuts_in` | `origin_history.jsonl`, `origin_history_located.jsonl`, `origin_history_located_modes.jsonl`, `origin_history_cuts.jsonl` |
 | `origin_model` | `origin_model.py`'s `Origin` as captured: `CapturedOrigin`, the stored `records::Origin` with `_repo_url_alternates`, `git_indeterminate` and `git_refusal` beside it | `origin_model.jsonl` |
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves; `origin_dates::memo`: `_instant`, `commit_author_timestamps` and `_remember_dates` over the caller's `TimestampsMemo`, `MemoLeaves` and `ShallowHold` | `origin_dates_reads.jsonl`, `origin_dates_memo.jsonl` |
@@ -21425,10 +21425,11 @@ hooks. Its map, by function, against the reference at `origin/v9`:
 | `ReverseLines` | 58-130 | open, `fstat` size, seek, read | transcript-1a, built |
 | `_row`, `_prompt_id` | 131-148 | nothing (`json.loads`) | transcript-1a, built |
 | `StopTurn`, `_Pending`, `stop_turn` | 149-258 | through `ReverseLines` | transcript-1a, built |
-| `InterruptedTurn`, `interrupted_turns` | 259-400 | as `stop_turn`, `parse_event_ts` | transcript-1b |
-| `owner_words`, `compact_marker` | 400-450 | as `stop_turn` | transcript-1b |
+| `InterruptedTurn`, `interrupted_turns` | 258-356 | as `stop_turn`, `parse_event_ts` | transcript-1b, built |
+| `owner_words` | 359-396 | as `stop_turn`, and `Path.is_file` | transcript-1b, built |
+| `CompactMarker`, `compact_marker` | 399-438 | as `stop_turn`, `parse_event_ts` | transcript-1b, built |
 
-The module is cut in two: 1a (this unit, `src/transcript`) and 1b, which
+The module is cut in two: 1a (`src/transcript`) and 1b, which
 reads `owner_prompt(row, cut=False)` (reference line 388) and
 `datetime::parse_event_ts`.
 
@@ -21503,8 +21504,71 @@ transcripts) and `transcript_python.jsonl` (gated on the Python release:
 lines nested 20,000 deep). Tests: `golden_transcript`,
 `transcript_kills`, `transcript_robustness`.
 
-Left for transcript-1b: `InterruptedTurn`, `interrupted_turns`,
-`owner_words` and `compact_marker` (reference lines 259-450).
+What 1b (`transcript::turns`) reproduces:
+
+- `interrupted_turns`: the walk newest row first, grouping user rows by
+  `promptId` (a row without one, or with an empty one, is its own turn),
+  the end of the walk at the first user row stamped at or before `since`,
+  the reply and model taken from the assistant rows read before the turn's
+  newest user row (and, while still None, before older rows of the same
+  turn), the interrupt line found by `submitted_text(row).lstrip()`
+  (Python's `str.isspace`) starting with `INTERRUPT_OPENING`, `at` the
+  stamp of the turn's newest submitted row that carries one, and a turn
+  returned only when it holds the interrupt line, a stamp and a prompt.
+  The turns come oldest first.
+- The stamps are `parse_event_ts(row.get("timestamp"))`: an absent key,
+  null and any value that is not a `str` (a number, an object, a list)
+  are no stamp, as the reference's `isinstance(value, str)` declines them;
+  a `str` goes to `datetime::parse_event_ts`. Stamps are ordered by
+  instant, and `at` keeps the row's own offset (`isoformat` shows it).
+- A naive `since` (or `near`) cannot be ordered against the aware stamps
+  `parse_event_ts` answers: the reference raises TypeError at the first
+  comparison, and the port answers `Err(PyError::TypeError)` at the same
+  point, so a transcript with no stamped row answers without error.
+- `owner_words`: "" for `chars` at or below zero or a path that is not a
+  regular file (`Opener::is_file`, `Path.is_file`: links followed, False
+  on any error; the default declines with False, and `FsOpener` asks
+  `Fs::stat`); a line without the bytes `"user"` is not parsed (a user
+  row spelled with an escape is skipped, as in the reference);
+  `owner_prompt(row, cut=False)`, an empty text no piece; the count of
+  code points held with two for each separator, the walk stopped once it
+  reaches `chars`, the pieces joined by blank lines and cut from the
+  front to `chars` code points.
+- `compact_marker`: the reader's needle `compact_boundary`, rows of type
+  `system` and subtype `compact_boundary` only, a row with no stamp
+  passed over, `abs(stamp - near) > window` passed over (a negative
+  window holds nothing), the key the `uuid` when it is a nonempty `str`,
+  else the timestamp's own text (a parsed stamp is a `str`, so `str()` of
+  it is itself). The window is an `i128` count of microseconds, a
+  `timedelta`'s exact value; it also holds counts no `timedelta` can.
+- RecursionError from `_row` is raised out of all three, as in 1a.
+
+Decisions:
+
+- `Opener` gained `is_file` at its end with no default, so an opener that
+  forgets it fails to compile instead of answering no file. The two
+  openers, `FsOpener` and the test double `MemTranscript`, implement it.
+- `_Pending`, `get` and `is_str` of `transcript::stop` are shared with
+  `transcript::turns` (`pub(super)`), not copied.
+- No regular expression is used: transcript-1b has no pattern.
+- No path is resolved, so the Windows flavour has no gap here.
+
+Golden file: `transcript_turns.jsonl` (not gated: no path, errno or
+system text; every stamp is the reference's `fromisoformat` of the row's
+text). Each transcript is written once as a `file` row and named by index.
+It holds 31 `interrupted_turns` cases over transcripts and `since` values
+(boundaries at a stamp, offsets either side, a naive `since`, timestamps
+missing, null, a number, a float, an object, a list, naive text and text
+that does not parse, rows without ids, harness rows, chunk sizes and
+budgets), `owner_words` over 23 cases (`chars` from -1 to 10^12 across
+every cut point, chunk sizes, budgets, a missing file, a folder, lines
+with `"user"` that are not user rows) and `compact_marker` over 19 cases
+(inclusive and negative windows, keys from an empty and a numeric uuid,
+non-str and unparsable stamps, offsets, a naive `near`). Tests:
+`golden_transcript_turns`, `transcript_turns_kills`,
+`transcript_turns_robustness`.
+
+The module is complete.
 
 ## The owner's prompt and the override policy (`owner_prompt.py`, `policy.py`)
 
