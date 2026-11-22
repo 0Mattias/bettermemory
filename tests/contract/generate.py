@@ -101,6 +101,7 @@ from . import (
     gen_githead_discovery,
     gen_githead_signature,
     gen_location_probe,
+    gen_ntrealpath,
     gen_location_caller_state,
     gen_location_resolve,
     gen_location_hook,
@@ -454,6 +455,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "location_probe": gen_location_probe.generate,
     "location_probe_python": gen_location_probe.generate_python,
     "location_probe_errno": gen_location_probe.generate_errno,
+    "ntrealpath_python": gen_ntrealpath.generate_python,
     "location_caller_state": gen_location_caller_state.generate,
     "location_resolve": gen_location_resolve.generate,
     "location_hook": gen_location_hook.generate,
@@ -741,6 +743,8 @@ PYTHON_VERSION = "3.13.13"
 #: ``location_probe_python`` probes link loops, which 3.11's `realpath`
 #: walks otherwise, and paths holding a NUL, whose ValueError text 3.11
 #: words otherwise (`gen_location_probe`).
+#: ``ntrealpath_python`` holds `ntpath.realpath`'s Windows walk, which
+#: 3.11, 3.12 and 3.13 each walk differently (`gen_ntrealpath`).
 #: ``argparse_python`` holds `argparse`'s error texts, usage lines, help and
 #: version output and its prefix, ``=``, cluster and ``--`` readings as
 #: 3.13.13 gives them; 3.12 words the choices and wraps the usage line
@@ -836,6 +840,7 @@ PYTHON_GATED = frozenset(
         "machine_open_platform",
         "store_reads_seams_python",
         "location_probe_python",
+        "ntrealpath_python",
         "store_rotation_python",
         "log_keyfiles_posix_python",
         "machine_facts_python",

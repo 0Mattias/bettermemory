@@ -9,8 +9,13 @@
 //! ([`Host`]: `socket.gethostname()` and `os.strerror`). A path is bytes,
 //! as `os.fsencode` spells the reference's `str`.
 //!
-//! POSIX only: the Windows flavour (`ntpath.realpath`, and `view_path`'s
-//! drive rule) is not ported and answers [`Declined::NotPorted`]. Where
+//! [`view_path`] and [`probe`] over an [`Fs`] alone answer
+//! [`Declined::NotPorted`] for the Windows flavour; [`view_path_windows`]
+//! and [`probe_windows`] are the Windows flavour over the Windows calls
+//! ([`FinalPath`]: `ntpath.realpath` and `abspath`, with `view_path`'s
+//! drive rule). A path there is `os.fsencode`'s UTF-8; one that is not
+//! UTF-8 declines ([`Declined::Unknown`]). [`path_state`] is the same on
+//! both: the host's `os.stat` and `strerror`. Where
 //! the reference would print text the port cannot know (`os.strerror`
 //! off POSIX, a stat with no device or inode) the answer is
 //! [`Declined::Unknown`], never a guess. The detail of an OSError is the
@@ -19,10 +24,14 @@
 //! 0 `str(exc)` as CPython's `os.stat` raises it; only an error with no
 //! errno at all, which `os.stat` never raises, declines.
 
-use crate::fsdata::realpath::{abspath, realpath, Unresolved};
+use crate::fsdata::realpath::{
+    abspath, nt_abspath, nt_realpath, realpath, FinalPath, NtRaised, Unresolved,
+};
 use crate::fsdata::{Flavour, Fs, Numbered, PyErr, StatResult};
 use crate::gitconfig::paths::repr_text;
+use crate::gitfile_rule::hostpath::text;
 use crate::gitfile_rule::probe::{path_gone, Raised};
+use crate::pyvalue::PyStr;
 
 /// `INDETERMINATE`: the state of a location nothing could be read for.
 pub const INDETERMINATE: &str = "indeterminate";
@@ -257,6 +266,123 @@ pub fn probe<F: Fs + ?Sized, H: Host + ?Sized>(
         Ok(real) => real,
         Err(Some(declined)) => return Err(declined),
         Err(None) => path.to_vec(),
+    };
+    let (Some(dev), Some(ino)) = (st.dev, st.ino) else {
+        return Err(Declined::Unknown);
+    };
+    Ok(Probe {
+        cwd: resolved,
+        answer: ProbeAnswer::Present {
+            dev,
+            ino,
+            hostname: hostname(host),
+        },
+    })
+}
+
+/// What `view_path` raises where the reference lets an error through:
+/// the UnboundLocalError of `ntpath.realpath` ([`NtRaised::Unbound`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unbound;
+
+fn decode(path: &[u8]) -> Result<PyStr, Declined> {
+    let text = std::str::from_utf8(path).map_err(|_| Declined::Unknown)?;
+    Ok(text.chars().map(u32::from).collect())
+}
+
+fn encode(text: &[u32]) -> Result<Vec<u8>, Declined> {
+    let s: Option<String> = text.iter().map(|&u| char::from_u32(u)).collect();
+    Ok(s.ok_or(Declined::Unknown)?.into_bytes())
+}
+
+/// `view_path(path)` with `_VIEW_PATHS` the Windows `ntpath`, over code
+/// points: `realpath`, else `normpath(abspath(path))`, else the path; then
+/// without trailing separators, except where that leaves a drive alone
+/// (`normpath` of the resolved path then). `Err` is the UnboundLocalError
+/// `view_path` does not catch.
+pub fn view_path_text<P: FinalPath + ?Sized>(
+    nt: &P,
+    path: &[u32],
+    cwd: Result<&[u32], Option<i64>>,
+) -> Result<PyStr, Unbound> {
+    let w = Flavour::Windows;
+    let real = match nt_realpath(nt, path, cwd) {
+        Ok(real) => real,
+        Err(NtRaised::Unbound) => return Err(Unbound),
+        Err(_) => match nt_abspath(nt, path, cwd) {
+            Ok(abs) => text::normpath(w, &abs),
+            Err(_) => path.to_vec(),
+        },
+    };
+    let is_sep = |u: u32| u == u32::from(b'\\') || u == u32::from(b'/');
+    let end = real.iter().rposition(|&u| !is_sep(u)).map_or(0, |i| i + 1);
+    let stripped = &real[..end];
+    let drive = |p: &[u32]| {
+        let (d, r, rest) = crate::gitfile_rule::hostpath::splitroot(p);
+        (d, [r, rest].concat())
+    };
+    if !drive(&real).0.is_empty() && drive(stripped).1.is_empty() {
+        return Ok(text::normpath(w, &real));
+    }
+    if stripped.is_empty() {
+        return Ok(real);
+    }
+    Ok(stripped.to_vec())
+}
+
+/// [`view_path_text`] over `os.fsencode`'s bytes; the UnboundLocalError
+/// declines ([`Declined::Unknown`]).
+pub fn view_path_windows<P: FinalPath + ?Sized>(
+    nt: &P,
+    path: &[u8],
+    cwd: Result<&[u8], Option<i64>>,
+) -> Result<Vec<u8>, Declined> {
+    let cwd = match cwd {
+        Ok(c) => Ok(decode(c)?),
+        Err(e) => Err(e),
+    };
+    let view = view_path_text(nt, &decode(path)?, cwd.as_deref().map_err(|e| *e))
+        .map_err(|Unbound| Declined::Unknown)?;
+    encode(&view)
+}
+
+/// `probe(cwd)` on Windows: as [`probe`], `os.path.realpath` being
+/// `ntpath`'s (its OSError or ValueError leaves the path as given; its
+/// UnboundLocalError declines).
+pub fn probe_windows<F: Fs + ?Sized, H: Host + ?Sized, P: FinalPath + ?Sized>(
+    fs: &F,
+    host: &H,
+    nt: &P,
+    path: &[u8],
+    cwd: Result<&[u8], Option<i64>>,
+) -> Result<Probe, Declined> {
+    let st = match path_state(fs, host, path)? {
+        PathState::Present(st) => st,
+        state => {
+            let (name, why) = match &state {
+                PathState::Gone(why) => ("gone", why.as_str()),
+                PathState::Unreachable(why) => ("unreachable", why.as_str()),
+                PathState::Present(_) => ("present", ""),
+            };
+            let detail = if why.is_empty() {
+                format!("cwd {name}")
+            } else {
+                format!("cwd {name}: {why}")
+            };
+            return Ok(Probe {
+                cwd: view_path_windows(nt, path, cwd)?,
+                answer: ProbeAnswer::Indeterminate { detail },
+            });
+        }
+    };
+    let ucwd = match cwd {
+        Ok(c) => Ok(decode(c)?),
+        Err(e) => Err(e),
+    };
+    let resolved = match nt_realpath(nt, &decode(path)?, ucwd.as_deref().map_err(|e| *e)) {
+        Ok(real) => encode(&real)?,
+        Err(NtRaised::Unbound) => return Err(Declined::Unknown),
+        Err(_) => path.to_vec(),
     };
     let (Some(dev), Some(ino)) = (st.dev, st.ino) else {
         return Err(Declined::Unknown);

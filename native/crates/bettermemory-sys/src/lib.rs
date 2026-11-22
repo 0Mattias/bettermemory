@@ -596,6 +596,110 @@ pub fn unlock_byte(file: &File, offset: u64) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetFinalPathNameByHandleW(
+        file: *mut core::ffi::c_void,
+        buf: *mut u16,
+        len: u32,
+        flags: u32,
+    ) -> u32;
+    fn GetFullPathNameW(name: *const u16, len: u32, buf: *mut u16, part: *mut *mut u16) -> u32;
+    fn CreateFileW(
+        name: *const u16,
+        access: u32,
+        share: u32,
+        security: *mut core::ffi::c_void,
+        disposition: u32,
+        flags: u32,
+        template: *mut core::ffi::c_void,
+    ) -> *mut core::ffi::c_void;
+    fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
+}
+
+/// Calls `fill(buf, len)` with a buffer of `len` wide characters until
+/// the answer fits: the Win32 convention where a call too short answers
+/// the length it needs (with its NUL), and 0 on failure.
+#[cfg(windows)]
+fn wide_answer(mut fill: impl FnMut(&mut [u16]) -> u32) -> io::Result<Vec<u16>> {
+    let mut buf = vec![0u16; 260];
+    loop {
+        let n = fill(&mut buf) as usize;
+        if n == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if n < buf.len() {
+            buf.truncate(n);
+            return Ok(buf);
+        }
+        buf.resize(n, 0);
+    }
+}
+
+/// `nt._getfinalpathname(path)`: the path passed to `CreateFileW`
+/// unchanged, as CPython passes it (no access, no sharing,
+/// `OPEN_EXISTING`, `FILE_FLAG_BACKUP_SEMANTICS`, so a folder opens), and
+/// `GetFinalPathNameByHandleW` with `VOLUME_NAME_DOS`. The standard
+/// library's open is not used: it rewrites a long path into the `\\?\`
+/// form, which resolves where CPython meets error 3 or 206 on a host
+/// without long-path support. `path` is wide text without a NUL; the
+/// error carries the Windows code.
+#[cfg(windows)]
+pub fn final_path_name(path: &[u16]) -> io::Result<Vec<u16>> {
+    const OPEN_EXISTING: u32 = 3;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    let mut name = path.to_vec();
+    name.push(0);
+    // SAFETY: `name` is NUL-terminated and lives across the call; the
+    // security and template arguments may be null.
+    let handle = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            0,
+            0,
+            std::ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    };
+    // INVALID_HANDLE_VALUE is -1.
+    if handle as isize == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let answer = wide_answer(|buf| {
+        // SAFETY: `handle` is open until the close below; `buf` is a live,
+        // writable buffer of the length passed, which the call writes
+        // within.
+        unsafe { GetFinalPathNameByHandleW(handle, buf.as_mut_ptr(), buf.len() as u32, 0) }
+    });
+    // SAFETY: `handle` came from `CreateFileW` above and is closed once.
+    unsafe { CloseHandle(handle) };
+    answer
+}
+
+/// `nt._getfullpathname(path)`: `GetFullPathNameW`. `path` is wide text
+/// without a NUL; the error carries the Windows code.
+#[cfg(windows)]
+pub fn full_path_name(path: &[u16]) -> io::Result<Vec<u16>> {
+    let mut name = path.to_vec();
+    name.push(0);
+    wide_answer(|buf| {
+        // SAFETY: `name` is NUL-terminated and lives across the call; `buf`
+        // is a live, writable buffer of the length passed; the last
+        // argument may be null.
+        unsafe {
+            GetFullPathNameW(
+                name.as_ptr(),
+                buf.len() as u32,
+                buf.as_mut_ptr(),
+                std::ptr::null_mut(),
+            )
+        }
+    })
+}
+
 /// `gethostuuid(3)` with a zero timespec, as `machine._darwin_hardware`
 /// calls it: the host's 16 bytes, None where the call returns non-zero.
 #[cfg(target_os = "macos")]

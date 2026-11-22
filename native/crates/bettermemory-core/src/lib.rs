@@ -232,7 +232,8 @@
 //!   discovery (unit githead-1: the walk git's `setup.c` makes, `stamp`;
 //!   unit githead-2: `entry_above` and the change signature);
 //! - [`location_probe`]: the hook client's namespace probe (the cwd's
-//!   state, its view spelling, the host's name);
+//!   state, its view spelling, the host's name), on Windows over
+//!   `fsdata::realpath`'s `ntpath.realpath` and `abspath` (unit ntreal);
 //! - [`hook_stop`]: the Stop audit's front half (`run_audit` through
 //!   `_is_repeat_audit`, unit hook-2a) as a sequence over
 //!   [`hook_stop_side::StopSide`], the calls into modules not yet ported,

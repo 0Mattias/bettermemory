@@ -104,7 +104,7 @@ pub fn normcase(flavour: Flavour, text: &[u32]) -> PyStr {
 }
 
 /// `os.path.split`: the head and the last component.
-fn split(flavour: Flavour, path: &[u32]) -> (PyStr, PyStr) {
+pub fn split(flavour: Flavour, path: &[u32]) -> (PyStr, PyStr) {
     match flavour {
         Flavour::Posix => {
             let i = path.iter().rposition(|&u| u == SLASH).map_or(0, |i| i + 1);

@@ -91,7 +91,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `origin_gitfiles` | units 1 to 3 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`), the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) and the config facts (`facts`: `_facts_of`, `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies`, `_config_entries`, `_config_variable_names`, `_hold_directory`, `directories_held`, `_global_attributes_path`) and unit 4 (`root`: `_CONFIG_LIMIT`, `_config_facts` and its memo, `_worktree_config_facts`, `_config_moves_worktree`, `refused_worktree_root`, `first_not_a_directory`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl`, `origin_gitfiles_facts.jsonl`, `origin_gitfiles_facts_posix.jsonl`, `origin_gitfiles_root_posix.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs`; unit githead-1, `githead::discovery`: `stamp`, `find_gitdir`, `gitdir_at`, `locate`, `probed`, `across_filesystems`, `discovery_moved`, `_entry_above`, `_located` and their helpers over `fsdata::Fs`, membership's `Rule`, an `Env` and the owners (`Owners`); unit githead-2, `githead::signature`: `entry_above`, `_stops_at`, `_would_be_git_directory`, `_Undetermined`, `_ref_stamps`, `signature`, and `CtxRefs`, a `RefFs` over a `gitdir::Ctx` | `githead.jsonl`, `githead_posix.jsonl`, `githead_discovery.jsonl`, `githead_signature.jsonl` |
-| `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
+| `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`; unit ntreal, the Windows flavour (`view_path_windows`, `view_path_text`, `probe_windows`) over `fsdata::realpath`'s `FinalPath`, `nt_realpath` and `nt_abspath` (`ntpath.realpath` non-strict with `_readlink_deep` and `_getfinalpathname_nonstrict`, `ntpath.abspath`); the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl`, `ntrealpath_python.jsonl` |
 | `location_caller` | a caller's resolution (`location.py` 1420-1997), unit locstate: the per-process state around a resolution: `process_machine`, `_recorded`, `_clear_machine` (`ProcessMachine`), `_Held`, `_LOCKS`, `_location_lock` (`Locks`, `lock_name`), `_cwd_of`, `_Stand`, `_STANDS`, `_keep_stand`, `_stand_of`, `forget_session`, `_clear_stands` (`Stands`), `_with_file_errors`, `_same_namespace`; every read of the machine a closure | `location_caller_state.jsonl` |
 | `location_resolve` | a caller's resolution (`location.py` 1420-1997), unit loccaller: `capture_location`, `_model`, `Caller` (`home`, `add_head_witness`), `resolve_caller`, `_caller`, `_resolved`, `resolve_here`, `_hooked`; the model, capture cache, re-mint, `_earlier_tree` and `_machineless` arguments | `location_resolve.jsonl` |
 | `location_hook` | a caller's resolution (`location.py` 1420-1997), unit lochook: `resolve_hook`; `_hooked`, `os.getcwd`, `object_key`, `_hostname`, `open_machine` and the model's two constructors as arguments | `location_hook.jsonl` |
@@ -6870,6 +6870,8 @@ that Unicode too.
 | `golden_location_probe`: `location_probe_loops` (unix) | `location_probe_python.jsonl` | ii (Python) |
 | `golden_location_probe`: `location_probe_errnos` (unix) | `location_probe_errno.jsonl` | iii |
 | `location_probe_kills` (18 on unix, 14 elsewhere), `location_probe_robustness` (2) | none | i |
+| `golden_ntrealpath`: `ntrealpath_every_case` | `ntrealpath_python.jsonl` | ii (Python) |
+| `ntrealpath_kills` (13), `ntrealpath_robustness` (3) | none | i |
 | `golden_location_witness`: `location_witness_every_case` | `location_witness.jsonl` | i |
 | `location_witness_kills` (21), `location_witness_robustness` (6) | none | i |
 | `golden_location_caller_state`: `location_caller_state_every_case` | `location_caller_state.jsonl` | i |
@@ -15405,9 +15407,9 @@ and the host's name.
 | --- | --- | --- | --- |
 | `GONE_ERRNOS`, `GONE_WINERRORS`, `path_gone`, `path_missing` | 40-106 | nothing (an exception as data) | built, `gitfile_rule::probe` |
 | `_path_state` | 109-123 | `os.stat`, `os.strerror` | built, `location_probe::path_state` |
-| `_VIEW_PATHS`, `view_path` | 128-153 | `realpath` (`lstat`, `readlink`), `os.getcwd` | built (POSIX), `location_probe::view_path` |
+| `_VIEW_PATHS`, `view_path` | 128-153 | `realpath` (`lstat`, `readlink`; on Windows `_getfinalpathname`, `readlink`, `_findfirstfile`, `islink`), `abspath` (`_getfullpathname`), `os.getcwd` | built, `location_probe::view_path` (POSIX), `view_path_windows` and `view_path_text` (Windows, unit ntreal) |
 | `_hostname` | 156-160 | `socket.gethostname` | built, `location_probe::hostname` |
-| `probe` | 163-187 | all of the above | built (POSIX), `location_probe::probe` |
+| `probe` | 163-187 | all of the above | built, `location_probe::probe` (POSIX), `probe_windows` (Windows, unit ntreal) |
 
 The whole module is about 200 lines of Rust, so it is built whole.
 
@@ -15533,6 +15535,86 @@ past the platform's list (macOS and glibc); `bettermemory-sys` pins
 through `StdFs` and the machine's `strerror`, skipping a case whose
 mode-000 folder can still be listed (a root user);
 `location_probe_kills` and `location_probe_robustness` run in memory.
+
+### Unit ntreal: `ntpath.realpath` and `abspath` on Windows
+
+The Windows flavour of `view_path` and `probe` reads `ntpath`, which on
+Windows resolves through calls of its own. Unit ntreal ports them over a
+trait in `fsdata::realpath`, `FinalPath` (`final_path_name`,
+`full_path_name`, `readlink`, `find_first_file`, `is_link`), and does
+not add a method to `Fs`: the Windows calls are not POSIX calls spelled
+otherwise. The interpreter is CPython 3.13.13 (`.python-version`), and
+its `Lib/ntpath.py` is the reference:
+
+| Function | Lines (3.13.13) | Rust | Status |
+| --- | --- | --- | --- |
+| `_readlink_deep` | 563-603 | `fsdata::realpath::readlink_deep` | built |
+| `_getfinalpathname_nonstrict` | 605-659 | `fsdata::realpath::nonstrict` | built |
+| `realpath` (non-strict) | 661-731 | `fsdata::realpath::nt_realpath` | built |
+| `abspath` (Windows) | 529-554 | `fsdata::realpath::nt_abspath`, through `gitfile_rule::hostpath::text::abspath` | built |
+| `view_path` with `_VIEW_PATHS = ntpath` | `_location_probe.py` 131-153 | `location_probe::view_path_text`, `view_path_windows` | built |
+| `probe` with `os.path = ntpath` | `_location_probe.py` 163-187 | `location_probe::probe_windows` | built |
+
+Decisions:
+
+- Paths are Python `str` (code points) as `ntpath` spells them, and the
+  module's Python `normpath`, `splitroot`, `join`, `split` and `normcase`
+  are `gitfile_rule::hostpath::text`'s (`split` is made public there). On
+  a Windows host `ntpath` takes `nt._path_normpath` and
+  `nt._path_splitroot_ex` in C and `normcase` asks `LCMapStringEx`; the
+  fixture holds ASCII paths, where they agree.
+- `fsdata::realpath::realpath` and `abspath` over an `Fs` alone still
+  answer `NotPorted` for the Windows flavour, and so do
+  `location_probe::view_path` and `probe`: their callers hold no
+  `FinalPath`. The Windows entries take one as an argument. Bringing the
+  callers over is left to the units that port them on Windows.
+- `os.getcwd()` is an argument (`Err(winerror)` where it raises). The
+  reference asks it before anything else, for an absolute path too, so
+  its OSError rises from `realpath` whatever the path; `view_path` then
+  falls back to `abspath`, which needs no working directory for an
+  absolute path.
+- The reference's UnboundLocalError (`initial_winerror` unset where the
+  first `_getfinalpathname` raised ValueError and the path still carries
+  the long prefix from the working directory) is reproduced as
+  `NtRaised::Unbound`; `view_path` lets it through (`Unbound`), and the
+  byte entries decline it.
+- The byte entries read `os.fsencode`'s UTF-8; bytes that are not UTF-8
+  (or a lone surrogate in an answer) decline (`Declined::Unknown`).
+- `bettermemory-sys` gains `final_path_name` (`CreateFileW` as CPython
+  opens the path, then `GetFinalPathNameByHandleW` with
+  `VOLUME_NAME_DOS`) and `full_path_name` (`GetFullPathNameW`), Windows
+  only. A `FinalPath` over them, `readlink` and `FindFirstFileW` is left
+  for the unit that brings the callers over.
+- No regular expression is involved.
+
+Fixture: `gen_ntrealpath.py` loads `ntpath` from its own source with a
+fake `nt` module, so the Windows branches run on any host, each call
+answering from the case's table (links, junction-like relative targets,
+missing tails, drive roots, UNC, the long prefix, NUL, every stop code
+and one outside them). `ntrealpath_python.jsonl` (68 cases, about 7 KB)
+is Python-gated: 3.11, 3.12 and 3.13 walk differently. Its texts spell
+a backslash as `|`, so the long prefix and UNC paths do not read as host
+paths to the golden directory's guard. Rows from a real
+Windows host are not recorded: the generator has no Windows gate of its
+own. The Win32 wrappers (`final_path_name`, `full_path_name`) have no
+caller yet and run nowhere: CI's Windows build only compiles them, and
+the unit that connects them owes them a Windows test. `final_path_name`
+hands the path to `CreateFileW` unchanged, as CPython does, rather than
+through the standard library's open, which rewrites a long path into the
+`\\?\` form. On a Windows host `ntpath` uses the C helpers
+`nt._path_normpath` and `nt._path_splitroot_ex` and `LCMapStringEx` for
+`normcase`; the fixture compares the Python spellings only, so agreement
+is claimed for ASCII paths, and a non-ASCII path whose `lower()` differs
+from `LCMapStringEx` may stop the readlink cycle check elsewhere.
+
+Tests: `golden_ntrealpath` (every case: `realpath`, `abspath`,
+`view_path`), `ntrealpath_kills` (12), `ntrealpath_robustness` (3: a
+path of 3,000 missing parts, a chain and a cycle of 5,000 links, and the
+growth of the deep walk, quadratic in the reference as each step joins
+the tail again, held within 150 times for ten times the parts).
+
+Reference findings: `realpath` of an absolute path raises when
+`os.getcwd()` does; and the UnboundLocalError above.
 
 ## The Stop audit's front half (`hook.py` 319-725, unit hook-2a)
 
@@ -21752,6 +21834,10 @@ What the reference has and this build does not, by area:
   `_add_hook_subparser`, `main` in `cli::root`) are built; the rest,
   `cli___init__-1b` (the help listing), `cli__common-1b` and the command
   modules included, is not.
+- Of the Windows flavour of `location_probe` (unit ntreal built
+  `nt_realpath`, `nt_abspath`, `view_path_windows` and `probe_windows`
+  over `FinalPath`): a machine `FinalPath` over `bettermemory-sys`,
+  moving the existing callers onto it, and strict `ntpath.realpath`.
 - `datetime.astimezone` of a naive value (the reference reads it as the
   machine's local time).
 - `handlers/verify.py` past its pure gates: `_stamp`,

@@ -11,13 +11,25 @@
 //! `realpath_strict` is the same walk with 3.13's `strict=True`: each
 //! error raised with its errno's name.
 //!
-//! The Windows flavour (`ntpath.realpath` over `_getfinalpathname` and
-//! its fallbacks, `ntpath.abspath` over `_getfullpathname`) is not ported:
-//! it answers [`Unresolved::NotPorted`], which a caller reads as a decline.
+//! Over an [`Fs`] alone the Windows flavour answers
+//! [`Unresolved::NotPorted`], which a caller reads as a decline: the
+//! Windows calls are not the file-system trait's. They are [`FinalPath`]'s,
+//! and over it [`nt_realpath`] is CPython 3.13.13's `ntpath.realpath`
+//! (non-strict, `Lib/ntpath.py` 563-731: `_readlink_deep`,
+//! `_getfinalpathname_nonstrict` and `realpath`) and [`nt_abspath`] its
+//! `abspath` over `_getfullpathname` (529-554, through
+//! `gitfile_rule::hostpath::text::abspath`). 3.13.13 is the interpreter
+//! the contract generators run under (`.python-version`). Paths there
+//! are Python `str` (code points), and the module's Python spellings of
+//! `normpath`, `splitroot` and `normcase` are the ones reproduced (on a
+//! Windows host `normcase` asks `LCMapStringEx`, which agrees on ASCII).
 
 use std::collections::HashMap;
 
 use super::{Flavour, Fs, Kind, OsError, PyErr};
+use crate::gitfile_rule::hostpath::text::{self, Process};
+use crate::pyvalue::PyStr;
+use crate::unicode::cps;
 
 /// Why a path was not resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -232,4 +244,205 @@ fn resolve<F: Fs + ?Sized>(
         rest.extend(parts.into_iter().rev().map(|p| Part::Name(p.to_vec())));
     }
     Ok(resolved)
+}
+
+/// What a Windows call raised: an OSError with its `winerror` (None where
+/// it has none), or ValueError (a NUL).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NtRaise {
+    Os(Option<i64>),
+    Value,
+}
+
+/// What `ntpath.realpath` (non-strict) raises.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NtRaised {
+    /// An OSError: of `os.getcwd()`, or a winerror the walk does not stop
+    /// at.
+    Os(Option<i64>),
+    /// ValueError, from a call after the first.
+    Value,
+    /// UnboundLocalError: the first `_getfinalpathname` raised ValueError
+    /// (so `initial_winerror` was never set), the path still gained the
+    /// long prefix (a working directory spelled with it), and its plain
+    /// spelling raised OSError.
+    Unbound,
+}
+
+/// The Windows calls `ntpath.realpath` and `abspath` make.
+pub trait FinalPath {
+    /// `nt._getfinalpathname(path)`.
+    fn final_path_name(&self, path: &[u32]) -> Result<PyStr, NtRaise>;
+    /// `nt._getfullpathname(path)`, None where it raises.
+    fn full_path_name(&self, path: &[u32]) -> Option<PyStr>;
+    /// `nt.readlink(path)`.
+    fn readlink(&self, path: &[u32]) -> Result<PyStr, NtRaise>;
+    /// `nt._findfirstfile(path)`: the name as the folder spells it.
+    fn find_first_file(&self, path: &[u32]) -> Result<PyStr, NtRaise>;
+    /// `os.path.islink(path)` (`nt._path_islink`, which never raises).
+    fn is_link(&self, path: &[u32]) -> bool;
+}
+
+const W: Flavour = Flavour::Windows;
+/// `_readlink_deep`'s `allowed_winerror`.
+const DEEP_STOPS: [i64; 12] = [1, 2, 3, 5, 21, 32, 50, 67, 87, 4390, 4392, 4393];
+/// `_getfinalpathname_nonstrict`'s `allowed_winerror`.
+const NONSTRICT_STOPS: [i64; 16] = [
+    1, 2, 3, 5, 21, 32, 50, 53, 65, 67, 87, 123, 161, 1005, 1920, 1921,
+];
+/// The codes after which `_findfirstfile` is asked for the real name.
+const FIND_FIRST: [i64; 7] = [1, 5, 32, 50, 87, 1920, 1921];
+
+fn allowed(code: Option<i64>, list: &[i64]) -> bool {
+    code.is_some_and(|c| list.contains(&c))
+}
+
+/// `_readlink_deep(path)`: follows links by `readlink` until a path seen
+/// before (by `normcase`), a stop code or a ValueError; a relative target
+/// of something that is no link answers the path before it.
+fn readlink_deep<P: FinalPath + ?Sized>(p: &P, path: &[u32]) -> Result<PyStr, NtRaise> {
+    let mut path = path.to_vec();
+    let mut seen = std::collections::HashSet::new();
+    while seen.insert(text::normcase(W, &path)) {
+        let old = path.clone();
+        match p.readlink(&path) {
+            Ok(target) => {
+                path = target;
+                if !text::isabs(W, &path) {
+                    if !p.is_link(&old) {
+                        return Ok(old);
+                    }
+                    let joined = text::join(W, &text::dirname(W, &old), &[&path]);
+                    path = text::normpath(W, &joined);
+                }
+            }
+            Err(NtRaise::Os(code)) if allowed(code, &DEEP_STOPS) => break,
+            Err(NtRaise::Os(code)) => return Err(NtRaise::Os(code)),
+            Err(NtRaise::Value) => break,
+        }
+    }
+    Ok(path)
+}
+
+fn joined(head: PyStr, tail: &[u32]) -> PyStr {
+    if tail.is_empty() {
+        head
+    } else {
+        text::join(W, &head, &[tail])
+    }
+}
+
+/// `_getfinalpathname_nonstrict(path)`: the deepest part that resolves
+/// (or that `readlink` leads elsewhere), the rest joined after it.
+fn nonstrict<P: FinalPath + ?Sized>(p: &P, path: &[u32]) -> Result<PyStr, NtRaise> {
+    let mut path = path.to_vec();
+    let mut tail: PyStr = Vec::new();
+    while !path.is_empty() {
+        let code = match p.final_path_name(&path) {
+            Ok(done) => return Ok(joined(done, &tail)),
+            Err(NtRaise::Value) => return Err(NtRaise::Value),
+            Err(NtRaise::Os(code)) if allowed(code, &NONSTRICT_STOPS) => code,
+            Err(raised) => return Err(raised),
+        };
+        if let Ok(new) = readlink_deep(p, &path) {
+            if new != path {
+                return Ok(joined(new, &tail));
+            }
+        }
+        let (head, name) = if allowed(code, &FIND_FIRST) {
+            match p.find_first_file(&path) {
+                Ok(name) => (text::split(W, &path).0, name),
+                Err(NtRaise::Os(_)) => text::split(W, &path),
+                Err(NtRaise::Value) => return Err(NtRaise::Value),
+            }
+        } else {
+            text::split(W, &path)
+        };
+        path = head;
+        if !path.is_empty() && name.is_empty() {
+            path.extend_from_slice(&tail);
+            return Ok(path);
+        }
+        tail = joined(name, &tail);
+    }
+    Ok(tail)
+}
+
+/// `ntpath.realpath(path)` (non-strict) on Windows, with `os.getcwd()`
+/// answering `cwd` (asked for every path, an absolute one too, so its
+/// OSError rises whatever the path).
+pub fn nt_realpath<P: FinalPath + ?Sized>(
+    p: &P,
+    path: &[u32],
+    cwd: Result<&[u32], Option<i64>>,
+) -> Result<PyStr, NtRaised> {
+    let mut path = text::normpath(W, path);
+    let cwd = cwd.map_err(NtRaised::Os)?;
+    if text::normcase(W, &path) == cps("nul") {
+        return Ok(cps("\\\\.\\NUL"));
+    }
+    let prefix = cps("\\\\?\\");
+    let had_prefix = path.starts_with(&prefix);
+    if !had_prefix && !text::isabs(W, &path) {
+        path = text::join(W, cwd, &[&path]);
+    }
+    // None: `initial_winerror` never set.
+    let initial: Option<Option<i64>> = match p.final_path_name(&path) {
+        Ok(done) => {
+            path = done;
+            Some(Some(0))
+        }
+        Err(NtRaise::Value) => {
+            path = text::normpath(W, &path);
+            None
+        }
+        Err(NtRaise::Os(code)) => {
+            path = nonstrict(p, &path).map_err(|e| match e {
+                NtRaise::Os(c) => NtRaised::Os(c),
+                NtRaise::Value => NtRaised::Value,
+            })?;
+            Some(code)
+        }
+    };
+    if !had_prefix && path.starts_with(&prefix) {
+        let unc = cps("\\\\?\\UNC\\");
+        let spath = if path.starts_with(&unc) {
+            [cps("\\\\").as_slice(), &path[unc.len()..]].concat()
+        } else {
+            path[prefix.len()..].to_vec()
+        };
+        match p.final_path_name(&spath) {
+            Ok(again) if again == path => path = spath,
+            Ok(_) | Err(NtRaise::Value) => {}
+            Err(NtRaise::Os(code)) => match initial {
+                None => return Err(NtRaised::Unbound),
+                Some(first) if first == code => path = spath,
+                Some(_) => {}
+            },
+        }
+    }
+    Ok(path)
+}
+
+/// `ntpath.abspath(path)` on Windows: `_getfullpathname`, else the
+/// path joined by hand (`os.getcwd()` answering `cwd`, its OSError
+/// raised as `Err(winerror)`).
+pub fn nt_abspath<P: FinalPath + ?Sized>(
+    p: &P,
+    path: &[u32],
+    cwd: Result<&[u32], Option<i64>>,
+) -> Result<PyStr, Option<i64>> {
+    struct On<'a, P: ?Sized>(&'a P, Result<&'a [u32], Option<i64>>);
+    impl<P: FinalPath + ?Sized> Process for On<'_, P> {
+        fn getcwd(&self) -> Result<PyStr, PyErr> {
+            self.1.map(<[u32]>::to_vec).map_err(|_| PyErr::Os)
+        }
+        fn windows(&self) -> bool {
+            true
+        }
+        fn full_path_name(&self, path: &[u32]) -> Option<PyStr> {
+            self.0.full_path_name(path)
+        }
+    }
+    text::abspath(W, path, &On(p, cwd)).map_err(|_| cwd.err().flatten())
 }

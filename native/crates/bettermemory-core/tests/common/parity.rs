@@ -371,6 +371,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "fsutil_flock_platform.jsonl" => &[Python, Platform],
         // The probe of a link loop (`gen_location_probe`), as above.
         "location_probe_python.jsonl" => &[Python],
+        // `ntpath.realpath`'s Windows walk, 3.13's (`gen_ntrealpath`).
+        "ntrealpath_python.jsonl" => &[Python],
         // Every errno number and the C library's text for it, both the
         // platform's (`gen_location_probe`).
         "location_probe_errno.jsonl" => &[Platform],
