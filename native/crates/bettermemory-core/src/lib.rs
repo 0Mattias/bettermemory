@@ -65,9 +65,10 @@
 //! - [`log`]: the row MAC, the key ring and `verify_chain`, and the key
 //!   ring's files (`log::ring`: the current key, the origin anchor, the
 //!   binding);
-//! - [`machine`]: this machine's id, its first two units (the identity
+//! - [`machine`]: this machine's id, its first three units (the identity
 //!   record, the id minted from given bytes, the clone rule; the hardware
-//!   id, the hostname, the id file's object and the two files read);
+//!   id, the hostname, the id file's object and the two files read;
+//!   `open_machine` and `_write_record`, with the machine's own reads);
 //! - [`search`]: `search.search` over records in memory, bit for bit;
 //! - [`search_dedup`]: write-time dedup, the Jaccard scorer and its
 //!   token cache;

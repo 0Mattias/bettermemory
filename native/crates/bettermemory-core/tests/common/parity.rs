@@ -224,6 +224,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // Which birth time `os.stat_result` carries is the release's and
         // the platform's (`gen_machine`).
         "machine_facts_platform.jsonl" => &[Python, Platform],
+        // A real id file's birth time through `open_machine` (`gen_machine`).
+        "machine_open_platform.jsonl" => &[Python, Platform],
         // `str.isspace`, `str.istitle`, the general category and `\w`, `\d`
         // past ASCII (`gen_durability`).
         "durability_unicode.jsonl" => &[Unicode],

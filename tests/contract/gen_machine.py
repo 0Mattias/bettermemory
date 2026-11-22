@@ -836,3 +836,345 @@ def generate_facts_platform() -> dict[str, bytes]:
         "has_birthtime": hasattr(os.stat_result, "st_birthtime"),
     }
     return {"machine_facts_platform.jsonl": jsonl([header, *rows])}
+
+
+# -- unit 3: opening the state directory (``machine_open*.jsonl``) -------------
+#
+# Each ``open`` row runs `open_machine` over a fresh state directory
+# ``state`` (``k``: ``nested`` puts it under two missing folders,
+# ``loose`` makes it first with mode 0755, ``file`` puts a file there),
+# holding before the open the id file text ``pre_id`` and the facts file
+# text ``pre_facts`` (null: no file). ``hw`` and ``host`` are what the two
+# fact readers answer (``hw`` ``{"x": ...}``: the reader raises that
+# class); `_file_object` is scripted to answer ``fo`` (``A`` is
+# ``("1", "2", None)``, ``B`` ``("3", "4", None)``, null None);
+# `secrets.token_bytes` answers ``TOKEN`` and `datetime.now` ``NOW``.
+# ``log`` holds the calls in order: ``hw``, ``host``, ``tok`` and
+# ``fo`` with whether the id file then holds its final bytes and the
+# facts file its first. ``r`` is `identity_to_json` of the answer in
+# neutral form, or ``x`` the class raised; ``id``, ``facts`` the files'
+# texts after the open, ``modes`` the octal modes of the directory, the
+# id file and the facts file (null: absent); a file there before the open
+# is made 0644. The file is POSIX only: the
+# modes are POSIX's, and the native build declines on Windows.
+#
+# The platform file's row ``real`` opens with the real `_file_object` and
+# checks the facts' id file against `os.stat` of the id file.
+
+import json  # noqa: E402
+from datetime import datetime as _dt  # noqa: E402
+from datetime import timezone as _tz  # noqa: E402
+
+_NOW = _dt(2026, 3, 4, 5, 6, 7, 890123, tzinfo=_tz.utc)
+_TOKEN = bytes(range(1, 18))
+_ID1 = _GOOD
+_ID2 = "ZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+_FO: dict[str, tuple[str, str, str | None]] = {
+    "A": ("1", "2", None),
+    "B": ("3", "4", None),
+}
+
+
+class _FixedNow(_dt):
+    @classmethod
+    def now(cls, tz: Any = None) -> Any:
+        assert tz is _tz.utc
+        return _NOW
+
+
+def _id_text(value: str) -> str:
+    return f"{m._ID_HEADER}\n{value}\n"
+
+
+def _facts_text(
+    machine_id: Any = _ID1,
+    hw: Any = "H",
+    host: Any = "h",
+    fo: str | None = "A",
+    predecessor: Any = None,
+    **extra: Any,
+) -> str:
+    body = {
+        "id": machine_id,
+        "facts": {
+            "hardware": hw,
+            "hostname": host,
+            "id_file": None if fo is None else list(_FO[fo]),
+        },
+        "predecessor": predecessor,
+        "recorded": "2025-01-01T00:00:00Z",
+        **extra,
+    }
+    return json.dumps(body, sort_keys=True, indent=2) + "\n"
+
+
+_OPEN_CASES: list[dict[str, Any]] = [
+    {"n": "first open"},
+    {"n": "matching facts", "pre_id": _id_text(_ID1), "pre_facts": _facts_text()},
+    {
+        "n": "hostname changed",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(),
+        "host": "h2",
+    },
+    {
+        "n": "id file object changed",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(),
+        "fo": "B",
+    },
+    {
+        "n": "hardware changed",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(),
+        "hw": "H2",
+    },
+    {
+        "n": "clone by hostname and file object",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(hw=None),
+        "hw": None,
+        "host": "h2",
+        "fo": "B",
+    },
+    {
+        "n": "hostname changed, same object, no hardware",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(hw=None),
+        "hw": None,
+        "host": "h2",
+    },
+    {
+        "n": "empty hardware on one side",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(hw=""),
+        "host": "h2",
+        "fo": "B",
+    },
+    {
+        "n": "foreign id in the facts",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(_ID2),
+    },
+    {"n": "facts file holds {}", "pre_id": _id_text(_ID1), "pre_facts": "{}"},
+    {"n": "facts file holds []", "pre_id": _id_text(_ID1), "pre_facts": "[]"},
+    {"n": "id as an int", "pre_id": _id_text(_ID1), "pre_facts": _facts_text(7)},
+    {
+        "n": "id lowercase",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(_ID1.lower()),
+    },
+    {
+        "n": "facts not a dict",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": json.dumps({"id": _ID1, "facts": [1]}),
+    },
+    {
+        "n": "no facts key",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": json.dumps({"id": _ID1}),
+    },
+    {
+        "n": "empty facts, nothing seen",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": json.dumps({"id": _ID1, "facts": {}}),
+        "hw": None,
+        "host": None,
+        "fo": None,
+    },
+    {
+        "n": "non-str predecessor kept out",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(predecessor=5),
+        "host": "h2",
+    },
+    {
+        "n": "non-str predecessor, no write",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(predecessor=["X"]),
+    },
+    {
+        "n": "str predecessor kept",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(predecessor="OLD"),
+        "host": "h2",
+    },
+    {
+        "n": "surrogate predecessor kept",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(predecessor="\ud800é"),
+        "host": "h2",
+    },
+    {
+        "n": "a kept predecessor replaced on a mint",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(predecessor="P"),
+        "hw": "H2",
+    },
+    {
+        "n": "extra keys kept out",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(extra=1),
+        "host": "x",
+    },
+    {"n": "unreadable id file", "pre_id": "not an id\n", "pre_facts": _facts_text()},
+    {"n": "id file only", "pre_id": _id_text(_ID1)},
+    {"n": "facts file only", "pre_facts": _facts_text()},
+    {"n": "facts file not JSON", "pre_id": _id_text(_ID1), "pre_facts": "{"},
+    {"n": "escaped hostname", "host": "h\udcffé", "hw": "☃"},
+    {"n": "no object on a mint", "fo": None},
+    {"n": "nothing seen", "hw": None, "host": None, "fo": None},
+    {"n": "nested missing folders", "k": "nested"},
+    {
+        "n": "loose existing folder",
+        "k": "loose",
+        "pre_id": _id_text(_ID1),
+        "pre_facts": _facts_text(),
+    },
+    {"n": "a file at the state directory", "k": "file"},
+    {"n": "hardware read raises", "hw": {"x": "UnicodeDecodeError"}},
+]
+
+
+def _mode(path: Path) -> str | None:
+    try:
+        return oct(os.stat(path).st_mode & 0o777)
+    except OSError:
+        return None
+
+
+def _read_or_none(path: Path) -> str | None:
+    try:
+        return path.read_bytes().decode("ascii")
+    except FileNotFoundError:
+        return None
+
+
+def _open_case(case: dict[str, Any]) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        kind = case.get("k")
+        state = root / "a" / "b" / "state" if kind == "nested" else root / "state"
+        if kind == "file":
+            state.write_bytes(b"x")
+        elif kind != "nested":
+            state.mkdir()
+            if kind == "loose":
+                state.chmod(0o755)
+        id_path = state / m.MACHINE_ID_FILE
+        facts_path = state / m.MACHINE_FACTS_FILE
+        if case.get("pre_id") is not None:
+            id_path.write_bytes(case["pre_id"].encode("ascii"))
+            id_path.chmod(0o644)
+        if case.get("pre_facts") is not None:
+            facts_path.write_bytes(case["pre_facts"].encode("ascii"))
+            facts_path.chmod(0o644)
+        first_facts = case.get("pre_facts")
+        log: list[Any] = []
+        hw = case.get("hw", "H")
+        host = case.get("host", "h")
+        fo = case.get("fo", "A")
+
+        def hardware() -> str | None:
+            log.append("hw")
+            if isinstance(hw, dict):
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+            return hw
+
+        def hostname() -> str | None:
+            log.append("host")
+            return host
+
+        def file_object(path: Path) -> Any:
+            assert path == id_path
+            log.append(
+                ["fo", _read_or_none(id_path), _read_or_none(facts_path) == first_facts]
+            )
+            return None if fo is None else _FO[fo]
+
+        def token(n: int) -> bytes:
+            assert n == 17
+            log.append("tok")
+            return _TOKEN
+
+        with (
+            mock.patch.object(m, "datetime", _FixedNow),
+            mock.patch.object(m, "_file_object", file_object),
+            mock.patch("bettermemory.machine.secrets.token_bytes", token),
+        ):
+            answer = _call_x(
+                lambda: m.open_machine(state, hardware=hardware, hostname=hostname)
+            )
+        if "r" in answer:
+            answer = {"r": neutral(m.identity_to_json(answer["r"]))}
+        final_id = _read_or_none(id_path) if state.is_dir() else None
+        # The fo entry names whether the id file then held its final text.
+        for entry in log:
+            if isinstance(entry, list):
+                entry[1] = entry[1] is not None and entry[1] == final_id
+        out: dict[str, Any] = {"f": "open", "n": case["n"]}
+        for key in ("k", "pre_id", "pre_facts"):
+            if case.get(key) is not None:
+                out[key] = case[key]
+        out["hw"] = hw if isinstance(hw, dict) else neutral(hw)
+        out["host"] = neutral(host)
+        out["fo"] = fo
+        out["log"] = log
+        out.update(answer)
+        if state.is_dir():
+            out["id"] = final_id
+            out["facts"] = _read_or_none(facts_path)
+            out["modes"] = [_mode(state), _mode(id_path), _mode(facts_path)]
+        return out
+
+
+def _open_header(name: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "fixture": name,
+        "count": len(rows),
+        "now": _NOW.isoformat(),
+        "token": _TOKEN.hex(),
+    }
+
+
+def generate_open() -> dict[str, bytes]:
+    rows = [_open_case(c) for c in _OPEN_CASES]
+    return {"machine_open.jsonl": jsonl([_open_header("machine_open", rows), *rows])}
+
+
+def _real_open_row() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        with (
+            mock.patch.object(m, "datetime", _FixedNow),
+            mock.patch("bettermemory.machine.secrets.token_bytes", lambda _n: _TOKEN),
+        ):
+            ident = m.open_machine(state, hardware=lambda: "H", hostname=lambda: "h")
+            again = m.open_machine(state, hardware=lambda: "H", hostname=lambda: "h")
+        st = os.stat(state / m.MACHINE_ID_FILE)
+    found = ident.facts.id_file
+    assert found is not None
+    ns = getattr(st, "st_birthtime_ns", None)
+    seconds = getattr(st, "st_birthtime", None)
+    birth: str | None = None
+    if ns is not None:
+        birth = str(ns)
+    elif seconds is not None:
+        birth = str(int(seconds * 1_000_000_000))
+    return {
+        "f": "real",
+        "dev": found[0] == str(st.st_dev),
+        "ino": found[1] == str(st.st_ino),
+        "birth_present": found[2] is not None,
+        "birth": found[2] == birth,
+        "kept": again.id == ident.id and not again.minted and not again.facts_updated,
+    }
+
+
+def generate_open_platform() -> dict[str, bytes]:
+    rows = [_real_open_row()]
+    return {
+        "machine_open_platform.jsonl": jsonl(
+            [_open_header("machine_open_platform", rows), *rows]
+        )
+    }

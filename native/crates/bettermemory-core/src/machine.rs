@@ -1,8 +1,9 @@
 //! `machine.py`, unit 1: the machine identity record. `MachineFacts`
 //! (`to_dict`, `from_dict`), `MachineIdentity`, `_identity_from`,
 //! `identity_to_json`, `new_machine_id` from given random bytes, and
-//! `is_clone`. Reading the hardware id, the hostname, the id file's object
-//! and the two files of the state directory are later units.
+//! `is_clone`. Unit 2 ([`facts`]) reads the hardware id, the hostname, the
+//! id file's object and the two files of the state directory; unit 3
+//! ([`open`]) is `open_machine` and `_write_record`.
 //!
 //! The values these read are the Python values a JSON body or a facts
 //! file yields ([`PyValue`]); `str()` of a value inside the id file's
@@ -13,6 +14,7 @@
 use crate::pyvalue::{self, PyError, PyStr, PyValue};
 
 pub mod facts;
+pub mod open;
 
 /// `MACHINE_ID_FILE`.
 pub const MACHINE_ID_FILE: &str = "machine-id";

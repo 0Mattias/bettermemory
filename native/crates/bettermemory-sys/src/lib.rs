@@ -596,9 +596,44 @@ pub fn unlock_byte(file: &File, offset: u64) -> io::Result<()> {
     Ok(())
 }
 
+/// `gethostuuid(3)` with a zero timespec, as `machine._darwin_hardware`
+/// calls it: the host's 16 bytes, None where the call returns non-zero.
+#[cfg(target_os = "macos")]
+pub fn gethostuuid() -> Option<[u8; 16]> {
+    let mut id = [0u8; 16];
+    let wait = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `id` is a live, writable buffer of the 16 bytes the call
+    // writes, and `wait` a live timespec it only reads.
+    let status = unsafe { libc::gethostuuid(id.as_mut_ptr(), &wait) };
+    (status == 0).then_some(id)
+}
+
+/// Not macOS: no `gethostuuid`.
+#[cfg(not(target_os = "macos"))]
+pub fn gethostuuid() -> Option<[u8; 16]> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::fsync;
+
+    /// macOS answers 16 bytes, the same on each call, not all zero; any
+    /// other system answers None.
+    #[test]
+    fn gethostuuid_answers_the_same_bytes_on_macos_only() {
+        let first = super::gethostuuid();
+        if cfg!(target_os = "macos") {
+            let id = first.expect("gethostuuid on macOS");
+            assert_ne!(id, [0u8; 16]);
+            assert_eq!(super::gethostuuid(), Some(id));
+        } else {
+            assert_eq!(first, None);
+        }
+    }
 
     /// The thread clock moves with work done on this thread and not while
     /// the thread sleeps or waits on another thread's work.

@@ -214,6 +214,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "machine_facts_python": gen_machine.generate_facts_python,
     "machine_facts_unicode": gen_machine.generate_facts_unicode,
     "machine_facts_platform": gen_machine.generate_facts_platform,
+    "machine_open": gen_machine.generate_open,
+    "machine_open_platform": gen_machine.generate_open_platform,
     "log_keyring": gen_log_ring.generate,
     "store": gen_store.generate,
     "store_schema_steps": gen_store_schema.generate,
@@ -610,7 +612,8 @@ PYTHON_VERSION = "3.13.13"
 #: whose text changed within 3.13 and again in 3.14 (`gen_location_leaves`).
 #: ``machine_facts_platform`` records which birth time attribute
 #: `os.stat_result` carries, which follows the release and the platform
-#: (`gen_machine`).
+#: (`gen_machine`); so does ``machine_open_platform``, which opens a real
+#: state directory and reads the id file's birth time.
 #: ``location_probe_python`` probes link loops, which 3.11's `realpath`
 #: walks otherwise, and paths holding a NUL, whose ValueError text 3.11
 #: words otherwise (`gen_location_probe`).
@@ -690,6 +693,7 @@ PYTHON_GATED = frozenset(
         "gitobjects_python",
         "machine_identity_python",
         "machine_facts_platform",
+        "machine_open_platform",
         "location_probe_python",
         "store_rotation_python",
         "log_keyfiles_posix_python",
@@ -762,7 +766,8 @@ def pydantic_core_version() -> str:
 #: it adds a section of its own.
 #: ``machine_facts_platform`` stats a real file: whether a birth time is
 #: given, and as ``st_birthtime_ns`` or ``st_birthtime``, is the
-#: platform's (`gen_machine`).
+#: platform's (`gen_machine`), and ``machine_open_platform`` reads it
+#: through `open_machine`.
 #: ``location_probe_errno`` raises every errno number, whose meaning and
 #: whose text (the C library's `strerror`) are the platform's.
 #: ``membership_records_paths_platform`` holds the cases whose reference
@@ -796,6 +801,7 @@ PLATFORM_GATED = frozenset(
         "membership_records_paths_platform",
         "machine_facts_platform",
         "fsutil_flock_platform",
+        "machine_open_platform",
     }
 )
 
@@ -900,6 +906,9 @@ PLATFORM_GATED = frozenset(
 #: ``store_rotation`` and ``store_rotation_python`` finish key rotations
 #: over links, hard links, mode-000 files and read-only folders
 #: (`gen_store_rotation`).
+#: ``machine_open`` and ``machine_open_platform`` record the POSIX modes
+#: `open_machine` leaves on the state directory and its two files, which
+#: the native build does not port to Windows (`gen_machine`).
 POSIX_ONLY = frozenset(
     {
         "attestation_paths_posix",
@@ -939,6 +948,8 @@ POSIX_ONLY = frozenset(
         "location_probe",
         "location_probe_python",
         "location_probe_errno",
+        "machine_open",
+        "machine_open_platform",
         "gitconfig_file",
         "location_stamps",
         "location_stamps_python",
