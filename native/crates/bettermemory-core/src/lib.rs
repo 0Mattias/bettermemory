@@ -103,7 +103,8 @@
 //! - [`store`]: a store file read without writing to it: the version
 //!   contract, the tables, the key ring from a keys directory, the chain
 //!   verified on disk, the FTS5 prefilter, the additive schema steps
-//!   with their leaves (`store::schema`), the restore lock as a read
+//!   with their leaves (`store::schema`), the digest's questions
+//!   (`store::digest_query`), the restore lock as a read
 //!   and a writing open meet it and a restore holds it
 //!   (`store::restore_lock`: `reading`, `admit`, `restore_state`,
 //!   `acquire`, `held_here`, `probe`, `unlock`, `state_finding`), and

@@ -156,6 +156,7 @@ from . import (
     gen_membership_proposals,
     gen_membership_touch,
     gen_store_create,
+    gen_store_digest_query,
     gen_store_files,
     gen_store_open,
     gen_store_records,
@@ -345,6 +346,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "fold": gen_fold.generate,
     "fold_python": gen_fold.generate_python,
     "store_create": gen_store_create.generate,
+    "store_digest_query": gen_store_digest_query.generate,
+    "store_digest_query_sqlite": gen_store_digest_query.generate_sqlite,
     "store_open": gen_store_open.generate,
     "store_write": gen_store_write.generate,
     "store_tx": gen_store_tx.generate,
@@ -607,6 +610,8 @@ SQLITE_GATED = frozenset(
         "models_stores",
         "store_rows_columns",
         "store_reads_python",
+        # The order of rows a query without ORDER BY returns.
+        "store_digest_query_sqlite",
     }
 )
 

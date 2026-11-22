@@ -41,6 +41,7 @@ pub mod bulk;
 pub mod caller;
 pub mod create;
 pub mod digest;
+pub mod digest_query;
 pub mod docfreq;
 pub mod fold;
 pub mod home;

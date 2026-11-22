@@ -100,7 +100,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `standing_guard` | `handlers/_guard.py` whole: `read_words`, `record`, `Held`, `check`, `guard` and the hints, over `GuardDeps` | `standing_guard.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_python.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_python.jsonl` |
 | `store::docfreq` | the document frequency memo of `store_index.py`: `_memoised_document_frequencies`, `_current_inputs`, `_patched_masks`, `_admitted_mask`, `_keep_doc_freqs`, `_row_mask`, `_DocFreqInputs` and the grouping of `Store._read_doc_freq_inputs`, the memoised half of `Store.ranking_statistics`; the store's side is the trait `DocFreqSource` | `store_docfreq.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks` | `membership_shared.jsonl`, `membership_shared_python.jsonl` |
@@ -8946,6 +8946,91 @@ directory are synced as the reference syncs them, with `fsync(2)`
 (`bettermemory_sys::fsync`; the standard library's `sync_all` is
 `F_FULLFSYNC` on macOS, which neither the reference nor SQLite's own
 commits ask for, and which made a write's head move 23 times slower).
+
+## The digest's questions (`store_digest.py` 466-473, 549-740)
+
+`store::digest_query` holds what a write's review asks of the digest.
+
+| Function | Lines | Needs | Status |
+| --- | --- | --- | --- |
+| `_mark` | 466-473 | a connection | built (`mark`) |
+| `_MEMO_ENTRIES`, `digest_memo` | 549-575 | the mark | built (`DigestMemo`) |
+| `_share` | 578-615 | a connection, the mark | built (`share`, `asked`) |
+| `digest_candidates` | 618-679 | a connection, the mark, the store's path | built |
+| `DigestShare`, `digest_shares` | 682-740 | as above | built |
+| `digest_mark`, `digest_sync`, `keeps_digest`, `_may_write` | 476-546 | the writing store | later (the `DigestStore` wiring) |
+| `digest_tokens_of` to `bodies_of` | 743-911 | a connection | later |
+
+- **`mark(conn)`** is `_mark`: `"{seen}:{mac}"` when `_built` names the
+  log's last record mutation (`_head`), else None; `mac` is the state's
+  own (empty when it has none). It reuses `digest::{state, built, head}`
+  and, as the reference, catches nothing.
+- **The mark is an argument.** `digest_candidates` and `digest_shares`
+  take `mark: Option<&str>` where the reference calls `self.digest_mark()`
+  (a private method of the writing open), and the store's path for the
+  warning. The order is the reference's: an empty token set answers None,
+  then a None mark, then the floor becomes thousandths: `int(floor *
+  1000)` truncated toward zero, NaN `QueryError::Value` (ValueError) and
+  an infinity `QueryError::Overflow` (OverflowError), both before any
+  read. A finite floor whose thousandths lie past an SQLite INTEGER
+  raises OverflowError as sqlite3 binds it, after `_share` has run and
+  outside `except sqlite3.Error`: `QueryError::Overflow` there too, with
+  `temp.digest_asked` already written.
+- **Reads.** Any SQLite error from `_share` or the query answers
+  `Answer { rows: None, warning }`, the warning the text the reference
+  logs, `store {path}: the digest could not be read ({msg})` with SQLite's
+  own message. The fixture pins only that a warning came, never the
+  text. Columns are read as `str()`, `int()` and `bool()` read them: an
+  id or tokens column that is a blob reads as `repr(bytes)`, any text
+  that is UTF-8 is true; a text that is not UTF-8, in any column read,
+  is the reference's OperationalError at fetch, so a warning, and it
+  comes before any conversion (`fetchall` runs inside the `try`, the
+  conversions after it). `n` and `claim` are `int()` of the column as a
+  `PyValue::Int`, however large: a real truncates (`1e300` is its exact
+  integer), a numeral text reads with Unicode digits, spaces and single
+  underscores (`'\u0667'` is 7), a blob as ASCII digits only; any other
+  text or blob raises ValueError and an infinity OverflowError, past the
+  query (`QueryError`), as the reference's conversions do. The fixture
+  pins the exception's type; the ValueError's text is CPython's
+  `invalid literal for int() with base 10:` and the value's repr.
+- **`share`** is `_share`: the sha256 of the mark, a newline and the
+  sorted expanded tokens joined by newlines (`asked`); tokens are
+  `String`s, so their UTF-8 bytes are the reference's `surrogatepass`
+  bytes. A `temp.digest_asked` row equal to it answers at once (the same
+  question under the same mark is not counted again, so a record written
+  since is not seen until the mark moves). A failed read of that table
+  creates the three temp tables only when sqlite3 would raise it as
+  OperationalError (the primary result codes `_pysqlite_seterror` maps
+  there); any other error leaves. Then the deletes and inserts in the
+  reference's order. Each statement runs on the caller's connection as
+  it is: the reference's store connection is in autocommit
+  (`isolation_level=None`), so does this port.
+- **The bound.** `contained` is `-(-400 * 8 // 1000)` = 4, floored
+  division; the WHERE clause is the reference's text, so SQLite's own
+  integer overflow to REAL in the products is the reference's.
+- **`DigestMemo<K, A>`** is `digest_memo` without the store: `get_or(mark,
+  key, compute)`. No mark computes and keeps nothing; a new mark drops
+  every answer; a held key moves to the end; a new answer of None is not
+  kept; past 16 answers the least recently used goes.
+- **Rows.** `digest_candidates` answers `Candidate { doc: DigestDoc, n,
+  claim, stamped }` (`search_dedup::DigestDoc` holds the id and tokens);
+  the tokens are `str.split()` of the column (`str.isspace` runs).
+
+Fixtures: `gen_store_digest_query.py` writes `store_digest_query.jsonl`
+(ungated: twelve `_mark` cases over a scripted state and log, the
+fingerprint as `@fp`; one store of `_put_entry` rows and 47 steps on one
+connection: floors 0, 0.25, 0.4, 0.999, 1.0, negative, NaN, both
+infinities and both ends of an SQLite INTEGER, both passes, claims, empty
+tokens, a None mark, the cached question, a dropped temp table, odd
+column values and a missing table; rows sorted by id, the warning as a
+flag, `temp.digest_asked` after each step) and
+`store_digest_query_sqlite.jsonl` (SQLite-gated: each step's ids in the
+order SQLite returns them). Every token is ASCII. Tests:
+`golden_store_digest_query`, `store_digest_query_kills` (the asked hash,
+the order of the early answers, where the floor raises, the containment
+bound, truncation, claims, the cached question, the warning, the memo)
+and `store_digest_query_robustness` (extreme floors, megabyte tokens,
+blob and huge columns, growth of a question with its token count).
 
 ## Opening a store for writing
 

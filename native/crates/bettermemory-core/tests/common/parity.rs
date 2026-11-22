@@ -305,6 +305,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "origin_remote_python.jsonl" => &[Python, Unicode],
         // The tokenizer's and the digest's fingerprints read `unicodedata`.
         "store_create.json" => &[Unicode],
+        // The order of rows a query without ORDER BY returns (`gen_store_digest_query`).
+        "store_digest_query_sqlite.jsonl" => &[Sqlite],
         // The tokenizer's fingerprint decides a re-spelling; the digest's
         // rows are its tokens.
         "store_open.jsonl" => &[Unicode],
