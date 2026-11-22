@@ -1,0 +1,10 @@
+{"b":[["word ",130],["end.\u3000caf\u00e9 here",1]],"c":"caf\u00e9","k":"text","r":"...caf\u00e9 here"}
+{"b":[["word ",130],["end.\u2003\u00a0caf\u00e9 here",1]],"c":"caf\u00e9","k":"text","r":"...caf\u00e9 here"}
+{"b":[["word ",130],["end.\u001cruff here",1]],"c":"ruff","k":"text","r":"...ruff here"}
+{"b":[["word ",130],["end.\u2028ruff here",1]],"c":"ruff","k":"text","r":"...ruff here"}
+{"b":[["word ",130],["x. \u039b\u03cc\u03b3\u03bf\u03c2 y",1]],"c":"\u03bb\u03cc\u03b3\u03bf\u03c2","k":"text","r":"...\u039b\u03cc\u03b3\u03bf\u03c2 y"}
+{"b":[["word ",130],["\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",1],["\u3000ruff",1]],"c":"ruff","k":"text","r":"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word..."}
+{"b":[["\u00e9t\u00e9 ",150],["x. na\u00efve",1]],"c":"na\u00efve","k":"text","r":"...na\u00efve"}
+{"c":"Un.\u3000Deux.\u2003trois\u0085quatre","k":"sent","r":["Deux.","trois\u0085quatre"]}
+{"c":"caf\u00e9. caf\u00e9.\u001fcaf\u00e9","k":"sent","r":["caf\u00e9.","caf\u00e9"]}
+{"c":"\u00e9t\u00e9 \u2029 \u03bb\u03cc\u03b3\u03bf\u03c2","k":"sent","r":["\u00e9t\u00e9 \u2029 \u03bb\u03cc\u03b3\u03bf\u03c2"]}

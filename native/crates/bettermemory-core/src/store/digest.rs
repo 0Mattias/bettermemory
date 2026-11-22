@@ -176,8 +176,9 @@ fn sentences(text: &[u32]) -> usize {
     count
 }
 
-/// `supersession.claim_sized(body)`.
-fn claim_sized(body: &[u32]) -> bool {
+/// `supersession.claim_sized(body)`: the port of that function, which
+/// `review::related_entry` calls and the supersession unit re-exports.
+pub fn claim_sized(body: &[u32]) -> bool {
     let stripped = strip_provenance(body);
     let tokens = raw_content_tokens(&stripped).len();
     0 < tokens && tokens <= MAX_CLAIM_TOKENS && sentences(&stripped) <= MAX_CLAIM_SENTENCES

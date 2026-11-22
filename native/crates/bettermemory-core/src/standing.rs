@@ -19,15 +19,8 @@ use crate::unicode;
 mod reads;
 pub use reads::*;
 
-/// `review.RELATED_CAP` (review.py:91). Kept here until the review unit
-/// is built, which moves it and re-exports it.
-pub const RELATED_CAP: usize = 11;
-/// `review.RELATED_TEXT_CHARS` (review.py:96), likewise.
-pub const RELATED_TEXT_CHARS: usize = 600;
-/// `review.STANDING_STATEMENT` (review.py:208-211), likewise.
-pub const STANDING_STATEMENT: &str =
-    "The statement directs future work in its scope until it is replaced: \
-a ruling, rule or standing preference the user gave.";
+/// `review`'s three constants this module reads, owned by `review`.
+pub use crate::review::{RELATED_CAP, RELATED_TEXT_CHARS, STANDING_STATEMENT};
 
 /// `TAU_STANDING`: the standing threshold, inclusive; None turns it off.
 pub const TAU_STANDING: Option<f64> = Some(0.3);

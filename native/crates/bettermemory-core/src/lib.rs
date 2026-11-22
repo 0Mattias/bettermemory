@@ -83,6 +83,10 @@
 //!   reads (the body sha memo, the backlog, the standing, guarded and
 //!   held ids, the refusal rows) over the `StandingStore` and
 //!   `Admission` traits;
+//! - [`review`]: `review.py`'s sealed tables (the related_for constants,
+//!   the thresholds and their overrides, the labels and statements,
+//!   `QUESTIONS` and the seal shas, the action names), the related-set
+//!   records, the text one related entry shows and the roster line;
 //! - [`mirror_format`]: the v8 file names and frontmatter the mirror
 //!   writes (`mirror_format.py` whole);
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
@@ -468,6 +472,7 @@ pub mod response_render;
 pub mod response_rows;
 pub mod response_trust;
 pub mod response_write;
+pub mod review;
 pub mod search;
 pub mod search_dedup;
 pub mod session;

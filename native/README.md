@@ -38,7 +38,8 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth. Unit pyre-5b: `_sre`'s ASSERT and ASSERT_NOT (`Op::Look`, `Op::LookEnd`) run in `exec` as sub-attempts on the same stack; `supports` refuses nothing. Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`). Unit pyre-6b: `Pattern.sub`, `subn` and `split` with a count, a literal or a function replacement, a literal holding a backslash refused as a template (`replace::ReplaceError::Template`). Unit pyre-7 (tests only): every pattern of the reference the engine runs, built from its own text and flags, against `re` over texts that tell its mutants apart, the four data-built families, the tripwire on the reference's sites | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl`, `pyre_inventory.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `records::summaries` | unit 3 of `models.py`, the result models: `MemoryHit` (`MemoryHit::new` with the model's defaults), `MemorySummary` and `TombstonedSummary` (`of` a record, as `store_records.list_summaries` and `list_tombstones` build them), and the two listings' scope filters (`summaries`, `tombstone_summaries`) | `models_hits.jsonl` |
-| `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT` until the review unit), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint`; unit 2, the store reads: the body sha memo (`SHA_BOUND`, `clear_shas`), `current`, `answers`, `Backlog`, `backlog`, `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids`, `refusal_rows`, `held_by_removal` over `StandingStore` and `Admission` | `standing.jsonl`, `standing_reads.jsonl` |
+| `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT`, re-exported), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint`; unit 2, the store reads: the body sha memo (`SHA_BOUND`, `clear_shas`), `current`, `answers`, `Backlog`, `backlog`, `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids`, `refusal_rows`, `held_by_removal` over `StandingStore` and `Admission` | `standing.jsonl`, `standing_reads.jsonl` |
+| `review` | unit 1 of `review.py`, the sealed tables: `RELATED_TOP`, `RELATED_CAP`, `RELATED_TEXT_CHARS`, `RELATED_CONSTANTS`, `ROSTER_TEXT_CHARS`, `TAU_UNSAFE`, `TAU_SECRET`, `Tau`, `current_tau`, `tau_override`, `tau_unset` (and `tau_patched`), the labels, `LABEL_CHOICES`, the four statements, `QUESTIONS`, `questions_payload`, `questions_sha256`, `constants_sha256`, `seal_shas`, `ACTION_*`, `DETECTOR_*`, `REVIEW_LINK_NOTE`, `RelatedEntry`, `RelatedSet` (with `CueReport`), `related_text`, `related_entry`, `RosterLine`, `_write_sentences` | `review_tables.jsonl`, `review_tables_unicode.jsonl` |
 | `mirror_format` | `mirror_format.py` whole: `TOMBSTONE_DIR`, `EPISODES_DIR`, `TOMBSTONE_SUFFIX`, `_ID_TOMBSTONE_RE` (by hand, `id_tombstone_stem`), `memory_filename`, `tombstone_filename`, `active_filename_for_tombstone`, `is_legacy_tombstone_name`, the four key tables, `memory_metadata`, `episode_metadata` | `mirror_format.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl` |
@@ -10016,10 +10017,9 @@ in this unit.
 | `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids` | 248-350 | the store, `in_force`, the review switch | built (unit 2), the switch an argument |
 | `refusal_rows`, `held_by_removal` | 364-385, 399-415 | the store, the admission | built (unit 2) |
 
-`review.py` is not built, so `RELATED_CAP` (11), `RELATED_TEXT_CHARS`
-(600) and `STANDING_STATEMENT` are copied into `standing` as public
-constants, with a comment naming `review.py`; the review unit moves them
-and re-exports them here. `asking(tau_set)` takes the review's switch
+`RELATED_CAP` (11), `RELATED_TEXT_CHARS` (600) and `STANDING_STATEMENT`
+are `review`'s (unit review-1) and are re-exported here, so `BATCH` and
+`record_text` read them through `standing` as before. `asking(tau_set)` takes the review's switch
 (whether `current_tau()` is set) and `answered_by(actor)` the request's
 actor (`identity::Published::current_actor`); an empty client or model
 counts as none, as `or` reads it. `is_standing` compares the category to
@@ -10143,6 +10143,103 @@ place; `standing_reads_robustness` (4) holds the memo at its bound past
 65,536 rows, hashes a body of two megabytes and holds `standing_ids` to
 `timing::TENFOLD` at ten times the rows, and `answers` the same (an
 index beside the ordered pairs keeps it linear). No pattern is matched here.
+
+## The write review's sealed tables (`review.py`, unit review-1)
+
+`review.py` (about 1,250 lines) is cut into units, leaves first. Unit
+review-1 is built in `src/review/mod.rs` and `src/review/related.rs`;
+the answers units add `review/answers.rs` and `review/decision.rs`
+beside them.
+
+| Function | Lines | Needs from the machine | Status |
+| --- | --- | --- | --- |
+| `RELATED_TOP`, `RELATED_CAP`, `RELATED_TEXT_CHARS`, `RELATED_CONSTANTS`, `ROSTER_TEXT_CHARS` | 84-112 | nothing | built (review-1) |
+| `TAU_UNSAFE`, `TAU_SECRET`, `Tau`, `current_tau`, `tau_override`, `tau_unset` | 121-171 | a process-wide cell | built (review-1) |
+| the labels, `LABEL_CHOICES`, the four statements | 177-219 | nothing | built (review-1) |
+| `QUESTIONS`, `questions_payload`, `canonical_json`, `questions_sha256`, `constants_sha256`, `seal_shas` | 222-307 | nothing | built (review-1); `canonical_json` is `json::review_canonical_json` |
+| `RelatedEntry`, `RelatedSet` | 311-377 | nothing | built (review-1) |
+| `_SENTENCE_BREAK_RE`, `related_text`, `related_entry` | 380-417 | nothing | built (review-1) |
+| `related_for` | 420-528 | the store, the engine, the cue code | review-3 |
+| `RosterLine`, `_write_sentences` | 531-540, 572-575 | nothing | built (review-1) |
+| `roster_candidates`, `roster_for` | 543-674 | the store, the engine | review-3 |
+| the answers, `parse_answers`, the checks | 677-938 | nothing | the answers units |
+| `ACTION_*`, `DETECTOR_*`, `REVIEW_LINK_NOTE` | 949-959 | nothing | built (review-1); the answers units import them |
+| `ReviewDecision`, `apply_review` and what follows | 962- | the store | the decision unit |
+
+What review-1 reproduces, and why it is built as it is:
+
+- **The thresholds** are one process-wide cell, a `Mutex` of
+  `(Option<f64>, Option<f64>)` seeded with the sealed 0.3 and 0.3, as the
+  two module attributes are. `current_tau()` reads it at call time and is
+  the only way product code reads tau. `tau_override` and `tau_unset`
+  return guards that put back the pair they found when dropped, also
+  while a panic unwinds, as the reference's `finally` does; a guard
+  dropped out of order restores what it found, so two overrides left out
+  of order end where the reference's two `__exit__` calls in that order
+  end. `tau_patched` is what `mock.patch` of the two attributes does in
+  the reference's tests, which can leave one of them None.
+- **The serializing lock.** Tests in one binary run on threads of one
+  process, while the reference's module attributes are read by one test
+  at a time. Every guard therefore holds a serializing lock for its life:
+  a counted lock (the holding thread and its count of live guards, with
+  a `Condvar`), so a second thread's override waits until the first
+  thread's guards are all dropped. It counts rather than being a plain
+  `Mutex<()>` because the reference nests overrides on one thread, which
+  a plain mutex would deadlock.
+  Two differences from the reference follow and are stated here. A
+  thread that holds a guard and then joins a thread that itself takes
+  an override deadlocks, where the reference's second thread just sets
+  the attributes. `current_tau()` takes no part in the lock, so a test
+  that takes no guard can read another thread's override; every test
+  that reads tau therefore holds a guard (`tau_patched(TAU_UNSAFE,
+  TAU_SECRET)` for the sealed pair). `TauGuard` is not `Send`, so its
+  count is released on the thread that took it.
+- **The guard is the override.** `tau_override` returns only the
+  `#[must_use]` guard, and the yielded `Tau` is `guard.tau()`, so the
+  `Tau` cannot be kept while the guard is dropped in the same pattern.
+  The override ends when the guard is dropped, where the reference's
+  ends with its `with` block.
+- **`QUESTIONS`** is built once as a `PyValue` tree in the reference's
+  key order and only lent out; `questions_payload` is a clone. The shas
+  are SHA-256 over `json::review_canonical_json`.
+- **`RelatedSet`** keeps the cue report as `Option<CueReport>`:
+  `supersession.py` is not built, so `CueReport { supersedes, conflicts }`
+  holds the memory ids of the report's two lists in report order, the
+  shape the supersession unit converts its report into. None is the
+  `write_supersession` switch off.
+- **`related_text`** reads tokens through
+  `search_dedup::raw_content_token_set`; the reference's cache
+  (`RawTokenCache`) changes no answer here. The window comes from
+  `models_text::snippet_window`.
+- **`related_entry`** renders `updated` in UTC as `date().isoformat()`;
+  `astimezone`'s OverflowError (year 1 or 9999 pushed past the range) is
+  `RelatedError::Date`, and a naive `updated`, which the reference reads
+  as the machine's local time, is declined (`NaiveUpdated`). Its
+  `claim_sized` is `store::digest::claim_sized`, the port of
+  `supersession.claim_sized`, made public for this; the supersession
+  unit re-exports it.
+- **`RELATED_CAP`, `RELATED_TEXT_CHARS` and `STANDING_STATEMENT`** moved
+  here from `standing`, which re-exports all three; `standing::BATCH`
+  stays.
+
+The pattern: `_SENTENCE_BREAK_RE` (`(?<=[.!?])\s+|\n+`, class T2) is a
+`pyre::regex::Regex` built from the reference's own text with no flags,
+called through `finditer` in `related_text` and `split` in
+`_write_sentences` (the pyre decision's rule 1). It is in the engine's
+inventory through `gen_pyre_atom`'s scan of the reference's source.
+
+Fixtures: `gen_review_tables` writes `review_tables.jsonl` (ungated: the
+constants, the payload in sorted and in reference key order with both
+shas, the tau overrides, `to_dict`, `RelatedSet`, `to_line`,
+`related_text` and `_write_sentences` over long and short bodies with
+breaks, `!?.` runs and line feeds, `related_entry` across UTC dates and
+both overflow edges, and a seeded sweep of 2,000 cases as one digest
+row) and `review_tables_unicode.jsonl` (`UNICODE_GATED`: `\s` and the
+tokenizer past ASCII). The generator reads tau only inside `with`
+blocks of `tau_override` and `tau_unset`. Tests: `golden_review_tables`,
+`review_tables_kills` (the guards out of order, under a panic and across
+threads), `review_tables_robustness` (long bodies, runs of breaks, odd
+code points, linear growth).
 
 ## The hook mains' argument parser (`argparse`, units argparse-1a and argparse-1b)
 

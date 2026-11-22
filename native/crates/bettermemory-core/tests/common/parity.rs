@@ -310,6 +310,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "search_dedup_unicode.jsonl" => &[Unicode],
         // The tokenizer, `str.strip` and `\w` past ASCII (`gen_search_snippet`).
         "search_snippet_unicode.jsonl" => &[Unicode],
+        // `\s` and the tokenizer past ASCII (`gen_review_tables`).
+        "review_tables_unicode.jsonl" => &[Unicode],
         "models.jsonl" => &[Pydantic],
         // Episodes read through the model (`gen_store_journal`).
         "store_journal.jsonl" => &[Pydantic],
