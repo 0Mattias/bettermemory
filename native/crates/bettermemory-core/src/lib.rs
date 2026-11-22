@@ -217,6 +217,8 @@
 //! - [`hook`]: the hooks of `hook.py`, their first unit (the stdin
 //!   payload reader, the pending-retrieval scan and the Stop's
 //!   attribution settlement);
+//! - [`response_render`]: the wire shapes of a search hit and of
+//!   `memory_show` (`render_hit`, `render_show` and their helpers);
 //! - [`response_reason`] and [`response_trust`]: the reason a row asks for
 //!   a check and the verdict with its objection, and the trust appliers
 //!   that rewrite a row's verdict from the store's trust rows;
@@ -327,6 +329,7 @@ pub mod repository_history;
 pub mod response_links;
 pub mod response_memo;
 pub mod response_reason;
+pub mod response_render;
 pub mod response_trust;
 pub mod search;
 pub mod search_dedup;

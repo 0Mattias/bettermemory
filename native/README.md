@@ -45,6 +45,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
+| `response_render` | `_response.py`'s `ResponseBuilder.render_hit`, `render_show`, `_SHOW_DEFAULTS`, `_NATIVE_SEP`, `_slashed`, `_path_states`, `_compact_origin`, `_grouped_links` | `response_render.jsonl` |
 | `response_reason`, `response_trust` | `_response.py`'s `check_reason` (`_named`, `_REASON_PATHS`, `_rejection_note`), `_UNTRUSTED_PROVENANCE`, `_untrusted`, `verdict_and_reason`, `_row_reason`, `_claim_at_index`, `TRUST_UNAVAILABLE_RECOMMENDATION`, `ResponseBuilder.attach_provenance`, `apply_trust_unavailable`, `apply_trust`; `verdict.py`'s `_OBJECTED` and `with_objection` | `response_reason.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
@@ -1145,6 +1146,83 @@ No regular expression is involved.
   rounds past a cap of 1,000, both as tenfold growth claims; infinite and
   NaN clocks; `i64` bounds). The shared builders are in
   `tests/common/response_leaf.rs`.
+
+## The wire shapes of a search hit and of `memory_show` (`_response.py`)
+
+`src/response_render.rs` reproduces the dict a search hit and a
+`memory_show` answer are sent as, built from the row or state the caller
+assembled. 521 lines of source.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `ResponseBuilder.render_hit` | `_response` 888-932 | nothing | built |
+| `ResponseBuilder.render_show` | `_response` 934-1023 | nothing (`parse_claim` an argument) | built |
+| `_SHOW_DEFAULTS` | `_response` 2053-2058 | nothing | built |
+| `_NATIVE_SEP`, `_slashed` | `_response` 2236-2240 | the platform's separator, as a cfg constant | built |
+| `_path_states` | `_response` 2243-2312 | nothing (`parse_claim` and the separator arguments) | built |
+| `_compact_origin` | `_response` 2315-2328 | nothing | built |
+| `_grouped_links` | `_response` 2331-2340 | nothing | built |
+
+Decisions:
+
+- A row and the show's state are `response_trust::Row`, every value a
+  `PyValue` read as Python reads it (`x or ()` by truthiness, `list(x)`
+  of a `str` by code point and of a `dict` by key, `==` by
+  `location_witness::py_eq`, so `1`, `1.0` and `True` are equal). What
+  the reference raises comes back as its class, `Fault`: the classes of
+  `response_reason::Raised` and `ValueError`, which `zip(...,
+  strict=True)` raises over unconfirmed paths and reasons of different
+  lengths. The answer is a `Row` in the reference's key order.
+- `verify.PathDriftReport` is not built: the show takes
+  `PathDriftLists`, the ten fields `_path_states` and `render_show`
+  read, which the drift unit will fill.
+- `claims.parse_claim` is the caller's function, `ParsedClaim`: the
+  claim's kind and `rel_path`, or `Err(ClaimRejected)` where it raises
+  `ValueError`. The claims unit supplies it.
+- `_slashed` takes the separator as an argument (`slashed(path, sep)`),
+  and `NATIVE_SEP` is `Some('\\')` on Windows and None elsewhere, as
+  `os.sep` is. `render_show` uses `NATIVE_SEP`; `render_show_sep` and
+  `path_states` take the separator, so both branches are tested on
+  every host. The fixtures set the reference's `_NATIVE_SEP` per case,
+  which makes the file the same on every platform and leaves it ungated.
+- `_grouped_links` hashes the group key before it reads the entry's
+  end, so an unhashable type or note raises `TypeError` before a missing
+  id's `KeyError`; groups keep the first spelling of an equal key
+  (`True` before `1`). A key of a `str` type and a `str` or `None`
+  note is found by hash, as the reference's dict finds it; any other
+  key by a scan of the groups with such keys, so many distinct string
+  groups cost linear time.
+- `contradicting_ids` and `_admitted_ids` are not here; `render_hit`
+  reads `_contradicted_by` and `contradicts` from the row as given.
+- No regular expression is involved.
+
+Stated difference: `render_show` compares `updated` with `created`
+iteratively. The reference compares two distinct nested lists
+recursively and raises `RecursionError` at a depth that follows the
+release and the system; the port answers instead. No golden row holds
+such a value; `response_render_robustness.rs` pins the port's answer.
+
+Reference finding: `_path_states`' `spelled` strips every leading `.`
+and `/` character (`lstrip("./")`), so an attested spelling made only of
+them (`""`, `"."`, `"/"`, `"../"`) becomes the tail `/` and joins the
+first key ending in `/`, and `"../e"` joins any key ending in `/e`
+outside the record's root. Reproduction: `verified_paths=[".", ""]`
+with `checked=["/"]` shows one key `/` and no `.` entry. The port
+reproduces it.
+
+Fixtures: `tests/contract/gen_response_render.py` writes
+`response_render.jsonl` (not gated): hand-built rows and states for
+every branch and error of both renderers, `Memory` values, a stub drift
+report and a stub `parse_claim`, and the helpers alone; each answer's dicts
+are written as their pairs in order, so key order is pinned. Rust:
+`golden_response_render.rs`, `response_render_kills.rs`,
+`response_render_robustness.rs` (values nested 100,000 deep, a path of
+a million characters, a 400-digit count, and growth claims over the
+drift lists, links and ids).
+
+Left for later units: `contradicting_ids`, `_admitted_ids`, the drift
+report itself (`verify_anchoring`), `parse_claim` (claims), and the rest
+of `ResponseBuilder`.
 
 ## The reason a row asks for a check, and the trust appliers (`_response.py`)
 
