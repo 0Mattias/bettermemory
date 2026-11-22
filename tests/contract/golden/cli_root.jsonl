@@ -1,0 +1,40 @@
+{"cases":39,"fixture":"cli_root","python":"3.13.13","version":"0.0.test","w":78}
+{"a":[],"shim":true}
+{"a":["health"],"arm":"health","ns":[["cmd","health"],["opt",null]],"root":null,"sub":null}
+{"a":["init"],"arm":"init","ns":[["cmd","init"],["opt",null]],"root":null,"sub":null}
+{"a":["migrate"],"arm":"migrate","ns":[["cmd","migrate"],["opt",null]],"root":"bettermemory","sub":"bettermemory migrate"}
+{"a":["export"],"arm":"export","ns":[["cmd","export"],["opt",null]],"root":null,"sub":"bettermemory export"}
+{"a":["tombstones"],"arm":"tombstones","ns":[["cmd","tombstones"],["opt",null]],"root":"bettermemory","sub":"bettermemory tombstones"}
+{"a":["rollback"],"arm":"rollback","ns":[["cmd","rollback"],["opt",null]],"root":null,"sub":null}
+{"a":["episodes"],"arm":"episodes","ns":[["cmd","episodes"],["opt",null]],"root":null,"sub":"bettermemory episodes"}
+{"a":["log"],"arm":"log","ns":[["cmd","log"],["opt",null]],"root":null,"sub":"bettermemory log"}
+{"a":["index"],"arm":"index","ns":[["cmd","index"],["opt",null]],"root":null,"sub":"bettermemory index"}
+{"a":["key"],"arm":"key","ns":[["cmd","key"],["opt",null]],"root":null,"sub":"bettermemory key"}
+{"a":["project"],"arm":"project","ns":[["cmd","project"],["opt",null]],"root":null,"sub":"bettermemory project"}
+{"a":["memory"],"arm":"memory","ns":[["cmd","memory"],["opt",null]],"root":null,"sub":"bettermemory memory"}
+{"a":["membership"],"arm":"membership","ns":[["cmd","membership"],["opt",null]],"root":null,"sub":"bettermemory membership"}
+{"a":["eval"],"arm":"eval","ns":[["cmd","eval"],["opt",null]],"root":null,"sub":"bettermemory eval"}
+{"a":["review"],"arm":"review","ns":[["cmd","review"],["opt",null]],"root":null,"sub":"bettermemory review"}
+{"a":["capture"],"arm":"capture","ns":[["cmd","capture"],["opt",null]],"root":null,"sub":"bettermemory capture"}
+{"a":["recall"],"arm":"recall","ns":[["cmd","recall"],["opt",null]],"root":null,"sub":"bettermemory recall"}
+{"a":["rename-scope"],"arm":"rename-scope","ns":[["cmd","rename-scope"],["opt",null]],"root":"bettermemory","sub":null}
+{"a":["try"],"arm":"try","ns":[["cmd","try"],["opt",null]],"root":null,"sub":null}
+{"a":["backup"],"arm":"backup","ns":[["cmd","backup"],["opt",null]],"root":null,"sub":"bettermemory backup"}
+{"a":["service"],"arm":"service","ns":[["cmd","service"],["opt",null]],"root":null,"sub":"bettermemory service"}
+{"a":["doctor"],"arm":"doctor","ns":[["cmd","doctor"],["opt",null]],"root":null,"sub":null}
+{"a":["security"],"arm":"security","ns":[["cmd","security"],["opt",null]],"root":null,"sub":"bettermemory security"}
+{"a":["stats"],"arm":"stats","ns":[["cmd","stats"],["opt",null]],"root":null,"sub":"bettermemory stats"}
+{"a":["completion"],"arm":"completion","ns":[["cmd","completion"],["opt",null]],"root":"bettermemory","sub":null}
+{"a":["config"],"arm":"config","ns":[["cmd","config"],["opt",null]],"root":null,"sub":"bettermemory config"}
+{"a":["up"],"arm":"up","ns":[["cmd","up"],["opt",null]],"root":null,"sub":null}
+{"a":["down"],"arm":"down","ns":[["cmd","down"],["opt",null]],"root":null,"sub":null}
+{"a":["status"],"arm":"status","ns":[["cmd","status"],["opt",null]],"root":null,"sub":null}
+{"a":["serve"],"arm":"serve","ns":[["cmd","serve"],["opt",null]],"root":null,"sub":null}
+{"a":["migrate","--opt","x"],"arm":"migrate","ns":[["cmd","migrate"],["opt","x"]],"root":"bettermemory","sub":"bettermemory migrate"}
+{"a":["rename-scope","--opt=y"],"arm":"rename-scope","ns":[["cmd","rename-scope"],["opt","y"]],"root":"bettermemory","sub":null}
+{"a":["serve","--opt","1"],"arm":"serve","ns":[["cmd","serve"],["opt","1"]],"root":null,"sub":null}
+{"a":["hook"],"called":["hook"],"hook":7}
+{"a":["hook","stop"],"called":["hook","stop"],"hook":7}
+{"a":["session-start"],"called":["session-start"],"hook":7}
+{"a":["audit-turn","x"],"called":["audit-turn","x"],"hook":7}
+{"a":["prompt-recall","--quiet"],"called":["prompt-recall","--quiet"],"hook":7}

@@ -204,6 +204,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "claims_python.jsonl"
         // `datetime.fromisoformat` at its edges (`gen_cli_common`).
         | "cli_common_python.jsonl"
+        // `argparse`'s exits under the CLI root parser (`gen_cli_root`).
+        | "cli_root_python.jsonl"
         // The tokenizer and `literal_eval` of 3.13.13 (`gen_pysyntax`);
         // `pysyntax.jsonl`, the values alone, is not gated.
         | "pysyntax_python.jsonl"

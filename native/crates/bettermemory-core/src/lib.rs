@@ -261,7 +261,9 @@
 //!   the lines shown about which project a folder belongs to;
 //! - [`entry`] and [`cli`]: the process entry's hook-word routing, and
 //!   the CLI's shared leaves (`cli::common`: the refusals, the
-//!   key-unreadable line, the migration line, the ISO cutoff parser);
+//!   key-unreadable line, the migration line, the ISO cutoff parser) and
+//!   the CLI root (`cli::root`: the root parser and `main`'s dispatch over
+//!   command modules taken as trait objects);
 //! - [`origin_remote`]: a remote URL read into the triple `origin`
 //!   compares, with `urllib.parse.urlparse` as CPython 3.13.13 has it;
 //! - [`credentials`]: the write gate's credential detectors, its first

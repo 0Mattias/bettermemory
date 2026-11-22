@@ -109,7 +109,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal`; unit mqueries of `membership_queries.py` in `queries`: `home`, `homes`, `_home_from`, `admit_recall`, `restated`, `_written_afresh`, `_restatement`, `filed_elsewhere`, the trait `ScopeReader`; unit membership-4a: `_touch_view`, `_checkout_name`, `_give_token`, `token_written`, `_foreign` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl`, `membership_queries.jsonl`, `membership_touch.jsonl` |
 | `location_continuity` | `location.continuity` (`location.py` 1040-1094) | `location_continuity.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
-| `entry`, `cli::common` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff` | `cli_common.jsonl`, `cli_common_python.jsonl` |
+| `entry`, `cli::common`, `cli::root` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`; `cli/__init__.py`'s `_build_parser`, `_add_hook_subparser`, `main` (`cli::root`) | `cli_common.jsonl`, `cli_common_python.jsonl`, `cli_root.jsonl`, `cli_root_python.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
 | `claims`, `claim_drift` | units 1 to 3 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`); `claim_drift`: `_Headers`, `build_binding_index`, `claim_level_drift`, the trait `LiteralLines` for the literal helpers | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl`, `claim_drift.jsonl`, `claim_drift_unicode.jsonl`, `claim_drift_python.jsonl` |
@@ -17198,6 +17198,100 @@ cli__common-1b: `read_only_store_path`, `open_read_only`,
 `run_migration_at_open` and `cli_recorder`, which need the config's
 loader, the store's opens and the recorder.
 
+## The CLI root (`cli/__init__.py`)
+
+Read at origin/v9 (7be0e20e); the file is the same in the tree.
+`cli/__init__.py` is 298 lines: imports and the module text (1-70), and
+three functions. Unit cli___init__-1a builds the root parser and `main`'s
+routing and dispatch; the command modules (`cli/*_cmd.py` and their
+kin), the shim and the check of the help listing are later units.
+
+### The map
+
+| Function | Reference lines | Needs from the machine | Status |
+| --- | --- | --- | --- |
+| `_build_parser` | 73-150 | `__version__` and the formatter's width (arguments); each command's `add_subparser` (a `Command`) | built (`cli::root::build_parser`) |
+| `_add_hook_subparser` | 152-177 | nothing | built (`cli::root::add_hook_subparser`) |
+| `main` | 178-298 | `sys.argv[1:]`, `hook_main`, the shim, the commands (arguments) | built (`cli::root::main`) |
+| the help listing and its order | 119-150 | argparse-2's formatter | cli___init__-1b, not built |
+
+### As built
+
+`cli::root` (`src/cli/root.rs`):
+
+- `COMMANDS` holds the 31 subcommand names in `_build_parser`'s order,
+  `hook` last; `DESCRIPTION` and `HOOK_HELP` are the reference's texts.
+- `Command` is a command module as a trait object: `name`,
+  `add_subparser(root, width)` (it calls `root.add_parser`; the
+  reference's builder takes the `_SubParsersAction`, which the port keeps
+  inside the root parser) and `run(args, root, sub) -> Exit`, the
+  handler with the parsers its arm passes. `up`, `down` and `status` are
+  three commands (the reference's `daemon_cmd.add_up`/`run_up` and
+  kin); `serve`'s `run` is `run_serve`, which the reference calls with no
+  argument, so its `args` is unused there.
+- `build_parser(version, commands, width)`: `ArgumentParser(prog=
+  "bettermemory", description=DESCRIPTION)`, `--version` with
+  `"bettermemory {version}"`, `add_subparsers(dest="cmd")`, then each
+  name of `COMMANDS` in order. A name with no `Command` registered is
+  skipped, so it is no choice of the parser (the reference always
+  registers all 31); where two are registered under one name the first
+  is used. `hook` is always `add_hook_subparser`'s, whatever is
+  registered under that name. The subparsers dict of the reference is
+  `subparser(root, name)`, read from the root's subparsers action.
+- `arm_parsers(cmd)` is `main`'s arm table: `(root, sub)` per name,
+  both for `migrate` and `tombstones`, the root alone for
+  `rename-scope` and `completion`, the subparser alone for the 17 others
+  that take one, neither for `health`, `init`, `rollback`, `try`,
+  `doctor`, `up`, `down`, `status` and `serve`; None for `hook` and any
+  other name.
+- `main(argv, version, commands, width, help, hook_main, shim)`:
+  `route_hook_word` first (`Ended::Hook(code)`), then the parse; an exit
+  of the parser (help, version, an error) is `Ended::Parser(outcome)`;
+  `cmd` None runs the shim (`Ended::Shim`); a name with an arm and a
+  registered command runs it (`Ended::Ran { cmd, exit }`); anything else
+  is `parser.error(f"unknown subcommand: {cmd!r}")`, with
+  `pyvalue::repr_str`. A `SpecError` from a builder is `Fault::Spec`
+  (the reference raises), a decline of the parser `Fault::NotPorted`.
+- `UsageError` for `ArgumentParser`: `prog`, and `error` at
+  `DEFAULT_WIDTH` 78, the width `shutil.get_terminal_size` gives with
+  `COLUMNS` unset and no terminal; a caller that knows another width
+  calls `ArgumentParser::error` itself.
+- `Formatted { parser, width }`: a parser as `main` hands it to
+  `Command::run`, with `UsageError::error` at the width `main` was
+  given, so a command's refusal wraps its usage line where the
+  reference's `parser.error` does under that `COLUMNS`.
+
+No regular expression is involved. The Windows flavour has no gap here:
+nothing resolves a path.
+
+### Fixtures and tests
+
+`tests/contract/gen_cli_root.py` runs the reference `main` with every
+command module's builder replaced by a stand-in (`add_parser(name,
+help=, description=)` both `"<name> help"`, and `--opt`) and every
+handler by one that records its arm and the `prog` of the parsers it was
+passed; `hook_main` answers 7, the shim records that it ran,
+`__version__` is `0.0.test` and `COLUMNS=80`. `cli_root.jsonl` (not
+gated) holds the hook routes, the shim and every arm with its namespace;
+`cli_root_python.jsonl` (gated on the Python release) holds the parser's
+exits, whose texts are `argparse`'s, and argvs holding `--`. The Rust
+tests are `golden_cli_root` (the same stand-ins in
+`tests/common/cli_root.rs`), `cli_root_kills` and `cli_root_robustness`.
+
+### Reference findings
+
+- The hook subparser is said to be listed for `--help` and nothing else,
+  but `--` before the word reaches it: `bettermemory -- hook stop` passes
+  `route_hook_word` (its first word is `--`), parses to `cmd == "hook"`,
+  which has no arm, and ends in `bettermemory: error: unknown subcommand:
+  'hook'` (exit 2) instead of running the hook. The port reproduces it.
+
+### Left for later
+
+cli___init__-1b: the help listing and its order (argparse-2's
+formatter). The command modules themselves (`cli/*_cmd.py`, `migrate`,
+`export` and the rest) and the shim are their own units.
+
 ## The credential detectors
 
 Read at 465bc600. `credentials.py` (639 lines). Nothing in it reads the
@@ -20569,8 +20663,11 @@ What the reference has and this build does not, by area:
   (argparse-2) is not. Of the command line, the process entry's
   hook-word routing (`entry`) and `cli/_common.py`'s parser-free leaves
   (`_refuse`, `exit_if_bundle_file`, `key_unreadable_line`,
-  `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`) are
-  built; the rest, `cli__common-1b` included, is not.
+  `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`) and
+  `cli/__init__.py`'s root parser and dispatch (`_build_parser`,
+  `_add_hook_subparser`, `main` in `cli::root`) are built; the rest,
+  `cli___init__-1b` (the help listing), `cli__common-1b` and the command
+  modules included, is not.
 - `datetime.astimezone` of a naive value (the reference reads it as the
   machine's local time).
 - `handlers/verify.py` past its pure gates: `_stamp`,

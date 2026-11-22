@@ -42,6 +42,7 @@ from . import (
     gen_checkout_token_remint,
     gen_cli,
     gen_cli_common,
+    gen_cli_root,
     gen_config,
     gen_difflib,
     gen_credentials_prefixed,
@@ -325,6 +326,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "cli_surface": gen_cli.generate,
     "cli_common": gen_cli_common.generate,
     "cli_common_python": gen_cli_common.generate_python,
+    "cli_root": gen_cli_root.generate,
+    "cli_root_python": gen_cli_root.generate_python,
     "credentials_prefixed": gen_credentials_prefixed.generate,
     "credentials_prefixed_unicode": gen_credentials_prefixed.generate_unicode,
     "credentials_gate": gen_credentials_gate.generate,
@@ -667,6 +670,9 @@ PYTHON_VERSION = "3.13.13"
 #: ``cli_common_python`` holds cutoffs read by `datetime.fromisoformat`
 #: at its edges (week dates, compact forms, offsets with seconds, a NUL,
 #: digits past ASCII), whose answers follow the release (`gen_cli_common`).
+#: ``cli_root_python`` holds the CLI root parser's exits (help, version,
+#: errors) and argvs holding ``--``: `argparse`'s texts and readings
+#: follow the release (`gen_cli_root`).
 #: ``pysyntax_python`` holds the eval-mode tokenizer's and
 #: `ast.literal_eval`'s answers as 3.13.13 gives them, classed by the
 #: release's messages; under another interpreter the generator writes its
@@ -734,6 +740,7 @@ PYTHON_GATED = frozenset(
         "argparse_python",
         "argparse_subparsers_python",
         "cli_common_python",
+        "cli_root_python",
         # 3.11 and 3.12 raise RuntimeError where `Path.resolve` meets a link loop.
         "handlers_verify_gates_python",
         "symbols_platform",
