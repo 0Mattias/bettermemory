@@ -77,8 +77,9 @@
 //!   pass of path drift, its effects as closures;
 //! - [`attestation_paths`]: explicit path attestations compiled beside
 //!   the legacy reference grammar (`attestation_paths.py` whole);
-//! - [`project_file`]: the project file, its first unit (the vocabulary,
-//!   `mint_id`, `render` and the id and name checks);
+//! - [`project_file`]: the project file, its first two units (the
+//!   vocabulary, `mint_id`, `render` and the id and name checks; `parse`
+//!   and its bounded read);
 //! - [`project_walk`]: the project file's upward walk (`Walk`,
 //!   `above_start`, `find`, `_walk`, `_look`) and `write` (its third unit);
 //! - [`log`]: the row MAC, the key ring and `verify_chain`, and the key

@@ -228,6 +228,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "attestation_paths_posix": gen_attestation_paths.generate_posix,
     "project_file": gen_project_file.generate,
     "project_walk": gen_project_walk.generate,
+    "project_file_parse": gen_project_file.generate_parse,
+    "project_file_parse_python": gen_project_file.generate_parse_python,
+    "project_file_parse_posix": gen_project_file.generate_parse_posix,
     "verify_candidates_patterns": gen_verify_candidates.generate_patterns,
     "verify_candidates_patterns_unicode": gen_verify_candidates.generate_patterns_unicode,
     "canonical_json": gen_json.generate,
@@ -739,6 +742,8 @@ PYTHON_VERSION = "3.13.13"
 #: (`gen_restore_lock`).
 #: ``symbols_platform`` holds a link loop, on which 3.11 and 3.12's
 #: `Path.resolve` raises RuntimeError out of the checker (`gen_symbols`).
+#: ``project_file_parse_python`` holds `tomllib`'s refusals, whose messages
+#: and `int()` digit limit are the release's (`gen_project_file`).
 PYTHON_GATED = frozenset(
     {
         "argparse_python",
@@ -763,6 +768,7 @@ PYTHON_GATED = frozenset(
         "store_reads_python",
         "store_rows_leaves_python",
         "origin_gitfiles_leaves_python",
+        "project_file_parse_python",
         "pyre_python",
         "python_edges",
         "models_rows",
@@ -1036,7 +1042,9 @@ PLATFORM_GATED = frozenset(
 #: ``verify_anchoring_attest_posix`` resolves through a link in a scratch
 #: tree (`gen_verify_anchoring_attest`);
 #: ``symbols_platform`` holds links, a FIFO and a mode-000 file
-#: (`gen_symbols`).
+#: (`gen_symbols`);
+#: ``project_file_parse_posix`` parses a real tree with a FIFO, links, a
+#: loop and a mode-000 file, worded by the C library (`gen_project_file`).
 POSIX_ONLY = frozenset(
     {
         "attestation_paths_posix",
@@ -1054,6 +1062,7 @@ POSIX_ONLY = frozenset(
         "verify_anchoring_attest_posix",
         "checkout_token_remint",
         "checkout_token_remint_posix",
+        "project_file_parse_posix",
         "store_restore_lock",
         "store_restore_lock_hold",
         "store_restore_lock_python",

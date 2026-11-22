@@ -1,0 +1,20 @@
+{"cases":19,"k":"header"}
+{"n":"good","o":{"b":false,"id":"bmp_0123456789ABCDEFGHJKMNPQRS","name":"n","p":"/good"}}
+{"n":"s65535","o":{"b":false,"id":"bmp_0123456789ABCDEFGHJKMNPQRS","name":"n","p":"/s65535"}}
+{"n":"s65536","o":{"b":false,"id":"bmp_0123456789ABCDEFGHJKMNPQRS","name":"n","p":"/s65536"}}
+{"n":"s65537","o":{"d":"larger than 65536 bytes","p":"/s65537","r":"too_large"}}
+{"n":"s70000","o":{"d":"larger than 65536 bytes","p":"/s70000","r":"too_large"}}
+{"n":"latin","o":{"d":"not UTF-8 text","p":"/latin","r":"toml"}}
+{"n":"empty","o":{"d":"it has no [project] table","p":"/empty","r":"no_project_table"}}
+{"n":"fifo","o":{"d":"not a regular file","p":"/fifo","r":"not_a_file"}}
+{"n":"dir","o":{"d":"not a regular file","p":"/dir","r":"not_a_file"}}
+{"n":"link","o":{"b":false,"id":"bmp_0123456789ABCDEFGHJKMNPQRS","name":"n","p":"/link"}}
+{"n":"dangling","o":{"d":"No such file or directory","p":"/dangling","r":"unreadable"}}
+{"n":"loop","o":{"d":"Too many levels of symbolic links","p":"/loop","r":"unreadable"}}
+{"n":"fifolink","o":{"d":"not a regular file","p":"/fifolink","r":"not_a_file"}}
+{"n":"locked","o":{"d":"Permission denied","p":"/locked","r":"unreadable"}}
+{"n":"missing","o":{"d":"No such file or directory","p":"/missing","r":"unreadable"}}
+{"n":"good/below","o":{"d":"Not a directory","p":"/good/below","r":"unreadable"}}
+{"n":"x*300","o":{"d":"File name too long","p":"/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","r":"unreadable"}}
+{"n":"dir/../good","o":{"b":false,"id":"bmp_0123456789ABCDEFGHJKMNPQRS","name":"n","p":"/good"}}
+{"n":"dir//./../link","o":{"b":false,"id":"bmp_0123456789ABCDEFGHJKMNPQRS","name":"n","p":"/link"}}

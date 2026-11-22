@@ -267,6 +267,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `re` sources the engine was read from (`gen_pyre`); an empty
         // negative lookaround, which `re._parser` parses to FAILURE from
         // 3.13 (`gen_pyre_tree`).
+        // `tomllib`'s refusals (`gen_project_file`).
+        "project_file_parse_python.jsonl" => &[Python],
         "pyre_python.jsonl" => &[Python],
         // `str.strip`, `str.lower`, `str.isalnum` and `re`'s `\s` and `\d`
         // past ASCII (`gen_models_text`).

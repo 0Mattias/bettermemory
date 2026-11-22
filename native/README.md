@@ -43,7 +43,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl` |
 | `path_drift_steps` | `path_drift_steps.py`: `_check_body_candidates`, its checks and keys as closures | `path_drift_steps.jsonl` |
 | `attestation_paths` | `attestation_paths.py` whole: `LiteralPaths`/`ReferencePaths` (`Paths` and its `Kind`), `path_mode`, `interpret_path`, `_may_be_literal`, `joined_path`, `_REFERENCE_ROOT`, `absolute_spelling`, `literal_path`, `reference_path`, `placeholder_spelling`, `target_path`, `record_paths`, `commit_paths`, `compile_targets`, `unverifiable_inputs`, with `ntpath.splitdrive` and both `commonpath`s; the host (`os.name`, `expanduser`, `lstat`, `ntpath.normcase` on Windows) a trait | `attestation_paths.jsonl`, `attestation_paths_posix.jsonl` |
-| `project_file` | unit 1 of `project_file.py`: the constants, `ErrorReason`, `ProjectFile`, `ProjectFileError` (`directory`, `line`), `Found`, `Above`, `mint_id`, `render`, `_ID_RE` (`id_text`), `_bad_name`, `_bad_char`, `_toml_string` | `project_file.jsonl` |
+| `project_file` | units 1 and 2 of `project_file.py`: the constants, `ErrorReason`, `ProjectFile`, `ProjectFileError` (`directory`, `line`), `Found`, `Above`, `mint_id`, `render`, `_ID_RE` (`id_text`), `_bad_name`, `_bad_char`, `_toml_string`; `parse`, `_absolute`, `_evicted`, `_parse_stat`, `_read_bounded`, `_from_table`, `_os_text` | `project_file.jsonl`, `project_file_parse.jsonl`, `project_file_parse_python.jsonl`, `project_file_parse_posix.jsonl` |
 | `project_walk` | unit 3 of `project_file.py`: `Walk` and its properties, `above_start`, `find`, `_walk`, `_look`, `write` (`WriteEffects`), with `path_eq` and `is_relative_to` | `project_walk.jsonl` |
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store` | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_posix_python.jsonl`, `log_keyfiles_darwin.jsonl` |
 | `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record`; unit 3 (`machine::open`): `_write_record`, `open_machine`, `StdMachine` (`gethostuuid`, the `ioreg` spawn) | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_python.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl`, `machine_open.jsonl`, `machine_open_platform.jsonl` |
@@ -541,17 +541,17 @@ and a mode-000 folder; `golden_attestation_paths_posix` runs `FsHost` over
 | constants, `ErrorReason`, `ProjectFile`, `ProjectFileError` (`directory`, `line`), `Found`, `Above` | 46-138 | nothing | built (unit 1) |
 | `Walk` | 140-233 | nothing | built (unit 3, `project_walk.rs`) |
 | `mint_id` | 236-239 | random bytes (an argument) | built (unit 1) |
-| `parse` | 242-260 | `os.path.abspath` (a `Process`), `os.stat` | unit 2 |
+| `parse` | 242-260 | `os.path.abspath` (a `Process`), `os.stat` | built (unit 2) |
 | `above_start`, `find` | 263-314 | the walk | built (unit 3) |
 | `write` | 317-361 | the file system's writes (`WriteEffects`), random bytes | built (unit 3) |
 | `render` | 364-378 | nothing | built (unit 1) |
-| `_absolute` | 384-385 | `os.path.abspath` (`hostpath::text::abspath`) | unit 2 |
+| `_absolute` | 384-385 | `os.path.abspath` (`hostpath::text::abspath`) | built (unit 2) |
 | `_walk`, `_look` | 388-410 | `os.stat` (`Fs::stat`), `path_missing`, `Fs::strerror` | built (unit 3) |
-| `_evicted`, `_parse_stat` | 413-437 | `sys.platform == "darwin"` (an argument), `StatResult.flags` and `file_attributes` | unit 2 |
-| `_read_bounded` | 440-460 | `fsdata`'s non-blocking `open_result`, `fstat_result`, `read_once`, `close` | unit 2 |
-| `_from_table` | 463-499 | `toml::loads` | unit 2 |
+| `_evicted`, `_parse_stat` | 413-437 | `sys.platform == "darwin"` (an argument), `StatResult.flags` and `file_attributes` | built (unit 2) |
+| `_read_bounded` | 440-460 | `fsdata`'s non-blocking `open_result`, `fstat_result`, `read_once`, `close` | built (unit 2) |
+| `_from_table` | 463-499 | `toml::loads` | built (unit 2) |
 | `_bad_name`, `_bad_char`, `_toml_string` | 502-523 | nothing | built (unit 1) |
-| `_os_text` | 526-527 | `exc.strerror` (`Fs::strerror`; none: decline) | unit 2 |
+| `_os_text` | 526-527 | `exc.strerror` (`Fs::strerror`; none: decline) | built (unit 2) |
 
 **The cut.** The lane's plan built `parse` with unit 1 unless the two
 modules of the lane passed 600 lines of Rust source; `attestation_paths`
@@ -590,6 +590,70 @@ paths with quotes, line breaks and an escape sequence, `render` with every
 C0 character, DEL and past ASCII and with a lone surrogate, `mint_id` over
 three byte strings, `_ID_RE.fullmatch` over ids one step from valid, and
 every code point `_bad_char` refuses.
+
+**Unit 2 as built: `parse` and its reads.** `parse(host, path)` takes a
+`Host`: the file system (`fsdata::Fs`), the path flavour, the `Process`
+whose `getcwd` `abspath` asks, and `darwin` (`sys.platform == "darwin"`).
+It answers `Found`, or a `Fault`: `Raised(class)` where the reference
+raises, `NotPorted` where the port declines. The line ranges were read
+again at this unit: `parse` 242-260, `_absolute` 384-385, `_evicted`
+413-418, `_parse_stat` 421-437, `_read_bounded` 440-460, `_from_table`
+463-499, `_os_text` 526-527.
+
+- `absolute` is `hostpath::text::abspath`; its ValueError and the OSError
+  of `os.getcwd` are raised.
+- The path reaches the OS as `os.fsencode` gives it under POSIX (a code
+  point it cannot encode raises, a ValueError); under the Windows flavour
+  as UTF-8, and a lone surrogate there is not ported.
+- `os.stat` refused with ValueError (a NUL) raises out of `parse`: the
+  reference catches OSError alone.
+- `evicted(st, darwin)`: the dataless flag counts on darwin alone; the
+  recall attributes count wherever the stat carries them.
+- `parse_stat` checks the kind before eviction, so a folder with the
+  dataless flag is `not_a_file`.
+- `read_bounded` opens without blocking (`open_result`), checks the
+  kind `os.fstat` answers, reads with `read_once` what is still wanted up
+  to one byte past `MAX_BYTES`, and closes in the `finally`: a close that
+  fails raises its class over whatever the body answered, a read error
+  included.
+- `parse_raw` is the tail of `_parse_stat` once the bytes are read:
+  strict UTF-8 (a BOM is kept and refused by the TOML reader, an encoded
+  surrogate is not UTF-8), then `toml::loads`. A `TOMLDecodeError` is
+  worded `not valid TOML (<message>)`; `int()`'s digit limit raises
+  ValueError; a document nested to the recursion limit declines, because
+  the reference's limit there is its stack at the call, which `parse` and
+  its callers deepen.
+- `from_table` reads `project`, `id`, `name` and `boundary` in the
+  reference's order. An absent name is the base name of the file's folder
+  with the characters `_bad_char` refuses removed. The id is checked by
+  `id_text` (`_ID_RE.fullmatch`: no trailing line break) and quoted to 40
+  code points.
+- `os_text` is `exc.strerror or str(exc)`: the file system's text
+  (`Fs::strerror`). Where there is none, `str(exc)` would be worded from
+  the errno's number, which `OsError` does not keep, so the parse
+  declines.
+
+**The Windows gap.** `StdFs` words no OS error under Windows (its
+`strerror` is the trait's default), so a file `parse` cannot open or stat
+declines there where the reference words the C runtime's text
+(`project_file_parse_not_posix`, class os).
+
+**Fixtures of unit 2.** `project_file_parse.jsonl` (not gated) runs
+`_parse_stat` over a stat the row describes (kind, `st_flags`,
+`st_file_attributes`, `sys.platform`) with `_read_bounded` patched to the
+row's bytes: eviction on each platform, bytes that are not UTF-8, every
+`_from_table` branch, ids one step from valid (a trailing line break
+among them), names at each refused character, the folder's name.
+`project_file_parse_python.jsonl` (Python-gated) holds `tomllib`'s
+refusals and the ValueError of 4,301 digits. `project_file_parse_posix.jsonl`
+(POSIX only) parses a real tree: sizes 65,535 to 65,537 and 70,000,
+bytes that are not UTF-8, an empty file, a FIFO, a folder, links, a
+dangling link, a loop, a mode-000 file, a path through a file, a name too
+long and paths with `..`, with the texts macOS and glibc share. The kills
+(`project_file_parse_kills`) hold the close of the `finally`, refused
+reads and fstat, the sizes each read asks, a relative path, a NUL and an
+error without text; the robustness file holds nesting past the budget, a
+name of 60,000 characters and growth over many keys.
 
 ### Unit 3: the walk and `write` (`project_walk.rs`)
 
@@ -20755,8 +20819,6 @@ What the reference has and this build does not, by area:
   store id reissue (store_membership-2), and of the caller's resolution its file roots
   and workspace declaration (`identity` resolves the rest; its
   admission is `store::caller`).
-- `project_file.py` past its vocabulary, render, walk and write: `parse`
-  and its reads (unit 2).
 - Each hit's signals and drift report: `claims.py` past its leaves,
   its literal reader, its drift index and its module tokenizer (unit
   5a) (the declare-time oracle),
