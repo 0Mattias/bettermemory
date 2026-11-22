@@ -22,6 +22,9 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | --- | --- | --- |
 | `json` | `json.dumps` as each call site spells values (`log.canonical_payload` and nine more forms, `review.canonical_json`), `json.loads` | `canonical_json.jsonl`, `json_edges.jsonl` |
 | `in_force` | `in_force.py` whole: `InForce` (with `history`), `in_force` and its inner `newest`, `newest_head`, `admitted_sources`, `head`; the store's reads and the admission are traits (`LinkReader`, `RecordView`) | `in_force.jsonl` |
+| `admission` | `admission.py` 59-127 beside `store::caller`'s `Admission` and `NO_RESOLUTION` (re-exported): `DriftScope`, `CountedRecords`, `EveryRecord` (with `admits_row`), `EVERY_RECORD`, `admitted_nothing` | unit tests |
+| `health_summary` | `health_summary.py` whole: `section_names`, `health_summary` (with `_empty`, `_attention`), `health_section`, `SUMMARY_IDS`, `HEADLINE_KEYS` | `health_summary.jsonl` |
+| `health_roots` | `health_roots.py` 21-73: `EstateProgress` (`ordered`, `attempt`), `_LAST_CHECKED_CAP`; `progress_for_store` is the open Store's own `EstateProgress` | `health_roots.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `argparse` | unit argparse-1a: the flat-parser subset of CPython 3.13.13's `argparse` the hook mains use: `ArgumentParser(prog, description, add_help)`, `add_argument` (`store`, `store_true`, `help`, `version`; positionals of one argument with `choices`), `parse_args` (`_parse_known_args` with `_parse_optional`, `_get_option_tuples`, `consume_optional`, `consume_positionals`, `_match_argument`, `_match_arguments_partial`, the negative-number matcher), `error` and `_format_usage` with its wrapping, as an `Outcome` without a process exit; unit argparse-1b: `add_subparsers(dest)` with its `prog` derived from the parent's positionals, `add_parser`, the PARSER `nargs` and `_SubParsersAction.__call__` with the child's namespace merged in the reference's order and its leftovers after the parent's | `argparse.jsonl`, `argparse_python.jsonl`, `argparse_subparsers.jsonl`, `argparse_subparsers_python.jsonl` |
@@ -2028,6 +2031,90 @@ milliseconds in release.
 
 Nothing of the module is left for a later unit; wiring the traits to
 `store` and to `store::caller`'s admission is the store's and standing's.
+
+## The admission vocabulary and the health answers (`admission`, `health_summary`, `health_roots`)
+
+Three small modules, one unit (unit leafkit2, about 330 lines of Rust
+outside tests). None needs anything from the machine: the report, the
+roots and the times are arguments.
+
+| function | reference lines | needs | status |
+| --- | --- | --- | --- |
+| `admission.NO_RESOLUTION`, `Admission`, `admits_row` | 59-60, class | nothing | in `store::caller`; re-exported |
+| `admission.DriftScope`, `CountedRecords` | 65-89 | nothing | built |
+| `admission.EveryRecord`, `EVERY_RECORD` | 106-121 | nothing | built |
+| `admission.admitted_nothing` | 124-126 | nothing | built |
+| `admission.recorded_caller` | 129-163 | the membership model | later |
+| `health_summary._empty`, `_attention` | 34-50 | nothing | built |
+| `section_names`, `health_summary` | 53-68 | `json.dumps(default=str)` | built |
+| `health_section` | 71-85 | nothing | built |
+| `health_roots.EstateProgress` (`ordered`, `attempt`) | 21-52 | nothing | built |
+| `progress_for_store` | 55-73 | an open Store | the Store owns its progress |
+
+What each part reproduces, and why:
+
+- `admission`: `NO_RESOLUTION` and `Admission` stay where
+  `store::caller` ported them; the module re-exports `NO_RESOLUTION`.
+  `EveryRecord` implements `in_force::RecordView` (`prime`, `admits_id`)
+  and has `admits_row` as an inherent method with the signature of
+  `store::caller::Admission::admits_row`, since the crate's `RecordView`
+  has no `admits_row` until a reader of it is ported. `DriftScope` is a
+  trait with `prime` and `drift_counts`; `CountedRecords` holds a
+  `HashSet` (the reference's frozenset) and its `prime` does nothing.
+- `health_summary` reads the report as a `PyValue::Dict` in insertion
+  order (a repeated key answers its last value, as a dict holds the last
+  one set). A report that is not a dict is iterated and indexed as the
+  reference does: a list, tuple or string yields its items or characters
+  as section names, `report[name]` is TypeError for a `str` name and
+  IndexError out of range, `key in report` is membership (a substring for
+  a string), `report.get` is AttributeError, and anything else is
+  TypeError at the iteration. Errors are `HealthError` (the class, and `str(exc)` for KeyError
+  and ValueError). `_empty` is None or an empty list or dict only; a
+  zero, a False, an empty string and an empty tuple are values.
+  `_attention` evaluates as the reference does: `list(memory_ids)` of a
+  truthy value (a string gives its characters, a dict its keys, any other
+  non-iterable TypeError), the first three, replaced by `str(scope)` split
+  on `", "` when the scope is truthy; the line is `str()` of kind, count
+  and action in that order (a missing key is KeyError), and a named item
+  that is not a `str` is TypeError at the join. A recommendation that is
+  not a dict is AttributeError. `section_chars` is the code point length
+  of `json.dumps` with `DumpOptions` built for `separators=(",", ":")`,
+  `default=str`, `ensure_ascii`. `health_section` splits on `,`, strips
+  each part with Python's `str.isspace` set (`unicode::is_space`, so
+  U+3000 and U+0085 strip and U+200B does not), drops empty parts, keeps
+  a repeated part at its first place, and raises the reference's
+  ValueError text with the `repr` of the first unknown part, or of the
+  whole name when nothing is asked.
+- `health_roots`: `EstateProgress` keeps `checked` as a `VecDeque` in
+  attempt order (the `OrderedDict` with `move_to_end`), capped at
+  `LAST_CHECKED_CAP` (1024) by dropping the oldest. `ordered` sorts the
+  distinct roots by code point (Python `str` order; `Vec<u32>` order, so a
+  lone surrogate sorts where Python puts it) and rotates to
+  `bisect_left` of `retry_root` when it is among them, else `bisect_right`
+  of the cursor. The reference's `RLock` becomes a `Mutex` its owner
+  holds, and `progress_for_store`'s weak map becomes the open Store's own
+  `EstateProgress::default()`; `store` is not edited by this unit.
+- No regular expression is involved.
+
+Fixtures and tests: `tests/contract/gen_health_summary.py` writes
+`health_summary.jsonl` (45 rows over hand-built reports: empty sections
+and zero values, scope against memory ids, odd recommendation shapes and
+every exception, padded, empty, repeated, unknown and comma-separated
+section names, non-ASCII values, a lone surrogate name, a datetime
+section) and `tests/contract/gen_health_roots.py` writes
+`health_roots.jsonl` (16 rows of root lists with cursor, retry root and
+attempt sequences, and one digest row of 3000 attempts over 1500 roots
+that evicts past the cap). Neither is gated: every value spells the same
+under every interpreter and platform. `golden_health_summary.rs` and
+`golden_health_roots.rs` check every row; `health_kills.rs` holds the
+cases a plausible wrong port fails; `health_robustness.rs` orders 200,000
+roots, attempts past the cap, asks a million commas, and holds growth
+claims through `tests/timing`. The admission vocabulary has unit tests in
+its module.
+
+Left for later: `admission.recorded_caller` and `admits_row` on
+`RecordView`, with their first reader; wiring `EstateProgress` into the
+Store.
 
 ## The ranker
 

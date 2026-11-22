@@ -18,6 +18,12 @@
 //!   `hook_budget_seconds`, and the install-command spellings;
 //! - [`in_force`]: what is in force at delivery (`in_force.py` whole):
 //!   the supersession head, the newest extender, the held slot;
+//! - [`admission`]: `admission.py`'s vocabulary beside `store::caller`'s
+//!   `Admission`: `DriftScope`, `CountedRecords`, `EveryRecord`,
+//!   `admitted_nothing`;
+//! - [`health_summary`]: `health_summary.py` whole: the default health
+//!   answer and the answer naming sections;
+//! - [`health_roots`]: `health_roots.py`'s estate progress cursor;
 //! - [`float_repr`]: Python's `float.__repr__`;
 //! - [`datetime`]: the datetime spellings and readings;
 //! - [`argparse`]: the flat-parser subset of `argparse` the hook mains
@@ -258,6 +264,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod admission;
 pub mod argparse;
 pub mod attestation_paths;
 pub mod attribution;
@@ -287,6 +294,8 @@ pub mod gitfile_rule;
 pub mod githead;
 pub mod gitobjects;
 pub mod gitsystem;
+pub mod health_roots;
+pub mod health_summary;
 pub mod history;
 pub mod history_rows;
 pub mod hook;
