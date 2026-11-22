@@ -116,6 +116,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal`; unit mqueries of `membership_queries.py` in `queries`: `home`, `homes`, `_home_from`, `admit_recall`, `restated`, `_written_afresh`, `_restatement`, `filed_elsewhere`, the trait `ScopeReader`; unit membership-4a: `_touch_view`, `_checkout_name`, `_give_token`, `token_written`, `_foreign`; unit mlegacy in `legacy`: `pending`, `settle_legacy_questions`, `below_root`, `_declared_below`, `_record_counts`, `_records_by_project`, and `first_output` of `membership_queries.py`; rung 2 of `membership_resolve.py` in `rung`: `_token_now`, `_token_read`, `_by_object`, `_rung_two` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl`, `membership_queries.jsonl`, `membership_touch.jsonl`, `membership_legacy.jsonl`, `membership_rung.jsonl` |
 | `location_continuity` | `location.continuity` (`location.py` 1040-1094) | `location_continuity.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
+| `membership_migrate` | `membership_migrate.py`, unit 1: the constants (`LIVE`, `GONE`, `REPLACED`, `UNREACHABLE`, `RULE_PREFIX`, `LEGACY_REASON`, `MIGRATED`, `_RECORD_TABLES`, `_RECORD_KINDS`, `_SHA`, `_PROBE_BUDGET`, `_PROBE_WORKERS`), `RootDecision`, `RootlessHome`, `LegacyQuestion`, `MigrationTotals` (`to_dict`), `MigrationReport` (`homed`, `to_dict`, `lines`), `_basename`, `_origin`, `_text`, `_id_order`, `_repository_name`, `_shas`, `_json_list` | `membership_migrate_report.jsonl`, `membership_migrate_report_python.jsonl` |
 | `entry`, `cli::common`, `cli::root` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`; `cli/__init__.py`'s `_build_parser`, `_add_hook_subparser`, `main` (`cli::root`) | `cli_common.jsonl`, `cli_common_python.jsonl`, `cli_root.jsonl`, `cli_root_python.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
@@ -18474,6 +18475,93 @@ involved stable from Unicode 14 to 16):
   reference; the native signatures take `&[u32]` there, so that call
   cannot be written.
 
+## The migration to the membership model (`membership_migrate.py`)
+
+`membership_migrate.py` (at origin/v9) moves a store written before the
+membership model onto it: it probes each recorded root, homes every
+record, opens the `legacy` questions and reports what it did. Unit 1
+(`src/membership_migrate`) holds what needs nothing from the store or
+the machine.
+
+| Function | Reference lines | Needs from the machine | Status |
+| --- | --- | --- | --- |
+| the constants (`LIVE` to `_PROBE_WORKERS`) | 89-123 | nothing | unit 1 (`mod.rs`) |
+| `RootDecision`, `RootlessHome`, `LegacyQuestion`, `MigrationTotals` | 132-204 | nothing | unit 1 (`report.rs`) |
+| `MigrationReport` (`homed`, `to_dict`, `lines`) | 206-311 | nothing | unit 1 (`report.rs`) |
+| `_basename` | 464-465 | the host's `os.path` flavour | unit 1 (`helpers.rs`) |
+| `_origin`, `_text`, `_id_order`, `_repository_name`, `_shas`, `_json_list` | 468-517 | nothing | unit 1 (`helpers.rs`) |
+| `_Record`, `_Decision`, `_Live`, `_Probe`, `_move_targets`, `_commit_sets`, `_remote_keys`, `_held_counts`, `_held_anywhere` | 520-621 | the store's rows; `_remote_keys` needs the local branch of `location.remote_key`, which `capture/remote.rs` leaves out | later, with `_Run`, their one caller |
+| `unhomed`, `migrate`, `_Run` and the rest | 314-461, 622 on | the store, the probes, the clock | later |
+
+What unit 1 reproduces, and how:
+
+- The report types are plain structs. A `Mapping` field (`held`,
+  `homes_by_rule`) is a list of pairs in insertion order, as the
+  reference's dict keeps it; `carriers` is a list that `to_dict` writes
+  as a tuple, as `dataclasses.asdict` keeps a tuple. `to_dict` builds the
+  `PyValue` dict in the dataclass's field order, `MigrationTotals`' twelve
+  keys included. Counts are `i64`; `homed` adds three of them as `i128`,
+  so no sum overflows. The reference's counts are Python ints of any
+  size; the real run passes `len(...)` and its own tallies. Stated
+  difference: a count past `i64::MAX` cannot be built here, where the
+  reference holds it. `homes_by_rule` and `held` are vectors of pairs; a
+  caller that puts one key in twice gets both entries in `to_dict` and
+  `lines`, where a Python dict holds one. No caller does.
+- `lines()` is the reference's text byte for byte: a path, a cwd, a root
+  and a question's `at` through `printable::quoted`, the project's name
+  through `membership_lines::named`, every other text as it is. The
+  `held` clause appears only when `held` is not empty and lists
+  `sorted(held.items())`, which is code-point order of the keys
+  (`C10` before `C9`). `checkout` reads `checkout X` only when it is a
+  non-empty text, as the reference's truth test reads it. The remint
+  header appears only when `remint` is not empty.
+- `_basename` reads `os.path`, which is `posixpath` on macOS and Linux and
+  `ntpath` on Windows. `basename_on(path, nt)` takes the flavour, and
+  `basename` passes `HOST_NT` (`cfg!(windows)`). Under `ntpath` a drive
+  (`C:x`, any character before a colon) or a UNC prefix (`//server/share`,
+  `//?/UNC/server/share`) is not part of the name, so `//server/share`
+  answers itself through the `or path` fallback. The golden rows carry
+  both flavours' answers, made by the reference with `os.path` set to
+  each (both pure Python on every host), so the file is the same on every
+  system and the Rust test checks both branches everywhere.
+- `_origin` and `_json_list` read a text with `json::loads`. A value
+  `json.loads` refuses by type (a number, a list given to `_origin`)
+  answers None or an empty list as the reference's `except` does;
+  RecursionError passes through, as it does in the reference. A `bytes`
+  value, which `json.loads` would decode, has no `PyValue` and cannot be
+  passed. `_text` returns the value unstripped when its `strip()` is not
+  empty (`str.strip` of `claims::strip`).
+- `_repository_name` drops one `local:` prefix (case kept) and one
+  `.git` suffix, and falls back to the whole key when nothing is left.
+- `_shas` builds `pyre::Regex` from `_SHA`'s own text `[0-9a-f]{4,64}`
+  with no flags and calls `fullmatch` on `unicode::lower(strip(v))` (pyre
+  decision, section 5 rule 1: the engine is in the crate). The pattern is
+  a reference literal, so `gen_pyre_api`'s scan of the reference's
+  literals finds it with the others. A seeded sweep of 20,000 texts over
+  hex digits, both cases, `g`, whitespace and U+212A is pinned by digest.
+
+Gates. `membership_migrate_report.jsonl` is not gated: its texts are
+ASCII, Latin-1 and characters whose Unicode properties are stable, and
+its JSON nests at most 900 levels, which every release reads.
+`membership_migrate_report_python.jsonl` (`PYTHON_GATED`) holds `_origin`
+and `_json_list` of JSON nested 1,500 and 100,000 levels, where the
+decoder stops recursing as the release, the system and the caller's
+stack depth decide (under 3.13 a text nested 9,998 deep reads when
+called alone and raises RecursionError under pytest, so no case lies
+near the limit).
+
+A difference left in place: near the decoder's depth limit CPython 3.13
+raises RecursionError for some malformed texts where the crate's
+`json::loads` raises ValueError. `"[" * 9998` (unclosed), `"[" * 9996 +
+"1"` and `'{"a":' * 9998` raise RecursionError in the reference (the
+JSONDecodeError's own construction meets the limit), and `_origin` and
+`_json_list` answer None and an empty list here. The rule depends on the
+error's kind and on the release, so it belongs to `json`, not to this
+module; no golden row holds such a text.
+
+Tests: `golden_membership_migrate_report`,
+`membership_migrate_report_kills`, `membership_migrate_report_robustness`.
+
 ## The process entry and the CLI's shared leaves
 
 Read at 6cf944e5. `_entry.py` (38 lines) whole, and the leaves of
@@ -22231,6 +22319,13 @@ What the reference has and this build does not, by area:
   `membership::rung`): the tally, the other rungs, the liveness plan,
   first sight, join, ask and new, the sighting's writes, the
   subprojects and the declared folders.
+- `membership_migrate.py` past its constants, its report types
+  (`RootDecision`, `RootlessHome`, `LegacyQuestion`, `MigrationTotals`,
+  `MigrationReport` with `homed`, `to_dict` and `lines`) and its text
+  helpers (`_basename`, `_origin`, `_text`, `_id_order`,
+  `_repository_name`, `_shas`, `_json_list`), which are built in
+  `membership_migrate`: `_Record` through `_held_anywhere`, `unhomed`,
+  `migrate` and `_Run`.
 - Each hit's signals and drift report: `claims.py` past its leaves,
   its literal reader, its drift index and its module tokenizer (unit
   5a) (the declare-time oracle),

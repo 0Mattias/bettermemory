@@ -1,0 +1,8 @@
+{"a":[{"t":"rep","v":[["[",1500],["]",1500]]}],"f":"origin","o":{"t":"null"}}
+{"a":[{"t":"rep","v":[["[",1500],["]",1500]]}],"f":"json_list","o":{"kinds":[["l",1499]],"leaf":{"t":"list","v":[]},"t":"chain"}}
+{"a":[{"t":"rep","v":[["{\"a\":",1500],["1",1],["}",1500]]}],"f":"origin","o":{"kinds":[["a",1500]],"leaf":{"t":"int","v":"1"},"t":"chain"}}
+{"a":[{"t":"rep","v":[["{\"a\":",1500],["1",1],["}",1500]]}],"f":"json_list","o":{"t":"list","v":[]}}
+{"a":[{"t":"rep","v":[["[",100000]]}],"f":"origin","o":{"raised":"RecursionError"}}
+{"a":[{"t":"rep","v":[["[",100000]]}],"f":"json_list","o":{"raised":"RecursionError"}}
+{"a":[{"t":"rep","v":[["[",100000],["]",100000]]}],"f":"origin","o":{"raised":"RecursionError"}}
+{"a":[{"t":"rep","v":[["[",100000],["]",100000]]}],"f":"json_list","o":{"raised":"RecursionError"}}

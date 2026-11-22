@@ -299,6 +299,9 @@
 //!   gates of `handlers/verify.py`);
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
 //!   the lines shown about which project a folder belongs to;
+//! - [`membership_migrate`]: the migration to the membership model, its
+//!   first unit (the constants, the report types with `to_dict` and
+//!   `lines`, and the pure text helpers);
 //! - [`entry`] and [`cli`]: the process entry's hook-word routing, and
 //!   the CLI's shared leaves (`cli::common`: the refusals, the
 //!   key-unreadable line, the migration line, the ISO cutoff parser) and
@@ -404,6 +407,7 @@ pub mod log;
 pub mod machine;
 pub mod membership;
 pub mod membership_lines;
+pub mod membership_migrate;
 pub mod membership_records;
 pub mod membership_rows;
 pub mod membership_shared;

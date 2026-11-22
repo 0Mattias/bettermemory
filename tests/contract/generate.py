@@ -133,6 +133,7 @@ from . import (
     gen_log_ring,
     gen_mcp,
     gen_membership_lines,
+    gen_membership_migrate_report,
     gen_membership_queries,
     gen_membership_legacy,
     gen_claims,
@@ -534,6 +535,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "membership_lines": gen_membership_lines.generate,
     "membership_lines_unicode": gen_membership_lines.generate_unicode,
     "membership_lines_python": gen_membership_lines.generate_python,
+    "membership_migrate_report": gen_membership_migrate_report.generate,
+    "membership_migrate_report_python": gen_membership_migrate_report.generate_python,
     "membership_queries": gen_membership_queries.generate,
     "membership_legacy": gen_membership_legacy.generate,
     "claims": gen_claims.generate,
@@ -824,6 +827,9 @@ PYTHON_GATED = frozenset(
         "settings_python",
         "settings_paths_python",
         "membership_lines_python",
+        # Where the JSON decoder stops recursing in `_origin` and
+        # `_json_list` (`gen_membership_migrate_report`).
+        "membership_migrate_report_python",
         "membership_records_paths_python",
         "membership_records_paths_platform",
         # `str.strip`, `str.lower` and `repr` of names and witnesses past
