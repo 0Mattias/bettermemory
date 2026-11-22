@@ -4,10 +4,12 @@
 //! and detector names, and the roster line. The related-set records and
 //! the text one related entry shows are in [`related`], re-exported here.
 //!
+//! The answers, their readers and the two answer checks are in
+//! [`answers`] (unit review-2), re-exported here.
+//!
 //! `related_for`, `roster_candidates` and `roster_for` read the store and
-//! the engine and are left for unit review-3; the answers and the
-//! decision for the units that add `answers.rs` and `decision.rs` beside
-//! this file.
+//! the engine and are left for unit review-3; the decision for the unit
+//! that adds `decision.rs` beside this file.
 
 use std::marker::PhantomData;
 use std::sync::{Condvar, Mutex, MutexGuard, OnceLock};
@@ -19,7 +21,9 @@ use crate::json;
 use crate::pyvalue::{PyError, PyStr, PyValue};
 use crate::unicode;
 
+mod answers;
 mod related;
+pub use answers::*;
 pub use related::*;
 
 /// `RELATED_TOP`: the engine's top hits for the write's content.

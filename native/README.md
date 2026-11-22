@@ -39,7 +39,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `records::summaries` | unit 3 of `models.py`, the result models: `MemoryHit` (`MemoryHit::new` with the model's defaults), `MemorySummary` and `TombstonedSummary` (`of` a record, as `store_records.list_summaries` and `list_tombstones` build them), and the two listings' scope filters (`summaries`, `tombstone_summaries`) | `models_hits.jsonl` |
 | `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT`, re-exported), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint`; unit 2, the store reads: the body sha memo (`SHA_BOUND`, `clear_shas`), `current`, `answers`, `Backlog`, `backlog`, `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids`, `refusal_rows`, `held_by_removal` over `StandingStore` and `Admission` | `standing.jsonl`, `standing_reads.jsonl` |
-| `review` | unit 1 of `review.py`, the sealed tables: `RELATED_TOP`, `RELATED_CAP`, `RELATED_TEXT_CHARS`, `RELATED_CONSTANTS`, `ROSTER_TEXT_CHARS`, `TAU_UNSAFE`, `TAU_SECRET`, `Tau`, `current_tau`, `tau_override`, `tau_unset` (and `tau_patched`), the labels, `LABEL_CHOICES`, the four statements, `QUESTIONS`, `questions_payload`, `questions_sha256`, `constants_sha256`, `seal_shas`, `ACTION_*`, `DETECTOR_*`, `REVIEW_LINK_NOTE`, `RelatedEntry`, `RelatedSet` (with `CueReport`), `related_text`, `related_entry`, `RosterLine`, `_write_sentences` | `review_tables.jsonl`, `review_tables_unicode.jsonl` |
+| `review` | unit 1 of `review.py`, the sealed tables: `RELATED_TOP`, `RELATED_CAP`, `RELATED_TEXT_CHARS`, `RELATED_CONSTANTS`, `ROSTER_TEXT_CHARS`, `TAU_UNSAFE`, `TAU_SECRET`, `Tau`, `current_tau`, `tau_override`, `tau_unset` (and `tau_patched`), the labels, `LABEL_CHOICES`, the four statements, `QUESTIONS`, `questions_payload`, `questions_sha256`, `constants_sha256`, `seal_shas`, `ACTION_*`, `DETECTOR_*`, `REVIEW_LINK_NOTE`, `RelatedEntry`, `RelatedSet` (with `CueReport`), `related_text`, `related_entry`, `RosterLine`, `_write_sentences`; unit 2, the answers: `ReviewAnswerError` (`AnswerFault`), `ANSWER_FORMAT`, `NAMED_FORMAT`, `UPDATE_ANSWER_FORMAT`, `ReviewAnswers` with `to_event` and `is_zero_attestation`, `_score`, `_chain_keys`, `parse_answers`, `parse_update_answers`, `check_answered_ids`, `check_named` | `review_tables.jsonl`, `review_tables_unicode.jsonl`, `review_answers.jsonl` |
 | `mirror_format` | `mirror_format.py` whole: `TOMBSTONE_DIR`, `EPISODES_DIR`, `TOMBSTONE_SUFFIX`, `_ID_TOMBSTONE_RE` (by hand, `id_tombstone_stem`), `memory_filename`, `tombstone_filename`, `active_filename_for_tombstone`, `is_legacy_tombstone_name`, the four key tables, `memory_metadata`, `episode_metadata` | `mirror_format.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl` |
@@ -10305,8 +10305,8 @@ beside them.
 | `related_for` | 420-528 | the store, the engine, the cue code | review-3 |
 | `RosterLine`, `_write_sentences` | 531-540, 572-575 | nothing | built (review-1) |
 | `roster_candidates`, `roster_for` | 543-674 | the store, the engine | review-3 |
-| the answers, `parse_answers`, the checks | 677-938 | nothing | the answers units |
-| `ACTION_*`, `DETECTOR_*`, `REVIEW_LINK_NOTE` | 949-959 | nothing | built (review-1); the answers units import them |
+| `ReviewAnswerError`, `ANSWER_FORMAT`, `NAMED_FORMAT`, `UPDATE_ANSWER_FORMAT`, `ReviewAnswers` (`to_event`, `is_zero_attestation`), `_score`, `_chain_keys`, `parse_answers`, `parse_update_answers`, `check_answered_ids`, `check_named` | 677-942 | nothing | built (review-2, `review/answers.rs`) |
+| `ACTION_*`, `DETECTOR_*`, `REVIEW_LINK_NOTE` | 949-959 | nothing | built (review-1) |
 | `ReviewDecision`, `apply_review` and what follows | 962- | the store | the decision unit |
 
 What review-1 reproduces, and why it is built as it is:
@@ -10383,6 +10383,61 @@ blocks of `tau_override` and `tau_unset`. Tests: `golden_review_tables`,
 `review_tables_kills` (the guards out of order, under a panic and across
 threads), `review_tables_robustness` (long bodies, runs of breaks, odd
 code points, linear growth).
+
+### Unit review-2: the answers (`review/answers.rs`)
+
+Unit review-2 ports lines 677-942: the answer readers, their teaching
+errors and the two answer checks. It imports the labels,
+`LABEL_CHOICES` and `LABEL_UNRELATED` from `review/mod.rs` and defines
+none of the sealed tables again. Nothing it does reads the store, the
+clock or the environment, and it holds no pattern.
+
+- **`raw`** is the `review` argument as `json::loads` gives it, an
+  `Option<&PyValue>`: Rust None and JSON null are both a first call, as
+  is an empty dict; any value other than a dict is the teaching error.
+  The relation must be a `PyValue::Dict` (`Mapping`); `named` a list or
+  a tuple of str.
+- **The errors** are `AnswerFault::Teach` with the reference's text in
+  code points, or `AnswerFault::Py` for another exception the reference
+  raises on the way: `float` of an int past the float range
+  (OverflowError: Rust's decimal parse rounds half to even as CPython's
+  `float(int)` does, so 2**1024 - 2**970 overflows and one less does
+  not), `sorted` of unknown keys of types `<` refuses (TypeError), and
+  `repr` of a review_id nested past `json::MAX_DEPTH`
+  (RecursionError, as `pyvalue::repr` models it).
+- **The order of the checks** is the reference's: unknown keys,
+  review_id, relation, named, said, then unsafe, secret and standing in
+  the order the dataclass's arguments are evaluated.
+- **`_score`** tests bool before the number test, then `float`, then
+  `math.isfinite` and the bounds; the shown value is `pyvalue::repr` of
+  the value as given (an int stays an int, a float goes through
+  `float_repr`). `type(value).__name__` is spelled per variant
+  (`datetime` for a `DateTime`, `PurePosixPath` for a `Path`).
+- **The orders.** The relation keeps a repeated id at its first place
+  with its last label, as a dict does; `named` keeps each id at its first
+  appearance (`dict.fromkeys`); unknown keys and foreign ids sort by code
+  point, and the lists print as Python's repr of a list. `said` is
+  `" ".join(said.split())` with `unicode::is_space`, and `said.strip()`
+  is empty exactly when every code point is a space.
+- **Set semantics** for unknown keys dedupe equal values after sorting;
+  a dict JSON gives has str keys only, so `1 == 1.0 == True` among
+  non-str keys is not modelled.
+- **`ReviewAnswers`** holds the relation as ordered pairs; `to_event`
+  is a `PyValue` dict in the reference's key order. `check_named`
+  takes the roster and the shown ids as `HashSet`s and answers the
+  named ids.
+
+Fixtures: `gen_review_answers` writes `review_answers.jsonl`
+(ungated: every text is ASCII or an escaped surrogate, no int reaches
+the 4,300 digit limit, and `said` folds only ASCII whitespace there; the
+three formats, every teaching error of both readers, the accepted
+shapes with `to_event`, the review_id and `is_zero_attestation`, both
+checks, and a seeded sweep of 3,000 label and score combinations as one
+digest row). No module global is patched. Tests:
+`golden_review_answers`, `review_answers_kills` (a bool score, JSON
+null, the check order, the dedup orders, whitespace past ASCII, the int
+bounds), `review_answers_robustness` (200,000 relation ids, 200,000
+unknown keys, millions of spaces, a deep review_id, linear growth).
 
 ## The hook mains' argument parser (`argparse`, units argparse-1a and argparse-1b)
 

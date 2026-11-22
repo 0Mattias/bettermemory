@@ -86,7 +86,8 @@
 //! - [`review`]: `review.py`'s sealed tables (the related_for constants,
 //!   the thresholds and their overrides, the labels and statements,
 //!   `QUESTIONS` and the seal shas, the action names), the related-set
-//!   records, the text one related entry shows and the roster line;
+//!   records, the text one related entry shows, the roster line, and the
+//!   answers with their readers, teaching errors and two checks;
 //! - [`mirror_format`]: the v8 file names and frontmatter the mirror
 //!   writes (`mirror_format.py` whole);
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
