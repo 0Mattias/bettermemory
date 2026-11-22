@@ -45,6 +45,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
+| `response_reason`, `response_trust` | `_response.py`'s `check_reason` (`_named`, `_REASON_PATHS`, `_rejection_note`), `_UNTRUSTED_PROVENANCE`, `_untrusted`, `verdict_and_reason`, `_row_reason`, `_claim_at_index`, `TRUST_UNAVAILABLE_RECOMMENDATION`, `ResponseBuilder.attach_provenance`, `apply_trust_unavailable`, `apply_trust`; `verdict.py`'s `_OBJECTED` and `with_objection` | `response_reason.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
@@ -1144,6 +1145,67 @@ No regular expression is involved.
   rounds past a cap of 1,000, both as tenfold growth claims; infinite and
   NaN clocks; `i64` bounds). The shared builders are in
   `tests/common/response_leaf.rs`.
+
+## The reason a row asks for a check, and the trust appliers (`_response.py`)
+
+`src/response_reason.rs` and `src/response_trust.rs` reproduce the text a
+user reads beside a verdict other than `fresh`, and the rules that rewrite
+a row's verdict from the store's trust rows.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_named`, `_REASON_PATHS`, `_rejection_note` | `_response` 2031-2064 | nothing | built |
+| `check_reason` | `_response` 2067-2131 | nothing | built |
+| `_UNTRUSTED_PROVENANCE`, `_untrusted` | `_response` 2134-2157 | nothing | built |
+| `verdict_and_reason`, `_row_reason` | `_response` 2160-2233 | nothing | built |
+| `_claim_at_index` | `_response` 2401-2410 | nothing | built |
+| `_OBJECTED`, `with_objection` | `verdict` 103-113 | nothing | built |
+| `TRUST_UNAVAILABLE_RECOMMENDATION` | `_response` 85-89 | nothing | built |
+| `attach_provenance` | `_response` 1324-1353 | the store, as the trait `TrustRows` | built |
+| `apply_trust_unavailable`, `apply_trust` | `_response` 1355-1382, 1425-1457 | nothing (`stale_after_days` an argument) | built |
+
+Decisions:
+
+- A row is a `dict`'s pairs (`response_trust::Row`). Every value is a
+  `PyValue` and is read as Python reads it: `x or ()` by truthiness, a
+  `str` iterated by code point, a `dict` by its keys, `in set(...)` by hash
+  and `==` (unhashable values raise). What the reference raises comes back
+  as its class (`Raised`): `TypeError`, `KeyError`, `AttributeError`,
+  `IndexError`. NaN identity is not modelled.
+- `check_reason`'s keyword arguments are the struct `CheckReason` with
+  `Default`; its sequence arguments, `commits` and `leg_note` are values as
+  given, since `_row_reason` passes whatever the row holds.
+  `isinstance(commits, int)` holds for a `bool`, so `True` is written
+  `True commit`.
+- `_named` over a `dict` slices it; from 3.12 that raises `KeyError`
+  (`TypeError` on 3.11). The port answers `KeyError`, which
+  `response_reason_kills` pins, and no fixture row holds the case.
+  `_named` takes the first three items and the length without copying
+  the value, as the reference's slice does.
+- `check_reason` keeps repeats in `anchored_missing`: the reference's
+  comprehension checks each path against the paths taken from `missing`
+  before `+=` extends the list.
+- `_rejection_note` is ported with `check_reason`, which calls it;
+  `NEGATIVE_OUTCOME_WINDOW_DAYS` is 30.
+- `attach_provenance` takes the store as `TrustRows`, implemented for
+  `store::provenance::Provenance`. An id holding a lone surrogate answers
+  `AttachError::Encode` when the store holds its key, as the store's SQL
+  binding raises `UnicodeEncodeError`; a keyless store
+  (`TrustRows::verifies` false) answers None before any binding, so every
+  row is marked trust unavailable; an unhashable id raises `TypeError` after the rows
+  before it were changed, as in the reference.
+- No regular expression is involved.
+
+Fixtures: `tests/contract/gen_response_reason.py` writes
+`response_reason.jsonl` (not gated): every branch of each function over
+hand-built rows and arguments, the appliers over a stub store answering
+None, rows or raising, and a sweep of 129,600 `check_reason` argument sets
+pinned as a count and SHA-256. Rust: `golden_response_reason.rs`,
+`response_reason_kills.rs`, `response_reason_robustness.rs`.
+
+Left for later units: `apply_commit_drift_unread` and
+`apply_commit_drift_unchecked` (the drift unit), `_SHOW_DEFAULTS` and the
+rest of `ResponseBuilder`.
 
 ## Limits and key material
 
@@ -18414,10 +18476,10 @@ What the reference has and this build does not, by area:
   `_DOMAIN_ROUTE_RE`) and the candidate scan (`_normalize_for_compare`
   on POSIX, `_scan_candidates`, `_extract_candidates` without its body
   parse memo), and `verify.py` past its verdict ladder (`verdict_signals`).
-  Of the response layer, `_response_links.py` and the drift memo are
-  built; the memo's key and value types, its one instance and its
-  `_caches` registration (the drift pass) and `verdict.with_objection`
-  (respreason) are not.
+  Of the response layer, `_response_links.py`, the drift memo,
+  `check_reason`, `verdict_and_reason`, the trust appliers and
+  `verdict.with_objection` are built; the memo's key and value types, its
+  one instance and its `_caches` registration (the drift pass) are not.
 - The write gates past the control tokens and the dedup: `credentials.py`
   after its vendor-prefixed detectors and its value gate (the generic and
   URI patterns, spans and markers: units 3 and 4), `durability.py` past

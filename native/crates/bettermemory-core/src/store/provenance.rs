@@ -510,6 +510,11 @@ impl<'a> Provenance<'a> {
         Ok(out)
     }
 
+    /// Whether the reader verifies: the open holds the store's key.
+    pub fn verifies(&self) -> bool {
+        self.verifies
+    }
+
     /// `trust_rows`: None when the reader does not verify.
     pub fn trust_rows(
         &self,

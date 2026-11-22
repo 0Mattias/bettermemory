@@ -217,6 +217,9 @@
 //! - [`hook`]: the hooks of `hook.py`, their first unit (the stdin
 //!   payload reader, the pending-retrieval scan and the Stop's
 //!   attribution settlement);
+//! - [`response_reason`] and [`response_trust`]: the reason a row asks for
+//!   a check and the verdict with its objection, and the trust appliers
+//!   that rewrite a row's verdict from the store's trust rows;
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
 //!   the lines shown about which project a folder belongs to;
 //! - [`entry`] and [`cli`]: the process entry's hook-word routing, and
@@ -323,6 +326,8 @@ pub mod records;
 pub mod repository_history;
 pub mod response_links;
 pub mod response_memo;
+pub mod response_reason;
+pub mod response_trust;
 pub mod search;
 pub mod search_dedup;
 pub mod session;

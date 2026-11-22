@@ -1,0 +1,258 @@
+{"count":257,"k":"header"}
+{"a":{},"f":"cr","o":null}
+{"a":{"missing":["a"]},"f":"cr","o":"Cited path missing: a."}
+{"a":{"anchored_missing":["b","z"],"missing":["a","b"]},"f":"cr","o":"Attested or anchored path missing: b, z. Cited path missing: a."}
+{"a":{"anchored_missing":[],"missing":["a.py","b/c.md","d","e.txt","f"]},"f":"cr","o":"Cited path missing: a.py, b/c.md, d and 2 more."}
+{"a":{"missing":["a.py","b/c.md","d","e.txt"]},"f":"cr","o":"Cited path missing: a.py, b/c.md, d and 1 more."}
+{"a":{"missing":"abcd"},"f":"cr","o":"Cited path missing: a, b, c and 1 more."}
+{"a":{"missing":{"k1":1,"k2":2}},"f":"cr","o":"Cited path missing: k1, k2."}
+{"a":{"anchored_missing":[1.0],"missing":[1,true]},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"anchored_missing":[true],"missing":[1]},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"anchored_missing":[["x"]],"missing":["a"]},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"anchored_missing":["a"],"missing":[["x"]]},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"anchored_missing":[["x"]],"missing":[]},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"missing":5},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"anchored_missing":5},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"anchored_missing":"xy","missing":[]},"f":"cr","o":"Attested or anchored path missing: x, y."}
+{"a":{"anchored_missing":["a","a"]},"f":"cr","o":"Attested or anchored path missing: a, a."}
+{"a":{"anchored_missing":"remote"},"f":"cr","o":"Attested or anchored path missing: r, e, m and 3 more."}
+{"a":{"anchored_missing":["b","z","z","b"],"missing":["a","b"]},"f":"cr","o":"Attested or anchored path missing: b, z, z. Cited path missing: a."}
+{"a":{"attested_absent_present":["a.py","b/c.md","d","e.txt","f"]},"f":"cr","o":"Attested absent but present: a.py, b/c.md, d and 2 more."}
+{"a":{"attested_absent_present":7},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"attested_absent_present":[null]},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"commits":1},"f":"cr","o":"1 commit since the last verify touched the paths it cites."}
+{"a":{"commits":2},"f":"cr","o":"2 commits since the last verify touched the paths it cites."}
+{"a":{"commits":0},"f":"cr","o":null}
+{"a":{"commits":true},"f":"cr","o":"True commit since the last verify touched the paths it cites."}
+{"a":{"commits":false},"f":"cr","o":null}
+{"a":{"commits":-3},"f":"cr","o":"-3 commits since the last verify touched the paths it cites."}
+{"a":{"commits":9223372036854775807},"f":"cr","o":"9223372036854775807 commits since the last verify touched the paths it cites."}
+{"a":{"claims_drifted":["a.py","b/c.md","d","e.txt","f"],"commits":1},"f":"cr","o":"1 commit since the last verify touched the claims a.py, b/c.md, d and 2 more."}
+{"a":{"claims_drifted":"xy","commits":2},"f":"cr","o":"2 commits since the last verify touched the claims x, y."}
+{"a":{"claims_drifted":["a.py","b/c.md","d","e.txt","f"],"commits":0},"f":"cr","o":null}
+{"a":{"claims_drifted":9,"commits":3},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"leg_note":"Leg."},"f":"cr","o":"Leg."}
+{"a":{"leg_note":""},"f":"cr","o":null}
+{"a":{"leg_note":5},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"leg_note":5,"rejections":4},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"remote":true},"f":"cr","o":"Its verification stamp was made on another host."}
+{"a":{"trust_unavailable":true},"f":"cr","o":"This machine does not hold the store's key, so whether this host made this stamp is unknown. Spot-check a claim before relying on the memory; `bettermemory log verify` reports the same condition. Nothing in these tools clears it; the store's owner restores the key."}
+{"a":{"untrusted":"U."},"f":"cr","o":"U."}
+{"a":{"untrusted":""},"f":"cr","o":null}
+{"a":{"contradicted_by":["m1"]},"f":"cr","o":"A recorded link says it contradicts m1: read it, then fix whichever is wrong or remove the link; memory_verify does not clear it."}
+{"a":{"contradicted_by":["a.py","b/c.md","d","e.txt","f"]},"f":"cr","o":"A recorded link says it contradicts a.py, b/c.md, d and 2 more: read it, then fix whichever is wrong or remove the link; memory_verify does not clear it."}
+{"a":{"contradicted_by":"abcde"},"f":"cr","o":"A recorded link says it contradicts a, b, c and 2 more: read it, then fix whichever is wrong or remove the link; memory_verify does not clear it."}
+{"a":{"contradicted_by":3},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"contradicted_by":true},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"contradicted_by":[1]},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"rejections":[{"count_in_window":1,"most_recent_ts":"2026-01-02T03:04:05Z","outcome":"ignored"}]},"f":"cr","o":"A use marked it ignored on 2026-01-02. It clears once a later use applies it."}
+{"a":{"rejections":[{"count_in_window":1,"most_recent_ts":"2026-01-02T03:04:05Z","outcome":"ignored"},{"count_in_window":4,"most_recent_ts":"2026-02-03T00:00:00+00:00","outcome":"contradicted"}]},"f":"cr","o":"A use marked it ignored on 2026-01-02. A use marked it contradicted 4 times in the last 30 days, last on 2026-02-03. It clears once a later use applies it."}
+{"a":{"rejections":[{"count_in_window":true,"most_recent_ts":12,"outcome":null}]},"f":"cr","o":"A use marked it None on 12. It clears once a later use applies it."}
+{"a":{"rejections":[{"count_in_window":1.0,"most_recent_ts":"x","outcome":"o"}]},"f":"cr","o":"A use marked it o on x. It clears once a later use applies it."}
+{"a":{"rejections":[{"count_in_window":2.5,"most_recent_ts":[1],"outcome":{"a":1}}]},"f":"cr","o":"A use marked it {'a': 1} 2.5 times in the last 30 days, last on [1]. It clears once a later use applies it."}
+{"a":{"rejections":[{"count_in_window":1}]},"f":"cr","o":{"raised":"KeyError"}}
+{"a":{"rejections":[{"most_recent_ts":"x"}]},"f":"cr","o":{"raised":"KeyError"}}
+{"a":{"rejections":[{"count_in_window":2,"most_recent_ts":"x"}]},"f":"cr","o":{"raised":"KeyError"}}
+{"a":{"rejections":["s"]},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"rejections":"s"},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"rejections":[[1]]},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"rejections":3},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"rejections":{"k":1}},"f":"cr","o":{"raised":"TypeError"}}
+{"a":{"staleness_verdict":"fresh"},"f":"vr","o":["fresh",null]}
+{"a":{"staleness_verdict":"stale"},"f":"vr","o":["stale",null]}
+{"a":{"staleness_verdict":5},"f":"vr","o":[5,null]}
+{"a":{},"f":"vr","o":{"raised":"KeyError"}}
+{"a":{"_contradicted_by":["m2","m3"],"staleness_verdict":"fresh"},"f":"vr","o":["spot_check_recommended","A recorded link says it contradicts m2, m3: read it, then fix whichever is wrong or remove the link; memory_verify does not clear it."]}
+{"a":{"_contradicted_by":"m","staleness_verdict":"fresh"},"f":"vr","o":["spot_check_recommended","A recorded link says it contradicts m: read it, then fix whichever is wrong or remove the link; memory_verify does not clear it."]}
+{"a":{"_contradicted_by":0,"staleness_verdict":"fresh"},"f":"vr","o":["fresh",null]}
+{"a":{"_contradicted_by":4,"staleness_verdict":"fresh"},"f":"vr","o":{"raised":"TypeError"}}
+{"a":{"recent_negative_outcomes":[{"count_in_window":1,"most_recent_ts":"2026-01-02T03:04:05Z","outcome":"ignored"}],"staleness_verdict":"fresh"},"f":"vr","o":["spot_check_recommended","A use marked it ignored on 2026-01-02. It clears once a later use applies it."]}
+{"a":{"recent_negative_outcomes":[],"staleness_verdict":"fresh"},"f":"vr","o":["fresh",null]}
+{"a":{"staleness_verdict":"fresh","trust_unavailable":true},"f":"vr","o":["spot_check_recommended","This machine does not hold the store's key, so whether this host made this stamp is unknown. Spot-check a claim before relying on the memory; `bettermemory log verify` reports the same condition. Nothing in these tools clears it; the store's owner restores the key."]}
+{"a":{"staleness_verdict":"fresh","trust_unavailable":0},"f":"vr","o":["fresh",null]}
+{"a":{"provenance":"unaccounted","staleness_verdict":"fresh"},"f":"vr","o":["spot_check_recommended","It entered the store without a log record on this host, so nothing says who wrote it; memory_verify does not clear that. Remove it, or restore it after a memory_remove if you recognise it."]}
+{"a":{"provenance":"unaccounted","staleness_verdict":"fresh","verification":{"recommendation":"Rec.","status":"fresh"}},"f":"vr","o":["spot_check_required","It entered the store without a log record on this host, so nothing says who wrote it; memory_verify does not clear that. Remove it, or restore it after a memory_remove if you recognise it."]}
+{"a":{"provenance":"unaccounted","staleness_verdict":"fresh","verification":{"status":"never"}},"f":"vr","o":["spot_check_recommended","It entered the store without a log record on this host, so nothing says who wrote it; memory_verify does not clear that. Remove it, or restore it after a memory_remove if you recognise it."]}
+{"a":{"provenance":"unaccounted","staleness_verdict":"fresh","verification":{"status":null}},"f":"vr","o":["spot_check_recommended","It entered the store without a log record on this host, so nothing says who wrote it; memory_verify does not clear that. Remove it, or restore it after a memory_remove if you recognise it."]}
+{"a":{"provenance":"synced","staleness_verdict":"fresh","verification":{"status":"never"}},"f":"vr","o":["spot_check_recommended","It arrived by sync and has not been verified on this host; memory_verify here clears that."]}
+{"a":{"provenance":"synced","staleness_verdict":"fresh","verification":{"recommendation":"Rec.","status":"fresh"}},"f":"vr","o":["fresh",null]}
+{"a":{"provenance":"local","staleness_verdict":"stale","verification":{}},"f":"vr","o":["stale",null]}
+{"a":{"staleness_verdict":"fresh","verification":"x"},"f":"vr","o":{"raised":"AttributeError"}}
+{"a":{"staleness_verdict":"fresh","verification":""},"f":"vr","o":["fresh",null]}
+{"a":{"staleness_verdict":"fresh","verification":[1]},"f":"vr","o":{"raised":"AttributeError"}}
+{"a":{"path_drift":{"missing":["p"]},"staleness_verdict":"stale"},"f":"vr","o":["stale","Cited path missing: p."]}
+{"a":{"path_drift":{"claim_anchored_missing":["q","r"],"missing":["p","q"],"present_but_attested_absent":["s"]},"staleness_verdict":"stale"},"f":"vr","o":["stale","Attested or anchored path missing: q, r. Cited path missing: p. Attested absent but present: s."]}
+{"a":{"path_drift":{"claim_anchored_missing":["p","p"]},"staleness_verdict":"stale"},"f":"vr","o":["stale","Attested or anchored path missing: p, p."]}
+{"a":{"path_drift":"x","staleness_verdict":"stale"},"f":"vr","o":{"raised":"AttributeError"}}
+{"a":{"path_drift":0,"staleness_verdict":"stale"},"f":"vr","o":["stale",null]}
+{"a":{"path_drift":{"missing":null},"staleness_verdict":"stale"},"f":"vr","o":["stale",null]}
+{"a":{"commit_drift":{"commits_since_verify":3},"staleness_verdict":"stale"},"f":"vr","o":["stale","3 commits since the last verify touched the paths it cites."]}
+{"a":{"commit_drift":{"claim_drift":{"drifted":["c1"]},"commits_since_verify":1},"staleness_verdict":"stale"},"f":"vr","o":["stale","1 commit since the last verify touched the claims c1."]}
+{"a":{"commit_drift":{"commits_since_verify":true},"staleness_verdict":"stale"},"f":"vr","o":["stale","True commit since the last verify touched the paths it cites."]}
+{"a":{"commit_drift":{"commits_since_verify":2.0},"staleness_verdict":"stale"},"f":"vr","o":["stale",null]}
+{"a":{"commit_drift":{"commits_since_verify":"2"},"staleness_verdict":"stale"},"f":"vr","o":["stale",null]}
+{"a":{"commit_drift":{"claim_drift":"x"},"staleness_verdict":"stale"},"f":"vr","o":{"raised":"AttributeError"}}
+{"a":{"commit_drift":{"claim_drift":{"drifted":null}},"staleness_verdict":"stale"},"f":"vr","o":["stale",null]}
+{"a":{"commit_drift":{},"commit_drift_count":5,"staleness_verdict":"stale"},"f":"vr","o":["stale",null]}
+{"a":{"commit_drift":[],"commit_drift_count":5,"staleness_verdict":"stale"},"f":"vr","o":["stale","5 commits since the last verify touched the paths it cites."]}
+{"a":{"claim_drift":{"drifted":"ab"},"commit_drift_count":2,"staleness_verdict":"stale"},"f":"vr","o":["stale","2 commits since the last verify touched the claims a, b."]}
+{"a":{"claim_drift":1,"commit_drift_count":2,"staleness_verdict":"stale"},"f":"vr","o":{"raised":"AttributeError"}}
+{"a":{"commit_drift_count":false,"staleness_verdict":"stale"},"f":"vr","o":["stale",null]}
+{"a":{"commit_drift_unread":true,"staleness_verdict":"stale","verification":{"recommendation":"Rec.","status":"fresh"}},"f":"vr","o":["stale","Rec."]}
+{"a":{"commit_drift_unchecked":1,"staleness_verdict":"stale","verification":{"recommendation":"Rec.","status":"fresh"}},"f":"vr","o":["stale","Rec."]}
+{"a":{"commit_drift_unread":true,"staleness_verdict":"stale"},"f":"vr","o":["stale",null]}
+{"a":{"commit_drift_unread":true,"staleness_verdict":"stale","verification":{"recommendation":7}},"f":"vr","o":{"raised":"TypeError"}}
+{"a":{"commit_drift_unread":true,"staleness_verdict":"stale","verification":{"recommendation":"R.","status":"remote"}},"f":"vr","o":["stale","The commits since its stamp were not read. Its verification stamp was made on another host."]}
+{"a":{"commit_drift_unchecked":true,"staleness_verdict":"stale","verification":{"status":"remote"}},"f":"vr","o":["stale","No checkout here can read the commits since its stamp. Its verification stamp was made on another host."]}
+{"a":{"commit_drift_unchecked":true,"staleness_verdict":"stale","trust_unavailable":true,"verification":{"recommendation":"Rec.","status":"fresh"}},"f":"vr","o":["stale","No checkout here can read the commits since its stamp. This machine does not hold the store's key, so whether this host made this stamp is unknown. Spot-check a claim before relying on the memory; `bettermemory log verify` reports the same condition. Nothing in these tools clears it; the store's owner restores the key."]}
+{"a":{"commit_drift_unchecked":true,"commit_drift_unread":true,"staleness_verdict":"spot_check_required","trust_unavailable":true},"f":"vr","o":["spot_check_required","The commits since its stamp were not read. This machine does not hold the store's key, so whether this host made this stamp is unknown. Spot-check a claim before relying on the memory; `bettermemory log verify` reports the same condition. Nothing in these tools clears it; the store's owner restores the key."]}
+{"a":{"_contradicted_by":["m9"],"claim_drift":{"drifted":["a.py","b/c.md","d","e.txt","f"]},"commit_drift_count":7,"path_drift":{"missing":["a.py","b/c.md","d","e.txt","f"]},"provenance":"synced","recent_negative_outcomes":[{"count_in_window":4,"most_recent_ts":"2026-02-03T00:00:00+00:00","outcome":"contradicted"}],"staleness_verdict":"stale","trust_unavailable":true,"verification":{"status":"never"}},"f":"vr","o":["stale","Cited path missing: a.py, b/c.md, d and 2 more. 7 commits since the last verify touched the claims a.py, b/c.md, d and 2 more. This machine does not hold the store's key, so whether this host made this stamp is unknown. Spot-check a claim before relying on the memory; `bettermemory log verify` reports the same condition. Nothing in these tools clears it; the store's owner restores the key. It arrived by sync and has not been verified on this host; memory_verify here clears that. A recorded link says it contradicts m9: read it, then fix whichever is wrong or remove the link; memory_verify does not clear it. A use marked it contradicted 4 times in the last 30 days, last on 2026-02-03. It clears once a later use applies it."]}
+{"a":{"recent_negative_outcomes":"s","staleness_verdict":"stale"},"f":"vr","o":{"raised":"TypeError"}}
+{"a":{"_contradicted_by":[1],"staleness_verdict":"stale"},"f":"vr","o":{"raised":"TypeError"}}
+{"a":{"c":[],"row":{},"u":null},"f":"rr","o":null}
+{"a":{"c":["m"],"row":{},"u":"U."},"f":"rr","o":"U. A recorded link says it contradicts m: read it, then fix whichever is wrong or remove the link; memory_verify does not clear it."}
+{"a":{"c":"xy","row":{"verification":{"status":"never"}},"u":null},"f":"rr","o":"A recorded link says it contradicts x, y: read it, then fix whichever is wrong or remove the link; memory_verify does not clear it."}
+{"a":{"c":[],"row":{"path_drift":{"missing":["p"]}},"u":"U."},"f":"rr","o":"Cited path missing: p. U."}
+{"a":{"c":[],"row":{"commit_drift_unread":true},"u":null},"f":"rr","o":null}
+{"a":["fresh",false],"f":"wo","o":"fresh"}
+{"a":["fresh",true],"f":"wo","o":"spot_check_recommended"}
+{"a":["stale",false],"f":"wo","o":"stale"}
+{"a":["stale",true],"f":"wo","o":"stale"}
+{"a":["spot_check_required",false],"f":"wo","o":"spot_check_required"}
+{"a":["spot_check_required",true],"f":"wo","o":"spot_check_required"}
+{"a":[1,false],"f":"wo","o":1}
+{"a":[1,true],"f":"wo","o":1}
+{"a":[null,false],"f":"wo","o":null}
+{"a":[null,true],"f":"wo","o":null}
+{"a":[{},0],"f":"ci","o":null}
+{"a":[{},1],"f":"ci","o":null}
+{"a":[{},2],"f":"ci","o":null}
+{"a":[{},3],"f":"ci","o":null}
+{"a":[{},4],"f":"ci","o":null}
+{"a":[{},-1],"f":"ci","o":null}
+{"a":[{},-2],"f":"ci","o":null}
+{"a":[{},-3],"f":"ci","o":null}
+{"a":[{},-4],"f":"ci","o":null}
+{"a":[{},4611686018427387904],"f":"ci","o":null}
+{"a":[{"claim_excerpts":null},0],"f":"ci","o":null}
+{"a":[{"claim_excerpts":null},1],"f":"ci","o":null}
+{"a":[{"claim_excerpts":null},2],"f":"ci","o":null}
+{"a":[{"claim_excerpts":null},3],"f":"ci","o":null}
+{"a":[{"claim_excerpts":null},4],"f":"ci","o":null}
+{"a":[{"claim_excerpts":null},-1],"f":"ci","o":null}
+{"a":[{"claim_excerpts":null},-2],"f":"ci","o":null}
+{"a":[{"claim_excerpts":null},-3],"f":"ci","o":null}
+{"a":[{"claim_excerpts":null},-4],"f":"ci","o":null}
+{"a":[{"claim_excerpts":null},4611686018427387904],"f":"ci","o":null}
+{"a":[{"claim_excerpts":"abc"},0],"f":"ci","o":null}
+{"a":[{"claim_excerpts":"abc"},1],"f":"ci","o":null}
+{"a":[{"claim_excerpts":"abc"},2],"f":"ci","o":null}
+{"a":[{"claim_excerpts":"abc"},3],"f":"ci","o":null}
+{"a":[{"claim_excerpts":"abc"},4],"f":"ci","o":null}
+{"a":[{"claim_excerpts":"abc"},-1],"f":"ci","o":null}
+{"a":[{"claim_excerpts":"abc"},-2],"f":"ci","o":null}
+{"a":[{"claim_excerpts":"abc"},-3],"f":"ci","o":null}
+{"a":[{"claim_excerpts":"abc"},-4],"f":"ci","o":null}
+{"a":[{"claim_excerpts":"abc"},4611686018427387904],"f":"ci","o":null}
+{"a":[{"claim_excerpts":["x",2,"z"]},0],"f":"ci","o":"x"}
+{"a":[{"claim_excerpts":["x",2,"z"]},1],"f":"ci","o":null}
+{"a":[{"claim_excerpts":["x",2,"z"]},2],"f":"ci","o":"z"}
+{"a":[{"claim_excerpts":["x",2,"z"]},3],"f":"ci","o":null}
+{"a":[{"claim_excerpts":["x",2,"z"]},4],"f":"ci","o":null}
+{"a":[{"claim_excerpts":["x",2,"z"]},-1],"f":"ci","o":"z"}
+{"a":[{"claim_excerpts":["x",2,"z"]},-2],"f":"ci","o":null}
+{"a":[{"claim_excerpts":["x",2,"z"]},-3],"f":"ci","o":"x"}
+{"a":[{"claim_excerpts":["x",2,"z"]},-4],"f":"ci","o":{"raised":"IndexError"}}
+{"a":[{"claim_excerpts":["x",2,"z"]},4611686018427387904],"f":"ci","o":null}
+{"a":{"row":{}},"f":"tu","o":{"trust_unavailable":true}}
+{"a":{"rec":"Other.","row":{}},"f":"tu","o":{"trust_unavailable":true}}
+{"a":{"p":null,"row":{},"s":30,"v":null},"f":"at","o":{}}
+{"a":{"p":"local","row":{},"s":30,"v":null},"f":"at","o":{"provenance":"local"}}
+{"a":{"p":"synced","row":{},"s":30,"v":null},"f":"at","o":{"provenance":"synced"}}
+{"a":{"p":"synced","row":{},"s":-5,"v":null},"f":"at","o":{"provenance":"synced"}}
+{"a":{"p":"synced","row":{},"s":0,"v":null},"f":"at","o":{"provenance":"synced"}}
+{"a":{"p":"synced","row":{},"s":30,"v":"2026-01-01T00:00:00Z"},"f":"at","o":{"provenance":"synced"}}
+{"a":{"p":"unaccounted","row":{},"s":30,"v":null},"f":"at","o":{"provenance":"unaccounted"}}
+{"a":{"row":{"last_verified_at":"2026-01-01T00:00:00Z"}},"f":"tu","o":{"last_verified_at":"2026-01-01T00:00:00Z","staleness_verdict":"spot_check_required","trust_unavailable":true}}
+{"a":{"rec":"Other.","row":{"last_verified_at":"2026-01-01T00:00:00Z"}},"f":"tu","o":{"last_verified_at":"2026-01-01T00:00:00Z","staleness_verdict":"spot_check_required","trust_unavailable":true}}
+{"a":{"p":null,"row":{"last_verified_at":"2026-01-01T00:00:00Z"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z"}}
+{"a":{"p":"local","row":{"last_verified_at":"2026-01-01T00:00:00Z"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","provenance":"local"}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T00:00:00Z"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-01-01T00:00:00Z","recommendation":"This memory arrived by sync pull and its verification stamp (2026-01-01T00:00:00Z) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":30,"status":"remote"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T00:00:00Z"},"s":-5,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-01-01T00:00:00Z","recommendation":"This memory arrived by sync pull and its verification stamp (2026-01-01T00:00:00Z) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":0,"status":"remote"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T00:00:00Z"},"s":0,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-01-01T00:00:00Z","recommendation":"This memory arrived by sync pull and its verification stamp (2026-01-01T00:00:00Z) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":0,"status":"remote"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T00:00:00Z"},"s":30,"v":"2026-01-01T00:00:00Z"},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","provenance":"synced"}}
+{"a":{"p":"unaccounted","row":{"last_verified_at":"2026-01-01T00:00:00Z"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","provenance":"unaccounted"}}
+{"a":{"row":{"last_verified_at":"2026-01-01T00:00:00Z","verification":{"status":"fresh"}}},"f":"tu","o":{"last_verified_at":"2026-01-01T00:00:00Z","staleness_verdict":"spot_check_required","trust_unavailable":true,"verification":{"recommendation":"This machine does not hold the store's key, so whether this host made this stamp is unknown. Spot-check a claim before relying on the memory; `bettermemory log verify` reports the same condition.","status":"fresh"}}}
+{"a":{"rec":"Other.","row":{"last_verified_at":"2026-01-01T00:00:00Z","verification":{"status":"fresh"}}},"f":"tu","o":{"last_verified_at":"2026-01-01T00:00:00Z","staleness_verdict":"spot_check_required","trust_unavailable":true,"verification":{"recommendation":"Other.","status":"fresh"}}}
+{"a":{"p":null,"row":{"last_verified_at":"2026-01-01T00:00:00Z","verification":{"status":"fresh"}},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","verification":{"status":"fresh"}}}
+{"a":{"p":"local","row":{"last_verified_at":"2026-01-01T00:00:00Z","verification":{"status":"fresh"}},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","provenance":"local","verification":{"status":"fresh"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T00:00:00Z","verification":{"status":"fresh"}},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-01-01T00:00:00Z","recommendation":"This memory arrived by sync pull and its verification stamp (2026-01-01T00:00:00Z) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":30,"status":"remote"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T00:00:00Z","verification":{"status":"fresh"}},"s":-5,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-01-01T00:00:00Z","recommendation":"This memory arrived by sync pull and its verification stamp (2026-01-01T00:00:00Z) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":0,"status":"remote"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T00:00:00Z","verification":{"status":"fresh"}},"s":0,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-01-01T00:00:00Z","recommendation":"This memory arrived by sync pull and its verification stamp (2026-01-01T00:00:00Z) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":0,"status":"remote"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T00:00:00Z","verification":{"status":"fresh"}},"s":30,"v":"2026-01-01T00:00:00Z"},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","provenance":"synced","verification":{"status":"fresh"}}}
+{"a":{"p":"unaccounted","row":{"last_verified_at":"2026-01-01T00:00:00Z","verification":{"status":"fresh"}},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00Z","provenance":"unaccounted","verification":{"status":"fresh"}}}
+{"a":{"row":{"last_verified_at":"","verification":{"status":"fresh"}}},"f":"tu","o":{"last_verified_at":"","trust_unavailable":true,"verification":{"status":"fresh"}}}
+{"a":{"rec":"Other.","row":{"last_verified_at":"","verification":{"status":"fresh"}}},"f":"tu","o":{"last_verified_at":"","trust_unavailable":true,"verification":{"status":"fresh"}}}
+{"a":{"p":null,"row":{"last_verified_at":"","verification":{"status":"fresh"}},"s":30,"v":null},"f":"at","o":{"last_verified_at":"","verification":{"status":"fresh"}}}
+{"a":{"p":"local","row":{"last_verified_at":"","verification":{"status":"fresh"}},"s":30,"v":null},"f":"at","o":{"last_verified_at":"","provenance":"local","verification":{"status":"fresh"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"","verification":{"status":"fresh"}},"s":30,"v":null},"f":"at","o":{"last_verified_at":"","provenance":"synced","verification":{"status":"fresh"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"","verification":{"status":"fresh"}},"s":-5,"v":null},"f":"at","o":{"last_verified_at":"","provenance":"synced","verification":{"status":"fresh"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"","verification":{"status":"fresh"}},"s":0,"v":null},"f":"at","o":{"last_verified_at":"","provenance":"synced","verification":{"status":"fresh"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"","verification":{"status":"fresh"}},"s":30,"v":"2026-01-01T00:00:00Z"},"f":"at","o":{"last_verified_at":"","provenance":"synced","verification":{"status":"fresh"}}}
+{"a":{"p":"unaccounted","row":{"last_verified_at":"","verification":{"status":"fresh"}},"s":30,"v":null},"f":"at","o":{"last_verified_at":"","provenance":"unaccounted","verification":{"status":"fresh"}}}
+{"a":{"row":{"last_verified_at":5,"verification":{"status":"fresh"}}},"f":"tu","o":{"last_verified_at":5,"trust_unavailable":true,"verification":{"status":"fresh"}}}
+{"a":{"rec":"Other.","row":{"last_verified_at":5,"verification":{"status":"fresh"}}},"f":"tu","o":{"last_verified_at":5,"trust_unavailable":true,"verification":{"status":"fresh"}}}
+{"a":{"p":null,"row":{"last_verified_at":5,"verification":{"status":"fresh"}},"s":30,"v":null},"f":"at","o":{"last_verified_at":5,"verification":{"status":"fresh"}}}
+{"a":{"p":"local","row":{"last_verified_at":5,"verification":{"status":"fresh"}},"s":30,"v":null},"f":"at","o":{"last_verified_at":5,"provenance":"local","verification":{"status":"fresh"}}}
+{"a":{"p":"synced","row":{"last_verified_at":5,"verification":{"status":"fresh"}},"s":30,"v":null},"f":"at","o":{"last_verified_at":5,"provenance":"synced","verification":{"status":"fresh"}}}
+{"a":{"p":"synced","row":{"last_verified_at":5,"verification":{"status":"fresh"}},"s":-5,"v":null},"f":"at","o":{"last_verified_at":5,"provenance":"synced","verification":{"status":"fresh"}}}
+{"a":{"p":"synced","row":{"last_verified_at":5,"verification":{"status":"fresh"}},"s":0,"v":null},"f":"at","o":{"last_verified_at":5,"provenance":"synced","verification":{"status":"fresh"}}}
+{"a":{"p":"synced","row":{"last_verified_at":5,"verification":{"status":"fresh"}},"s":30,"v":"2026-01-01T00:00:00Z"},"f":"at","o":{"last_verified_at":5,"provenance":"synced","verification":{"status":"fresh"}}}
+{"a":{"p":"unaccounted","row":{"last_verified_at":5,"verification":{"status":"fresh"}},"s":30,"v":null},"f":"at","o":{"last_verified_at":5,"provenance":"unaccounted","verification":{"status":"fresh"}}}
+{"a":{"row":{"last_verified_at":"x","staleness_verdict":"fresh","verification":[1]}},"f":"tu","o":{"last_verified_at":"x","staleness_verdict":"spot_check_required","trust_unavailable":true,"verification":[1]}}
+{"a":{"rec":"Other.","row":{"last_verified_at":"x","staleness_verdict":"fresh","verification":[1]}},"f":"tu","o":{"last_verified_at":"x","staleness_verdict":"spot_check_required","trust_unavailable":true,"verification":[1]}}
+{"a":{"p":null,"row":{"last_verified_at":"x","staleness_verdict":"fresh","verification":[1]},"s":30,"v":null},"f":"at","o":{"last_verified_at":"x","staleness_verdict":"fresh","verification":[1]}}
+{"a":{"p":"local","row":{"last_verified_at":"x","staleness_verdict":"fresh","verification":[1]},"s":30,"v":null},"f":"at","o":{"last_verified_at":"x","provenance":"local","staleness_verdict":"fresh","verification":[1]}}
+{"a":{"p":"synced","row":{"last_verified_at":"x","staleness_verdict":"fresh","verification":[1]},"s":30,"v":null},"f":"at","o":{"last_verified_at":"x","provenance":"synced","staleness_verdict":"fresh","verification":[1]}}
+{"a":{"p":"synced","row":{"last_verified_at":"x","staleness_verdict":"fresh","verification":[1]},"s":-5,"v":null},"f":"at","o":{"last_verified_at":"x","provenance":"synced","staleness_verdict":"fresh","verification":[1]}}
+{"a":{"p":"synced","row":{"last_verified_at":"x","staleness_verdict":"fresh","verification":[1]},"s":0,"v":null},"f":"at","o":{"last_verified_at":"x","provenance":"synced","staleness_verdict":"fresh","verification":[1]}}
+{"a":{"p":"synced","row":{"last_verified_at":"x","staleness_verdict":"fresh","verification":[1]},"s":30,"v":"2026-01-01T00:00:00Z"},"f":"at","o":{"last_verified_at":"x","provenance":"synced","staleness_verdict":"fresh","verification":[1]}}
+{"a":{"p":"unaccounted","row":{"last_verified_at":"x","staleness_verdict":"fresh","verification":[1]},"s":30,"v":null},"f":"at","o":{"last_verified_at":"x","provenance":"unaccounted","staleness_verdict":"fresh","verification":[1]}}
+{"a":{"row":{"last_verified_at":"not a stamp","staleness_verdict":"fresh"}},"f":"tu","o":{"last_verified_at":"not a stamp","staleness_verdict":"spot_check_required","trust_unavailable":true}}
+{"a":{"rec":"Other.","row":{"last_verified_at":"not a stamp","staleness_verdict":"fresh"}},"f":"tu","o":{"last_verified_at":"not a stamp","staleness_verdict":"spot_check_required","trust_unavailable":true}}
+{"a":{"p":null,"row":{"last_verified_at":"not a stamp","staleness_verdict":"fresh"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"not a stamp","staleness_verdict":"fresh"}}
+{"a":{"p":"local","row":{"last_verified_at":"not a stamp","staleness_verdict":"fresh"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"not a stamp","provenance":"local","staleness_verdict":"fresh"}}
+{"a":{"p":"synced","row":{"last_verified_at":"not a stamp","staleness_verdict":"fresh"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"not a stamp","provenance":"synced","staleness_verdict":"fresh"}}
+{"a":{"p":"synced","row":{"last_verified_at":"not a stamp","staleness_verdict":"fresh"},"s":-5,"v":null},"f":"at","o":{"last_verified_at":"not a stamp","provenance":"synced","staleness_verdict":"fresh"}}
+{"a":{"p":"synced","row":{"last_verified_at":"not a stamp","staleness_verdict":"fresh"},"s":0,"v":null},"f":"at","o":{"last_verified_at":"not a stamp","provenance":"synced","staleness_verdict":"fresh"}}
+{"a":{"p":"synced","row":{"last_verified_at":"not a stamp","staleness_verdict":"fresh"},"s":30,"v":"2026-01-01T00:00:00Z"},"f":"at","o":{"last_verified_at":"not a stamp","provenance":"synced","staleness_verdict":"fresh"}}
+{"a":{"p":"unaccounted","row":{"last_verified_at":"not a stamp","staleness_verdict":"fresh"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"not a stamp","provenance":"unaccounted","staleness_verdict":"fresh"}}
+{"a":{"row":{"last_verified_at":"2026-01-01T00:00:00","staleness_verdict":"fresh"}},"f":"tu","o":{"last_verified_at":"2026-01-01T00:00:00","staleness_verdict":"spot_check_required","trust_unavailable":true}}
+{"a":{"rec":"Other.","row":{"last_verified_at":"2026-01-01T00:00:00","staleness_verdict":"fresh"}},"f":"tu","o":{"last_verified_at":"2026-01-01T00:00:00","staleness_verdict":"spot_check_required","trust_unavailable":true}}
+{"a":{"p":null,"row":{"last_verified_at":"2026-01-01T00:00:00","staleness_verdict":"fresh"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00","staleness_verdict":"fresh"}}
+{"a":{"p":"local","row":{"last_verified_at":"2026-01-01T00:00:00","staleness_verdict":"fresh"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00","provenance":"local","staleness_verdict":"fresh"}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T00:00:00","staleness_verdict":"fresh"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-01-01T00:00:00Z","recommendation":"This memory arrived by sync pull and its verification stamp (2026-01-01T00:00:00Z) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":30,"status":"remote"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T00:00:00","staleness_verdict":"fresh"},"s":-5,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-01-01T00:00:00Z","recommendation":"This memory arrived by sync pull and its verification stamp (2026-01-01T00:00:00Z) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":0,"status":"remote"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T00:00:00","staleness_verdict":"fresh"},"s":0,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-01-01T00:00:00Z","recommendation":"This memory arrived by sync pull and its verification stamp (2026-01-01T00:00:00Z) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":0,"status":"remote"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T00:00:00","staleness_verdict":"fresh"},"s":30,"v":"2026-01-01T00:00:00Z"},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00","provenance":"synced","staleness_verdict":"fresh"}}
+{"a":{"p":"unaccounted","row":{"last_verified_at":"2026-01-01T00:00:00","staleness_verdict":"fresh"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T00:00:00","provenance":"unaccounted","staleness_verdict":"fresh"}}
+{"a":{"row":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local"}},"f":"tu","o":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local","staleness_verdict":"spot_check_required","trust_unavailable":true}}
+{"a":{"rec":"Other.","row":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local"}},"f":"tu","o":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local","staleness_verdict":"spot_check_required","trust_unavailable":true}}
+{"a":{"p":null,"row":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local"}}
+{"a":{"p":"local","row":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local"}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-01-01T05:00:00+05:00","recommendation":"This memory arrived by sync pull and its verification stamp (2026-01-01T05:00:00+05:00) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":30,"status":"remote"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local"},"s":-5,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-01-01T05:00:00+05:00","recommendation":"This memory arrived by sync pull and its verification stamp (2026-01-01T05:00:00+05:00) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":0,"status":"remote"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local"},"s":0,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-01-01T05:00:00+05:00","recommendation":"This memory arrived by sync pull and its verification stamp (2026-01-01T05:00:00+05:00) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":0,"status":"remote"}}}
+{"a":{"p":"synced","row":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local"},"s":30,"v":"2026-01-01T00:00:00Z"},"f":"at","o":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"synced"}}
+{"a":{"p":"unaccounted","row":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"local"},"s":30,"v":null},"f":"at","o":{"last_verified_at":"2026-01-01T05:00:00+05:00","provenance":"unaccounted"}}
+{"a":{"rows":[],"s":30,"st":null},"f":"ap","o":{"out":[],"q":null}}
+{"a":{"rows":[{"id":5},{}],"s":30,"st":null},"f":"ap","o":{"out":[{"id":5},{}],"q":null}}
+{"a":{"rows":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","verification":{}},{"id":"m2"},{"id":3}],"s":30,"st":null},"f":"ap","o":{"out":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","staleness_verdict":"spot_check_required","trust_unavailable":true,"verification":{"recommendation":"This machine does not hold the store's key, so whether this host made this stamp is unknown. Spot-check a claim before relying on the memory; `bettermemory log verify` reports the same condition."}},{"id":"m2","trust_unavailable":true},{"id":3,"trust_unavailable":true}],"q":["m1","m2"]}}
+{"a":{"rows":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","verification":{}},{"id":"m2"}],"s":30,"st":"raise"},"f":"ap","o":{"out":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","verification":{}},{"id":"m2"}],"q":["m1","m2"],"raised":"RuntimeError"}}
+{"a":{"rows":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","verification":{}},{"id":"m2"},{"id":"m3"}],"s":30,"st":{"m1":["synced",null],"m2":["local",null]}},"f":"ap","o":{"out":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-03-04T05:06:07Z","recommendation":"This memory arrived by sync pull and its verification stamp (2026-03-04T05:06:07Z) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":30,"status":"remote"}},{"id":"m2","provenance":"local"},{"id":"m3"}],"q":["m1","m2","m3"]}}
+{"a":{"rows":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","verification":{}},{"id":"m1"}],"s":30,"st":{"m1":["synced","2026-01-01T00:00:00Z"]}},"f":"ap","o":{"out":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","provenance":"synced","verification":{}},{"id":"m1","provenance":"synced"}],"q":["m1","m1"]}}
+{"a":{"rows":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","verification":{}},{"id":""},{}],"s":30,"st":{"":["unaccounted",null]}},"f":"ap","o":{"out":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","verification":{}},{"id":"","provenance":"unaccounted"},{"provenance":"unaccounted"}],"q":["m1",""]}}
+{"a":{"rows":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","verification":{}},{"id":null}],"s":30,"st":{"m1":["synced",null]}},"f":"ap","o":{"out":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-03-04T05:06:07Z","recommendation":"This memory arrived by sync pull and its verification stamp (2026-03-04T05:06:07Z) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":30,"status":"remote"}},{"id":null}],"q":["m1"]}}
+{"a":{"rows":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","verification":{}},{"id":["x"]},{"id":"m1"}],"s":30,"st":{"m1":["synced",null]}},"f":"ap","o":{"out":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","provenance":"synced","staleness_verdict":"spot_check_required","verification":{"age_days":null,"last_verified_at":"2026-03-04T05:06:07Z","recommendation":"This memory arrived by sync pull and its verification stamp (2026-03-04T05:06:07Z) was written on another host; this host has not checked it, so the stamp is not evidence here. Confirm at least one claim against ground truth on this machine and call memory_verify(id, note=..., verified_paths=[...]) with paths that resolve here to adopt it, or memory_update if a claim has drifted.","stale_after_days":30,"status":"remote"}},{"id":["x"]},{"id":"m1"}],"q":["m1","m1"],"raised":"TypeError"}}
+{"a":{"rows":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","verification":{}},{"id":{"k":1}}],"s":30,"st":{}},"f":"ap","o":{"out":[{"id":"m1","last_verified_at":"2026-03-04T05:06:07Z","verification":{}},{"id":{"k":1}}],"q":["m1"],"raised":"TypeError"}}
+{"f":"sweep","n":129600,"sha256":"ca501ad681501a7d6fdaaed0e5a1b9f53addc66f514c9794efb9071daf860b6c"}
