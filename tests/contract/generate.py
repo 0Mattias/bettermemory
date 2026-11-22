@@ -47,6 +47,8 @@ from . import (
     gen_difflib,
     gen_credentials_prefixed,
     gen_credentials_gate,
+    gen_credentials_spans,
+    gen_builder_schema,
     gen_identity_caller,
     gen_identity_roots,
     gen_session,
@@ -370,6 +372,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "credentials_prefixed_unicode": gen_credentials_prefixed.generate_unicode,
     "credentials_gate": gen_credentials_gate.generate,
     "credentials_gate_unicode": gen_credentials_gate.generate_unicode,
+    "credentials_spans": gen_credentials_spans.generate,
+    "credentials_spans_unicode": gen_credentials_spans.generate_unicode,
+    "builder_schema": gen_builder_schema.generate,
     "state_files": gen_state.generate,
     "store_files": gen_store_files.generate,
     "models": gen_models.generate,
@@ -623,6 +628,9 @@ UNICODE_GATED = frozenset(
         "hooks",
         "credentials_prefixed_unicode",
         "credentials_gate_unicode",
+        # `re`'s `\s`, `\b` and IGNORECASE past ASCII in the generic and
+        # URI rules and the snippet's `\s+` (`gen_credentials_spans`).
+        "credentials_spans_unicode",
         "control_tokens_unicode",
         "recall_render_unicode",
         "machine_facts_unicode",

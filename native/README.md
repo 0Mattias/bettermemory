@@ -122,6 +122,8 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `entry`, `cli::common`, `cli::root` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`; `cli/__init__.py`'s `_build_parser`, `_add_hook_subparser`, `main` (`cli::root`) | `cli_common.jsonl`, `cli_common_python.jsonl`, `cli_root.jsonl`, `cli_root_python.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
+| `credentials::spans` | units 3 and 4 of `credentials.py`: `_GENERIC_KEYWORD_RE` and `_URI_USERINFO_RE` (built by the engine from their own text and flags), `CredentialMatch`, `_CONTEXT_CHARS`, `_merged_secret_spans`, `secret_spans`, `_redact_all`, `_safe_snippet`, `find_credential_markers` | `credentials_spans.jsonl`, `credentials_spans_unicode.jsonl` |
+| `builder` | `builder.py`'s two pure schema scrubs: `_strip_titles`, `_fold_nullable` | `builder_schema.jsonl` |
 | `claims`, `claim_drift` | units 1 to 3 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`); `claim_drift`: `_Headers`, `build_binding_index`, `claim_level_drift`, the trait `LiteralLines` for the literal helpers | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl`, `claim_drift.jsonl`, `claim_drift_unicode.jsonl`, `claim_drift_python.jsonl` |
 | `symbols` | unit symcheck of `symbols.py`: the bounds (`_MAX_*`, `_FILE_SUFFIXES`), `SymbolCitation`, `SymbolDriftReport` (`missing`, `__bool__`, `to_dict`), `check_symbol_citations` over citations already parsed, `_tier`, `_live_root`, `_resolve_module`, `_module_bindings`; `ast.parse` and the name walks are a trait (`ModuleNames`) | `symbols.jsonl`, `symbols_platform.jsonl` |
 | `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL; f-strings with a field deferred | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl` |
@@ -19011,9 +19013,9 @@ and none was extended.
 | `_is_spent_run` | 192-197 | nothing | built, unit 1 |
 | `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS`, `_NUMBER_SUFFIX_RE`, `_is_placeholder` | 269-319, 362-378 | nothing (`str.lower`) | built, unit 2 |
 | `_DATETIME_SHAPE_RE`, `_looks_like_secret` | 332-336, 381-472 | nothing (`str.isupper`, `isalpha`, `isdigit`, `\w`, `\d`) | built, unit 2 |
-| `_GENERIC_KEYWORD_RE`, `_URI_USERINFO_RE` | 238-265 | nothing (`re.IGNORECASE`, `\s`, `\b`, a lookbehind) | unit 3 |
-| `CredentialMatch`, `_CONTEXT_CHARS`, `_merged_secret_spans`, `secret_spans` | 475-546 | nothing | unit 4 |
-| `_redact_all`, `_safe_snippet`, `find_credential_markers` | 549-632 | nothing (`\s` in `re.sub`) | unit 4 |
+| `_GENERIC_KEYWORD_RE`, `_URI_USERINFO_RE` | 238-265 | nothing (`re.IGNORECASE`, `\s`, `\b`, a lookbehind) | built, unit 3 |
+| `CredentialMatch`, `_CONTEXT_CHARS`, `_merged_secret_spans`, `secret_spans` | 475-546 | nothing | built, unit 4 |
+| `_redact_all`, `_safe_snippet`, `find_credential_markers` | 549-632 | nothing (`\s` in `re.sub`) | built, unit 4 |
 
 The whole module is more than 600 lines of Rust: the generic rule's
 pattern alone (an IGNORECASE alternation with a bounded prefix repetition,
@@ -19257,9 +19259,152 @@ quotes).
 
 #### Left for later units
 
-Units 3 and 4 above. Unit 4 sorts `prefixed_spans`' output with the generic
-and URI spans (a stable sort by start, so the order among equal starts is
-this function's order) before merging.
+None: units 3 and 4 below finish the module.
+
+### Units 3 and 4, built (`credentials::spans`)
+
+The line ranges were confirmed against the source as it is now:
+`_GENERIC_KEYWORD_RE` at 238-251, `_URI_USERINFO_RE` at 262-265,
+`CredentialMatch` at 475-489, `_CONTEXT_CHARS` at 492, `_merged_secret_spans`
+at 495-525, `secret_spans` at 528-546, `_redact_all` at 549-557,
+`_safe_snippet` at 560-588 and `find_credential_markers` at 591-632.
+Both units were built together: unit 3 alone is two statics and two
+calls, and every fixture of it is also a fixture of unit 4.
+
+Per pattern (pyre decision, rule 4): `_GENERIC_KEYWORD_RE` (tier T3),
+`_URI_USERINFO_RE` (T1) and `_safe_snippet`'s `\s+` (T1) are each a
+`LazyLock<Result<pyre::Regex, RegexError>>` built from the reference's own
+pattern text and flags (`GENERIC_KEYWORD_PATTERN`, `URI_USERINFO_PATTERN`,
+`SNIPPET_SPACE_PATTERN`, the first two checked against the golden header,
+IGNORECASE as the flag), run through `finditer` and `sub`; none is matched
+by hand. All three are literal patterns of the reference, so the engine's
+inventory already holds them (`gen_pyre_atom`'s scan and the tier table of
+pyre-7); nothing was added to it.
+
+- `generic_values`, `uri_values`: the `value` group's span of every match,
+  read through `Match::group` by the group number the pattern's names give.
+- `secret_spans` (`_merged_secret_spans` and `secret_spans`):
+  `prefixed_spans`, then the generic and URI spans whose value passes
+  `looks_like_secret`, a stable sort by start, and the union of overlaps
+  keeping the first kind.
+- `redact_all`: the markers spliced right to left.
+- `safe_snippet`: the window `[max(0, start - 24), min(len, end + 24))`,
+  with no trailing context for `private-key-pem`; every span that overlaps
+  it spliced right to left with Python's slice clamping; line feeds to
+  spaces; `\s+` to one space through the engine's `sub` with the literal
+  `" "`; `str.strip` (`unicode::py_strip`); `...` on each cut edge.
+- `find_credential_markers`: per detector the first match that is not a
+  spent run or a mask (a kind already reported adds nothing), then the
+  first generic and the first URI value that pass the gate. The merged
+  spans are read once and shared by every snippet, which answers as the
+  reference's call per snippet does. `CredentialMatch` holds the kind and
+  the snippet. `_str` conveniences take a `&str`.
+
+The engine runs with no budget, so it answers or panics on an engine
+fault; it never answers a silent no-match. Rule 6's step claim is tested:
+the steps of the longest run of `_GENERIC_KEYWORD_RE` over dense `_`,
+`-`, `a_`, `-a` and long-segment runs, prose with and without keywords
+and repeated `Authorization: Bearer` headers at 2n are within 2.2 times
+the steps at n, and the same for `_URI_USERINFO_RE`.
+
+#### Fixtures
+
+`tests/contract/gen_credentials_spans.py`:
+
+- `credentials_spans.jsonl`, not gated: a header pinning both pattern
+  texts, their flags and `_CONTEXT_CHARS`; 157 hand cases (each keyword
+  and compound, each separator and connective, the prefix bounds of five
+  segments and thirty characters, the wrappers and quotes, the value floor
+  and the gate's placeholders, the `Authorization: Bearer` header, prose
+  near-misses, URI userinfo with its bounds, prefixed tokens overlapping
+  the generic rule, PEM, snippet windows and whitespace, surrogates and
+  NUL, dense separator runs), each with the raw value spans of both rules,
+  the merged spans, the redacted text and the markers; eleven direct
+  `_safe_snippet` cases; and a seeded sweep of 3,000 pastes joined from 40
+  pieces, pinned as a digest. A text whose line would itself be a
+  credential shape to the detectors is written as the hex of its UTF-8
+  (`test_no_fixture_line_is_shaped_like_a_key`), and every key shape in
+  the generator and the tests is written in pieces.
+- `credentials_spans_unicode.jsonl`, gated on the Unicode version: two
+  multi-line templates with one code point at every joint, over the ranges
+  below U+3400, U+A000 to U+AC00 and U+D7A4 to U+10000 whole (surrogates
+  left out) and every thirteenth code point elsewhere below U+40000,
+  hashed per block of 0x4000.
+
+#### Tests
+
+`golden_credentials_spans.rs` (every row of both files, the counts
+checked), `credentials_spans_kills.rs` (IGNORECASE past ASCII in the
+keyword and in the lookbehind's class, the merge's first kind, the
+snippet's Unicode space and PEM cut, a kind reported once, the value and
+userinfo bounds; for `builder` the one-pair null branch, a key kept in
+place, the named maps), `credentials_spans_robustness.rs` (the step
+claims; time at ten times the input within thirty times the time at the
+input for ten shapes; the empty text, lone surrogates, 100,000 spaces,
+5,000 secrets, snippet arguments past the text; `builder`'s trees 100,000
+deep and wide).
+
+#### What the reference does that looks wrong (not changed)
+
+- A span is labelled with its first kind, so the generic marker of
+  `"api_key = " + "AKIA" + "0189ABCDEFGHIJKL"` reports `generic-secret-assignment`
+  with the snippet `api_key = [redacted:aws-access-key-id]`.
+- The lookbehind's `[A-Za-z0-9]` is read under IGNORECASE, so a
+  non-ASCII letter that folds into it hides the keyword:
+  `secret_spans("İpassword=Xy7kQ9pLm2Zt")` and
+  `secret_spans("aıpassword=Xy7kQ9pLm2Zt")` are empty, while
+  `secret_spans("paſsword=" + "Xy7kQ9pLm2Zt")` finds the value.
+- A URI user name of 65 characters hides the password:
+  `secret_spans("postgres://" + "u" * 65 + ":Xy7kQ9pLm2Zt@h")` is empty.
+## The server builder (`builder.py`)
+
+Read at 42c271b6. Only the two pure schema scrubs are built; they read
+nothing from the machine.
+
+| function | lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_strip_titles` | 294-332 | nothing | built |
+| `_fold_nullable` | 335-378 | nothing | built |
+| `_Served`, `build_server`, `_register_tools`, `_strip_schema_titles` | rest | the MCP server, the tool table, pydantic | later units |
+
+`builder::strip_titles` and `builder::fold_nullable` walk a
+`pyvalue::PyValue` tree in place with an explicit stack: each node's edit
+reads only that node, and the walk then visits what the node holds after
+the edit, so the order of visits does not change the answer. Both descend
+into a dict held under `properties`, `$defs` or `definitions` by value
+only, and into every other value and list item.
+
+- `strip_titles`: `title` popped, `default` deleted when it is `None`.
+- `fold_nullable`: `{"type": "null"} in branches` and `branches[1] ==
+  {"type": "null"}` are true exactly when the branch is a dict of the one
+  pair `("type", "null")` (one pair makes key order moot, a `str` value
+  makes numeric equality across types moot), so that predicate is written
+  instead of a general equality. The fold needs a list of two branches,
+  one of them null, the other a dict whose `type` is a `str` and that has
+  no `anyOf` or `$ref`, and no `type` on the node; then `anyOf` is
+  deleted and the other's keys but `type` and then `type = [x, "null"]`
+  are applied with `dict.update`'s rule (an existing key keeps its
+  position, a new one is appended).
+
+Fixtures: `tests/contract/gen_builder_schema.py` writes
+`builder_schema.jsonl`, not gated: 54 hand-written trees (each guard of
+both walks, the named maps, and two trees copied once in the shape
+pydantic emits, so no row follows the installed pydantic), each as JSON
+text with the tree after each walk and after both. Tests:
+`golden_builder_schema.rs`, and the builder cases of
+`credentials_spans_kills.rs` and `credentials_spans_robustness.rs`.
+
+Stated difference: the reference recurses, so a tree nested past
+Python's recursion limit (about 1,000 levels, less the caller's frames)
+raises RecursionError; the port finishes it. The depth at which the
+reference raises depends on its caller's stack and cannot be reproduced.
+
+What the reference does that looks wrong (not changed): every value but
+the named maps is walked as a schema node, so a `default`, `enum` or
+`const` value that is an object loses its `title` key and its `default:
+null` entry: `{"default": {"default": null, "title": "kept?"}}` becomes
+`{"default": {}}`.
+
 ## What a memory claims (`claims.py`)
 
 Read at 465bc600 (`claims.py`, 1,159 lines). The module holds the claim
@@ -22691,9 +22836,8 @@ What the reference has and this build does not, by area:
   `credential_to_dict`, `origin_to_dict`, `actor_to_dict`) are built;
   `ResponseBuilder`'s attach passes, the memo's key and value types, its
   one instance and its `_caches` registration (the drift pass) are not.
-- The write gates past the control tokens and the dedup: `credentials.py`
-  after its vendor-prefixed detectors and its value gate (the generic and
-  URI patterns, spans and markers: units 3 and 4), `durability.py` past
+- The write gates past the control tokens, the dedup and `credentials.py`
+  (built whole): `durability.py` past
   its quoted spans and sentence helpers (the marker tables with
   `find_transient_markers`, and the capture rules: units 2 and 3), and
   the review. The dedup's store side reads through a trait not yet wired

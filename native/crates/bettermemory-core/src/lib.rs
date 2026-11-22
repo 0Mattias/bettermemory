@@ -317,8 +317,11 @@
 //!   command modules taken as trait objects);
 //! - [`origin_remote`]: a remote URL read into the triple `origin`
 //!   compares, with `urllib.parse.urlparse` as CPython 3.13.13 has it;
-//! - [`credentials`]: the write gate's credential detectors, its first
-//!   two units (the vendor-prefixed shapes and the value gate);
+//! - [`credentials`]: the write gate's credential detectors, whole: the
+//!   vendor-prefixed shapes, the value gate, the generic keyword rule and
+//!   the URI password on the engine, and the spans, snippets and markers;
+//! - [`builder`]: the server builder's two pure schema scrubs
+//!   (`_strip_titles`, `_fold_nullable`);
 //! - [`origin_gitfiles`]: the repository files `origin` reads in-process,
 //!   its first three units (the pure decoders; the leaves that read the
 //!   machine: a file's prefix, a path relative to the root, the root as
@@ -356,6 +359,7 @@ pub mod argparse;
 pub mod attestation_paths;
 pub mod attribution;
 pub mod audit;
+pub mod builder;
 pub mod caches;
 pub mod capture;
 pub mod checkout_token;

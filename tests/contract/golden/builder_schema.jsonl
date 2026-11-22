@@ -1,0 +1,54 @@
+{"tree":"null"}
+{"tree":"\"title\""}
+{"tree":"3"}
+{"tree":"[]"}
+{"tree":"{}"}
+{"strip":"{}","tree":"{\"title\": \"X\"}"}
+{"strip":"{\"type\": \"object\"}","tree":"{\"title\": {\"title\": \"inner\"}, \"type\": \"object\"}"}
+{"strip":"{\"type\": \"string\"}","tree":"{\"type\": \"string\", \"title\": \"Content\"}"}
+{"strip":"{\"items\": {\"type\": \"string\"}}","tree":"{\"items\": {\"title\": \"Item\", \"type\": \"string\"}, \"title\": \"L\"}"}
+{"strip":"[{}, [{\"x\": [{}]}]]","tree":"[{\"title\": \"a\"}, [{\"title\": \"b\", \"x\": [{\"title\": \"c\"}]}]]"}
+{"strip":"{}","tree":"{\"default\": null}"}
+{"strip":"{\"type\": \"integer\"}","tree":"{\"default\": null, \"title\": \"T\", \"type\": \"integer\"}"}
+{"tree":"{\"default\": false}"}
+{"tree":"{\"default\": 0}"}
+{"tree":"{\"default\": \"\"}"}
+{"tree":"{\"default\": []}"}
+{"strip":"{\"default\": {}}","tree":"{\"default\": {\"default\": null, \"title\": \"kept?\"}}"}
+{"strip":"{\"default\": [null, {}]}","tree":"{\"default\": [null, {\"default\": null}]}"}
+{"strip":"{\"properties\": {\"title\": {\"type\": \"string\"}}}","tree":"{\"properties\": {\"title\": {\"type\": \"string\", \"title\": \"Title\"}}}"}
+{"strip":"{\"properties\": {\"default\": null, \"x\": {}}}","tree":"{\"properties\": {\"default\": null, \"x\": {\"default\": null}}}"}
+{"strip":"{\"$defs\": {\"title\": {\"type\": \"object\"}}}","tree":"{\"$defs\": {\"title\": {\"title\": \"Def\", \"type\": \"object\"}}}"}
+{"strip":"{\"definitions\": {\"title\": {}, \"n\": 3}}","tree":"{\"definitions\": {\"title\": {\"title\": \"Def\"}, \"n\": 3}}"}
+{"strip":"{\"properties\": [{}]}","tree":"{\"properties\": [{\"title\": \"listed\"}]}"}
+{"tree":"{\"properties\": \"title\"}"}
+{"strip":"{\"properties\": {\"p\": {\"properties\": {\"title\": {}}}}}","tree":"{\"properties\": {\"p\": {\"properties\": {\"title\": {\"title\": \"deep\"}}}}}"}
+{"strip":"{\"other\": {}}","tree":"{\"other\": {\"title\": {\"title\": \"named\"}}}"}
+{"both":"{\"type\": [\"string\", \"null\"]}","fold":"{\"type\": [\"string\", \"null\"]}","tree":"{\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}]}"}
+{"both":"{\"type\": [\"integer\", \"null\"]}","fold":"{\"type\": [\"integer\", \"null\"]}","tree":"{\"anyOf\": [{\"type\": \"null\"}, {\"type\": \"integer\"}]}"}
+{"both":"{\"type\": [\"null\", \"null\"]}","fold":"{\"type\": [\"null\", \"null\"]}","tree":"{\"anyOf\": [{\"type\": \"null\"}, {\"type\": \"null\"}]}"}
+{"both":"{\"description\": \"d\", \"maxLength\": 9, \"type\": [\"string\", \"null\"]}","fold":"{\"description\": \"d\", \"maxLength\": 9, \"type\": [\"string\", \"null\"]}","tree":"{\"anyOf\": [{\"type\": \"string\", \"maxLength\": 9}, {\"type\": \"null\"}], \"description\": \"d\"}"}
+{"both":"{\"description\": \"e\", \"type\": [\"string\", \"null\"]}","fold":"{\"description\": \"e\", \"type\": [\"string\", \"null\"]}","tree":"{\"description\": \"d\", \"anyOf\": [{\"description\": \"e\", \"type\": \"string\"}, {\"type\": \"null\"}]}"}
+{"both":"{\"type\": [\"string\", \"null\"]}","fold":"{\"title\": \"S\", \"default\": null, \"type\": [\"string\", \"null\"]}","strip":"{\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}]}","tree":"{\"anyOf\": [{\"title\": \"S\", \"type\": \"string\"}, {\"type\": \"null\"}], \"title\": \"Opt\", \"default\": null}"}
+{"both":"{\"items\": {\"type\": [\"string\", \"null\"]}, \"type\": [\"array\", \"null\"]}","fold":"{\"items\": {\"type\": [\"string\", \"null\"]}, \"type\": [\"array\", \"null\"]}","tree":"{\"anyOf\": [{\"type\": \"array\", \"items\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}]}}, {\"type\": \"null\"}]}"}
+{"both":"{\"type\": [\"string\", \"null\"]}","strip":"{\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}]}","tree":"{\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\", \"title\": \"N\"}]}"}
+{"tree":"{\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"NULL\"}]}"}
+{"tree":"{\"anyOf\": [{\"type\": \"string\"}, {\"type\": null}]}"}
+{"tree":"{\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}, {\"type\": \"null\"}]}"}
+{"tree":"{\"anyOf\": [{\"type\": \"null\"}]}"}
+{"tree":"{\"anyOf\": {\"a\": {\"type\": \"string\"}, \"b\": {\"type\": \"null\"}}}"}
+{"tree":"{\"anyOf\": [\"string\", {\"type\": \"null\"}]}"}
+{"tree":"{\"anyOf\": [{\"type\": [\"string\", \"integer\"]}, {\"type\": \"null\"}]}"}
+{"tree":"{\"anyOf\": [{\"type\": 1}, {\"type\": \"null\"}]}"}
+{"tree":"{\"anyOf\": [{\"maxLength\": 3}, {\"type\": \"null\"}]}"}
+{"tree":"{\"anyOf\": [{\"$ref\": \"#/$defs/X\", \"type\": \"object\"}, {\"type\": \"null\"}]}"}
+{"tree":"{\"anyOf\": [{\"anyOf\": [{\"type\": \"string\"}], \"type\": \"string\"}, {\"type\": \"null\"}]}"}
+{"tree":"{\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"type\": \"string\"}"}
+{"tree":"{\"type\": \"object\", \"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}]}"}
+{"tree":"{\"anyOf\": [{\"type\": \"string\", \"anyOf\": []}, {\"type\": \"null\"}]}"}
+{"both":"{\"properties\": {\"a\": {\"type\": [\"string\", \"null\"]}}}","fold":"{\"properties\": {\"a\": {\"type\": [\"string\", \"null\"]}}}","tree":"{\"properties\": {\"a\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}]}}}"}
+{"tree":"{\"properties\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}]}}"}
+{"both":"{\"$defs\": {\"D\": {\"type\": [\"boolean\", \"null\"]}}}","fold":"{\"$defs\": {\"D\": {\"type\": [\"boolean\", \"null\"]}}}","tree":"{\"$defs\": {\"D\": {\"anyOf\": [{\"type\": \"null\"}, {\"type\": \"boolean\"}]}}}"}
+{"both":"{\"x\": [{\"type\": [\"number\", \"null\"]}]}","fold":"{\"x\": [{\"type\": [\"number\", \"null\"]}]}","tree":"{\"x\": [{\"anyOf\": [{\"type\": \"number\"}, {\"type\": \"null\"}]}]}"}
+{"both":"{\"properties\": {\"content\": {\"type\": \"string\"}, \"project\": {\"type\": [\"string\", \"null\"]}, \"limit\": {\"default\": 30, \"type\": \"integer\"}, \"tags\": {\"items\": {\"type\": \"string\"}, \"type\": [\"array\", \"null\"]}, \"title\": {\"maxLength\": 80, \"type\": [\"string\", \"null\"]}, \"mode\": {\"$ref\": \"#/$defs/Mode\", \"default\": \"fast\"}}, \"required\": [\"content\"], \"type\": \"object\", \"$defs\": {\"Mode\": {\"enum\": [\"fast\", \"full\"], \"type\": \"string\"}}}","fold":"{\"properties\": {\"content\": {\"title\": \"Content\", \"type\": \"string\"}, \"project\": {\"default\": null, \"title\": \"Project\", \"type\": [\"string\", \"null\"]}, \"limit\": {\"default\": 30, \"title\": \"Limit\", \"type\": \"integer\"}, \"tags\": {\"default\": null, \"title\": \"Tags\", \"items\": {\"type\": \"string\"}, \"type\": [\"array\", \"null\"]}, \"title\": {\"default\": null, \"title\": \"Title\", \"maxLength\": 80, \"type\": [\"string\", \"null\"]}, \"mode\": {\"$ref\": \"#/$defs/Mode\", \"default\": \"fast\"}}, \"required\": [\"content\"], \"title\": \"memory_writeArguments\", \"type\": \"object\", \"$defs\": {\"Mode\": {\"enum\": [\"fast\", \"full\"], \"title\": \"Mode\", \"type\": \"string\"}}}","strip":"{\"properties\": {\"content\": {\"type\": \"string\"}, \"project\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}]}, \"limit\": {\"default\": 30, \"type\": \"integer\"}, \"tags\": {\"anyOf\": [{\"items\": {\"type\": \"string\"}, \"type\": \"array\"}, {\"type\": \"null\"}]}, \"title\": {\"anyOf\": [{\"maxLength\": 80, \"type\": \"string\"}, {\"type\": \"null\"}]}, \"mode\": {\"$ref\": \"#/$defs/Mode\", \"default\": \"fast\"}}, \"required\": [\"content\"], \"type\": \"object\", \"$defs\": {\"Mode\": {\"enum\": [\"fast\", \"full\"], \"type\": \"string\"}}}","tree":"{\"properties\": {\"content\": {\"title\": \"Content\", \"type\": \"string\"}, \"project\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Project\"}, \"limit\": {\"default\": 30, \"title\": \"Limit\", \"type\": \"integer\"}, \"tags\": {\"anyOf\": [{\"items\": {\"type\": \"string\"}, \"type\": \"array\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Tags\"}, \"title\": {\"anyOf\": [{\"maxLength\": 80, \"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Title\"}, \"mode\": {\"$ref\": \"#/$defs/Mode\", \"default\": \"fast\"}}, \"required\": [\"content\"], \"title\": \"memory_writeArguments\", \"type\": \"object\", \"$defs\": {\"Mode\": {\"enum\": [\"fast\", \"full\"], \"title\": \"Mode\", \"type\": \"string\"}}}"}
+{"both":"{\"properties\": {\"flag\": {\"default\": false, \"type\": \"boolean\"}, \"since\": {\"format\": \"date-time\", \"type\": [\"string\", \"null\"]}, \"ref\": {\"anyOf\": [{\"$ref\": \"#/$defs/Ref\"}, {\"type\": \"null\"}]}}, \"type\": \"object\", \"$defs\": {\"Ref\": {\"properties\": {\"id\": {\"type\": \"string\"}}, \"required\": [\"id\"], \"type\": \"object\"}}}","fold":"{\"properties\": {\"flag\": {\"default\": false, \"title\": \"Flag\", \"type\": \"boolean\"}, \"since\": {\"default\": null, \"title\": \"Since\", \"format\": \"date-time\", \"type\": [\"string\", \"null\"]}, \"ref\": {\"anyOf\": [{\"$ref\": \"#/$defs/Ref\"}, {\"type\": \"null\"}], \"default\": null}}, \"title\": \"Args\", \"type\": \"object\", \"$defs\": {\"Ref\": {\"properties\": {\"id\": {\"title\": \"Id\", \"type\": \"string\"}}, \"required\": [\"id\"], \"title\": \"Ref\", \"type\": \"object\"}}}","strip":"{\"properties\": {\"flag\": {\"default\": false, \"type\": \"boolean\"}, \"since\": {\"anyOf\": [{\"format\": \"date-time\", \"type\": \"string\"}, {\"type\": \"null\"}]}, \"ref\": {\"anyOf\": [{\"$ref\": \"#/$defs/Ref\"}, {\"type\": \"null\"}]}}, \"type\": \"object\", \"$defs\": {\"Ref\": {\"properties\": {\"id\": {\"type\": \"string\"}}, \"required\": [\"id\"], \"type\": \"object\"}}}","tree":"{\"properties\": {\"flag\": {\"default\": false, \"title\": \"Flag\", \"type\": \"boolean\"}, \"since\": {\"anyOf\": [{\"format\": \"date-time\", \"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Since\"}, \"ref\": {\"anyOf\": [{\"$ref\": \"#/$defs/Ref\"}, {\"type\": \"null\"}], \"default\": null}}, \"title\": \"Args\", \"type\": \"object\", \"$defs\": {\"Ref\": {\"properties\": {\"id\": {\"title\": \"Id\", \"type\": \"string\"}}, \"required\": [\"id\"], \"title\": \"Ref\", \"type\": \"object\"}}}"}

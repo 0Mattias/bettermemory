@@ -476,6 +476,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `isalpha` and `isdigit` of every code point
         // (`gen_credentials_gate`).
         "credentials_gate_unicode.jsonl" => &[Unicode],
+        // `re`'s `\s`, `\b` and IGNORECASE past ASCII
+        // (`gen_credentials_spans`).
+        "credentials_spans_unicode.jsonl" => &[Unicode],
         // A link or folder checked through a folder that cannot be
         // searched: 3.13's `Path.is_dir` raises, 3.14's answers False.
         "gitsystem_probe_python.jsonl" => &[Python],
