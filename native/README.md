@@ -113,7 +113,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks`; unit 2a in `membership::shared_heal`: `_carriers`, `_restamped`, `_healed`, `_chosen`, `retired_into`, `_folded`, and the `MembershipLog` trait | `membership_shared.jsonl`, `membership_shared_python.jsonl`, `membership_shared_heal.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
-| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal`; unit mqueries of `membership_queries.py` in `queries`: `home`, `homes`, `_home_from`, `admit_recall`, `restated`, `_written_afresh`, `_restatement`, `filed_elsewhere`, the trait `ScopeReader`; unit membership-4a: `_touch_view`, `_checkout_name`, `_give_token`, `token_written`, `_foreign`; unit mlegacy in `legacy`: `pending`, `settle_legacy_questions`, `below_root`, `_declared_below`, `_record_counts`, `_records_by_project`, and `first_output` of `membership_queries.py` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl`, `membership_queries.jsonl`, `membership_touch.jsonl`, `membership_legacy.jsonl` |
+| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal`; unit mqueries of `membership_queries.py` in `queries`: `home`, `homes`, `_home_from`, `admit_recall`, `restated`, `_written_afresh`, `_restatement`, `filed_elsewhere`, the trait `ScopeReader`; unit membership-4a: `_touch_view`, `_checkout_name`, `_give_token`, `token_written`, `_foreign`; unit mlegacy in `legacy`: `pending`, `settle_legacy_questions`, `below_root`, `_declared_below`, `_record_counts`, `_records_by_project`, and `first_output` of `membership_queries.py`; rung 2 of `membership_resolve.py` in `rung`: `_token_now`, `_token_read`, `_by_object`, `_rung_two` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl`, `membership_queries.jsonl`, `membership_touch.jsonl`, `membership_legacy.jsonl`, `membership_rung.jsonl` |
 | `location_continuity` | `location.continuity` (`location.py` 1040-1094) | `location_continuity.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `entry`, `cli::common`, `cli::root` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`; `cli/__init__.py`'s `_build_parser`, `_add_hook_subparser`, `main` (`cli::root`) | `cli_common.jsonl`, `cli_common_python.jsonl`, `cli_root.jsonl`, `cli_root_python.jsonl` |
@@ -4799,6 +4799,85 @@ project. Tests: `golden_membership_legacy`, `membership_legacy_kills`,
 `membership_legacy_robustness`. Left for later units: `why` (1730-1826),
 `portable_export` and `_decides`, the `membership_declare` bindings, and
 the callers that give `below_root` the location's `view_path`.
+
+## The resolution ladder (`membership_resolve.py`)
+
+`membership_resolve.py` (1,924 lines) holds the methods `Membership`
+binds for a resolution: the tally, the ladder's rungs, the liveness
+plan, first sight, join, ask and new, the sighting's writes, the
+subprojects and the declared folders. The Rust lives in
+`src/membership/`, one file per unit, as further `impl` blocks of
+`Membership`. The module is far past 600 lines of Rust, so it is cut
+into units, leaves first; unit mresrung (rung 2) is built.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_tally` | 133-263 | the store | later |
+| `_at_the_path`, `_strength` | 266-326 | the store | later |
+| `resolve` | 332-395 | the store, a transaction, the history reader | later (with `_resolve`) |
+| `_token_now` | 398-431 | the token file (a closure) | built (mresrung) |
+| `_token_read` | 434-451 | the token file's stat and read, a bounded read | built (mresrung) |
+| `_by_object`, `_rung_two` | 454-516 | the store, the history reader, `_shared_remint` (a closure) | built (mresrung) |
+| `_liveness_plan`, `prefetch_liveness` | 519-650 | the liveness, bounded reads | later |
+| `_resolve`, `_enclosing`, `_filed_tenant`, `_caller`, `_resolve_repository`, `_folder_became_repository` | 657-951 | the store, the file system | later |
+| `_first_sight`, `_join`, `_content_candidates`, `_ask`, `_new`, `_display_name` | 954-1301 | the store, the clock | later |
+| `_observe` | 1307-1453 | the store, the clock, the token writer | later |
+| `_subproject_line`, `_nested_answer`, `_subproject` | 1459-1563 | the store | later |
+| `_resolve_folder`, `_asked_folder`, `_declared_folder`, `_declared_dirs`, `prefetch_declared`, `_declared_todo`, `_unordered` | 1569-1924 | the store, the file system | later |
+
+Rung 2 (`membership::rung`):
+
+- `Membership::rung_two(loc, history, remint)` answers `_rung_two`'s
+  four-tuple in the reference's order: the checkout, how it is
+  continued, the earlier checkout returned for the question naming both
+  (third), and the checkout to retire into the first (fourth). The
+  checkouts at the object on the location's machine are read in one
+  `_checkouts` call (`checkouts_where` with machine, object device and
+  inode); one without an object key, or retired into another
+  (`retired_into`, one log read per retired checkout), is skipped. A
+  birth time match answers `birth`; the guard `verdict != UNPROVEN or
+  (reminted is not None and k.token != _found_token(k, loc))` is kept as
+  written; `_continuity` and `_healed` are the model's own.
+  `history` is `loc.history` and `remint` stands for `_shared_remint`,
+  both passed to `_continuity` as the views unit takes them: the model
+  cannot lend itself to a closure while `_continuity` holds it.
+  `by_object` answers the first two.
+- `Membership::token_now(loc, read)` answers `_token_now`: the token is
+  `loc.token or loc.token_written`, and nothing is read unless it, the
+  git directory and the object key are present, the machine is the
+  model's and `reads_here` holds, at least one checkout is recorded at
+  the object and none records the token. `read` stands for `_token_read`.
+  A found token that differs gives the location with that token, no
+  token written and the status `present` (`dataclasses.replace`).
+- `token_read(board, path, read)` is `_token_read`'s bound:
+  `bounded_read` of `location_reads` with `PROBE_BUDGET` of
+  `location_answer` under the what `token`; `Read::Unanswered` (the
+  reference's `UNANSWERED`) and an OSError answer None, a ValueError (a
+  NUL in the path) and a read not ported pass on. `token_file(ctx,
+  git_dir, evicted, pause)` is its inner `read()`: `evicted` is the stat
+  and `location._evicted` of it as one closure (`location._evicted` is
+  ported on its own lane), and the token is `checkout_token.read(git_dir).token`.
+  The caller builds a `Send` closure over both, so the stat is inside
+  the bound as in the reference.
+
+No regular expression is used. No path is resolved here. On Windows a
+token path that cannot be opened (a directory, or access denied)
+declines with `Fault::NotPorted`, where the reference answers None:
+`StdFs` ports no `strerror` text for Windows, which the unreadable
+read needs. `golden_membership_rung` compares that row on POSIX only,
+and `membership_rung_not_posix` records the gap (class os).
+
+Fixtures: `tests/contract/gen_membership_rung.py` drives the reference
+over the recording store of `gen_membership_shared_heal` with
+`_shared_remint` and `_token_read` replaced by stubs that log each call,
+and writes `membership_rung.jsonl` (not gated): `_rung_two`, `_by_object`
+and `_token_now` with their answers and store calls, and `_token_read`
+over token files written in a temporary directory (the eviction test
+forced true for one row). Tests: `golden_membership_rung`,
+`membership_rung_kills`, `membership_rung_robustness`,
+`membership_rung_not_posix`. Left for later
+units: every other function of the table above, and the wiring of
+`resolve` that gives `_token_now` its `_token_read`.
 
 ## The fold check
 
@@ -22075,6 +22154,11 @@ What the reference has and this build does not, by area:
   store id reissue (store_membership-2), and of the caller's resolution
   `prime_roots` and `middleware`, the MCP server's wire path (`identity`
   resolves the rest; its admission is `store::caller`).
+- `membership_resolve.py` past rung 2 of the ladder (`_token_now`,
+  `_token_read`, `_by_object` and `_rung_two` are built in
+  `membership::rung`): the tally, the other rungs, the liveness plan,
+  first sight, join, ask and new, the sighting's writes, the
+  subprojects and the declared folders.
 - Each hit's signals and drift report: `claims.py` past its leaves,
   its literal reader, its drift index and its module tokenizer (unit
   5a) (the declare-time oracle),

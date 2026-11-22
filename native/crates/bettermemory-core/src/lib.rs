@@ -171,7 +171,9 @@
 //!   recall's admission, a question as it is shown), and unit mlegacy in
 //!   `membership::legacy` (the legacy questions settled, the open
 //!   questions shown, a directory against a checkout's root, the record
-//!   counts by project);
+//!   counts by project), and rung 2 of the resolution ladder in
+//!   `membership::rung` (`_token_now`, `_token_read`, `_by_object`,
+//!   `_rung_two` of `membership_resolve.py`);
 //! - [`location_continuity`]: `location.continuity`, witness O where birth
 //!   time cannot decide;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;

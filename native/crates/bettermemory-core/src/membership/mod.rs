@@ -18,6 +18,7 @@ pub mod projects;
 pub mod proposals;
 pub mod queries;
 pub mod reads;
+pub mod rung;
 pub mod shared_heal;
 pub mod touch;
 pub mod views;
