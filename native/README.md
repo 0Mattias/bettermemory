@@ -56,6 +56,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `handlers::verify` | unit h_verify-1 of `handlers/verify.py`: the caps, `_check_verify_args`, `_refuse_stale_stored_claims`, `_refuse_unverifiable_stored_attestations`, `_relative_to_root`, `_refuse_evidence_free_stamp`, `_record_root`, `_within`, `_is_callers_tree` | `handlers_verify_args.jsonl`, `handlers_verify_args_unicode.jsonl`, `handlers_verify_gates.jsonl`, `handlers_verify_gates_python.jsonl` |
 | `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations`; unit passes: `_relative_attestation_keys`, `_read_attestations`, `_AttestationRead`, `_attestation_read`, `_read_citations`, `_check_anchored_attestations`, `_is_checkable_citation`, `_check_anchored_citations`; unit detect: `holds_commit`, `detect_path_drift`, `_detect_unanchored`, `_AnchoredRead` (`report`), `_detect_anchored` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl`, `verify_anchoring_passes.jsonl`, `verify_anchoring_passes_unicode.jsonl`, `verify_anchoring_detect.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
+| `verify_basis`, `verify::status` | `verify_basis.py` whole (`unread_recommendation`, `dates_since`, `date_count_uncertainty`, `_count_since_verify` over the `AnchorWalk` trait) and `verify.py`'s status leaves (`CommitDriftStatus`, `_drift_recommendation`, `_claim_drift_recommendation`, `ResolvedCommitDrift`, `_index_paths`, `_unreadable`, `_gated_claims`, `commit_drift_status`, `staleness_verdict_from_report`) | `verify_basis.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
 | `response_render` | `_response.py`'s `ResponseBuilder.render_hit`, `render_show`, `_SHOW_DEFAULTS`, `_NATIVE_SEP`, `_slashed`, `_path_states`, `_compact_origin`, `_grouped_links` | `response_render.jsonl` |
 | `response_reason`, `response_trust` | `_response.py`'s `check_reason` (`_named`, `_REASON_PATHS`, `_rejection_note`), `_UNTRUSTED_PROVENANCE`, `_untrusted`, `verdict_and_reason`, `_row_reason`, `_claim_at_index`, `TRUST_UNAVAILABLE_RECOMMENDATION`, `ResponseBuilder.attach_provenance`, `apply_trust_unavailable`, `apply_trust`; `verdict.py`'s `_OBJECTED` and `with_objection` | `response_reason.jsonl` |
@@ -1726,6 +1727,79 @@ No regular expression is involved.
   rounds past a cap of 1,000, both as tenfold growth claims; infinite and
   NaN clocks; `i64` bounds). The shared builders are in
   `tests/common/response_leaf.rs`.
+
+## The commit-drift bases and the status leaves of `verify.py` (`verify_basis.py`, `verify::status`)
+
+`verify_basis.py` (195 lines) is built whole in `src/verify_basis.rs`, and
+the leaves of `verify.py` (1,849 lines) that turn a measured count into
+the `commit_drift` block, gate a claim list and roll a path report into a
+verdict are built in `src/verify/status.rs` (416 lines of source in all).
+`src/verify/mod.rs` re-exports the verdict strings from
+`verdict_signals`, as the reference does, and nothing else: the
+reference's re-exports of `Anchoring`, `PathDriftReport`,
+`VerificationStatus`, `compute_verification_status` and
+`detect_path_drift` are not mirrored, and Rust callers import them from
+`verify_status` and `verify_anchoring` directly.
+
+### The map
+
+| Function | Reference lines | Needs from the machine | Status |
+| --- | --- | --- | --- |
+| `BASIS_REACHABILITY`, `BASIS_AUTHOR_DATE`, `CommitDriftUnread` | `verify_basis.py` 42-57 | nothing | built |
+| `_UNREAD_RECOMMENDATIONS`, `UNREAD_RECOMMENDATIONS`, `unread_recommendation` | `verify_basis.py` 60-100 | nothing | built |
+| `dates_since`, `date_count_uncertainty` | `verify_basis.py` 103-127 | nothing | built |
+| `_count_since_verify` | `verify_basis.py` 130-195 | `origin`'s two reads (`AnchorWalk`), the walks given up on (`Unwalked`), the dates (a closure) | built |
+| `CommitDriftStatus`, `_drift_recommendation`, `_claim_drift_recommendation` | `verify.py` 245-322 | nothing | built |
+| `ResolvedCommitDrift` | `verify.py` 436-452 | nothing | built |
+| `_index_paths` | `verify.py` 579-592 | nothing | built |
+| `_unreadable`, `_gated_claims` | `verify.py` 674-702 | nothing | built |
+| `commit_drift_status` | `verify.py` 1536-1597 | nothing | built |
+| `staleness_verdict_from_report` | `verify.py` 1803-1817 | nothing | built |
+| `_weak_tier_evaluation`, `_claim_legs`, `_resolve_reachable`, `_resolve_with_claims`, `resolve_commit_drift` | `verify.py` 455-1535 | git, the claim index | lane vweak |
+| `resolve_commit_drift_count` onward | `verify.py` 1600 on | git, the store | lane vcount |
+
+### Decisions
+
+- `dates_since` reproduces `bisect.bisect_right` probe for probe, and
+  orders two datetimes as Python does: by instant when both are aware
+  (so an equal instant under another offset is no drift), by wall clock
+  when both are naive, and `NaiveAware` (the reference's TypeError) where
+  a naive value meets an aware one. Only the elements the bisection
+  probes are compared, so a naive stamp over an empty history answers 0,
+  and a mixed list raises or not as the reference's does.
+- `origin.repo_toplevel_and_head` and `origin.commits_since_anchor` are
+  not built (origin-3, origin-4); `_count_since_verify` takes them as the
+  trait `AnchorWalk`. The walk notes a give-up on the `Unwalked` it is
+  handed (`&mut`), and the count taken before the walk is read with
+  `given_up_since` after it, as the reference reads its thread-local.
+  The whole-history dates (`commit_author_timestamps`, built in
+  `origin_dates::memo` behind a memo) are a closure called only on the
+  author-date branch, so a walk that answers or is given up on reads no
+  dates.
+- Paths (`cwd`, the toplevel) are code points, as the claims and the
+  walk's commits are.
+- `CommitDriftStatus` keeps `status` and `basis` as text and the counts as
+  `i64`: `to_dict` adds `claim_drift` for any nonzero `claims_checked`,
+  a negative one included, as Python's truthiness does.
+- `_index_paths` answers a `BTreeSet`: the reference's set has no order
+  its callers read. The index always has `header_only`, so the
+  reference's `.get("header_only", {})` default has no Rust case.
+- `staleness_verdict_from_report` passes the three lengths as `i64`
+  (saturating, unreachable) to `verdict_signals::compute_staleness_verdict`.
+- No pattern of `re` is used by these functions.
+
+### Fixtures
+
+`tests/contract/gen_verify_basis.py` writes `verify_basis.jsonl` (not
+gated, about 28 KB): every unread recommendation in the dict's order,
+`dates_since` over equal, earlier and later instants with microseconds
+and offsets (one of seconds and microseconds), naive and mixed lists,
+`date_count_uncertainty` on both bases, `_count_since_verify` with the
+toplevel, the walk, the give-up and the dates scripted through
+`verify_basis`'s own bindings (each patch and `origin_history._UNWALKED`
+restored), and the status leaves over constructed values, texts with
+surrogates written through `text_field`. No git runs. Rust tests:
+`golden_verify_basis`, `verify_basis_kills`, `verify_basis_robustness`.
 
 ## The wire shapes of a search hit and of `memory_show` (`_response.py`)
 
@@ -23031,7 +23105,10 @@ What the reference has and this build does not, by area:
   three extraction patterns (`_BACKTICK_RE`, `_BARE_RE`,
   `_DOMAIN_ROUTE_RE`) and the candidate scan (`_normalize_for_compare`
   on POSIX, `_scan_candidates`, `_extract_candidates` without its body
-  parse memo), and `verify.py` past its verdict ladder (`verdict_signals`).
+  parse memo), and `verify.py` past its verdict ladder (`verdict_signals`)
+  and its status leaves (`CommitDriftStatus`, the two recommendations,
+  `ResolvedCommitDrift`, `_index_paths`, `_unreadable`, `_gated_claims`,
+  `commit_drift_status`, `staleness_verdict_from_report`).
   Of the response layer, `_response_links.py`, the drift memo,
   `check_reason`, `verdict_and_reason`, the trust appliers,
   `verdict.with_objection`, `render_hit`, `render_show` and the search

@@ -304,6 +304,11 @@
 //! - [`response_links`], [`response_memo`] and [`verdict_signals`]: the
 //!   response layer's leaves (`candidate_link_rows`, the per-hit drift
 //!   memo as a generic bounded LRU, and the verdict ladder);
+//! - [`verify_basis`] and [`verify`]: the bases a commit-drift count is
+//!   measured on and the count since a verify (`verify_basis.py` whole,
+//!   `origin`'s two reads as a trait), and `verify.py`'s status leaves
+//!   (`CommitDriftStatus`, `commit_drift_status`,
+//!   `staleness_verdict_from_report` and the claim gates);
 //! - [`hook`]: the hooks of `hook.py`, their first unit (the stdin
 //!   payload reader, the pending-retrieval scan and the Stop's
 //!   attribution settlement);
@@ -478,7 +483,9 @@ pub mod transcript;
 pub mod unicode;
 pub mod use_tokens;
 pub mod verdict_signals;
+pub mod verify;
 pub mod verify_anchoring;
+pub mod verify_basis;
 pub mod verify_candidates;
 pub mod verify_status;
 pub mod witness_questions;
