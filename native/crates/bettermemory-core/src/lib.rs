@@ -275,7 +275,11 @@
 //!   `claims._canonical_repr`;
 //! - [`gitfile_rule`]: the rule a `.git` entry is followed by, whole on
 //!   POSIX: from a `gitdir:` file's bytes to the judge of an entry and the
-//!   walk git's discovery makes.
+//!   walk git's discovery makes;
+//! - [`handler_checks`]: the write-payload validators of
+//!   `handlers/_shared.py`, its first unit;
+//! - [`standing_guard`]: the guard on a change to a standing memory
+//!   (`handlers/_guard.py` whole).
 
 #![forbid(unsafe_code)]
 
@@ -309,6 +313,7 @@ pub mod gitfile_rule;
 pub mod githead;
 pub mod gitobjects;
 pub mod gitsystem;
+pub mod handler_checks;
 pub mod handlers;
 pub mod health_roots;
 pub mod health_summary;
@@ -370,6 +375,7 @@ pub mod search;
 pub mod search_dedup;
 pub mod session;
 pub mod standing;
+pub mod standing_guard;
 pub mod store;
 pub mod symbols;
 pub mod toml;

@@ -1,0 +1,244 @@
+{"cases":243,"fixture":"handler_checks"}
+{"k":"count","max":0,"n":0,"o":{"ok":null}}
+{"k":"count","max":0,"n":5,"o":{"ok":null}}
+{"k":"count","max":-1,"n":5,"o":{"ok":null}}
+{"k":"count","max":3,"n":3,"o":{"ok":null}}
+{"k":"count","max":3,"n":4,"o":{"err":"Value","m":"too many scopes: 4 entries, more than the limit of 3 per write. Shorten the scope list."}}
+{"k":"count","max":5,"n":1099511627776,"o":{"err":"Value","m":"too many scopes: 1099511627776 entries, more than the limit of 5 per write. Shorten the scope list."}}
+{"k":"count","max":1,"n":1,"o":{"ok":null}}
+{"c":"","f":"content","k":"size","max":0,"o":{"ok":null}}
+{"c":"","f":"content","k":"size","max":-3,"o":{"ok":null}}
+{"c":"","f":"content","k":"size","max":1,"o":{"ok":null}}
+{"c":"","f":"takeaway","k":"size","max":1,"o":{"ok":null}}
+{"c":"","f":"content","k":"size","max":3,"o":{"ok":null}}
+{"c":"","f":"content","k":"size","max":4,"o":{"ok":null}}
+{"c":"","f":"content","k":"size","max":8,"o":{"ok":null}}
+{"c":"","f":"content","k":"size","max":9,"o":{"ok":null}}
+{"c":"","f":"content","k":"size","max":100,"o":{"ok":null}}
+{"c":"","f":"takeaway","k":"size","max":100,"o":{"ok":null}}
+{"c":"abc","f":"content","k":"size","max":0,"o":{"ok":null}}
+{"c":"abc","f":"content","k":"size","max":-3,"o":{"ok":null}}
+{"c":"abc","f":"content","k":"size","max":1,"o":{"err":"Value","m":"content is too long: 3 bytes of UTF-8, more than the limit of 1 bytes. Shorten the content."}}
+{"c":"abc","f":"takeaway","k":"size","max":1,"o":{"err":"Value","m":"takeaway is too long: 3 bytes of UTF-8, more than the limit of 1 bytes. Shorten the takeaway."}}
+{"c":"abc","f":"content","k":"size","max":3,"o":{"ok":null}}
+{"c":"abc","f":"content","k":"size","max":4,"o":{"ok":null}}
+{"c":"abc","f":"content","k":"size","max":8,"o":{"ok":null}}
+{"c":"abc","f":"content","k":"size","max":9,"o":{"ok":null}}
+{"c":"abc","f":"content","k":"size","max":100,"o":{"ok":null}}
+{"c":"abc","f":"takeaway","k":"size","max":100,"o":{"ok":null}}
+{"c":"\u00e9\u00e9","f":"content","k":"size","max":0,"o":{"ok":null}}
+{"c":"\u00e9\u00e9","f":"content","k":"size","max":-3,"o":{"ok":null}}
+{"c":"\u00e9\u00e9","f":"content","k":"size","max":1,"o":{"err":"Value","m":"content is too long: 4 bytes of UTF-8, more than the limit of 1 bytes. Shorten the content."}}
+{"c":"\u00e9\u00e9","f":"takeaway","k":"size","max":1,"o":{"err":"Value","m":"takeaway is too long: 4 bytes of UTF-8, more than the limit of 1 bytes. Shorten the takeaway."}}
+{"c":"\u00e9\u00e9","f":"content","k":"size","max":3,"o":{"err":"Value","m":"content is too long: 4 bytes of UTF-8, more than the limit of 3 bytes. Shorten the content."}}
+{"c":"\u00e9\u00e9","f":"content","k":"size","max":4,"o":{"ok":null}}
+{"c":"\u00e9\u00e9","f":"content","k":"size","max":8,"o":{"ok":null}}
+{"c":"\u00e9\u00e9","f":"content","k":"size","max":9,"o":{"ok":null}}
+{"c":"\u00e9\u00e9","f":"content","k":"size","max":100,"o":{"ok":null}}
+{"c":"\u00e9\u00e9","f":"takeaway","k":"size","max":100,"o":{"ok":null}}
+{"c":"\u20ac","f":"content","k":"size","max":0,"o":{"ok":null}}
+{"c":"\u20ac","f":"content","k":"size","max":-3,"o":{"ok":null}}
+{"c":"\u20ac","f":"content","k":"size","max":1,"o":{"err":"Value","m":"content is too long: 3 bytes of UTF-8, more than the limit of 1 bytes. Shorten the content."}}
+{"c":"\u20ac","f":"takeaway","k":"size","max":1,"o":{"err":"Value","m":"takeaway is too long: 3 bytes of UTF-8, more than the limit of 1 bytes. Shorten the takeaway."}}
+{"c":"\u20ac","f":"content","k":"size","max":3,"o":{"ok":null}}
+{"c":"\u20ac","f":"content","k":"size","max":4,"o":{"ok":null}}
+{"c":"\u20ac","f":"content","k":"size","max":8,"o":{"ok":null}}
+{"c":"\u20ac","f":"content","k":"size","max":9,"o":{"ok":null}}
+{"c":"\u20ac","f":"content","k":"size","max":100,"o":{"ok":null}}
+{"c":"\u20ac","f":"takeaway","k":"size","max":100,"o":{"ok":null}}
+{"c":"\ud83d\ude00","f":"content","k":"size","max":0,"o":{"ok":null}}
+{"c":"\ud83d\ude00","f":"content","k":"size","max":-3,"o":{"ok":null}}
+{"c":"\ud83d\ude00","f":"content","k":"size","max":1,"o":{"err":"Value","m":"content is too long: 4 bytes of UTF-8, more than the limit of 1 bytes. Shorten the content."}}
+{"c":"\ud83d\ude00","f":"takeaway","k":"size","max":1,"o":{"err":"Value","m":"takeaway is too long: 4 bytes of UTF-8, more than the limit of 1 bytes. Shorten the takeaway."}}
+{"c":"\ud83d\ude00","f":"content","k":"size","max":3,"o":{"err":"Value","m":"content is too long: 4 bytes of UTF-8, more than the limit of 3 bytes. Shorten the content."}}
+{"c":"\ud83d\ude00","f":"content","k":"size","max":4,"o":{"ok":null}}
+{"c":"\ud83d\ude00","f":"content","k":"size","max":8,"o":{"ok":null}}
+{"c":"\ud83d\ude00","f":"content","k":"size","max":9,"o":{"ok":null}}
+{"c":"\ud83d\ude00","f":"content","k":"size","max":100,"o":{"ok":null}}
+{"c":"\ud83d\ude00","f":"takeaway","k":"size","max":100,"o":{"ok":null}}
+{"c":"xxxxxxxxx","f":"content","k":"size","max":0,"o":{"ok":null}}
+{"c":"xxxxxxxxx","f":"content","k":"size","max":-3,"o":{"ok":null}}
+{"c":"xxxxxxxxx","f":"content","k":"size","max":1,"o":{"err":"Value","m":"content is too long: 9 bytes of UTF-8, more than the limit of 1 bytes. Shorten the content."}}
+{"c":"xxxxxxxxx","f":"takeaway","k":"size","max":1,"o":{"err":"Value","m":"takeaway is too long: 9 bytes of UTF-8, more than the limit of 1 bytes. Shorten the takeaway."}}
+{"c":"xxxxxxxxx","f":"content","k":"size","max":3,"o":{"err":"Value","m":"content is too long: 9 bytes of UTF-8, more than the limit of 3 bytes. Shorten the content."}}
+{"c":"xxxxxxxxx","f":"content","k":"size","max":4,"o":{"err":"Value","m":"content is too long: 9 bytes of UTF-8, more than the limit of 4 bytes. Shorten the content."}}
+{"c":"xxxxxxxxx","f":"content","k":"size","max":8,"o":{"err":"Value","m":"content is too long: 9 bytes of UTF-8, more than the limit of 8 bytes. Shorten the content."}}
+{"c":"xxxxxxxxx","f":"content","k":"size","max":9,"o":{"ok":null}}
+{"c":"xxxxxxxxx","f":"content","k":"size","max":100,"o":{"ok":null}}
+{"c":"xxxxxxxxx","f":"takeaway","k":"size","max":100,"o":{"ok":null}}
+{"c":{"$cps":[55296]},"f":"content","k":"size","max":0,"o":{"ok":null}}
+{"c":{"$cps":[55296]},"f":"content","k":"size","max":-3,"o":{"ok":null}}
+{"c":{"$cps":[55296]},"f":"content","k":"size","max":1,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296]},"f":"takeaway","k":"size","max":1,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296]},"f":"content","k":"size","max":3,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296]},"f":"content","k":"size","max":4,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296]},"f":"content","k":"size","max":8,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296]},"f":"content","k":"size","max":9,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296]},"f":"content","k":"size","max":100,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296]},"f":"takeaway","k":"size","max":100,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[97,57343]},"f":"content","k":"size","max":0,"o":{"ok":null}}
+{"c":{"$cps":[97,57343]},"f":"content","k":"size","max":-3,"o":{"ok":null}}
+{"c":{"$cps":[97,57343]},"f":"content","k":"size","max":1,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\udfff' in position 1: surrogates not allowed"}}
+{"c":{"$cps":[97,57343]},"f":"takeaway","k":"size","max":1,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\udfff' in position 1: surrogates not allowed"}}
+{"c":{"$cps":[97,57343]},"f":"content","k":"size","max":3,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\udfff' in position 1: surrogates not allowed"}}
+{"c":{"$cps":[97,57343]},"f":"content","k":"size","max":4,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\udfff' in position 1: surrogates not allowed"}}
+{"c":{"$cps":[97,57343]},"f":"content","k":"size","max":8,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\udfff' in position 1: surrogates not allowed"}}
+{"c":{"$cps":[97,57343]},"f":"content","k":"size","max":9,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\udfff' in position 1: surrogates not allowed"}}
+{"c":{"$cps":[97,57343]},"f":"content","k":"size","max":100,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\udfff' in position 1: surrogates not allowed"}}
+{"c":{"$cps":[97,57343]},"f":"takeaway","k":"size","max":100,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\udfff' in position 1: surrogates not allowed"}}
+{"c":{"$cps":[97,98,55296,56320,57343,99]},"f":"content","k":"size","max":0,"o":{"ok":null}}
+{"c":{"$cps":[97,98,55296,56320,57343,99]},"f":"content","k":"size","max":-3,"o":{"ok":null}}
+{"c":{"$cps":[97,98,55296,56320,57343,99]},"f":"content","k":"size","max":1,"o":{"err":"Encode","m":"'utf-8' codec can't encode characters in position 2-4: surrogates not allowed"}}
+{"c":{"$cps":[97,98,55296,56320,57343,99]},"f":"takeaway","k":"size","max":1,"o":{"err":"Encode","m":"'utf-8' codec can't encode characters in position 2-4: surrogates not allowed"}}
+{"c":{"$cps":[97,98,55296,56320,57343,99]},"f":"content","k":"size","max":3,"o":{"err":"Encode","m":"'utf-8' codec can't encode characters in position 2-4: surrogates not allowed"}}
+{"c":{"$cps":[97,98,55296,56320,57343,99]},"f":"content","k":"size","max":4,"o":{"err":"Encode","m":"'utf-8' codec can't encode characters in position 2-4: surrogates not allowed"}}
+{"c":{"$cps":[97,98,55296,56320,57343,99]},"f":"content","k":"size","max":8,"o":{"err":"Encode","m":"'utf-8' codec can't encode characters in position 2-4: surrogates not allowed"}}
+{"c":{"$cps":[97,98,55296,56320,57343,99]},"f":"content","k":"size","max":9,"o":{"err":"Encode","m":"'utf-8' codec can't encode characters in position 2-4: surrogates not allowed"}}
+{"c":{"$cps":[97,98,55296,56320,57343,99]},"f":"content","k":"size","max":100,"o":{"err":"Encode","m":"'utf-8' codec can't encode characters in position 2-4: surrogates not allowed"}}
+{"c":{"$cps":[97,98,55296,56320,57343,99]},"f":"takeaway","k":"size","max":100,"o":{"err":"Encode","m":"'utf-8' codec can't encode characters in position 2-4: surrogates not allowed"}}
+{"c":{"$cps":[55296,120,56320,56321]},"f":"content","k":"size","max":0,"o":{"ok":null}}
+{"c":{"$cps":[55296,120,56320,56321]},"f":"content","k":"size","max":-3,"o":{"ok":null}}
+{"c":{"$cps":[55296,120,56320,56321]},"f":"content","k":"size","max":1,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296,120,56320,56321]},"f":"takeaway","k":"size","max":1,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296,120,56320,56321]},"f":"content","k":"size","max":3,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296,120,56320,56321]},"f":"content","k":"size","max":4,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296,120,56320,56321]},"f":"content","k":"size","max":8,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296,120,56320,56321]},"f":"content","k":"size","max":9,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296,120,56320,56321]},"f":"content","k":"size","max":100,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":{"$cps":[55296,120,56320,56321]},"f":"takeaway","k":"size","max":100,"o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"}}
+{"c":"","k":"floor","min":0,"o":{"ok":null}}
+{"c":"","k":"floor","min":-1,"o":{"ok":null}}
+{"c":"","k":"floor","min":1,"o":{"err":"Value","m":"content is too short: 0 tokens, fewer than the minimum of 1. Expand the content."}}
+{"c":"","k":"floor","min":2,"o":{"err":"Value","m":"content is too short: 0 tokens, fewer than the minimum of 2. Expand the content."}}
+{"c":"","k":"floor","min":3,"o":{"err":"Value","m":"content is too short: 0 tokens, fewer than the minimum of 3. Expand the content."}}
+{"c":"","k":"floor","min":4,"o":{"err":"Value","m":"content is too short: 0 tokens, fewer than the minimum of 4. Expand the content."}}
+{"c":" ","k":"floor","min":0,"o":{"ok":null}}
+{"c":" ","k":"floor","min":-1,"o":{"ok":null}}
+{"c":" ","k":"floor","min":1,"o":{"err":"Value","m":"content is too short: 0 tokens, fewer than the minimum of 1. Expand the content."}}
+{"c":" ","k":"floor","min":2,"o":{"err":"Value","m":"content is too short: 0 tokens, fewer than the minimum of 2. Expand the content."}}
+{"c":" ","k":"floor","min":3,"o":{"err":"Value","m":"content is too short: 0 tokens, fewer than the minimum of 3. Expand the content."}}
+{"c":" ","k":"floor","min":4,"o":{"err":"Value","m":"content is too short: 0 tokens, fewer than the minimum of 4. Expand the content."}}
+{"c":"a","k":"floor","min":0,"o":{"ok":null}}
+{"c":"a","k":"floor","min":-1,"o":{"ok":null}}
+{"c":"a","k":"floor","min":1,"o":{"ok":null}}
+{"c":"a","k":"floor","min":2,"o":{"err":"Value","m":"content is too short: 1 tokens, fewer than the minimum of 2. Expand the content."}}
+{"c":"a","k":"floor","min":3,"o":{"err":"Value","m":"content is too short: 1 tokens, fewer than the minimum of 3. Expand the content."}}
+{"c":"a","k":"floor","min":4,"o":{"err":"Value","m":"content is too short: 1 tokens, fewer than the minimum of 4. Expand the content."}}
+{"c":"a b","k":"floor","min":0,"o":{"ok":null}}
+{"c":"a b","k":"floor","min":-1,"o":{"ok":null}}
+{"c":"a b","k":"floor","min":1,"o":{"ok":null}}
+{"c":"a b","k":"floor","min":2,"o":{"ok":null}}
+{"c":"a b","k":"floor","min":3,"o":{"err":"Value","m":"content is too short: 2 tokens, fewer than the minimum of 3. Expand the content."}}
+{"c":"a b","k":"floor","min":4,"o":{"err":"Value","m":"content is too short: 2 tokens, fewer than the minimum of 4. Expand the content."}}
+{"c":" a\tb\nc ","k":"floor","min":0,"o":{"ok":null}}
+{"c":" a\tb\nc ","k":"floor","min":-1,"o":{"ok":null}}
+{"c":" a\tb\nc ","k":"floor","min":1,"o":{"ok":null}}
+{"c":" a\tb\nc ","k":"floor","min":2,"o":{"ok":null}}
+{"c":" a\tb\nc ","k":"floor","min":3,"o":{"ok":null}}
+{"c":" a\tb\nc ","k":"floor","min":4,"o":{"err":"Value","m":"content is too short: 3 tokens, fewer than the minimum of 4. Expand the content."}}
+{"c":"a\u3000b\u0085c","k":"floor","min":0,"o":{"ok":null}}
+{"c":"a\u3000b\u0085c","k":"floor","min":-1,"o":{"ok":null}}
+{"c":"a\u3000b\u0085c","k":"floor","min":1,"o":{"ok":null}}
+{"c":"a\u3000b\u0085c","k":"floor","min":2,"o":{"ok":null}}
+{"c":"a\u3000b\u0085c","k":"floor","min":3,"o":{"ok":null}}
+{"c":"a\u3000b\u0085c","k":"floor","min":4,"o":{"err":"Value","m":"content is too short: 3 tokens, fewer than the minimum of 4. Expand the content."}}
+{"c":"a\u001cb\u001fc","k":"floor","min":0,"o":{"ok":null}}
+{"c":"a\u001cb\u001fc","k":"floor","min":-1,"o":{"ok":null}}
+{"c":"a\u001cb\u001fc","k":"floor","min":1,"o":{"ok":null}}
+{"c":"a\u001cb\u001fc","k":"floor","min":2,"o":{"ok":null}}
+{"c":"a\u001cb\u001fc","k":"floor","min":3,"o":{"ok":null}}
+{"c":"a\u001cb\u001fc","k":"floor","min":4,"o":{"err":"Value","m":"content is too short: 3 tokens, fewer than the minimum of 4. Expand the content."}}
+{"c":"a\u200bb","k":"floor","min":0,"o":{"ok":null}}
+{"c":"a\u200bb","k":"floor","min":-1,"o":{"ok":null}}
+{"c":"a\u200bb","k":"floor","min":1,"o":{"ok":null}}
+{"c":"a\u200bb","k":"floor","min":2,"o":{"err":"Value","m":"content is too short: 1 tokens, fewer than the minimum of 2. Expand the content."}}
+{"c":"a\u200bb","k":"floor","min":3,"o":{"err":"Value","m":"content is too short: 1 tokens, fewer than the minimum of 3. Expand the content."}}
+{"c":"a\u200bb","k":"floor","min":4,"o":{"err":"Value","m":"content is too short: 1 tokens, fewer than the minimum of 4. Expand the content."}}
+{"c":"a\u00a0b","k":"floor","min":0,"o":{"ok":null}}
+{"c":"a\u00a0b","k":"floor","min":-1,"o":{"ok":null}}
+{"c":"a\u00a0b","k":"floor","min":1,"o":{"ok":null}}
+{"c":"a\u00a0b","k":"floor","min":2,"o":{"ok":null}}
+{"c":"a\u00a0b","k":"floor","min":3,"o":{"err":"Value","m":"content is too short: 2 tokens, fewer than the minimum of 3. Expand the content."}}
+{"c":"a\u00a0b","k":"floor","min":4,"o":{"err":"Value","m":"content is too short: 2 tokens, fewer than the minimum of 4. Expand the content."}}
+{"c":{"$cps":[55296,32,56320]},"k":"floor","min":0,"o":{"ok":null}}
+{"c":{"$cps":[55296,32,56320]},"k":"floor","min":-1,"o":{"ok":null}}
+{"c":{"$cps":[55296,32,56320]},"k":"floor","min":1,"o":{"ok":null}}
+{"c":{"$cps":[55296,32,56320]},"k":"floor","min":2,"o":{"ok":null}}
+{"c":{"$cps":[55296,32,56320]},"k":"floor","min":3,"o":{"err":"Value","m":"content is too short: 2 tokens, fewer than the minimum of 3. Expand the content."}}
+{"c":{"$cps":[55296,32,56320]},"k":"floor","min":4,"o":{"err":"Value","m":"content is too short: 2 tokens, fewer than the minimum of 4. Expand the content."}}
+{"k":"scope","o":{"ok":"a"},"s":"a"}
+{"k":"scope","o":{"ok":"global"},"s":"global"}
+{"k":"scope","o":{"ok":"projects:foo"},"s":"projects:foo"}
+{"k":"scope","o":{"ok":"a-b:c"},"s":"a-b:c"}
+{"k":"scope","o":{"err":"Value","m":"invalid scope 'a--b': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":"a--b"}
+{"k":"scope","o":{"err":"Value","m":"invalid scope 'a:-b': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":"a:-b"}
+{"k":"scope","o":{"err":"Value","m":"invalid scope '-a': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":"-a"}
+{"k":"scope","o":{"err":"Value","m":"invalid scope 'a-': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":"a-"}
+{"k":"scope","o":{"err":"Value","m":"invalid scope ':': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":":"}
+{"k":"scope","o":{"err":"Value","m":"invalid scope '': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":""}
+{"k":"scope","o":{"err":"Value","m":"invalid scope 'A': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":"A"}
+{"k":"scope","o":{"err":"Value","m":"invalid scope 'a b': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":"a b"}
+{"k":"scope","o":{"err":"Value","m":"invalid scope 'projects:foo\\n': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":"projects:foo\n"}
+{"k":"scope","o":{"err":"Value","m":"invalid scope '\u00e9': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":"\u00e9"}
+{"k":"scope","o":{"err":"Value","m":"invalid scope 'a\\ud800': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":{"$cps":[97,55296]}}
+{"k":"scope","o":{"err":"Value","m":"invalid scope '\uff41': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":"\uff41"}
+{"k":"scope","o":{"ok":"0"},"s":"0"}
+{"k":"scope","o":{"ok":"a:b:c-d-e"},"s":"a:b:c-d-e"}
+{"k":"scope","o":{"err":"Value","m":"invalid scope 'a_b': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":"a_b"}
+{"k":"scope","o":{"err":"Value","m":"invalid scope '\u0661': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"},"s":"\u0661"}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content",""],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"content must be a non-empty string"}}
+{"a":{"$d":[["content"," "],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"content must be a non-empty string"}}
+{"a":{"$d":[["content","\t\n\u3000"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"content must be a non-empty string"}}
+{"a":{"$d":[["content","\u0085"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"content must be a non-empty string"}}
+{"a":{"$d":[["content","x"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content","x"],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",[]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"scopes must contain at least one entry"}}
+{"a":{"$d":[["content",""],["scopes",[]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"content must be a non-empty string"}}
+{"a":{"$d":[["content","one"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",1],["min_content_tokens",2],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"content is too short: 1 tokens, fewer than the minimum of 2. Expand the content."}}
+{"a":{"$d":[["content","one two"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",1],["min_content_tokens",2],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"content is too long: 7 bytes of UTF-8, more than the limit of 1 bytes. Shorten the content."}}
+{"a":{"$d":[["content",{"$cps":[97,55296]}],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",1],["min_content_tokens",3],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"content is too short: 1 tokens, fewer than the minimum of 3. Expand the content."}}
+{"a":{"$d":[["content",{"$cps":[97,32,98,32,55296]}],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",1],["min_content_tokens",3],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Encode","m":"'utf-8' codec can't encode character '\\ud800' in position 4: surrogates not allowed"}}
+{"a":{"$d":[["content",{"$cps":[97,32,55296,56320]}],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",100],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Encode","m":"'utf-8' codec can't encode characters in position 2-3: surrogates not allowed"}}
+{"a":{"$d":[["content",{"$cps":[97,32,55296,56320]}],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content",{"$cps":[97,32,55296,56320]}],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["Bad","a","b"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",2],["capture",false]]},"k":"pay","o":{"err":"Value","m":"too many scopes: 3 entries, more than the limit of 2 per write. Shorten the scope list."}}
+{"a":{"$d":[["content","a body"],["scopes",["a","Bad"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",2],["capture",false]]},"k":"pay","o":{"err":"Value","m":"invalid scope 'Bad': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"}}
+{"a":{"$d":[["content","a body"],["scopes",["a","b\n"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"invalid scope 'b\\n': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"}}
+{"a":{"$d":[["content","a body"],["scopes",["a","x"]],["confidence","high"],["source","inferred"],["allowed_scopes",["z","a","\u00e9","B"]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"scope(s) not in allowed list: ['x']. Allowed: ['B', 'a', 'z', '\u00e9']"}}
+{"a":{"$d":[["content","a body"],["scopes",["q","x","q"]],["confidence","high"],["source","inferred"],["allowed_scopes",[{"$cps":[55296]},"a"]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"scope(s) not in allowed list: ['q', 'x', 'q']. Allowed: ['a', '\\ud800']"}}
+{"a":{"$d":[["content","a body"],["scopes",["a","a"]],["confidence","high"],["source","inferred"],["allowed_scopes",["a"]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["a","a"]],["confidence","high"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["bad scope"]],["confidence","high"],["source","inferred"],["allowed_scopes",["a"]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"invalid scope 'bad scope': must be lowercase alphanumeric, with optional hyphens/colons (e.g. 'projects:foo')"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","medium"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","medium"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","low"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","low"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","High"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"confidence must be one of ['high', 'medium', 'low']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence",""],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"confidence must be one of ['high', 'medium', 'low']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high "],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"confidence must be one of ['high', 'medium', 'low']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","x"],["source","x"],["allowed_scopes",[]],["category","x"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"confidence must be one of ['high', 'medium', 'low']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","explicit-statement"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","explicit-statement"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","explicit-statement"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",true]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","explicit-statement"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",true]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","user-correction"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","user-correction"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","user-correction"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",true]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","user-correction"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","Inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"source must be one of ['explicit-statement', 'inferred', 'user-correction']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","Inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",true]]},"k":"pay","o":{"err":"Value","m":"source must be one of ['explicit-statement', 'inferred', 'user-correction']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","capture:"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"source 'capture:' names a capture batch, which only memory_write accepts, and only while the batch is open"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","capture:"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",true]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","capture:abc"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"source 'capture:abc' names a capture batch, which only memory_write accepts, and only while the batch is open"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","capture:abc"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",true]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","capture: x "],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"source 'capture: x ' names a capture batch, which only memory_write accepts, and only while the batch is open"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","capture: x "],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",true]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","capture"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"source must be one of ['explicit-statement', 'inferred', 'user-correction']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","capture"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",true]]},"k":"pay","o":{"err":"Value","m":"source must be one of ['explicit-statement', 'inferred', 'user-correction']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source"," capture:a"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"source must be one of ['explicit-statement', 'inferred', 'user-correction']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source"," capture:a"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",true]]},"k":"pay","o":{"err":"Value","m":"source must be one of ['explicit-statement', 'inferred', 'user-correction']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source",{"$cps":[99,97,112,116,117,114,101,58,55296]}],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"source 'capture:\\ud800' names a capture batch, which only memory_write accepts, and only while the batch is open"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source",{"$cps":[99,97,112,116,117,114,101,58,55296]}],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",true]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","fact"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","user-inference"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","user-inference"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","ambient"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"ok":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["category","ambient"]]}}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","Fact"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"category must be one of ['ambient', 'fact', 'user-inference']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category",""],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"category must be one of ['ambient', 'fact', 'user-inference']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","inferred"],["allowed_scopes",[]],["category","x"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"category must be one of ['ambient', 'fact', 'user-inference']"}}
+{"a":{"$d":[["content","a body"],["scopes",["global"]],["confidence","high"],["source","x"],["allowed_scopes",[]],["category","x"],["max_content_bytes",0],["min_content_tokens",0],["max_scopes_per_write",0],["capture",false]]},"k":"pay","o":{"err":"Value","m":"source must be one of ['explicit-statement', 'inferred', 'user-correction']"}}
+{"k":"digest","n":4000,"pools":[["a","b"," ","\t","\u3000","\u0085",{"$cps":[55296]},{"$cps":[57343]},"\u00e9","\ud83d\ude00","\u001c","\n"],["a","a-b","a:b","A","a--b","-a","a-","1","x:y-z","a\n","\u00e9",""],["high","low","medium","HIGH","x",""],["inferred","explicit-statement","user-correction","capture:","capture:ab","x"],["fact","ambient","user-inference","Fact",""],[0,-1,1,4,8,20],[0,1,2,3,-2],[0,1,2,3]],"seed":20261121,"sha":"67781546c0d81d874b364e7632f46652cc42797f4fdb2616872538935357a84c"}

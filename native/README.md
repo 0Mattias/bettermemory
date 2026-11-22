@@ -92,11 +92,13 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `fsutil` | units 1 and 2 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads; `flock_excl` (`lock_path`, a guard held until dropped) and its Windows branch `_flock_windows` over an `Msvcrt` trait, with `FLOCK_TIMEOUT_SECONDS` and the process-wide `_FLOCK_WARNED` | `fsutil.jsonl`, `fsutil_python.jsonl`, `fsutil_flock.jsonl`, `fsutil_flock_python.jsonl`, `fsutil_flock_platform.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`); unit 4, `gitobjects::files::reader`: `ObjectReader`'s `has`, `has_many`, `name_length`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `_raw`, `_places`, `_object`, `_take_loose`, `_loose`, `_packed` | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl`, `gitobjects_reader.jsonl`, `gitobjects_reader_zlib.jsonl`, `gitobjects_reader_posix.jsonl` |
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
+| `handler_checks` | unit 1 of `handlers/_shared.py`, the write-payload validators: `_validate_scope_count`, `_validate_content_size`, `_validate_content_floor`, `_validate_write_payload` (with `models.validate_scope` and `capture.token_of`), and the constants `_USE_OUTCOMES`, `_WRITE_CATEGORIES`, `_AMBIENT_LONG_BODY_WORDS`, `_NOTE_MAX_LEN` | `handler_checks.jsonl` |
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text`; its write (`checkout_token::write`): `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_fs_now`, `_sweep`, `_place`, `_after_race`, `_failed`, `_unlink_quietly`, `TokenWrite`; its re-mint (`checkout_token::remint`): `remint`, `_replace_named`, `_claim`, `_wait_for`, `_take`, `_blocked`, `_holder`, `_claim_read`, `_break`, `_break_marks`, `_release`, `_remove_holding`, `replace_atomic`'s retry | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only), `checkout_token_write.jsonl`, `checkout_token_write_posix.jsonl` (POSIX only), `checkout_token_remint.jsonl`, `checkout_token_remint_posix.jsonl` (POSIX only) |
 | `config` | `config._config_from_data`, `load_config(create=False)`, `load_config(create=True)`'s first-run write (`config::create`: `DEFAULT_CONFIG`, the parents made, the atomic write, the notice), the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json`, `settings_create.jsonl`, `settings_create_posix.jsonl` |
 | `difflib` | `history._body_diff` (`body_diff`), `str.splitlines`, and CPython 3.13.13's `difflib.unified_diff` as it calls it: `SequenceMatcher` with autojunk (`__chain_b`, `find_longest_match`, `get_matching_blocks`, `get_opcodes`, `get_grouped_opcodes`), `_format_range_unified`, `unified_diff` with `lineterm=""` and no dates (`unified_diff_lines` joined with newlines) | `difflib.jsonl` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
+| `standing_guard` | `handlers/_guard.py` whole: `read_words`, `record`, `Held`, `check`, `guard` and the hints, over `GuardDeps` | `standing_guard.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks` | `membership_shared.jsonl`, `membership_shared_python.jsonl` |
@@ -13152,6 +13154,102 @@ each hand in:
   Which answer is kept on a tie therefore depends on whether another
   process rewrote the record during the ask, not on which answer is
   newer.
+
+## The write-payload checks and the standing guard (`handlers/_shared.py`, `handlers/_guard.py`)
+
+Two small modules of the handlers package, built in one unit:
+`handler_checks` (the write-payload validators of `handlers/_shared.py`,
+its unit 1) and `standing_guard` (`handlers/_guard.py` whole). Every
+collaborator not yet built is a trait; nothing here reads the machine.
+
+The cut of `handlers/_shared.py`: unit 1 (built) is the validators; unit
+2 is `_CLAIM_REMEDY` and `_validate_declared_claims`, drafted with this
+unit and left for a follow-up because the two modules together passed
+the 600-line bound (651 lines with it); unit 3 (h__shared-3) is
+`request_cwd`, `has_home` and `caller_anchoring`. The rest of the module
+(the SDK `Context` alias, the per-handler bookkeeping helpers past line
+474) is mapped by the units that need it.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_USE_OUTCOMES`, `_WRITE_CATEGORIES`, `_AMBIENT_LONG_BODY_WORDS`, `_NOTE_MAX_LEN` | _shared 81-123 | nothing | built (`USE_OUTCOMES`, `is_write_category`, `AMBIENT_LONG_BODY_WORDS`, `NOTE_MAX_LEN`) |
+| `_validate_scope_count` | _shared 131-154 | nothing | built |
+| `_validate_content_size` | _shared 157-184 | nothing | built (`utf8_len` is `content.encode("utf-8")`) |
+| `_validate_content_floor` | _shared 187-215 | nothing | built (`token_count` is `len(str.split())`) |
+| `_validate_write_payload` (with `models.validate_scope`, models 179-188, and `capture.token_of`, capture 189-194) | _shared 218-298 | nothing | built |
+| `_CLAIM_REMEDY`, `_validate_declared_claims` | _shared 305-430 | `os.path.isdir` (a closure); the claim parsers and `check_claim` (a trait `ClaimOracle`) | unit 2, not built (drafted: see below) |
+| `request_cwd`, `has_home`, `caller_anchoring` | _shared 433-474 | the origin capture, the store, the caller's resolution | not built: unit h__shared-3 |
+| `_HINT`, `_RULE_S_HINT`, `_UNSEEN`, `Words`, `read_words`, `record`, `Held`, `check`, `guard` | _guard 58-195 | the store, the standing question, the caller, the prompt hook's words, the recorder (`GuardDeps`) | built |
+
+**`handler_checks`.**
+
+- **Errors** are `CheckError::Value` (any `ValueError`) or `CheckError::Encode` (the
+  `UnicodeEncodeError` of `content.encode("utf-8")`), each with the text
+  `str()` gives. The encode error is reproduced from CPython's encoder:
+  the first run of consecutive surrogates, by code-point positions,
+  `character '\udxxx' in position N` for a run of one and `characters in
+  position a-b` (the run's last position) for a longer one.
+- **The order of `_validate_write_payload`'s checks is kept**: the empty
+  body (`str.strip` on Unicode whitespace, `unicode::is_space`), the empty
+  scope list, the floor, the size, the count, each scope, the allowed
+  list, confidence, source, category. So a body of too few words that
+  holds a surrogate is refused for its length, not its encoding, and the
+  encoding is read only where a size cap is set.
+- **`_SCOPE_RE`** (`^[a-z0-9]+(?:[-:][a-z0-9]+)*\Z` under `match`) is
+  matched by hand over code points, a copy of `config::report`'s private
+  `is_scope` (the pyre decision's rule 3: a matcher already built, with no
+  nested choice; the engine's cross-check follows with pyre-8). The
+  pattern is in the engine's inventory already: `gen_pyre_atom` scans
+  every pattern literal of the reference.
+- **`capture.token_of`** is read inline: only whether it is None matters
+  here, which is whether `source` opens with `capture:`.
+- **Lists in messages** are `repr` of a list of `str`
+  (`pyvalue::repr_str` per item); the allowed list sorted by code point,
+  the unknown scopes in their order with repeats; the enum lists in
+  declaration order, the category list sorted.
+- **Unit 2, as drafted.** `_validate_declared_claims` takes a trait
+  `ClaimOracle` (`parse_claims`, `parse_claim(raw).render()`,
+  `check_claim`, each error as its `ValueError` text) and `os.path.isdir`
+  as a closure, and calls `claims::claim_reason_is_indeterminate` and
+  `control_tokens::refuse_control_tokens` directly, in the reference's
+  order: the raw claims refused for control tokens, then parsed, then
+  each raw claim's canonical render refused. Its fixture rows replay
+  scripted parsers, `check_claim` reasons and `isdir` answers. One
+  difference to settle there: the reference hands `Path(worktree_root)`
+  to `isdir` and `check_claim` (`Path("")` is `.`, a trailing separator
+  is dropped, backslashes on Windows), so the port must pass that
+  spelling or state the root's domain.
+
+**`standing_guard`.** `GuardDeps` carries `guarded_ids`, `asking`, the
+caller (its checkout and an opaque value `refusal_rows` takes), the
+prompt hook's `seen` and `holds`, and the recorder. The reference's call
+order is kept and pinned by a log of every call: `guarded_ids` only for a
+non-empty list; `asking` only when something is guarded; the caller only
+once `asking` says yes, its error passed through unchanged
+(`GuardError::Caller`); `seen` only for a checkout; `holds` only when the
+hook saw it. `rule_s` is de-duplicated in first order (`dict.fromkeys`)
+and the memories already guarded are dropped from it. The refusal is a
+`PyValue` dict in key order `status`, `standing`, `hint`, then
+`standing_write` where `rule_s` added any. The quote is `said.split()`
+joined by one space, on Unicode whitespace.
+
+**Fixtures.** `gen_handler_checks.py` (`handler_checks.jsonl`) calls the
+reference validators directly; `gen_standing_guard.py`
+(`standing_guard.jsonl`) calls the guard with its collaborators replaced
+by scripted answers, which each row records with the log of calls; the
+Rust test replays them through a stub `GuardDeps`. `handler_checks.jsonl` ends
+with a digest row over 4,000 payloads drawn by a 64-bit linear
+congruential generator from fixed pools. Neither file is gated: the
+answers are `str` methods on whitespace no Unicode release since 14.0
+changed, `repr` of `str` and the encoder's text, the same under Python
+3.11 to 3.14 and on every platform.
+
+| test | file | class |
+| --- | --- | --- |
+| `golden_handler_checks` | `handler_checks.jsonl` | i |
+| `golden_standing_guard` | `standing_guard.jsonl` | i |
+| `handler_checks_kills`, `standing_guard_kills` | none | i |
+| `handler_checks_robustness`, `standing_guard_robustness` | none | i |
 
 ## The shared Git-read deadline and the git call tallies (`git_read_budget.py`, `_git.py`)
 
