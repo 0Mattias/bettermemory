@@ -186,6 +186,10 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
     match file {
         // NFC, `str.lower`, `str.isspace` and `re`'s `\w` past ASCII.
         "attribution_unicode.jsonl" => &[Unicode],
+        // `find_control_tokens` past ASCII (`gen_handlers_verify`).
+        "handlers_verify_args_unicode.jsonl" => &[Unicode],
+        // `Path.resolve` meets a link loop: 3.11 and 3.12 raise RuntimeError.
+        "handlers_verify_gates_python.jsonl" => &[Python],
         "datetime_edges.jsonl"
         // `argparse` of 3.13.13: its texts and readings (`gen_argparse`).
         | "argparse_python.jsonl"

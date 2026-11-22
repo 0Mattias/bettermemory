@@ -239,6 +239,8 @@
 //! - [`response_reason`] and [`response_trust`]: the reason a row asks for
 //!   a check and the verdict with its objection, and the trust appliers
 //!   that rewrite a row's verdict from the store's trust rows;
+//! - [`handlers`]: the MCP tool handlers, their first unit (the pure
+//!   gates of `handlers/verify.py`);
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
 //!   the lines shown about which project a folder belongs to;
 //! - [`entry`] and [`cli`]: the process entry's hook-word routing, and
@@ -298,6 +300,7 @@ pub mod gitfile_rule;
 pub mod githead;
 pub mod gitobjects;
 pub mod gitsystem;
+pub mod handlers;
 pub mod health_roots;
 pub mod health_summary;
 pub mod history;

@@ -1,0 +1,78 @@
+{"count":77,"dirs":["tree","tree/sub","other"],"files":["tree/f.txt","tree/sub/g.txt"],"k":"header","links":[["link","@/tree"],["rel","tree"],["loop","loop"],["dangling","nope"],["tree/up",".."],["filelink","tree/f.txt"]]}
+{"anchor":null,"calls":[],"f":"stale","fail":{"a":"x"},"o":null,"origin":null,"stored":["a"]}
+{"anchor":null,"calls":[["a","@/tree"],["b","@/tree"]],"f":"stale","fail":{},"o":null,"origin":"@/tree","stored":["a","b"]}
+{"anchor":null,"calls":[["a","@/tree"],["b","@/tree"]],"f":"stale","fail":{"b":"gone"},"o":"cannot verify: 1 stored claim(s) no longer hold \u2014 claim b: gone. A verify stamps the whole record fresh, and its claims are part of the record. memory_update the body first (body edits clear claims), or re-declare corrected claims by passing claims=[...] on this call.","origin":"@/tree","stored":["a","b"]}
+{"anchor":null,"calls":[["a","@/tree"],["b","@/tree"],["c","@/tree"]],"f":"stale","fail":{"a":"?unreadable","b":"gone","c":"moved"},"o":"cannot verify: 2 stored claim(s) no longer hold \u2014 claim b: gone; claim c: moved. A verify stamps the whole record fresh, and its claims are part of the record. memory_update the body first (body edits clear claims), or re-declare corrected claims by passing claims=[...] on this call.","origin":"@/tree","stored":["a","b","c"]}
+{"anchor":null,"calls":[["a","@/tree"],["b","@/tree"]],"f":"stale","fail":{"a":"?x","b":"?y"},"o":"cannot verify: 2 stored claim(s) could not be checked here \u2014 claim a: ?x; claim b: ?y. A verify stamps the whole record fresh, and an unchecked claim is not a checked one. Verify from a machine that can read the tree, or re-declare corrected claims by passing claims=[...] on this call.","origin":"@/link","stored":["a","b"]}
+{"anchor":null,"calls":[],"f":"stale","fail":{"a":"x"},"o":null,"origin":"@/missing","stored":["a"]}
+{"anchor":null,"calls":[],"f":"stale","fail":{"a":"x"},"o":null,"origin":"@/tree/f.txt","stored":["a"]}
+{"anchor":null,"calls":[],"f":"stale","fail":{"a":"x"},"o":null,"origin":"@/filelink","stored":["a"]}
+{"anchor":null,"calls":[],"f":"stale","fail":{"a":"x"},"o":null,"origin":"@/dangling","stored":["a"]}
+{"anchor":null,"calls":[["a","@/tree/sub"]],"f":"stale","fail":{"a":"x"},"o":"cannot verify: 1 stored claim(s) no longer hold \u2014 claim a: x. A verify stamps the whole record fresh, and its claims are part of the record. memory_update the body first (body edits clear claims), or re-declare corrected claims by passing claims=[...] on this call.","origin":"sub","stored":["a"]}
+{"anchor":null,"calls":[],"f":"stale","fail":{"a":"x"},"nocwd":true,"o":null,"origin":"sub","stored":["a"]}
+{"anchor":null,"calls":[],"f":"stale","fail":{"a":"x"},"o":null,"origin":"@/tree\u0000x","stored":["a"]}
+{"anchor":null,"calls":[["a","@/tree/sub"]],"f":"stale","fail":{"a":"x"},"o":"cannot verify: 1 stored claim(s) no longer hold \u2014 claim a: x. A verify stamps the whole record fresh, and its claims are part of the record. memory_update the body first (body edits clear claims), or re-declare corrected claims by passing claims=[...] on this call.","origin":"@/tree/up/tree/./sub/","stored":["a"]}
+{"anchor":{"convicting":true,"root":"@/tree"},"calls":[["a","@/tree"]],"f":"stale","fail":{"a":"x"},"o":"cannot verify: 1 stored claim(s) no longer hold \u2014 claim a: x. A verify stamps the whole record fresh, and its claims are part of the record. memory_update the body first (body edits clear claims), or re-declare corrected claims by passing claims=[...] on this call.","origin":"@/other","stored":["a"]}
+{"anchor":{"convicting":false,"root":"@/tree"},"calls":[],"f":"stale","fail":{"a":"x"},"o":null,"origin":"@/tree","stored":["a"]}
+{"anchor":{"convicting":true,"root":null},"calls":[],"f":"stale","fail":{"a":"x"},"o":null,"origin":"@/tree","stored":["a"]}
+{"anchor":null,"calls":[],"f":"stale","fail":{},"o":null,"origin":"@/tree","stored":[]}
+{"anchor":null,"calls":[],"f":"att","o":null,"origin":"@/tree","stored":[],"unseen":["x"]}
+{"anchor":null,"calls":[["root","@/tree"]],"f":"att","o":null,"origin":"@/tree","stored":["a"],"unseen":[]}
+{"anchor":null,"calls":[["root","@/rel"]],"f":"att","o":"cannot attest 2 stored path(s) that do not exist on this machine: a, /b. verified_paths=None preserves the stored attestation list, and stamping last_verified_at asserts it still holds. Pass a corrected verified_paths list (the lists REPLACE, not append), or move intentionally-absent entries to verified_absent_paths.","origin":"@/rel","stored":["a","/b"],"unseen":["a","/b"]}
+{"anchor":null,"calls":[["root",null]],"f":"att","o":"cannot attest 1 stored path(s) that do not exist on this machine: /b. verified_paths=None preserves the stored attestation list, and stamping last_verified_at asserts it still holds. Pass a corrected verified_paths list (the lists REPLACE, not append), or move intentionally-absent entries to verified_absent_paths.","origin":"@/missing","stored":["a"],"unseen":["/b"]}
+{"anchor":null,"calls":[["root",null]],"f":"att","o":"cannot attest 1 stored path(s) that do not exist on this machine: /b. verified_paths=None preserves the stored attestation list, and stamping last_verified_at asserts it still holds. Pass a corrected verified_paths list (the lists REPLACE, not append), or move intentionally-absent entries to verified_absent_paths.","origin":null,"stored":["a"],"unseen":["/b"]}
+{"anchor":null,"calls":[["root",null]],"f":"att","o":"cannot attest 1 stored path(s) that do not exist on this machine: a. verified_paths=None preserves the stored attestation list, and stamping last_verified_at asserts it still holds. Pass a corrected verified_paths list (the lists REPLACE, not append), or move intentionally-absent entries to verified_absent_paths.","origin":"@/tree/f.txt","stored":["a"],"unseen":["a"]}
+{"anchor":null,"calls":[["root","@/tree//sub/.."]],"f":"att","o":"cannot attest 1 stored path(s) that do not exist on this machine: a. verified_paths=None preserves the stored attestation list, and stamping last_verified_at asserts it still holds. Pass a corrected verified_paths list (the lists REPLACE, not append), or move intentionally-absent entries to verified_absent_paths.","origin":"@/tree//sub/..","stored":["a"],"unseen":["a"]}
+{"anchor":{"convicting":false,"root":"@/tree"},"calls":[["anchor"]],"f":"att","o":"cannot attest 1 stored path(s) that do not exist on this machine: a. verified_paths=None preserves the stored attestation list, and stamping last_verified_at asserts it still holds. Pass a corrected verified_paths list (the lists REPLACE, not append), or move intentionally-absent entries to verified_absent_paths.","origin":"@/tree","stored":["a"],"unseen":["a"]}
+{"anchor":{"convicting":true,"root":"@/tree"},"calls":[["anchor"]],"f":"att","o":null,"origin":"@/tree","stored":["a"],"unseen":[]}
+{"a":"@/tree/f.txt","b":null,"calls":[],"f":"rel","o":"@/tree/f.txt"}
+{"a":"@/tree/f.txt","b":"@/tree","calls":[],"f":"rel","o":"f.txt"}
+{"a":"@/tree/f.txt","b":"@/link","calls":[],"f":"rel","o":"f.txt"}
+{"a":"@/link/sub/g.txt","b":"@/tree/","calls":[],"f":"rel","o":"sub/g.txt"}
+{"a":"@/tree","b":"@/tree","calls":[],"f":"rel","o":"."}
+{"a":"@/other/x","b":"@/tree","calls":[],"f":"rel","o":"@/other/x"}
+{"a":"@/treeish/x","b":"@/tree","calls":[],"f":"rel","o":"@/treeish/x"}
+{"a":"f.txt","b":"@/tree","calls":[],"f":"rel","o":"f.txt"}
+{"a":"f.txt","b":"@/tree","calls":[],"f":"rel","nocwd":true,"o":"f.txt"}
+{"a":"@/tree/a\u0000","b":"@/tree","calls":[],"f":"rel","o":"@/tree/a\u0000"}
+{"a":"@/tree/f.txt","b":"@/tree\u0000","calls":[],"f":"rel","o":"@/tree/f.txt"}
+{"a":"@/tree/../tree/sub/../f.txt","b":"@/rel/sub/..","calls":[],"f":"rel","o":"f.txt"}
+{"anchor":null,"body":"b","calls":[],"drift":[["@/tree/f.txt"],[],[]],"f":"evid","flags":[true,false,false],"id":"m1","live":true,"o":null,"origin":"@/tree"}
+{"anchor":null,"body":"b","calls":[],"drift":[["@/tree/f.txt"],[],[]],"f":"evid","flags":[false,true,false],"id":"m1","live":true,"o":null,"origin":"@/tree"}
+{"anchor":null,"body":"b","calls":[],"drift":[["@/tree/f.txt"],[],[]],"f":"evid","flags":[false,false,true],"id":"m1","live":true,"o":null,"origin":"@/tree"}
+{"anchor":null,"body":"cites","calls":[["live","@/tree"],["root","@/tree"]],"drift":[[],[],[]],"f":"evid","flags":[false,false,false],"id":"m1","live":true,"o":null,"origin":"@/tree"}
+{"anchor":null,"body":"cites","calls":[["live","@/tree"],["root","@/tree"]],"drift":[["@/tree/f.txt","/etc/x","@/tree/sub/g.txt","@/tree/gone"],["@/tree/gone"],["/etc/x"]],"f":"evid","flags":[false,false,false],"id":"m2","live":true,"o":"cannot verify: memory m2 cites 2 path(s) that resolve here and this call attests none of them: f.txt, sub/g.txt. A stamp that names nothing it checked asserts nothing the read side can use. Pass verified_paths with the ones you looked at, verified_absent_paths for any that should be absent, or claims for what the body asserts about them.","origin":"@/tree"}
+{"anchor":null,"body":"cites","calls":[["live","@/tree"],["root",null]],"drift":[["@/tree/f.txt","@/other/y"],[],[]],"f":"evid","flags":[false,false,false],"id":"m3","live":false,"o":"cannot verify: memory m3 cites 2 path(s) that resolve here and this call attests none of them: @/tree/f.txt, @/other/y. A stamp that names nothing it checked asserts nothing the read side can use. Pass verified_paths with the ones you looked at, verified_absent_paths for any that should be absent, or claims for what the body asserts about them.","origin":"@/tree"}
+{"anchor":null,"body":"cites","calls":[["root",null]],"drift":[["@/tree/f.txt"],[],[]],"f":"evid","flags":[false,false,false],"id":"m4","live":true,"o":"cannot verify: memory m4 cites 1 path(s) that resolve here and this call attests none of them: @/tree/f.txt. A stamp that names nothing it checked asserts nothing the read side can use. Pass verified_paths with the ones you looked at, verified_absent_paths for any that should be absent, or claims for what the body asserts about them.","origin":null}
+{"anchor":null,"body":"cites","calls":[["live","@/tree"],["root","@/tree"]],"drift":[["@/tree/p0","@/tree/p1","@/tree/p2","@/tree/p3","@/tree/p4","@/tree/p5","@/tree/p6","@/tree/p7"],[],[]],"f":"evid","flags":[false,false,false],"id":"m5","live":true,"o":"cannot verify: memory m5 cites 8 path(s) that resolve here and this call attests none of them: p0, p1, p2, p3, p4, p5, p6, p7. A stamp that names nothing it checked asserts nothing the read side can use. Pass verified_paths with the ones you looked at, verified_absent_paths for any that should be absent, or claims for what the body asserts about them.","origin":"@/tree"}
+{"anchor":null,"body":"cites","calls":[["live","@/link"],["root","@/link"]],"drift":[["@/tree/p0","@/tree/p1","@/tree/p2","@/tree/p3","@/tree/p4","@/tree/p5","@/tree/p6","@/tree/p7","@/tree/p8","@/tree/p9","@/tree/p10"],[],[]],"f":"evid","flags":[false,false,false],"id":"m6","live":true,"o":"cannot verify: memory m6 cites 11 path(s) that resolve here and this call attests none of them: p0, p1, p2, p3, p4, p5, p6, p7, and 3 more. A stamp that names nothing it checked asserts nothing the read side can use. Pass verified_paths with the ones you looked at, verified_absent_paths for any that should be absent, or claims for what the body asserts about them.","origin":"@/link"}
+{"anchor":null,"body":"cites","calls":[["live","@/tree"],["root","@/tree"]],"drift":[["@/tree/f.txt","@/tree/f.txt","x"],["x"],[]],"f":"evid","flags":[false,false,false],"id":"m7","live":true,"o":"cannot verify: memory m7 cites 2 path(s) that resolve here and this call attests none of them: f.txt, f.txt. A stamp that names nothing it checked asserts nothing the read side can use. Pass verified_paths with the ones you looked at, verified_absent_paths for any that should be absent, or claims for what the body asserts about them.","origin":"@/tree"}
+{"anchor":{"convicting":false,"root":"@/tree"},"body":"cites","calls":[["anchor"]],"drift":[["@/tree/sub/g.txt","@/other/z"],[],[]],"f":"evid","flags":[false,false,false],"id":"m8","live":true,"o":"cannot verify: memory m8 cites 2 path(s) that resolve here and this call attests none of them: sub/g.txt, @/other/z. A stamp that names nothing it checked asserts nothing the read side can use. Pass verified_paths with the ones you looked at, verified_absent_paths for any that should be absent, or claims for what the body asserts about them.","origin":"@/other"}
+{"anchor":{"convicting":true,"root":null},"body":"cites","calls":[["anchor"]],"drift":[["@/tree/sub/g.txt"],[],[]],"f":"evid","flags":[false,false,false],"id":"m9","live":true,"o":"cannot verify: memory m9 cites 1 path(s) that resolve here and this call attests none of them: @/tree/sub/g.txt. A stamp that names nothing it checked asserts nothing the read side can use. Pass verified_paths with the ones you looked at, verified_absent_paths for any that should be absent, or claims for what the body asserts about them.","origin":"@/other"}
+{"anchor":null,"body":"cites","calls":[["live","@/tree"],["root","@/tree"]],"drift":[["@/tree/f.txt"],[],["@/tree/f.txt"]],"f":"evid","flags":[false,false,false],"id":"m10","live":true,"o":null,"origin":"@/tree"}
+{"a":null,"b":"@","calls":[],"f":"within","o":false}
+{"a":"@","b":null,"calls":[],"f":"within","o":false}
+{"a":"@/tree/f.txt","b":"@/tree","calls":[],"f":"within","o":true}
+{"a":"@/tree","b":"@/tree/","calls":[],"f":"within","o":true}
+{"a":"@/treeish","b":"@/tree","calls":[],"f":"within","o":false}
+{"a":"@/link/sub","b":"@/rel","calls":[],"f":"within","o":true}
+{"a":"@/tree","b":"@/tree/sub","calls":[],"f":"within","o":false}
+{"a":"@/anything","b":"/","calls":[],"f":"within","o":true}
+{"a":"@/x\u0000","b":"@","calls":[],"f":"within","o":false}
+{"a":"sub","b":"@/tree","calls":[],"f":"within","o":true}
+{"a":"sub","b":"@/tree","calls":[],"f":"within","nocwd":true,"o":false}
+{"a":"@/loop/a","b":"@/loop","calls":[],"f":"within","o":true}
+{"a":null,"b":"@","calls":[],"f":"tree","o":false}
+{"a":"@","b":null,"calls":[],"f":"tree","o":false}
+{"a":"@/tree","b":"@/link","calls":[],"f":"tree","o":true}
+{"a":"@/tree","b":"@/tree/sub","calls":[],"f":"tree","o":false}
+{"a":"@/tree/up","b":"@","calls":[],"f":"tree","o":true}
+{"a":"@/tree","b":"@/tree\u0000","calls":[],"f":"tree","o":false}
+{"a":".","b":"@/rel","calls":[],"f":"tree","o":true}
+{"a":".","b":"@/rel","calls":[],"f":"tree","nocwd":true,"o":false}
+{"anchoring":{"anchor":{"convicting":true,"root":"@/tree"}},"calls":[],"f":"record","o":"@/w","origin":true,"wt":"@/w"}
+{"anchoring":null,"calls":[],"f":"record","o":null,"origin":true,"wt":null}
+{"anchoring":null,"calls":[],"f":"record","o":null,"origin":false,"wt":null}
+{"anchoring":{"anchor":{"convicting":false,"root":"@/tree"}},"calls":[["for_record","m1"]],"f":"record","o":"@/tree","origin":true,"wt":null}
+{"anchoring":{"anchor":null},"calls":[["for_record","m1"]],"f":"record","o":null,"origin":false,"wt":null}
+{"anchoring":{"anchor":{"convicting":true,"root":null}},"calls":[["for_record","m1"]],"f":"record","o":null,"origin":false,"wt":null}

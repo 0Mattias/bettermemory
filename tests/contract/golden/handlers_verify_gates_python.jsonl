@@ -1,0 +1,4 @@
+{"count":3,"dirs":["tree","tree/sub","other"],"files":["tree/f.txt","tree/sub/g.txt"],"k":"header","links":[["link","@/tree"],["rel","tree"],["loop","loop"],["dangling","nope"],["tree/up",".."],["filelink","tree/f.txt"]]}
+{"anchor":null,"calls":[],"f":"stale","fail":{"a":"x"},"o":null,"origin":"@/loop","stored":["a"]}
+{"anchor":null,"calls":[["root",null]],"f":"att","o":"cannot attest 1 stored path(s) that do not exist on this machine: a. verified_paths=None preserves the stored attestation list, and stamping last_verified_at asserts it still holds. Pass a corrected verified_paths list (the lists REPLACE, not append), or move intentionally-absent entries to verified_absent_paths.","origin":"@/loop","stored":["a"],"unseen":["a"]}
+{"a":"@/loop/x","b":"@","calls":[],"f":"rel","o":"loop/x"}

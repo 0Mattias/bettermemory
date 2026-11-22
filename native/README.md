@@ -48,6 +48,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
 | `response_rows` | `_response.py` unit resphit: `SIMILAR_HITS_SHOWN`, `ResponseBuilder.__init__`, `hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict` | `response_hits.jsonl` |
+| `handlers::verify` | unit h_verify-1 of `handlers/verify.py`: the caps, `_check_verify_args`, `_refuse_stale_stored_claims`, `_refuse_unverifiable_stored_attestations`, `_relative_to_root`, `_refuse_evidence_free_stamp`, `_record_root`, `_within`, `_is_callers_tree` | `handlers_verify_args.jsonl`, `handlers_verify_args_unicode.jsonl`, `handlers_verify_gates.jsonl`, `handlers_verify_gates_python.jsonl` |
 | `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
@@ -936,6 +937,102 @@ calendar's ends with `i64` lookbacks against the reference's sets, tuple
 sessions JSON cannot spell).
 
 Left for later units: everything in the map not marked hook-1a.
+
+## The memory_verify handler's gates (`handlers/verify.py`)
+
+`src/bettermemory/handlers/verify.py` (885 lines) is the `memory_verify`
+tool: its argument checks, the refusals that keep a stamp honest, and the
+stamp's transaction. It is cut in two units.
+
+| Function | Reference lines | Needs from the machine | Status |
+|---|---|---|---|
+| `_MAX_VERIFIED_ENTRIES`, `_MAX_VERIFIED_ITEM_LEN` | 59-60 | nothing | built (h_verify-1) |
+| `_refuse_stale_stored_claims` | 63-127 | `realpath`, `isdir`, the working directory; the claim oracle as closures | built (h_verify-1) |
+| `_refuse_unverifiable_stored_attestations` | 130-199 | as above; `unverifiable_attestations` as a closure | built (h_verify-1) |
+| `_SUGGESTED_PATHS_SHOWN`, `_relative_to_root` | 202, 205-217 | `realpath`, the working directory | built (h_verify-1) |
+| `_refuse_evidence_free_stamp` | 220-284 | `_worktree_root_is_live`, `detect_path_drift` as closures; `realpath` | built (h_verify-1) |
+| `_record_root` | 287-296 | `Anchoring.for_record` as a closure | built (h_verify-1) |
+| `_within`, `_is_callers_tree` | 299-307, 310-320 | `realpath`, the working directory | built (h_verify-1) |
+| `_ATTESTATION_REMEDY`, `_check_verify_args` | 389, 392-436 | nothing (`refuse_control_tokens`) | built (h_verify-1) |
+| `_stamp`, `_load_verify_snapshot` and the handler | 323-386, 438-885 | the store, the caller, git | unit h_verify-2 |
+
+### What h_verify-1 reproduces (`handlers::verify`)
+
+- Every effect is an argument. `Machine` carries the file system (the
+  `Fs` trait), the flavour and `os.getcwd()` (None where it raises).
+  `Path(p).resolve(strict=False)` is `os.path.realpath(p)` on POSIX (the
+  `Path` spelling drops only empty and `.` components and a trailing
+  separator, which the walk skips too), so both go through
+  `fsdata::realpath::realpath`; `os.path.isdir` is a `stat` that is a
+  directory, any error being False.
+- Text is code points. A path is encoded as `os.fsencode` encodes it; a
+  code point it cannot encode (a lone surrogate outside U+DC80 to
+  U+DCFF) raises UnicodeEncodeError, a ValueError, at the `lstat` of the
+  component that holds it, and the port puts a NUL byte there, which the
+  walk raises ValueError for at the same `lstat`. A resolved path is
+  decoded with `surrogateescape`.
+- Every OSError and ValueError of a resolution is caught by the
+  reference's guards, so the port reads both as one outcome
+  (`Unresolved::Raised`): the gate passes, or the helper answers its
+  fallback.
+- A `ClaimAnchor` is read for `root` and `convicting` only
+  (`AnchorFacts`), a `PathDriftReport` for its three lists
+  (`DriftLists`); `load_claims`, `check_claim`, `Claim.render`,
+  `claim_reason_is_indeterminate`, `unverifiable_attestations`,
+  `detect_path_drift`, `_worktree_root_is_live` and
+  `Anchoring.for_record` are closures. `ReadAt` says whether a closure
+  was asked with `anchor=` or with `worktree_root=`.
+- `_check_verify_args`' `isinstance` checks become `Arg::WrongType`,
+  which the JSON layer fills when the handler is ported (h_verify-2):
+  the port sees typed values and cannot reproduce a type check itself.
+- `_refuse_unverifiable_stored_attestations` passes the ORIGINAL
+  `origin_root` on as `worktree_root` where it resolves to a live
+  directory, not the resolved path; the port keeps that.
+- `_refuse_evidence_free_stamp` keeps the duplicates of `checked` (a list
+  comprehension), counts them, and drops what `missing` or
+  `expected_absent` hold through a set, as the reference does.
+- `_relative_to_root` is `PurePath.relative_to` over two resolved
+  absolute paths: component prefix, `.` for the root itself, the path as
+  given otherwise.
+- Errors are `Refused::ValueError` with the reference's message. Under
+  `Flavour::Windows` `realpath` is not ported, and a gate that must
+  resolve a path answers `Refused::NotPorted`, a decline (the crate's
+  stated Windows gap, ENG-124); a gate that resolves nothing answers as
+  the reference.
+- `_NOTE_MAX_LEN` (800) is `handlers/_shared.py`'s; the control-token
+  refusals are `control_tokens::refuse_control_tokens` with the
+  reference's defaults (`BARE_NAME_REMEDY`, `FIELD_WHY`) and
+  `_ATTESTATION_REMEDY` for list entries.
+- No regular expression is used here (the control-token reader is its
+  own unit's).
+
+### Fixtures and tests
+
+- `tests/contract/gen_handlers_verify.py` writes
+  `handlers_verify_args.jsonl` (not gated: every type, cap and
+  control-token refusal of `_check_verify_args` in its order),
+  `handlers_verify_args_unicode.jsonl` (gated on the Unicode version:
+  notes and entries past ASCII, whose lengths are code points and whose
+  control tokens `find_control_tokens` reads with the Unicode data) and
+  `handlers_verify_gates.jsonl` (POSIX only: the path gates over one
+  tree of folders, files and links, a link loop and a dangling link
+  among them, with stubbed checks whose calls are recorded; the working
+  directory patched, or raising), and `handlers_verify_gates_python.jsonl`
+  (POSIX only and gated on the Python release: the three cases whose
+  `Path.resolve` meets the link loop, where 3.11 and 3.12 raise
+  RuntimeError, which no guard of the reference catches, and 3.13
+  resolves; the port answers as 3.13).
+- Rust: `golden_handlers_verify_args.rs`,
+  `golden_handlers_verify_gates.rs` (unix, over the tree in `MemFs`),
+  `handlers_verify_gates_not_posix.rs` (records the gap, class os),
+  `handlers_verify_kills.rs` and `handlers_verify_robustness.rs` (deep
+  dotted paths, 100,000 separators, NULs and surrogates, a 10,000,000
+  code point note, 1,000,000 entries, and the evidence gate's growth over
+  ten times the citations).
+
+Left for h_verify-2: `_stamp`, `_load_verify_snapshot` and the handler
+`h_memory_verify` (lines 323-386 and 438-885), with the JSON layer that
+fills `Arg`.
 
 ## Anchoring and the sparse checkout (`verify_anchoring.py`)
 
@@ -19252,6 +19349,8 @@ What the reference has and this build does not, by area:
   built; the rest, `cli__common-1b` included, is not.
 - `datetime.astimezone` of a naive value (the reference reads it as the
   machine's local time).
+- `handlers/verify.py` past its pure gates: `_stamp`,
+  `_load_verify_snapshot` and the handler itself (h_verify-2).
 
 ## Records and their errors
 

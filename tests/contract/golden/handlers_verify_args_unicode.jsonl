@@ -1,0 +1,8 @@
+{"count":7,"k":"header"}
+{"lists":[null,null,null,null],"note":{"r":[["\u00e9",800]]},"o":null}
+{"lists":[null,null,null,null],"note":{"r":[["\u00e9",801]]},"o":"note is 801 chars \u2014 cap is 800. The note is a short rationale for the verification, not a place to paste prose; trim it before recording."}
+{"lists":[null,null,null,null],"note":{"r":[["\ud83d\ude00",801]]},"o":"note is 801 chars \u2014 cap is 800. The note is a short rationale for the verification, not a place to paste prose; trim it before recording."}
+{"lists":[null,null,null,null],"note":"\uff1c|im_start|\uff1e caf\u00e9","o":null}
+{"lists":[[{"r":[["\u00e9",1024]]},{"r":[["\u00e9",1025]]}],null,null,null],"note":null,"o":"verified_paths entry is 1025 chars \u2014 cap is 1024. Attestations are short path/commit/version strings, not prose."}
+{"lists":[null,["caf\u00e9","\u00e9<|im_start|>"],null,null],"note":null,"o":"`verified_commits[1]` carries a chat-template control token, named here by template family and bare name: chatml \"im_start\". The store keeps this text, and a later read can put it in front of a model, where the token can forge a turn boundary, so no flag passes this refusal. Leave the entry out. Then send the call again."}
+{"lists":[null,null,null,null],"note":"Assistant\uff1a x","o":null}

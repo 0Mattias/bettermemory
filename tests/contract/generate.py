@@ -188,6 +188,7 @@ from . import (
     gen_response_hits,
     gen_response_reason,
     gen_response_render,
+    gen_handlers_verify,
     gen_witness_questions,
     gen_verify_anchoring_sparse,
     gen_verify_anchoring_anchor,
@@ -376,6 +377,10 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "response_hits": gen_response_hits.generate,
     "response_reason": gen_response_reason.generate,
     "response_render": gen_response_render.generate,
+    "handlers_verify_args": gen_handlers_verify.generate_args,
+    "handlers_verify_args_unicode": gen_handlers_verify.generate_args_unicode,
+    "handlers_verify_gates": gen_handlers_verify.generate_gates,
+    "handlers_verify_gates_python": gen_handlers_verify.generate_gates_python,
     "witness_questions": gen_witness_questions.generate,
     "verify_anchoring_sparse": gen_verify_anchoring_sparse.generate,
     "verify_anchoring_anchor": gen_verify_anchoring_anchor.generate,
@@ -497,6 +502,8 @@ UNIDATA_VERSION = "15.1.0"
 UNICODE_GATED = frozenset(
     {
         "attribution_unicode",
+        # `find_control_tokens` over notes and attestations past ASCII.
+        "handlers_verify_args_unicode",
         "lexicon",
         "verify_candidates_unicode",
         "verify_anchoring_attest_unicode",
@@ -676,6 +683,8 @@ PYTHON_GATED = frozenset(
         "argparse_python",
         "argparse_subparsers_python",
         "cli_common_python",
+        # 3.11 and 3.12 raise RuntimeError where `Path.resolve` meets a link loop.
+        "handlers_verify_gates_python",
         "models_text_platform",
         "location_stamps_platform",
         "location_stamps_python",
@@ -951,6 +960,9 @@ POSIX_ONLY = frozenset(
     {
         "attestation_paths_posix",
         "project_walk",
+        # The gates resolve paths through `posixpath`; `ntpath` asks Windows.
+        "handlers_verify_gates",
+        "handlers_verify_gates_python",
         "checkout_token_read",
         "checkout_token_read_posix",
         "checkout_token_write",
