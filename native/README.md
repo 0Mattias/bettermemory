@@ -27,7 +27,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `argparse` | unit argparse-1a: the flat-parser subset of CPython 3.13.13's `argparse` the hook mains use: `ArgumentParser(prog, description, add_help)`, `add_argument` (`store`, `store_true`, `help`, `version`; positionals of one argument with `choices`), `parse_args` (`_parse_known_args` with `_parse_optional`, `_get_option_tuples`, `consume_optional`, `consume_positionals`, `_match_argument`, `_match_arguments_partial`, the negative-number matcher), `error` and `_format_usage` with its wrapping, as an `Outcome` without a process exit; unit argparse-1b: `add_subparsers(dest)` with its `prog` derived from the parent's positionals, `add_parser`, the PARSER `nargs` and `_SubParsersAction.__call__` with the child's namespace merged in the reference's order and its leftovers after the parent's | `argparse.jsonl`, `argparse_python.jsonl`, `argparse_subparsers.jsonl`, `argparse_subparsers_python.jsonl` |
 | `native_text`, `caches`, `daemon_client`, `install_hints` | `native_text.py` 15-40 (`has_surrogates`, `utf8_text`, `encoded_json`, `origin_projection`), `_caches.py` whole (`register` under a key, `clear_all`), `_daemon_client.py` 149-172 (`STORE_FILENAME` re-exported, `START_TIMEOUT_SECONDS`, `HOOK_TIMEOUT_SECONDS`, `HOOK_HARNESS_TIMEOUT_SECONDS`, `HOOK_MARGIN_SECONDS`, `hook_budget_seconds`), `_install_hints.py` 41-130 (every spelling) | `native_text.jsonl`, `daemon_client.jsonl`, `install_hints.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks; its second unit (`src/origin_history/located.rs`): `located_key`, `history_guard`, `cuts`, `shallow_file`, `cuts_in` | `origin_history.jsonl`, `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` |
-| `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves | `origin_dates_reads.jsonl` |
+| `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves; `origin_dates::memo`: `_instant`, `commit_author_timestamps` and `_remember_dates` over the caller's `TimestampsMemo`, `MemoLeaves` and `ShallowHold` | `origin_dates_reads.jsonl`, `origin_dates_memo.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth; lookarounds refused (`supports`). Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
@@ -5564,6 +5564,7 @@ that Unicode too.
 | `golden_datetime`: `datetime_every_case` | `datetime.jsonl` | i |
 | `golden_origin_history`: `origin_history_every_case`; `origin_history_kills` (12), `origin_history_robustness` (5) | `origin_history.jsonl` (the last two none) | i |
 | `golden_origin_dates_reads`: `every_row`; `origin_dates_kills` (7), `origin_dates_robustness` (3) | `origin_dates_reads.jsonl` (the last two none) | i |
+| `golden_origin_dates_memo`: `every_row`; `origin_dates_memo_kills` (7), `origin_dates_memo_robustness` (2) | `origin_dates_memo.jsonl` (the last two none) | i |
 | `golden_origin_history_located`: `origin_history_located_every_query`, `origin_history_located_modes_every_query` (unix; `golden_origin_history_located_not_posix` records the gap off it as class os); `origin_history_located_kills` (15), `origin_history_located_robustness` (7) | `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` (the last two none) | i |
 | `golden_history_rows`: `every_history_rows_answer_is_the_reference_s`; `history_rows_kills` (13), `history_rows_robustness` (5) | `history_rows.jsonl` (the last two none) | i |
 | `golden_history_rows`: `every_nested_history_rows_answer_is_the_reference_s` | `history_rows_python.jsonl` | ii |
@@ -12848,7 +12849,11 @@ the caller builds over its rule and environment.
 | `_unread_entry` | 379-392 | discovery (`DateFiles`) | unit 1, built |
 | `_extended_author_timestamps` | 395-429 | git | unit 1, built |
 | `_marked_seconds` | 432-439 | nothing | unit 1, built |
-| the memoised readers (`commit_author_timestamps` and the pathspec readers) | 31-248, 442 on | the memo, git, the clock | unit 2 (datememo) |
+| `_instant` | 31-40 | nothing | unit 2 (datememo), built |
+| `commit_author_timestamps` | 43-186 | the memo, git, the leaves, the clock, the read budget | unit 2 (datememo), built |
+| `_remember_dates` | 189-202 | the memo, the clock | unit 2 (datememo), built |
+| `_hold_shallow`, `_cut_held`, `_shallow_held` | 205-218, 221-233, 236-248 | the shallow file's stamps | origin_dates-1c (the `ShallowHold` trait here) |
+| the pathspec readers | 442 on | the memo, git | later units |
 
 What unit 1 reproduces:
 
@@ -12891,6 +12896,80 @@ out repositories. `origin_dates_kills` and `origin_dates_robustness` hold
 the rest.
 
 Left for unit 2 (datememo): lines 31-248 and the readers from 442 on.
+
+### Unit 2: the memoised history read (`src/origin_dates/memo.rs`)
+
+Built. `commit_author_timestamps` takes the call's `git_read_budget`
+`Scope` and a `Reader` of its effects: git (`OriginGit`), the files git's
+discovery reads (`DateFiles`), the leaves of `origin_history`
+(`MemoLeaves`: `located_key`, `history_guard`, `cuts`), the hold on the
+shallow file (`ShallowHold`), the memo (`&mut TimestampsMemo<G>`, `G` the
+guard's type) and `time.monotonic` as a function. It answers
+`Timestamps::Absent` (None), `Dates` (the stored list itself on a hit, an
+`Arc`) or `Unread`, and the ValueError a cut raises as the error.
+
+What it reproduces:
+
+- The order of every read: the files' pair, then `located_key`, then on
+  a key the guard, the cuts, the memo's recall, the hold, the base, the
+  extension or the whole log, the hold's check and the memo's write; with
+  no key the cuts walked from `cwd`, and the log from `HEAD`, never kept.
+- A remembered failure is served with no process and noted as the read
+  that met it was (`note_unread`: a timeout through
+  `OriginGit::note_timed_out`, anything else through `note_failed`).
+- A shallow file that is not read answers `SHALLOW` and, under a key,
+  is remembered; a cut that moved during the log answers `SHALLOW`,
+  counted, and keeps nothing.
+- `_remember_dates`: a list longer than `MEMO_SLOTS` answers
+  `OVER_BUDGET`, remembered and counted.
+- `git_read_budget.unread`: a call that raises `ReadDeadline` answers
+  `CALL_BUDGET` and keeps nothing. The raise is `OriginGit::deadline`:
+  once it answers true the runner answers every later call as a failure
+  that counts nothing, and the port checks it after each read that runs
+  git, so nothing after the raise reaches the memo.
+- `_instant` is `instant`: `stamp.timestamp()` of an aware date, the
+  quotient of its microseconds since the epoch by a million rounded once
+  as Python's integer true division rounds (a division of the float of
+  the microseconds rounds twice above 2**53). A naive date answers None:
+  its timestamp follows the host's zone, and no caller passes one.
+
+Decisions. `OriginGit` gains three methods at its end with default
+bodies: `note_timed_out` (counts the failure alone), `deadline` (false)
+and `toplevel_and_head_from_files` (`origin.toplevel_and_head_from_files`,
+unported, declines), so existing doubles need no change. A root the
+leaves are asked about is a `Place`: `cwd` as given, or the key's root
+text, which the leaf reads as `Path(key[0])` reads it. `ShallowHold`
+gives `cut_held` as a provided method over `shallow_held`; origin_dates-1c
+ports `_hold_shallow` and `_shallow_held` over the file system and
+`origin._hold_directory`. `shallow_held` answers a plain bool: the reference's
+`_shallow_held` calls `cuts`, which can raise ValueError (a path with an
+embedded NUL), but the same `cuts` on the same path has already run
+before the log and raised first, so only a race between the two calls
+reaches that raise, and the port does not carry it. No adapter of `MemoLeaves` over
+`origin_history::located` is built: the unit that ports `origin`'s
+`toplevel_and_head_from_files` wires both. No regular expression is
+involved.
+
+Pinned by `origin_dates_memo.jsonl` (class i, every platform: every leaf
+is scripted, so no row follows the git release, the platform or the
+Python release; the scripted roots are `PurePosixPath` and the doubles
+record each root and start in its POSIX form, since the reference
+rebuilds them with the host's `Path`, which spells `/r1` as `\r1` on
+Windows): eleven `_instant` rows over the bounds, offsets and the
+first instant above 2**53 microseconds, a sweep of 4,000 seeded UTC
+instants pinned by count and SHA-256, and 22 scenarios over one memo
+each (fresh then hit, a passed `located`, the located key, an extension
+after a new commit, a refused extension, an extension reaching a cut, no
+base without a guard, a deepened clone, an unread shallow file, a history
+reaching a cut, a cut moved during the log, a failure remembered then
+expired at its sixtieth second, another guard, the clock gone back, over
+the budget, the deadline at each read, a ValueError, the `HEAD` path and
+its refusals, and the eviction of entries and failures past the cap),
+each step checking the answer, the calls in order, the failures and
+timeouts noted and the memo after it. The scenarios script the leaves
+rather than laying out repositories: the leaves are pinned against real
+repositories by their own units, and a scripted step names the git
+release nowhere.
 
 ## HEAD and refs from a git directory's files
 

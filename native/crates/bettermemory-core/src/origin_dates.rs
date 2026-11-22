@@ -19,6 +19,8 @@ use crate::githead::{self, GitDir, RefFs};
 use crate::origin_history::{author_dates, read_lines, unanswered, HistoryUnread};
 use crate::pyvalue::PyStr;
 
+pub mod memo;
+
 /// `origin._WALK_MARK` (origin.py 1339).
 pub const WALK_MARK: &str = "\u{1}";
 
@@ -56,6 +58,23 @@ pub trait OriginGit {
     fn counts(&self) -> (i64, i64);
     /// `_git.note_failed()`.
     fn note_failed(&mut self);
+    /// `_git.note_timed_out()`: a failure and a timeout. A runner that
+    /// keeps no timeout tally counts the failure alone.
+    fn note_timed_out(&mut self) {
+        self.note_failed();
+    }
+    /// `origin.toplevel_and_head_from_files(cwd)` as `(str(root), head)`:
+    /// None wherever the files do not settle what git would print.
+    fn toplevel_and_head_from_files(&mut self, _cwd: &[u8]) -> Option<(PyStr, PyStr)> {
+        None
+    }
+    /// Whether a call raised `git_read_budget.ReadDeadline`. Once it
+    /// answers true, the runner answers every later call as a failure
+    /// that counts nothing (`git` None, `note_failed` nothing), as the
+    /// reference unwinds there and makes no later call.
+    fn deadline(&self) -> bool {
+        false
+    }
 }
 
 /// The reads of files and of git's discovery `refused_head` makes.

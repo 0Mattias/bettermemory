@@ -29,7 +29,8 @@
 //!   the repository's key, the history guard and the shallow cuts;
 //! - [`origin_dates`]: the author dates a drift count is read off, its
 //!   git-asking leaves (the log reads, why `git log HEAD` was refused,
-//!   the extension of a remembered history);
+//!   the extension of a remembered history) and (`origin_dates::memo`)
+//!   the memoised read of a head's whole history;
 //! - [`unicode`]: normalization, case mapping and the character classes,
 //!   XID_Start and XID_Continue (`unicode::xid`, `str.isidentifier`),
 //!   over tables generated from the reference Python's Unicode 15.1.0;
