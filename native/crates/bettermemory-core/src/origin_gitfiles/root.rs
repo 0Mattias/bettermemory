@@ -98,7 +98,7 @@ impl ConfigMemo {
 
 /// `_fd_stamp(fd)`: the five fields of an open file's `os.fstat`; not
 /// ported where a field is not (Windows' change time, inode, mode).
-fn fd_stamp(st: &StatResult) -> Result<Stamp, NotPorted> {
+pub(crate) fn fd_stamp(st: &StatResult) -> Result<Stamp, NotPorted> {
     let (Some(ctime), Some(ino), Some(mode)) = (st.ctime_ns, st.ino, st.mode) else {
         return Err(NotPorted);
     };

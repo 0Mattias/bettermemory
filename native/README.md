@@ -94,7 +94,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
 | `owner_prompt` | `owner_prompt.py` but `_ENVELOPES` and `probe_text`: the constants, `owner_text`, `text_blocks`, `is_submitted`, `submitted_text`, `_subagents`, `queued_text`, `owner_prompt`, with `probe_text` an argument; `Reference` implements `transcript::OwnerPrompt` | `owner_prompt.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
-| `origin_gitfiles` | units 1 to 3 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`), the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) and the config facts (`facts`: `_facts_of`, `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies`, `_config_entries`, `_config_variable_names`, `_hold_directory`, `directories_held`, `_global_attributes_path`) and unit 4 (`root`: `_CONFIG_LIMIT`, `_config_facts` and its memo, `_worktree_config_facts`, `_config_moves_worktree`, `refused_worktree_root`, `first_not_a_directory`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl`, `origin_gitfiles_facts.jsonl`, `origin_gitfiles_facts_posix.jsonl`, `origin_gitfiles_root_posix.jsonl` |
+| `origin_gitfiles` | units 1 to 3 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`), the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) and the config facts (`facts`: `_facts_of`, `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies`, `_config_entries`, `_config_variable_names`, `_hold_directory`, `directories_held`, `_global_attributes_path`) and unit 4 (`root`: `_CONFIG_LIMIT`, `_config_facts` and its memo, `_worktree_config_facts`, `_config_moves_worktree`, `refused_worktree_root`, `first_not_a_directory`) and unit 6 (`attrs`: `attribute_files_signature`, `gitattributes_signature`, `_index_gitmodules` and its memo, `_gitdir_at_root`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl`, `origin_gitfiles_facts.jsonl`, `origin_gitfiles_facts_posix.jsonl`, `origin_gitfiles_root_posix.jsonl`, `origin_gitfiles_attrs_posix.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs`; unit githead-1, `githead::discovery`: `stamp`, `find_gitdir`, `gitdir_at`, `locate`, `probed`, `across_filesystems`, `discovery_moved`, `_entry_above`, `_located` and their helpers over `fsdata::Fs`, membership's `Rule`, an `Env` and the owners (`Owners`); unit githead-2, `githead::signature`: `entry_above`, `_stops_at`, `_would_be_git_directory`, `_Undetermined`, `_ref_stamps`, `signature`, and `CtxRefs`, a `RefFs` over a `gitdir::Ctx` | `githead.jsonl`, `githead_posix.jsonl`, `githead_discovery.jsonl`, `githead_signature.jsonl` |
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`; unit ntreal, the Windows flavour (`view_path_windows`, `view_path_text`, `probe_windows`) over `fsdata::realpath`'s `FinalPath`, `nt_realpath` and `nt_abspath` (`ntpath.realpath` non-strict with `_readlink_deep` and `_getfinalpathname_nonstrict`, `ntpath.abspath`); the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl`, `ntrealpath_python.jsonl` |
 | `location_caller` | a caller's resolution (`location.py` 1420-1997), unit locstate: the per-process state around a resolution: `process_machine`, `_recorded`, `_clear_machine` (`ProcessMachine`), `_Held`, `_LOCKS`, `_location_lock` (`Locks`, `lock_name`), `_cwd_of`, `_Stand`, `_STANDS`, `_keep_stand`, `_stand_of`, `forget_session`, `_clear_stands` (`Stands`), `_with_file_errors`, `_same_namespace`; every read of the machine a closure | `location_caller_state.jsonl` |
@@ -7711,6 +7711,8 @@ that Unicode too.
 | `origin_gitfiles_facts_kills` (9), `origin_gitfiles_facts_robustness` (4) | none | i |
 | `golden_origin_gitfiles_root_posix`: `origin_gitfiles_root_posix_every_case` (POSIX only; `origin_gitfiles_root_not_posix` records the gap as os) | `origin_gitfiles_root_posix.jsonl` | i |
 | `origin_gitfiles_root_kills` (8), `origin_gitfiles_root_robustness` (3) | none | i |
+| `golden_origin_gitfiles_attrs_posix`: `origin_gitfiles_attrs_posix_every_case` (POSIX only; `origin_gitfiles_attrs_not_posix` records the gap as os) | `origin_gitfiles_attrs_posix.jsonl` | i |
+| `origin_gitfiles_attrs_kills` (7), `origin_gitfiles_attrs_robustness` (4) | none | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_every_case` | `capture_vocabulary.jsonl` | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_python_every_case` | `capture_vocabulary_python.jsonl` | ii (Python) |
 | `capture_vocabulary_robustness` (5) | none | i |
@@ -12338,8 +12340,8 @@ so it is cut into units, leaves first.
 | `_hold_directory`, `directories_held`, `_global_attributes_path` | 645-720 | `stat`, the environment | built (unit 3) |
 | `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies` | 722-999 | the git on PATH's version (`gitsystem`) | built (unit 3) |
 | `_config_entries`, `_config_variable_names` | 1002-1028 | nothing (`gitconfig`) | built (unit 3) |
-| `attribute_files_signature`, `gitattributes_signature` | 1031-1194 | `stat`, reads, `gitconfig`'s tree | unit 6 |
-| `_index_gitmodules` and its memo, `_gitdir_at_root` | 1205-1237, 1346-1427 | open, `fstat`, the prefix reads | unit 6 |
+| `attribute_files_signature`, `gitattributes_signature` | 1031-1192 | `stat`, reads, `githead`'s discovery | built (unit 6) |
+| `_index_gitmodules` and its memo, `_gitdir_at_root` | 1195-1237, 1346-1427 | open, `fstat`, `listdir`, the prefix reads | built (unit 6) |
 | `walk_files_signature`, `located_head`, `files_held` | 1430-1553 | `stat`, `githead` | unit 7 |
 
 Later units reuse `gitconfig`, `githead` and `fsdata` (its `Fs` trait,
@@ -12734,6 +12736,85 @@ moves table over a memory file system, the Windows decline and the
 once-per-path memo. `origin_gitfiles_root_robustness.rs` reads a config
 of the limit's size, a memo churned far past its cap and a not-a-directory
 memo fed thousands of paths, with no panic and growth bounded.
+
+### Unit 6, built (`origin_gitfiles::attrs`)
+
+Lines 1031-1192 (`attribute_files_signature`, `gitattributes_signature`),
+1195-1237 (`_INDEX_UNMERGED`, `_INDEX_FIRST_READ`, `_INDEX_READ_GROWTH`,
+`_INDEX_MEMO_CAP` and the index memo) and 1346-1427 (`_index_gitmodules`,
+`_gitdir_at_root`), confirmed at the source as it is now.
+
+- `attribute_files_signature` takes XDG_CONFIG_HOME and HOME as
+  arguments, the discovery variables as `githead::discovery::Env` and the
+  effective user and owners as `Host`. It finds the repository with
+  `find_gitdir` from `cwd` and, where that declines and no variable moves
+  discovery, with `locate` at `root` without the walk, answering None
+  there while neither an XDG_CONFIG_HOME that is set and not empty nor a
+  HOME is given. It reads the common `config` and `config.worktree`
+  through `config_facts` and `worktree_config_facts` (the caller's
+  `ConfigMemo`), declines on names of None, `log.follow`,
+  `attributes_elsewhere` or `includes` in either, holds `info` and the
+  global file's directory when asked (`hold_directory`), and stamps
+  `info/attributes` and the global file (`githead::discovery::stamp`,
+  links followed). The answer is `AttributeFiles`, the reference's
+  five-tuple.
+- `gitattributes_signature` refuses a pathspec with a leading colon, a
+  wildcard or escape (`*?[\`), or an empty, `.` or `..` part, and one
+  the working tree holds as a directory; a missing pathspec is passed over
+  as `path_missing` reads it. The chain is each directory once, in the
+  order first named (a set beside the list, so many pathspecs cost
+  linear time as the reference's dict does), and each `.gitattributes` is
+  stamped without following a link. `Path(root)` is spelled with
+  `githead::discovery::pure`, and `Path(".") / part` is the part alone.
+- `IndexMemo` is `_INDEX_MEMO`: a value the caller holds, at most 64
+  index paths, a hit moved last, the oldest dropped first.
+  `index_gitmodules` follows the reference's order: the common config
+  (`extensions.objectFormat`, an unread file or names of None are
+  `Unsettled`), the open (absence answers None), the open file's stamp
+  (anything but a regular file is `Unsettled`), the memo, the
+  `sharedindex.*` check, reads of 64 KiB growing fourfold
+  (`read_prefix`, `gitmodules_entries`), and the stamp after the read. A
+  kept answer is returned before the `sharedindex.*` check, so a split
+  index made after a read with the index unchanged still answers the kept
+  entry (pinned in the golden file and in `origin_gitfiles_attrs_kills.rs`).
+- `gitdir_at_root` is `gitdir_at` and, where it declines and no variable
+  moves discovery, `locate` without the walk.
+
+No regular expression is used here.
+
+The Windows flavour: discovery and `locate` decline there (fsdata does not
+port `realpath` for it, the crate's stated Windows gap, ENG-124), so
+`attribute_files_signature` and `gitdir_at_root` answer none where the
+reference on Windows may answer, and `gitattributes_signature` answers
+`NotPorted`; `origin_gitfiles_attrs_not_posix.rs` records the gap as
+class os. `index_gitmodules` declines on Windows' `StdFs`, whose stat
+gives no change time or inode.
+
+Difference from the reference: as in unit 4, a failed `os.close` of the
+index is ignored, where the reference's `finally` would let its OSError
+out.
+
+Fixtures: `gen_origin_gitfiles_attrs.py` writes
+`origin_gitfiles_attrs_posix.jsonl` (POSIX only: links, a FIFO, mode-000
+entries and the owner's check): 40 scenarios on a scratch tree with
+`.gitattributes` chains, `info/attributes`, the global file under
+XDG_CONFIG_HOME, HOME, a relative and an empty value, configs that set
+`log.follow`, an attributes file, an include or a NUL, `config.worktree`,
+a linked worktree, and indexes whose `.gitmodules` entry is present,
+absent, unmerged, split, of versions 2 to 4 with extended flags, cut
+short, grown past the first reads and rewritten mid-read (a byte appended
+after each prefix read). A signature is spelled by which stamps are
+present and the first earlier equal signature, never a time. The
+generator saves and gives back both memos and patches `_read_prefix` only
+inside a step. `origin_gitfiles_attrs_kills.rs` pins the index memo's
+bound and order, the kept answer outliving a split index, the growing
+read, the chain's order, the empty XDG_CONFIG_HOME's fallback and the
+Windows decline. `origin_gitfiles_attrs_robustness.rs` reads 10,000
+pathspecs, a 5,000-part pathspec, a cut index of 50,000 entries and a
+memo churned past its cap, with growth bounded.
+
+Left for unit 7 (lane ogfwalk): `walk_files_signature`, `located_head`,
+`files_held` and `capture_files`.
 
 ## Design notes for the rest of the tree half
 
@@ -23236,7 +23317,9 @@ What the reference has and this build does not, by area:
   `_link_change_rows`, `HistoryRow` and `_RecordWalk` are built):
   `history.py`'s `record_history` and the renderers.
 - Reading a checkout: `origin_gitfiles.py` past its decoders, machine leaves,
-  config facts and the config memo with the refused root (units 6 and 7), the origin's settling
+  config facts and the config memo with the refused root, its attribute
+  file signatures and the index's `.gitmodules` read (unit 7:
+  `walk_files_signature`, `located_head`, `files_held`, `capture_files`), the origin's settling
   (`origin.py`), `location.py` past its view continuity, the
   capture's filesystem leaves and its capture signature and cache
   (`continuity`, `view_state`, their helpers and unit 1's leaves in

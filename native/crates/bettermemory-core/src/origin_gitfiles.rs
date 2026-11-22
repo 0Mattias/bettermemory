@@ -21,11 +21,16 @@
 //!   working tree (`_config_moves_worktree`), the root read from the files
 //!   where `git rev-parse` exited non-zero (`refused_worktree_root`) and
 //!   the once-per-path memo (`first_not_a_directory`). Built.
+//! - [`attrs`], unit 6: the attribute file signatures
+//!   (`attribute_files_signature`, `gitattributes_signature`), the
+//!   index's `.gitmodules` entry with its memo (`_index_gitmodules`) and
+//!   `_gitdir_at_root`. Built.
 //!
 //! Texts are Python `str` values as code points ([`PyStr`]), since a
 //! caller's text may hold a lone surrogate, which the reference's UTF-8
 //! encode refuses with `UnicodeEncodeError`.
 
+pub mod attrs;
 pub mod facts;
 pub mod machine;
 pub mod root;

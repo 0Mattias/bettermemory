@@ -347,7 +347,9 @@
 //!   its first three units (the pure decoders; the leaves that read the
 //!   machine: a file's prefix, a path relative to the root, the root as
 //!   the kernel spells it; and what git dies on in a config, what a config
-//!   text says, and the directories a check holds);
+//!   text says, and the directories a check holds), unit 4 (the config
+//!   memo and the root read from the files) and unit 6 (the attribute
+//!   file signatures and the index's `.gitmodules` entry);
 //! - [`checkout_token`]: the checkout token, whole: the text, the reads
 //!   over the file-system trait, the write, and the re-mint with its
 //!   claim;
