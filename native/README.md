@@ -118,6 +118,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `location_continuity` | `location.continuity` (`location.py` 1040-1094) | `location_continuity.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `membership_migrate` | `membership_migrate.py`, unit 1: the constants (`LIVE`, `GONE`, `REPLACED`, `UNREACHABLE`, `RULE_PREFIX`, `LEGACY_REASON`, `MIGRATED`, `_RECORD_TABLES`, `_RECORD_KINDS`, `_SHA`, `_PROBE_BUDGET`, `_PROBE_WORKERS`), `RootDecision`, `RootlessHome`, `LegacyQuestion`, `MigrationTotals` (`to_dict`), `MigrationReport` (`homed`, `to_dict`, `lines`), `_basename`, `_origin`, `_text`, `_id_order`, `_repository_name`, `_shas`, `_json_list` | `membership_migrate_report.jsonl`, `membership_migrate_report_python.jsonl` |
+| `store_refusal` | `_store_refusal.py` whole: `bundle_refusal`, `_may_be_bundle_manifest`, `restore_state`, `_record_lock_held`, `_restore_marker`, `_restore_marker_at`, `_describe_restore`, `restore_refusal`, `store_refusal` and the constants; `json::loads_bytes` (`json.loads` of bytes) | `store_refusal.jsonl`, `store_refusal_posix.jsonl` |
 | `entry`, `cli::common`, `cli::root` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`; `cli/__init__.py`'s `_build_parser`, `_add_hook_subparser`, `main` (`cli::root`) | `cli_common.jsonl`, `cli_common_python.jsonl`, `cli_root.jsonl`, `cli_root_python.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
@@ -3586,6 +3587,110 @@ same fault (an ErrorKind expected where Windows gives raw error 5, 32 or 33):
 | `bettermemory_sys::file_index`, `lock_byte`, `unlock_byte` | sound: return `last_os_error` unchanged |
 | test `an_unlock_frees_the_lock_while_the_handle_stays_open` | sound: compares `Try` values only |
 | test `an_open_record_file_is_not_removed` | fixed (above) |
+
+## The hook's store refusals (`_store_refusal.py`)
+
+The module a hook loads to refuse a store before it starts a daemon,
+ported whole as `store_refusal.rs` (about 600 lines with its comments).
+The reference keeps it apart from `backup` and `restore_lock` for the
+hook's import cost and reads the same files its own way, so it is its own
+port: it reads only `restore_lock::LOCK_SUFFIX` from the crate's restore
+lock and calls nothing of it.
+
+| Function | Reference lines | Needs from the machine | Status |
+|---|---|---|---|
+| constants | 29-42 | none | built |
+| `printable` | 45-53 | none | `crate::printable::printable` |
+| `_may_be_bundle_manifest` | 56-70 | an open with O_NONBLOCK, `fstat`, a read | built (`may_be_bundle_manifest`) |
+| `bundle_refusal` | 73-108 | `realpath`, `stat` following links, the link count | built |
+| `_restore_marker`, `_restore_marker_at` | 111-136 | an open and one read | built |
+| `_record_lock_held` | 139-163 | `flock` (POSIX), `msvcrt.locking` (Windows) | built |
+| `restore_state` | 166-204 | the directory's `flock`, the record file | built, and its record branch alone (`restore_state_record_branch`) |
+| `_describe_restore` | 207-222 | none | built (`describe_restore`) |
+| `restore_refusal`, `store_refusal` | 225-258 | as above | built |
+
+What each reproduces, and the decisions:
+
+- Paths are spelled as `pathlib` spells them, worked on as text: on POSIX
+  each byte of the path is one character, so a byte that is no UTF-8
+  survives and `str(path)` shows the lone surrogate `os.fsdecode` gives it.
+  `Path.name`, `Path.parent`, `parent / name` and `with_name` are textual
+  over `config::pure_path`, so a store named `..` keeps its name (std's
+  `file_name` has none) and `with_name` on a path with no name (`/`, `.`)
+  is the reference's ValueError, out of `restore_state`, `restore_refusal`
+  and `store_refusal`.
+- `Path.resolve()` (strict=False) is Python 3.13's `posixpath.realpath`
+  step for step: each component `lstat`ed, each link read and its target
+  pushed, every error of a step leaving the component as spelled, a link
+  met again before it resolved (a loop) left as reached, `..` taken off
+  the resolved text. `os.getcwd` failing drops the second candidate. The
+  golden files hold no loop row: how `resolve` answers a loop changed
+  between releases (RuntimeError before 3.13). Under the Windows flavour
+  `ntpath.realpath` is not ported (ENG-124): `bundle_refusal` answers from
+  the spelled candidate when it finds a manifest and otherwise declines
+  (`Failure::NotPorted`), as `store_refusal` then does.
+- `manifest.is_file()` follows links and is false on any error. The
+  manifest is opened with O_NONBLOCK (the C library's value on each
+  target, `bettermemory_sys::O_NONBLOCK`) so a FIFO swapped in does not
+  block; not a regular file, or past 1 MiB by `fstat`, it counts; at most
+  1 MiB is read and given to `json::loads_bytes`. Any error counts; a
+  document counts only when it is an object whose last `format` key is
+  `"bettermemory.backup"`. A document that is not an object does not
+  count, as the code says and against the docstring.
+- `json::loads_bytes` (new in `json.rs`) is `json.loads` of bytes:
+  `json.detect_encoding` and a `surrogatepass` decode
+  (`store::provenance::decode_json_bytes`), a decode failure a ValueError
+  (`LoadError::Decode`), then `loads_detailed`.
+- The hard-link test is `stat().st_nlink > 1` following links, false on
+  any error; a directory as the store has more than one link on POSIX.
+  On Windows the count is `nNumberOfLinks` of the opened file
+  (`bettermemory_sys::file_links`), as `os.stat` fills `st_nlink` there.
+- `restore_state` on POSIX opens the store's directory with O_DIRECTORY
+  (`bettermemory_sys::O_DIRECTORY`: 0o200000 on most Linux targets,
+  0o40000 on arm and aarch64 Linux, the BSDs' own values elsewhere) and tries a shared `flock` once (`File::try_lock_shared`): taken, it is
+  let go and the record read read-only; held (WouldBlock, or EINTR), the
+  state is running with the record; any other error leaves the directory
+  and takes the record branch. The record branch opens the record file
+  read-write (an error is clear), tries its lock (held only for
+  WouldBlock or EINTR), then reads the marker from the same handle. A
+  marker is one read of at most 64 KiB; `bytes.strip()` whitespace alone
+  is none; JSON that is an object is the record, anything else an empty
+  record; a read error is `{"unreadable": str(exc)}`; RecursionError
+  passes out.
+- Windows: the record branch alone, its lock the reference's one byte at
+  1 MiB taken with `msvcrt.locking`; std locks the whole file, which
+  overlaps that byte, so the port takes `try_lock` and lets go at once, as
+  `store::restore_lock`'s Windows reader does, and any error is held. The
+  record file is opened with the CRT's share mode. A path that is no
+  Unicode text (a lone UTF-16 surrogate, which `str(Path)` keeps) is
+  declined by every function. Untested here.
+- `restore_refusal` and `_describe_restore` spell the text with
+  `printable` around the description and the again-command; the paths are
+  not passed through it, as in the reference.
+
+No regular expression is used.
+
+Fixtures: `gen_store_refusal.py` writes `store_refusal.jsonl` (every
+platform: manifests of each shape and encoding, the cap on either side as
+a sparse file and as text, records of each shape, each read through the
+directory lock and through the record branch) and
+`store_refusal_posix.jsonl` (POSIX_ONLY: a restore holding the directory
+or the record file, the record branch with its lock held, an unreadable
+record, a FIFO and links as the manifest, hard links, a store reached
+through a symbolic link file or directory, a directory as the store, `..`
+past a missing directory). Paths are `@` for the case directory; an
+unreadable record pins its key and the refusal, not the C library's text.
+`golden_store_refusal.rs` and `golden_store_refusal_posix.rs` build each
+case and compare (on Windows the rows `bundle_refusal` declines are
+recorded as a gap, class os); `store_refusal_not_posix.rs` records the
+POSIX file's gap elsewhere. `store_refusal_kills.rs` also holds a relative
+store (parent `.`) and `/..` (`..` at the root stays at `/`); a `flock`
+error other than WouldBlock or EINTR on the record file (ENOLCK on a
+mount without a lock daemon) needs a filesystem the suite does not have
+and is untested.
+
+Left for later: the hook client (`_daemon_client.hook_main`) that calls
+`store_refusal`; `backup.bundle_refusal` itself (`backup.py`'s units).
 
 ## The additive schema steps (`store_schema.py`, unit store_schema-1)
 

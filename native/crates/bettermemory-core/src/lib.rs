@@ -144,6 +144,9 @@
 //!   (`store::docfreq`); and the plain reads of the index and the
 //!   records over a connection (`store::index_reads`,
 //!   `store::record_reads`);
+//! - [`store_refusal`]: the stores a hook refuses before it starts a
+//!   daemon (`_store_refusal.py` whole: `bundle_refusal`, `restore_state`,
+//!   `restore_refusal`, `store_refusal`);
 //! - [`membership_records`]: the vocabulary and records of the membership
 //!   model, units 1 to 4 (the legacy ask rule and the helpers that
 //!   compare, join and rebase recorded paths in either spelling; the
@@ -449,6 +452,7 @@ pub mod session;
 pub mod standing;
 pub mod standing_guard;
 pub mod store;
+pub mod store_refusal;
 pub mod symbols;
 pub mod toml;
 pub mod tool_handlers;

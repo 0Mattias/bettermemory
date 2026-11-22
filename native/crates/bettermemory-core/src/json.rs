@@ -707,6 +707,16 @@ pub fn loads(text: &[u32]) -> Result<PyValue, PyError> {
     loads_detailed(text).map_err(LoadError::py_error)
 }
 
+/// `json.loads(data)` for bytes: `json.detect_encoding` (a UTF-8 BOM
+/// read as `utf-8-sig`, UTF-16 and UTF-32 by their BOM or by the null
+/// bytes of the first four), a `surrogatepass` decode whose failure is the
+/// reference's UnicodeDecodeError (a ValueError, given here as
+/// [`LoadError::Decode`]), then [`loads_detailed`].
+pub fn loads_bytes(data: &[u8]) -> Result<PyValue, LoadError> {
+    let text = crate::store::provenance::decode_json_bytes(data).ok_or(LoadError::Decode)?;
+    loads_detailed(&text)
+}
+
 /// Why `json.loads` refused a text, by the exception class it raises.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoadError {

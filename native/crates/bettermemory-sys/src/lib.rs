@@ -15,6 +15,12 @@ use std::io;
 #[cfg(unix)]
 pub const O_NONBLOCK: i32 = libc::O_NONBLOCK;
 
+/// The platform's `O_DIRECTORY` open flag, as its C library defines it
+/// (0o200000 on most Linux targets, 0o40000 on arm and aarch64 Linux,
+/// another value again on macOS and the BSDs).
+#[cfg(unix)]
+pub const O_DIRECTORY: i32 = libc::O_DIRECTORY;
+
 /// `os.fsync(fd)`, the reference's `_fsutil.fsync_file`: flush a file (or
 /// a directory opened for reading) to the disk with `fsync(2)`, tried
 /// again when a signal interrupts it, as Python does.
@@ -542,6 +548,22 @@ pub fn file_index(file: &File) -> io::Result<(u64, u64)> {
     }
     let index = (u64::from(info.index_high) << 32) | u64::from(info.index_low);
     Ok((u64::from(info.volume_serial), index))
+}
+
+/// `os.fstat(fd).st_nlink` on Windows: the `nNumberOfLinks`
+/// `GetFileInformationByHandle` answers for an open file, the count
+/// `os.stat` reports there.
+#[cfg(windows)]
+pub fn file_links(file: &File) -> io::Result<u32> {
+    use std::os::windows::io::AsRawHandle;
+    let mut info = ByHandleFileInformation::default();
+    // SAFETY: as in `file_index`: the borrowed handle is open for the
+    // call and `info` is a live struct of the layout the call fills.
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), &mut info) };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(info.links)
 }
 
 #[cfg(windows)]
