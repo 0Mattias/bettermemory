@@ -94,6 +94,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `location_resolve` | a caller's resolution (`location.py` 1420-1997), unit loccaller: `capture_location`, `_model`, `Caller` (`home`, `add_head_witness`), `resolve_caller`, `_caller`, `_resolved`, `resolve_here`, `_hooked`; the model, capture cache, re-mint, `_earlier_tree` and `_machineless` arguments | `location_resolve.jsonl` |
 | `location_hook` | a caller's resolution (`location.py` 1420-1997), unit lochook: `resolve_hook`; `_hooked`, `os.getcwd`, `object_key`, `_hostname`, `open_machine` and the model's two constructors as arguments | `location_hook.jsonl` |
 | `hook_stop`, `hook_stop_side` | the Stop audit's front half (`hook.py` 319-725, unit hook-2a): `run_audit` with `@hook_body("stop")`, `_audit_turn`, `_stop_window`, `_stop_pool`, `_stop_probe`, `_stop_recorder`, `_is_repeat_audit`, as a sequence over the trait `StopSide` (one method per call `hook.py` 319-946 makes outside itself, no implementation yet) with the settlement steps behind `StopSettle` | `hook_stop.jsonl` |
+| `hook_settle` | the Stop audit's settlement half (`hook.py` 728-946, unit hook-2b): `_settle_stop_turn`, `_record_stop_rows`, `_count_stop_reviews`, `_settle_stop_interrupted`, as `Settlement`, the `StopSettle` over any `StopSide` | `hook_settle.jsonl` |
 | `fsutil` | units 1 and 2 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads; `flock_excl` (`lock_path`, a guard held until dropped) and its Windows branch `_flock_windows` over an `Msvcrt` trait, with `FLOCK_TIMEOUT_SECONDS` and the process-wide `_FLOCK_WARNED` | `fsutil.jsonl`, `fsutil_python.jsonl`, `fsutil_flock.jsonl`, `fsutil_flock_python.jsonl`, `fsutil_flock_platform.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`); unit 4, `gitobjects::files::reader`: `ObjectReader`'s `has`, `has_many`, `name_length`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `_raw`, `_places`, `_object`, `_take_loose`, `_loose`, `_packed` | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl`, `gitobjects_reader.jsonl`, `gitobjects_reader_zlib.jsonl`, `gitobjects_reader_posix.jsonl` |
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
@@ -15370,7 +15371,7 @@ the sequence.
 | `_stop_probe` | 653-685 | built, inside `audit_turn` |
 | `_stop_recorder` | 688-704 | built, inside `audit_turn` |
 | `_is_repeat_audit` | 707-725 | built: `is_repeat_audit` |
-| `_settle_stop_turn`, `_record_stop_rows`, `_count_stop_reviews`, `_settle_stop_interrupted` | 728-946 | unit hook-2b (lane hookstopb), through `StopSettle` |
+| `_settle_stop_turn`, `_record_stop_rows`, `_count_stop_reviews`, `_settle_stop_interrupted` | 728-946 | built (unit hook-2b): `hook_settle::Settlement`, the `StopSettle` |
 | `audit_transcript`, `is_synthetic_prompt`, `human_prompt`, `_origin_for`, `run_prompt_recall` | 230-316, 949-981 | unit hook-2c |
 | an implementation of `StopSide` | | unit hook-2w |
 
@@ -15423,6 +15424,66 @@ defaults and orders a plausible port gets wrong; `hook_stop_robustness`
 runs a window of 100,000 events and a prompt of a megabyte, and holds
 time to linear growth. No pattern is matched. Nothing in the unit
 depends on the platform.
+
+## The Stop audit's settlement half (`hook.py` 728-946, unit hook-2b)
+
+`hook_settle` holds `Settlement`, the `StopSettle` that
+`hook_stop::audit_turn` runs over any `StopSide`, and one function per
+step. Every call it makes outside `hook.py` is a method `hook_stop_side`
+already declared, so the trait is unchanged and no extension trait is
+needed. The line ranges were read against `hook.py` as it is at
+13b3e3d0.
+
+| Function | Reference lines | Status |
+| --- | --- | --- |
+| `_settle_stop_turn` | 728-803 | built: `hook_settle::settle_stop_turn` |
+| `_record_stop_rows` | 806-860 | built: `record_stop_rows` |
+| `_count_stop_reviews` | 863-901 | built: `count_stop_reviews` |
+| `_settle_stop_interrupted` | 904-946 | built: `settle_stop_interrupted` |
+
+What the steps keep from the reference:
+
+- `joined_sessions` is called on every turn, before the test for a
+  prompt, so a turn that settles nothing still asks for it.
+- A turn settles only when the owner prompt is not None (an empty prompt
+  settles) and the reply is truthy (an empty reply does not; a reply of
+  one space does). `settle_shown` is handed the attributions' ids as
+  `exclude`, and the count is the two lists' lengths added, duplicates
+  and all.
+- `turn_audited`'s fields are built, then recorded; `search_miss` follows
+  for a miss that is not a repeat. `recall.RULE` is read once, before
+  both. `assistant_present` is `assistant_response is not None`.
+- The review window opens at the previous audit when there is one, even
+  one later than `now`, and the segment is not asked for. Otherwise it
+  opens at `now` less `REAUDIT_DEDUP_WINDOW_SECONDS` (3600), raised to the
+  segment's `started_at` only when that lies strictly between the two
+  (`since < first_seen < now`). The segment's key is `harness or
+  "claude-code"`; `review_unanswered` is handed `harness` as given.
+- When `harness_joined_sessions` answers an empty set the sessions are
+  `{server_session}` (an empty server session included), or none when
+  the server session is None.
+- `_settle_stop_interrupted` turns an `Exception` into one warning,
+  `interrupted turns not settled at the Stop: <class>: <text>`, the text
+  being `str(exc)` (empty for an exception with no arguments), and
+  answers None; a `BaseException` that is not an `Exception` propagates
+  (`StopSide::is_exception`). An error of the other three steps
+  propagates.
+
+Fixtures: `gen_hook_settle` replaces every name the four steps resolve
+with a recording fake (each object a label, a time a whole number of
+seconds) and records the ordered log of calls and the answer for 49
+cases: each branch above, the window's bounds (segment start at the
+window's opening, one past it, `now` less one, `now`, past `now`), the
+harness and server session fallbacks, a raise at each call, and the
+interrupted walk raising an `Exception` (with a text, none, and one that
+holds `%s`, and one with two arguments) and a `BaseException`. No row depends on the Python release
+or the platform. `golden_hook_settle` runs the same fakes in Rust
+(`tests/common/hook_settle.rs`); `hook_settle_kills` holds the strict
+bounds, the fallbacks and the warning's spelling; `hook_settle_robustness`
+runs 100,000 events, a megabyte reply, `i64::MAX` as the settled count
+and `i64::MIN` as the segment start (the clock reaches the unit only
+through `StopSide`), and holds time to linear growth. No pattern is
+matched. Left for later units: an implementation of `StopSide` (hook-2w).
 
 ## Git objects read from a repository's files (`gitobjects.py`)
 
@@ -21349,7 +21410,8 @@ What the reference has and this build does not, by area:
   the bundle are built, `tool_handlers`; the nine forwarders and the
   `DESC_*` re-exports are handlers-2b's), the hooks past the pure leaves of `hook.py`
   (hook-1a, in `hook.rs`) and the Stop audit's front half (hook-2a, a
-  sequence over `StopSide` in `hook_stop.rs`), and the command line. Of
+  sequence over `StopSide` in `hook_stop.rs`) and its settlement half
+  (hook-2b, in `hook_settle.rs`), and the command line. Of
   the hook mains' argument parsing, the flat parser (argparse-1a) and
   the subparsers (argparse-1b) are built; the help formatter
   (argparse-2) is not. Of the command line, the process entry's

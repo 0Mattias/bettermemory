@@ -227,6 +227,9 @@
 //!   `_is_repeat_audit`, unit hook-2a) as a sequence over
 //!   [`hook_stop_side::StopSide`], the calls into modules not yet ported,
 //!   with the settlement steps behind `hook_stop::StopSettle`;
+//! - [`hook_settle`]: the Stop audit's settlement half (unit hook-2b):
+//!   `_settle_stop_turn`, `_record_stop_rows`, `_count_stop_reviews` and
+//!   `_settle_stop_interrupted`, as `hook_settle::Settlement`;
 //! - [`location_witness`]: the witness exchange's history half: the
 //!   question raised (`NeedWitnesses`), the readers over the client's
 //!   answers, git's reading of tied witnesses and the keeping of one
@@ -355,6 +358,7 @@ pub mod health_summary;
 pub mod history;
 pub mod history_rows;
 pub mod hook;
+pub mod hook_settle;
 pub mod hook_stop;
 pub mod hook_stop_side;
 pub mod identity;
