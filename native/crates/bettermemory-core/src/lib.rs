@@ -160,7 +160,9 @@
 //!   another machine's view over carriers given, and the predicates over
 //!   a checkout's question rows and log rows), and its heal half in
 //!   `membership::shared_heal` (`_carriers`, `_restamped`, `_healed`,
-//!   `_chosen`, `retired_into`, `_folded` over the `MembershipLog` trait);
+//!   `_chosen`, `retired_into`, `_folded` over the `MembershipLog` trait)
+//!   and its asking half in `membership::shared_ask` (`_ask_which`,
+//!   `_retire_into`, `_asked_at`, `_asked_here`, `_unseen`, `_asked_plan`);
 //! - [`membership_rows`]: the membership table rows read into records and
 //!   written back, the object-key and stamp codecs, `_jsonable`,
 //!   `_signature`, `_unwritten` and `_Tally`;

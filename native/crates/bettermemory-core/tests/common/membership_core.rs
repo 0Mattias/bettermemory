@@ -72,6 +72,7 @@ fn kind_table(kind: &[u32]) -> (&'static str, &'static [&'static str]) {
         "checkout_view" => ("checkout_views", &["checkout", "machine", "path"]),
         "machine" => ("machines", &["id"]),
         "proposal" => ("proposals", &["id"]),
+        "home" => ("homes", &["record_id"]),
         other => panic!("no table for {other}"),
     }
 }

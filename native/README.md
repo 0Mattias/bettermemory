@@ -111,7 +111,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
 | `store::docfreq` | the document frequency memo of `store_index.py`: `_memoised_document_frequencies`, `_current_inputs`, `_patched_masks`, `_admitted_mask`, `_keep_doc_freqs`, `_row_mask`, `_DocFreqInputs` and the grouping of `Store._read_doc_freq_inputs`, the memoised half of `Store.ranking_statistics`; the store's side is the trait `DocFreqSource` | `store_docfreq.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token`; unit 4 in `identity`: `_strings`, `_flag`, `_FULL_SHA`, `PortableIdentity` (`to_json`, `from_json`, `digest`), `ImportedProject` and the bounds and import words, and in `outcomes`: `Declaration`, `Declared`, `Why`, `UnresolvedProject`, `Health`, `EpisodeRef`, `Handoff`, `RecallAdmission` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl`, `membership_records_identity.jsonl`, `membership_records_identity_python.jsonl` |
-| `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks`; unit 2a in `membership::shared_heal`: `_carriers`, `_restamped`, `_healed`, `_chosen`, `retired_into`, `_folded`, and the `MembershipLog` trait | `membership_shared.jsonl`, `membership_shared_python.jsonl`, `membership_shared_heal.jsonl` |
+| `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks`; unit 2a in `membership::shared_heal`: `_carriers`, `_restamped`, `_healed`, `_chosen`, `retired_into`, `_folded`, and the `MembershipLog` trait; unit 2b in `membership::shared_ask`: `_ask_which`, `_retire_into`, `_asked_at`, `_asked_here`, `_unseen`, `_asked_plan` | `membership_shared.jsonl`, `membership_shared_python.jsonl`, `membership_shared_heal.jsonl`, `membership_shared_ask.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
 | `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal`; unit mqueries of `membership_queries.py` in `queries`: `home`, `homes`, `_home_from`, `admit_recall`, `restated`, `_written_afresh`, `_restatement`, `filed_elsewhere`, the trait `ScopeReader`; unit membership-4a: `_touch_view`, `_checkout_name`, `_give_token`, `token_written`, `_foreign`; unit mlegacy in `legacy`: `pending`, `settle_legacy_questions`, `below_root`, `_declared_below`, `_record_counts`, `_records_by_project`, and `first_output` of `membership_queries.py`; rung 2 of `membership_resolve.py` in `rung`: `_token_now`, `_token_read`, `_by_object`, `_rung_two` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl`, `membership_queries.jsonl`, `membership_touch.jsonl`, `membership_legacy.jsonl`, `membership_rung.jsonl` |
 | `declare` | `declare.py` whole: `declaring_model` and its inner `write_token`, with the re-mint, the machine row's write, the liveness and the clock as arguments | `declare.jsonl` |
@@ -4238,7 +4238,7 @@ the module is cut in two. `src/membership_shared.rs`.
 | `_restamped` | 372-393 | the store's checkout write | built (unit 2a) |
 | `_healed`, `_chosen` | 396-463 | the store's rows and log | built (unit 2a) |
 | `retired_into`, `_folded` | 784-825 | the store's log | built (unit 2a) |
-| `_ask_which`, `_retire_into`, `_asked_at`, `_asked_here`, `_unseen`, `_asked_plan` | 545-778 | the store, the clock | membership_shared-2b |
+| `_ask_which`, `_retire_into`, `_asked_at`, `_asked_here`, `_unseen`, `_asked_plan` | 545-776 | the store, the clock, the liveness | built (unit 2b) |
 
 What unit 1 reproduces, and how:
 
@@ -4362,6 +4362,74 @@ never empty) and reading a ValueError payload as `Some(None)` (None is
 not a dict, so the row is passed over either way). Left for
 membership_shared-2b: `_ask_which`, `_retire_into` and the asking
 functions.
+
+Unit 2b, the asking half (`src/membership/shared_ask.rs`), adds methods
+of `Membership` and reproduces:
+
+- **`_ask_which`** opens the `duplicate_checkout` question on `later`
+  through `_open_proposal` (no `distinct`, no signature): candidates the
+  first record's project then `later`'s, merges followed, the evidence
+  `{"first": first.id}`, and the line `line_restated` builds from both
+  projects' names. A project the store does not hold is KeyError before
+  anything is read for the question; an open question of the kind on
+  `later` is kept as it is.
+- **`_retire_into`** is bound on `MembershipLog`, as it reads
+  `retired_into` first: a record retired into another writes nothing.
+  Then each home of `idle` is put again with `checkout` set to `kept`
+  and `rule` to `str(rule) + "|" + by` (the dict's keys in place; a home
+  without `rule` is KeyError), each view of `idle` on its machine at a
+  path `kept` has there (`_norm`) is deleted, keyed by checkout, machine
+  and path, and each open question is placed by `_asked_at`. The map of
+  what each checkout asks is keyed by that checkout and filled once from
+  its open questions, the first time a question goes there; a question
+  asked there already is closed as `settled:<where>`, `kept` standing in
+  for an empty id, as `where or kept.id` does. Last `idle` is put
+  retired and `checkout_retired` recorded.
+- **`_asked_at`** answers None outside `_SUBJECT`'s kinds, `kept` where
+  its project is among the candidates, else the first checkout of the
+  candidates' projects (sorted, `idle` left out) by this machine first,
+  then id, that `_unseen` does not hold, read lazily in that order, and
+  `idle` where none.
+- **`_unseen`**: retired; this machine's with no live view
+  (`live_view`); another machine's where the newest of its views'
+  `last_seen` that `parse_event_ts` reads is strictly older than
+  `now - RETIRE_AFTER`, False where none parses (the clock is then not
+  read). `RETIRE_AFTER` (`membership_records.py` 144, 180 days) is a
+  private constant of the file, pinned by a test. A naive clock is
+  TypeError and a clock within 180 days of the year 1 OverflowError, as
+  the subtraction and comparison raise.
+- **`_asked_here`** reads the open questions of `_SUBJECT`'s kinds and
+  each through `proposal_from` as it is reached (a refusal stops the walk
+  after what was written before it), passes over those on `k` or not
+  naming `k`'s project, reads the checkout a question is on (KeyError,
+  from any depth of the read, standing for a gone one), passes over one
+  `_unseen` does not hold, and fills what `k` asks once, at the first
+  question moved.
+- **`_asked_plan`** answers the checkouts holding such questions naming
+  one of `projects`, then for a heal this machine's checkouts of the
+  projects `settled`'s questions offer where `k` is in none, filtered to
+  this machine, not retired, and neither `k` nor `settled`. The heal's
+  checkouts come from `_checkouts_by_project`, whose dict follows a set
+  of project ids (the string hash) in the reference; the port takes them
+  by project id, an order the reference can produce. The fixture gives
+  each heal one such project, so its order is the reference's on every
+  run.
+
+`_asks` cannot meet an evidence that is not a dict here: `proposal_from`
+refuses one first (TypeError from `dict()`). No regular expression is
+read. The fixture (`tests/contract/gen_membership_shared_ask.py`,
+`membership_shared_ask.jsonl`, not gated) runs each function over the
+real `Membership` on unit 2a's recording store, which also puts
+questions and homes, with a fixed clock and a liveness that answers
+`live` for the case's paths; arguments are read by id before the
+function runs, and each case pins the answer and every store call in
+order. Shared tables are the header's `world`, a case naming only the
+tables it replaces (`x`). Tests: `golden_membership_shared_ask` (every
+case, answer and calls) and `membership_shared_ask_kills` (5: the 180
+days, the strict bound, the newest sighting, a second retirement, the
+ranking by machine). No robustness file: every input is a store row the
+earlier units' robustness files already cover, and each function's work
+is linear in the rows read.
 
 ## The membership table rows (`membership_rows.py`)
 
