@@ -1,0 +1,345 @@
+{"cases":344,"fixture":"owner_prompt"}
+{"f":"tb","in":"null","r":null}
+{"f":"tb","in":"\"text\"","r":null}
+{"f":"tb","in":"{\"type\": \"text\", \"text\": \"x\"}","r":null}
+{"f":"tb","in":"7","r":null}
+{"f":"tb","in":"[]","r":null}
+{"f":"tb","in":"[{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"text\", \"text\": \"b\"}]","r":"a\nb"}
+{"f":"tb","in":"[{\"type\": \"text\", \"text\": \"\"}, {\"type\": \"text\", \"text\": \"b\"}]","r":"b"}
+{"f":"tb","in":"[{\"type\": \"text\", \"text\": 5}, {\"type\": \"text\"}, {\"type\": \"text\", \"text\": null}]","r":null}
+{"f":"tb","in":"[{\"type\": \"thinking\", \"text\": \"t\"}, {\"type\": \"TEXT\", \"text\": \"u\"}]","r":null}
+{"f":"tb","in":"[\"text\", 3, null, [{\"type\": \"text\", \"text\": \"n\"}]]","r":null}
+{"f":"tb","in":"[{\"type\": \"text\", \"text\": \"\\n\"}, {\"type\": \"text\", \"text\": \" \"}]","r":"\n\n "}
+{"f":"tb","in":"[{\"type\": \"text\", \"text\": \"a\", \"type \": \"x\"}, {\"text\": \"b\"}]","r":"a"}
+{"f":"tb","in":"[{\"type\": \"text\", \"text\": \"\\ud800\"}]","r_cps":[55296]}
+{"f":"tb","in":"[{\"type\": \"tool_result\", \"text\": \"r\"}, {\"type\": \"text\", \"text\": \"s\"}]","r":"s"}
+{"f":"sub","in":"{}","r":false}
+{"f":"sub","in":"{\"type\": \"user\"}","r":false}
+{"f":"sub","in":"{\"type\": \"assistant\", \"message\": {\"content\": \"x\"}}","r":false}
+{"f":"sub","in":"{\"type\": \"USER\", \"message\": {\"content\": \"x\"}}","r":false}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": \"x\"}","r":false}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": [\"content\"]}","r":false}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": null}","r":false}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {}}","r":false}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hello\"}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"\"}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"   \"}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": 7}}","r":false}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": {\"type\": \"text\", \"text\": \"x\"}}}","r":false}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": null}}","r":false}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": []}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": [\"x\", 1]}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"image\"}]}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"tool_result\", \"content\": \"r\"}]}}","r":false}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"tool_result\"}]}}","r":false}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": [\"tool_result\", {\"type\": \"Tool_result\"}, {\"type\": \"text\", \"text\": \"q\"}]}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"\"}]}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"<system-reminder>x</system-reminder>\"}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"  <command-name>/x</command-name>\"}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"[Request interrupted by user]\"}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"ask <task-notification>\"}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": true}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": 0}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": \"\"}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": []}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": {}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": \"no\"}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": 0.0}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": null}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isCompactSummary\": true}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isCompactSummary\": false}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isSidechain\": true}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isSidechain\": false}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"agentId\": \"a1\"}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"agentId\": \"\"}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"agentId\": 0}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"human\"}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": null}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"peer\"}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"Human\"}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"\"}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": 0}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": false}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": [\"human\"]}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": {\"human\": 1}}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"text\", \"text\": \"b\"}]}, \"turnOrigin\": \"human\"}","r":true}
+{"f":"sub","in":"{\"type\": \"user\", \"message\": {\"content\": \"\\ud83d\"}}","r":true}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"next\"}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"  \"}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"\\u3000\\u0085\"}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"\"}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": 5}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\"}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \" p \", \"isMeta\": true}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": 0}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": \"\"}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": []}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": [0]}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"isSidechain\": true}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"agentId\": \"x\"}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"agentId\": \"\"}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"isMeta\": true}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"Queued_command\", \"prompt\": \"p\"}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"other\", \"prompt\": \"p\"}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": \"queued_command\"}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": [\"queued_command\"]}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": null}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\"}","r":false}
+{"f":"sub","in":"{\"type\": \"user\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}}","r":false}
+{"f":"sub","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"<task-notification>x\"}}","r":false}
+{"f":"st","in":"{}","r":null}
+{"f":"st","in":"{\"type\": \"user\"}","r":null}
+{"f":"st","in":"{\"type\": \"assistant\", \"message\": {\"content\": \"x\"}}","r":null}
+{"f":"st","in":"{\"type\": \"USER\", \"message\": {\"content\": \"x\"}}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": \"x\"}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": [\"content\"]}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": null}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {}}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hello\"}}","r":"hello"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"\"}}","r":""}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"   \"}}","r":"   "}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": 7}}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": {\"type\": \"text\", \"text\": \"x\"}}}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": null}}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": []}}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": [\"x\", 1]}}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"image\"}]}}","r":"a"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"tool_result\", \"content\": \"r\"}]}}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"tool_result\"}]}}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": [\"tool_result\", {\"type\": \"Tool_result\"}, {\"type\": \"text\", \"text\": \"q\"}]}}","r":"q"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"\"}]}}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"<system-reminder>x</system-reminder>\"}}","r":"<system-reminder>x</system-reminder>"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"  <command-name>/x</command-name>\"}}","r":"  <command-name>/x</command-name>"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"[Request interrupted by user]\"}}","r":"[Request interrupted by user]"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"ask <task-notification>\"}}","r":"ask <task-notification>"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": true}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": 0}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": \"\"}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": []}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": {}}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": \"no\"}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": 0.0}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": null}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isCompactSummary\": true}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isCompactSummary\": false}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isSidechain\": true}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isSidechain\": false}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"agentId\": \"a1\"}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"agentId\": \"\"}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"agentId\": 0}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"human\"}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": null}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"peer\"}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"Human\"}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"\"}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": 0}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": false}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": [\"human\"]}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": {\"human\": 1}}","r":"hi"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"text\", \"text\": \"b\"}]}, \"turnOrigin\": \"human\"}","r":"a\nb"}
+{"f":"st","in":"{\"type\": \"user\", \"message\": {\"content\": \"\\ud83d\"}}","r_cps":[55357]}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"next\"}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"  \"}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"\\u3000\\u0085\"}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"\"}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": 5}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\"}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \" p \", \"isMeta\": true}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": 0}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": \"\"}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": []}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": [0]}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"isSidechain\": true}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"agentId\": \"x\"}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"agentId\": \"\"}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"isMeta\": true}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"Queued_command\", \"prompt\": \"p\"}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"other\", \"prompt\": \"p\"}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": \"queued_command\"}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": [\"queued_command\"]}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": null}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\"}","r":null}
+{"f":"st","in":"{\"type\": \"user\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}}","r":null}
+{"f":"st","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"<task-notification>x\"}}","r":null}
+{"f":"qt","in":"{}","r":null}
+{"f":"qt","in":"{\"type\": \"user\"}","r":null}
+{"f":"qt","in":"{\"type\": \"assistant\", \"message\": {\"content\": \"x\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"USER\", \"message\": {\"content\": \"x\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": \"x\"}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": [\"content\"]}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": null}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hello\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"   \"}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": 7}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": {\"type\": \"text\", \"text\": \"x\"}}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": null}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": []}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": [\"x\", 1]}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"image\"}]}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"tool_result\", \"content\": \"r\"}]}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"tool_result\"}]}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": [\"tool_result\", {\"type\": \"Tool_result\"}, {\"type\": \"text\", \"text\": \"q\"}]}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"\"}]}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"<system-reminder>x</system-reminder>\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"  <command-name>/x</command-name>\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"[Request interrupted by user]\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"ask <task-notification>\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": true}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": 0}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": \"\"}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": []}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": {}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": \"no\"}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": 0.0}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": null}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isCompactSummary\": true}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isCompactSummary\": false}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isSidechain\": true}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isSidechain\": false}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"agentId\": \"a1\"}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"agentId\": \"\"}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"agentId\": 0}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"human\"}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": null}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"peer\"}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"Human\"}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"\"}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": 0}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": false}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": [\"human\"]}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": {\"human\": 1}}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"text\", \"text\": \"b\"}]}, \"turnOrigin\": \"human\"}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"message\": {\"content\": \"\\ud83d\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"next\"}}","r":"next"}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"  \"}}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"\\u3000\\u0085\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": 5}}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \" p \", \"isMeta\": true}}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": 0}}","r":"p"}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": \"\"}}","r":"p"}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": []}}","r":"p"}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": [0]}}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"isSidechain\": true}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"agentId\": \"x\"}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"agentId\": \"\"}","r":"p"}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"isMeta\": true}","r":"p"}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"Queued_command\", \"prompt\": \"p\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"other\", \"prompt\": \"p\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": \"queued_command\"}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": [\"queued_command\"]}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": null}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\"}","r":null}
+{"f":"qt","in":"{\"type\": \"user\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}}","r":null}
+{"f":"qt","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"<task-notification>x\"}}","r":"<task-notification>x"}
+{"f":"op","in":"{}","r":null}
+{"f":"op","in":"{\"type\": \"user\"}","r":null}
+{"f":"op","in":"{\"type\": \"assistant\", \"message\": {\"content\": \"x\"}}","r":null}
+{"f":"op","in":"{\"type\": \"USER\", \"message\": {\"content\": \"x\"}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": \"x\"}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": [\"content\"]}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": null}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hello\"}}","r":"hello"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"\"}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"   \"}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": 7}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": {\"type\": \"text\", \"text\": \"x\"}}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": null}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": []}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": [\"x\", 1]}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"image\"}]}}","r":"a"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"tool_result\", \"content\": \"r\"}]}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"tool_result\"}]}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": [\"tool_result\", {\"type\": \"Tool_result\"}, {\"type\": \"text\", \"text\": \"q\"}]}}","r":"q"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"\"}]}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"<system-reminder>x</system-reminder>\"}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"  <command-name>/x</command-name>\"}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"[Request interrupted by user]\"}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"ask <task-notification>\"}}","r":"ask <task-notification>"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": true}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": 0}","r":"hi"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": \"\"}","r":"hi"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": []}","r":"hi"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": {}}","r":"hi"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": \"no\"}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": 0.0}","r":"hi"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isMeta\": null}","r":"hi"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isCompactSummary\": true}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isCompactSummary\": false}","r":"hi"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isSidechain\": true}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"isSidechain\": false}","r":"hi"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"agentId\": \"a1\"}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"agentId\": \"\"}","r":"hi"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"agentId\": 0}","r":"hi"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"human\"}","r":"hi"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": null}","r":"hi"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"peer\"}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"Human\"}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": \"\"}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": 0}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": false}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": [\"human\"]}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"hi\"}, \"turnOrigin\": {\"human\": 1}}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"a\"}, {\"type\": \"text\", \"text\": \"b\"}]}, \"turnOrigin\": \"human\"}","r":"a\nb"}
+{"f":"op","in":"{\"type\": \"user\", \"message\": {\"content\": \"\\ud83d\"}}","r_cps":[55357]}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"next\"}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"  \"}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"\\u3000\\u0085\"}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"\"}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": 5}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\"}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \" p \", \"isMeta\": true}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": 0}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": \"\"}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": []}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\", \"isMeta\": [0]}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"isSidechain\": true}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"agentId\": \"x\"}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"agentId\": \"\"}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}, \"isMeta\": true}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"Queued_command\", \"prompt\": \"p\"}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"other\", \"prompt\": \"p\"}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": \"queued_command\"}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": [\"queued_command\"]}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": null}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\"}","r":null}
+{"f":"op","in":"{\"type\": \"user\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"p\"}}","r":null}
+{"f":"op","in":"{\"type\": \"attachment\", \"attachment\": {\"type\": \"queued_command\", \"prompt\": \"<task-notification>x\"}}","r":null}
+{"f":"ot","in":"","r":null}
+{"f":"ot","in":" ","r":null}
+{"f":"ot","in":"\t\n\u000b\f\r\u001c\u001d\u001e\u001f\u0085\u00a0\u1680\u2000\u2028\u3000","r":null}
+{"f":"ot","in":"\u200b","r":"\u200b"}
+{"f":"ot","in":"hello","r":"hello"}
+{"f":"ot","in":"  hello  ","r":"  hello  "}
+{"f":"ot","in":"hello <system-reminder>","r":"hello <system-reminder>"}
+{"f":"ot","in":"<system-reminder>x</system-reminder>","r":null}
+{"f":"ot","in":"<system-reminderx","r":null}
+{"f":"ot","in":"<System-reminder>x","r":"<System-reminder>x"}
+{"f":"ot","in":" \n<pasted_content>","r":null}
+{"f":"ot","in":"<artifact-view-context","r":null}
+{"f":"ot","in":"<artifact-view-contex","r":"<artifact-view-contex"}
+{"f":"ot","in":"\u3000<task-notification>","r":null}
+{"f":"ot","in":"<task-notification","r":"<task-notification"}
+{"f":"ot","in":"<command-name>","r":null}
+{"f":"ot","in":"<command-message>","r":null}
+{"f":"ot","in":"<local-command-stdout>","r":null}
+{"f":"ot","in":"<local-command-caveat>","r":null}
+{"f":"ot","in":"<agent-messages","r":null}
+{"f":"ot","in":"<cross-session-message from","r":null}
+{"f":"ot","in":"<cross-session-message>","r":null}
+{"f":"ot","in":"<side-sessions-event","r":null}
+{"f":"ot","in":"<scheduled-task>","r":null}
+{"f":"ot","in":"<scheduled-task id=1>","r":null}
+{"f":"ot","in":"Another Claude session sent a message: hi","r":null}
+{"f":"ot","in":"another Claude session sent a message","r":"another Claude session sent a message"}
+{"f":"ot","in":"[Request interrupted by user]","r":null}
+{"f":"ot","in":"[Request interrupted by user for tool use]","r":null}
+{"f":"ot","in":"[Request interrupte","r":"[Request interrupte"}
+{"f":"ot","in":"\u0085[Request interrupted","r":null}
+{"f":"ot","in":"\u200b<command-name>","r":"\u200b<command-name>"}
+{"f":"ot","in":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","r":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+{"f":"ot","in_cps":[55296,32,116,97,105,108],"r_cps":[55296,32,116,97,105,108]}

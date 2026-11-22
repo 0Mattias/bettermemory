@@ -36,6 +36,10 @@
 //! - [`transcript`]: a transcript read from its end, its first unit
 //!   (`ReverseLines`, `_row`, `_prompt_id`, `stop_turn`), with the file
 //!   and `owner_prompt.py` as traits;
+//! - [`owner_prompt`]: `owner_prompt.py` but `probe_text`, which callers
+//!   supply until the regular-expression engine reads its patterns;
+//! - [`policy`]: `policy.py` whole: the `[policy]` refusal of a write
+//!   tool's override flags and its audit row;
 //! - [`origin_history`]: how `origin` reads a repository's history: the
 //!   leaves and the memo of author dates, and (`origin_history::located`)
 //!   the repository's key, the history guard and the shallow cuts
@@ -398,7 +402,9 @@ pub mod origin_gitfiles;
 pub mod origin_history;
 pub mod origin_model;
 pub mod origin_remote;
+pub mod owner_prompt;
 pub mod path_drift_steps;
+pub mod policy;
 pub mod printable;
 pub mod project_file;
 pub mod project_walk;

@@ -43,6 +43,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl` |
 | `path_drift_steps` | `path_drift_steps.py`: `_check_body_candidates`, its checks and keys as closures | `path_drift_steps.jsonl` |
+| `policy` | `policy.py` whole: `REFUSAL_STATUS`, `_FORCE_KEY`, `_ACKNOWLEDGE_KEY`, `_label`, `PolicyRefusal` (with `event_fields`), `_message`, `check_overrides` | `policy.jsonl` |
 | `attestation_paths` | `attestation_paths.py` whole: `LiteralPaths`/`ReferencePaths` (`Paths` and its `Kind`), `path_mode`, `interpret_path`, `_may_be_literal`, `joined_path`, `_REFERENCE_ROOT`, `absolute_spelling`, `literal_path`, `reference_path`, `placeholder_spelling`, `target_path`, `record_paths`, `commit_paths`, `compile_targets`, `unverifiable_inputs`, with `ntpath.splitdrive` and both `commonpath`s; the host (`os.name`, `expanduser`, `lstat`, `ntpath.normcase` on Windows) a trait | `attestation_paths.jsonl`, `attestation_paths_posix.jsonl` |
 | `project_file` | units 1 and 2 of `project_file.py`: the constants, `ErrorReason`, `ProjectFile`, `ProjectFileError` (`directory`, `line`), `Found`, `Above`, `mint_id`, `render`, `_ID_RE` (`id_text`), `_bad_name`, `_bad_char`, `_toml_string`; `parse`, `_absolute`, `_evicted`, `_parse_stat`, `_read_bounded`, `_from_table`, `_os_text` | `project_file.jsonl`, `project_file_parse.jsonl`, `project_file_parse_python.jsonl`, `project_file_parse_posix.jsonl` |
 | `project_walk` | unit 3 of `project_file.py`: `Walk` and its properties, `above_start`, `find`, `_walk`, `_look`, `write` (`WriteEffects`), with `path_eq` and `is_relative_to` | `project_walk.jsonl` |
@@ -86,6 +87,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `repository_history` | `location_git.py`'s `RepositoryHistory` (`_batch_check`, `_askable`, `_expand`, `expand`, `holds`, `holds_objects`, `_commit_body`, `fingerprint`, `parents`, `committed`, `reachable_among`, `independent`, `blobs`) and its git fallback `_git`; the object reader is the `Objects` trait, git the `GitRun` trait | `repository_history.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
+| `owner_prompt` | `owner_prompt.py` but `_ENVELOPES` and `probe_text`: the constants, `owner_text`, `text_blocks`, `is_submitted`, `submitted_text`, `_subagents`, `queued_text`, `owner_prompt`, with `probe_text` an argument; `Reference` implements `transcript::OwnerPrompt` | `owner_prompt.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `origin_gitfiles` | units 1 to 3 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`), the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) and the config facts (`facts`: `_facts_of`, `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies`, `_config_entries`, `_config_variable_names`, `_hold_directory`, `directories_held`, `_global_attributes_path`) and unit 4 (`root`: `_CONFIG_LIMIT`, `_config_facts` and its memo, `_worktree_config_facts`, `_config_moves_worktree`, `refused_worktree_root`, `first_not_a_directory`) | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl`, `origin_gitfiles_facts.jsonl`, `origin_gitfiles_facts_posix.jsonl`, `origin_gitfiles_root_posix.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs`; unit githead-1, `githead::discovery`: `stamp`, `find_gitdir`, `gitdir_at`, `locate`, `probed`, `across_filesystems`, `discovery_moved`, `_entry_above`, `_located` and their helpers over `fsdata::Fs`, membership's `Rule`, an `Env` and the owners (`Owners`); unit githead-2, `githead::signature`: `entry_above`, `_stops_at`, `_would_be_git_directory`, `_Undetermined`, `_ref_stamps`, `signature`, and `CtxRefs`, a `RefFs` over a `gitdir::Ctx` | `githead.jsonl`, `githead_posix.jsonl`, `githead_discovery.jsonl`, `githead_signature.jsonl` |
@@ -6711,6 +6713,9 @@ that Unicode too.
 | `golden_origin_remote`: `origin_remote_unicode_every_case` | `origin_remote_unicode.jsonl` | ii (Unicode) |
 | `golden_origin_remote`: `origin_remote_python_every_case` | `origin_remote_python.jsonl` | ii (Python, Unicode) |
 | `origin_remote_kills` (6), `origin_remote_robustness` (3) | none | i |
+| `golden_owner_prompt`: `owner_prompt_every_case` | `owner_prompt.jsonl` | i |
+| `golden_policy`: `policy_every_case`, `policy_sweep_digest` | `policy.jsonl` | i |
+| `owner_prompt_policy_kills` (12), `owner_prompt_policy_robustness` (4) | none | i |
 | `golden_gitconfig_remote_rules`: `gitconfig_remote_rules_every_case` | `gitconfig_remote_rules.jsonl` | i |
 | `gitconfig_remote_rules_robustness` (2) | none | i |
 | `golden_origin_gitfiles`: `origin_gitfiles_leaves_every_case` | `origin_gitfiles_leaves.jsonl` | i |
@@ -21403,6 +21408,86 @@ lines nested 20,000 deep). Tests: `golden_transcript`,
 
 Left for transcript-1b: `InterruptedTurn`, `interrupted_turns`,
 `owner_words` and `compact_marker` (reference lines 259-450).
+
+## The owner's prompt and the override policy (`owner_prompt.py`, `policy.py`)
+
+Two leaves the handlers and the hooks read. Each fits in one unit.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `REFUSAL_STATUS`, `_FORCE_KEY`, `_ACKNOWLEDGE_KEY`, `_label` | policy.py 62-71 | nothing | built |
+| `PolicyRefusal`, `event_fields` | policy.py 74-106 | nothing | built |
+| `_message` | policy.py 109-146 | nothing | built |
+| `check_overrides` | policy.py 149-188 | the config | built |
+| `PROMPT_CUT_CHARS`, `ENVELOPE_TAGS`, `INTERRUPT_OPENING`, `HARNESS_OPENINGS`, `COMPOSED_OPENINGS`, `HUMAN_ORIGIN`, `QUEUED_COMMAND` | owner_prompt.py 47-96, 175 | nothing | built |
+| `_ENVELOPES`, `probe_text` | owner_prompt.py 98-114 | the regular-expression engine | waits for pyre-6 |
+| `owner_text` | owner_prompt.py 117-127 | `probe_text` as an argument | built |
+| `text_blocks`, `is_submitted`, `submitted_text` | owner_prompt.py 130-170 | nothing | built |
+| `_subagents`, `queued_text`, `owner_prompt` | owner_prompt.py 178-217 | `probe_text` as an argument (`owner_prompt`) | built |
+
+`policy` reproduces the refusal of a write tool's override flags.
+`check_overrides` reads `policy.forbid_force` and
+`policy.forbid_acknowledge` off the `Config` and asks `Config::is_managed`;
+`check_overrides_with` takes the two switches as values and the managed
+test as a closure, which is what the golden test drives (a duck-typed
+config). `acknowledge` is a closure answering `acknowledge.get(name,
+False)` as a truth value. The names are read in `ACKNOWLEDGE_NAMES` order,
+whatever order the call passed them in, and the check returns at once
+when both switches are at their default. The refusal is an error value
+(`PolicyRefusal`) whose `Display` is `str(refusal)`; at the handler
+boundary its class is `ValueError`. `managed` is held sorted, as
+`event_fields` spells the frozenset; `_message` asks membership only, so
+the order does not reach the text.
+
+`owner_prompt` reproduces the module but its envelope removal. Rows are
+`PyValue`s as `json.loads` gives them, and a row is a dict: the
+reference's `row.get` raises on anything else, and no caller hands one.
+`PyValue::get` answers None off a dict, which is the reference's
+`message.get("content") if isinstance(message, dict) else None`. The
+marks (`isMeta`, `isCompactSummary`, `isSidechain`, `agentId`, and an
+attachment's `isMeta`) are read through `machine::truthy`, so `"0"` is a
+mark and `0`, `""` and `[]` are not. `turnOrigin` is compared by Python
+equality against the str `"human"`: a null or absent origin is the
+owner's, and any other value (`false`, `0`, a list) is not. `strip` and
+`lstrip` are `str.isspace` (`unicode::is_space`), so U+0085 and U+3000
+are whitespace and U+200B is not; the openings are compared by code
+point, case and all.
+
+Decisions:
+
+- `probe_text` is the argument `probe: &dyn Fn(&[u32], bool) -> PyStr`
+  (text, `cut`) of `owner_text` and `owner_prompt`. Its patterns
+  (`<tag\b[^>]*?(?:/>|>.*?</tag\s*>)` under `DOTALL|IGNORECASE`, one per
+  envelope tag) are lazy choices, which rule 4 of the regular-expression
+  decision names as never written by hand ("the envelopes"); they wait
+  for pyre-6, and the unit that builds them passes `pyre::Regex::sub`
+  here. This unit ports no pattern, so it adds none to the engine's
+  inventory.
+- `COMPOSED_OPENINGS` is written out, the three envelope tags with `<`
+  first, as the reference's tuple concatenation gives; a kill test holds
+  each opening.
+- `Reference` implements `transcript::OwnerPrompt` over the functions,
+  with the probe it holds.
+
+Golden files: `policy.jsonl` (not gated: 16 hand cases over one flag and
+several, force present or not, `memory_write` against `memory_update`
+and another tool, managed and unmanaged keys, a flag passed false, a flag
+the policy does not name and a name outside `ACKNOWLEDGE_NAMES`; and a
+sweep of 4,096 combinations of tool, force, acknowledge subset, both
+switches and the managed keys, pinned as count and SHA-256) and
+`owner_prompt.jsonl` (not gated: `text_blocks` over contents that are not
+lists and blocks that are not dicts or carry no text; `is_submitted`,
+`submitted_text`, `queued_text` and `owner_prompt` over 74 rows: every
+mark, falsy marks `0`, `""` and `[]`, `turnOrigin` null, missing, of
+other types and other case, contents a dict or a number, queued prompts
+blank by Unicode whitespace; `owner_text` over each composed opening,
+leading whitespace and a tag after the first word, with `probe_text` the
+identity). Lone surrogates travel as code points (`text_field`). Tests:
+`golden_policy`, `golden_owner_prompt`, `owner_prompt_policy_kills`,
+`owner_prompt_policy_robustness`.
+
+Left for later: `_ENVELOPES` and `probe_text` (owner_prompt.py 98-114),
+after pyre-6.
 
 ## Not built yet
 
