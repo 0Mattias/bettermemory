@@ -38,6 +38,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `path_drift_steps` | `path_drift_steps.py`: `_check_body_candidates`, its checks and keys as closures | `path_drift_steps.jsonl` |
 | `attestation_paths` | `attestation_paths.py` whole: `LiteralPaths`/`ReferencePaths` (`Paths` and its `Kind`), `path_mode`, `interpret_path`, `_may_be_literal`, `joined_path`, `_REFERENCE_ROOT`, `absolute_spelling`, `literal_path`, `reference_path`, `placeholder_spelling`, `target_path`, `record_paths`, `commit_paths`, `compile_targets`, `unverifiable_inputs`, with `ntpath.splitdrive` and both `commonpath`s; the host (`os.name`, `expanduser`, `lstat`, `ntpath.normcase` on Windows) a trait | `attestation_paths.jsonl`, `attestation_paths_posix.jsonl` |
 | `project_file` | unit 1 of `project_file.py`: the constants, `ErrorReason`, `ProjectFile`, `ProjectFileError` (`directory`, `line`), `Found`, `Above`, `mint_id`, `render`, `_ID_RE` (`id_text`), `_bad_name`, `_bad_char`, `_toml_string` | `project_file.jsonl` |
+| `project_walk` | unit 3 of `project_file.py`: `Walk` and its properties, `above_start`, `find`, `_walk`, `_look`, `write` (`WriteEffects`), with `path_eq` and `is_relative_to` | `project_walk.jsonl` |
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store` | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_posix_python.jsonl`, `log_keyfiles_darwin.jsonl` |
 | `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record`; unit 3 (`machine::open`): `_write_record`, `open_machine`, `StdMachine` (`gethostuuid`, the `ioreg` spawn) | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_python.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl`, `machine_open.jsonl`, `machine_open_platform.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
@@ -524,14 +525,14 @@ and a mode-000 folder; `golden_attestation_paths_posix` runs `FsHost` over
 | function | reference lines | what it needs of the machine | status |
 | --- | --- | --- | --- |
 | constants, `ErrorReason`, `ProjectFile`, `ProjectFileError` (`directory`, `line`), `Found`, `Above` | 46-138 | nothing | built (unit 1) |
-| `Walk` | 140-233 | nothing | unit 3 |
+| `Walk` | 140-233 | nothing | built (unit 3, `project_walk.rs`) |
 | `mint_id` | 236-239 | random bytes (an argument) | built (unit 1) |
 | `parse` | 242-260 | `os.path.abspath` (a `Process`), `os.stat` | unit 2 |
-| `above_start`, `find` | 263-314 | the walk | unit 3 |
-| `write` | 317-361 | the file system's writes | unit 3 |
+| `above_start`, `find` | 263-314 | the walk | built (unit 3) |
+| `write` | 317-361 | the file system's writes (`WriteEffects`), random bytes | built (unit 3) |
 | `render` | 364-378 | nothing | built (unit 1) |
 | `_absolute` | 384-385 | `os.path.abspath` (`hostpath::text::abspath`) | unit 2 |
-| `_walk`, `_look` | 388-410 | `os.stat`, `path_missing` | unit 3 |
+| `_walk`, `_look` | 388-410 | `os.stat` (`Fs::stat`), `path_missing`, `Fs::strerror` | built (unit 3) |
 | `_evicted`, `_parse_stat` | 413-437 | `sys.platform == "darwin"` (an argument), `StatResult.flags` and `file_attributes` | unit 2 |
 | `_read_bounded` | 440-460 | `fsdata`'s non-blocking `open_result`, `fstat_result`, `read_once`, `close` | unit 2 |
 | `_from_table` | 463-499 | `toml::loads` | unit 2 |
@@ -575,6 +576,88 @@ paths with quotes, line breaks and an escape sequence, `render` with every
 C0 character, DEL and past ASCII and with a lone surrogate, `mint_id` over
 three byte strings, `_ID_RE.fullmatch` over ids one step from valid, and
 every code point `_bad_char` refuses.
+
+### Unit 3: the walk and `write` (`project_walk.rs`)
+
+`project_walk.rs` holds unit 3 apart from `project_file.rs`, so that it
+builds beside unit 2, which edits that file. It reads `ProjectFile`,
+`ProjectFileError`, `Found`, `Above`, `render`, `mint_id`, `bad_name` and
+`directory` from unit 1.
+
+- `Walk` keeps its flavour beside the reference's fields. `items`,
+  `files`, `errors`, `root`, `nested`, `folder`, `enclosing`, `nearest`,
+  `boundaries` and `placement` answer as the properties do; `placement`
+  of a file not on the walk is the ValueError `<path> is not on this
+  walk`.
+- Paths are kept as `Path` text (`pure_text`): under Windows a
+  drive-only UNC path (`\\srv\sh`, `\\?\UNC\srv\sh`) gains the root
+  separator `PureWindowsPath` writes and `ntpath.abspath` leaves off, so
+  a repository at a bare share keeps its file as the root.
+- Two paths are equal as `PurePath.__eq__` compares them (`path_eq`): the
+  text under POSIX, `str.lower` of it under Windows. A `ProjectFile` is
+  equal to another by its four fields with that path equality, as the
+  dataclass compares them.
+- `Path.parent` is unit 1's `directory`; `Path.is_relative_to` (3.13) is
+  lexical: equal, or equal to one of the parents (`is_relative_to`), so
+  `/r/ab` is not under `/r/a`. `directory / NAME` is `os.path.join`.
+- `above_start` and `find` follow the reference's order: the cwd made
+  absolute, the start, the check of a cached `above` (its message spells
+  a missing start `None`), the root made absolute, the inner walk (from
+  the root where the cwd is not under it), then the walk above unless a
+  cached `above` is given, which is used as it is and never read again.
+- `_walk` stops after the stop folder or the filesystem root.
+- `_look` stats with links followed (`Fs::stat`), as `os.stat` does; the
+  lane's plan named `lstat_result`, which would read a linked
+  `bettermemory.toml` as a link and differ from the reference. A missing
+  path (`probe::path_missing`) is no item; a ValueError of the stat (a
+  NUL) is raised, since `except OSError` does not catch it; any other
+  error is an `unreadable` item whose detail is `Fs::strerror`, and where
+  the file system has no text the port declines (`Fault::NotPorted`;
+  `str(exc)` is not reproduced). A path is encoded with `fsencode`
+  (UTF-8, `surrogateescape`); a lone surrogate it cannot carry is
+  `Fault::Encode`.
+- The parse is the caller's closure `look_file(path, &StatResult)`,
+  standing for unit 2's `_parse_stat`.
+- `_absolute` is `hostpath::text::abspath` over a `Process`; where
+  `os.getcwd()` raises, `Fault::Cwd`. Under the Windows flavour on a
+  Windows host `abspath` asks `nt._getfullpathname`, which the crate does
+  not port (ENG-124): the caller's `Process` answers it.
+- `write` checks the name, makes the folder absolute, asks `is_dir`,
+  mints the id from the given random bytes (a count other than 17 is
+  `Fault::NotPorted`), renders (a lone surrogate in the name is
+  `Fault::Encode`, before anything is written), then either
+  `atomic_write_bytes(path, body, mode=0o644)` (rebind) or the exclusive
+  create with mode 0o644, the write loop, `fsync_file` and the close. An
+  error of the create is raised with nothing removed. An error of a write
+  or of the close removes the file quietly and is raised; where both
+  fail, the close's error is raised, as an exception in a `finally`
+  replaces the one in flight. `fsync_dir` follows a written file. Its
+  effects are the trait `WriteEffects`; no implementation over the disk
+  is in the crate yet (the golden test holds one over `std::fs`).
+- The write loop slices by the count `os.write` answers and stops only
+  when nothing is left, as the reference's does: a write that answers 0
+  for a non-empty buffer loops for ever in both.
+
+**Fixtures.** `project_walk.jsonl` (POSIX only: links, a mode-000 folder,
+strerror texts, paths spelled by the host's `Path`): a `tree` row, then
+24 `find` rows over it (files at the cwd, between, at the root and above
+it, a boundary file, malformed files, a `bettermemory.toml` that is a
+folder, a linked, a dangling and a looping link, a cwd below a regular
+file, a mode-000 folder, a root not above the cwd, no repository, the
+root `/`, a cached `above` reused after a file above changed, and three
+mismatched caches), each with the reference's parse of every file it
+can stat (`pf`), and 12 `write` rows (written, `FileExistsError`,
+rebind, `ValueError` for control characters and separators,
+`FileNotFoundError` for a missing folder and a file, the
+`UnicodeEncodeError` of a lone surrogate, a folder spelled with `..`),
+each with the SHA-256 of the file after the call. Every path is spelled
+relative to the scratch folder. `golden_project_walk.rs` builds the same
+tree and walks it with `pf` as the parse; `project_walk_not_posix.rs`
+records the gap on Windows (class os). `project_walk_kills.rs` and
+`project_walk_robustness.rs` run over `MemFs` and scripted writes on
+every host; the kills cover a repository at a bare UNC share under the
+Windows flavour and the decline on an empty strerror text, and the
+robustness test walks 2,000 levels within the 1.2 s the reference took.
 
 ## Verification staleness and phrase-match attribution
 
@@ -18884,8 +18967,8 @@ What the reference has and this build does not, by area:
   store id reissue (store_membership-2), and of the caller's resolution its file roots
   and workspace declaration (`identity` resolves the rest; its
   admission is `store::caller`).
-- `project_file.py` past its vocabulary and render: `parse` and its
-  reads (unit 2), then the walk, `find` and the write (unit 3).
+- `project_file.py` past its vocabulary, render, walk and write: `parse`
+  and its reads (unit 2).
 - Each hit's signals and drift report: `claims.py` past its leaves and
   its literal reader (the drift index, the declare-time oracle),
   `verify_candidates.py` past the validation of one candidate, its

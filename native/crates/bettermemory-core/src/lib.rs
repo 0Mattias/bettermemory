@@ -65,6 +65,8 @@
 //!   the legacy reference grammar (`attestation_paths.py` whole);
 //! - [`project_file`]: the project file, its first unit (the vocabulary,
 //!   `mint_id`, `render` and the id and name checks);
+//! - [`project_walk`]: the project file's upward walk (`Walk`,
+//!   `above_start`, `find`, `_walk`, `_look`) and `write` (its third unit);
 //! - [`log`]: the row MAC, the key ring and `verify_chain`, and the key
 //!   ring's files (`log::ring`: the current key, the origin anchor, the
 //!   binding);
@@ -324,6 +326,7 @@ pub mod origin_remote;
 pub mod path_drift_steps;
 pub mod printable;
 pub mod project_file;
+pub mod project_walk;
 pub mod pyre;
 pub mod pysyntax;
 pub mod pyvalue;

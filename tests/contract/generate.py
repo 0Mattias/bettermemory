@@ -113,6 +113,7 @@ from . import (
     gen_path_drift_steps,
     gen_attestation_paths,
     gen_project_file,
+    gen_project_walk,
     gen_log,
     gen_log_keyfiles,
     gen_machine,
@@ -204,6 +205,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "attestation_paths": gen_attestation_paths.generate,
     "attestation_paths_posix": gen_attestation_paths.generate_posix,
     "project_file": gen_project_file.generate,
+    "project_walk": gen_project_walk.generate,
     "verify_candidates_patterns": gen_verify_candidates.generate_patterns,
     "verify_candidates_patterns_unicode": gen_verify_candidates.generate_patterns_unicode,
     "canonical_json": gen_json.generate,
@@ -916,6 +918,9 @@ PLATFORM_GATED = frozenset(
 #: (``ntpath`` on Windows) and holds trees with links and a mode-000
 #: folder (`gen_origin_gitfiles_facts`); ``attestation_paths_posix`` reads
 #: a tree with links and a mode-000 folder (`gen_attestation_paths`);
+#: ``project_walk`` walks trees with links and a mode-000 folder, holds
+#: strerror texts and spells paths as the host's ``Path`` does
+#: (`gen_project_walk`);
 #: ``store_schema_posix`` runs the schema steps on a mode-0444 store file
 #: and spells a v8 folder's path as the host's ``Path`` does
 #: (`gen_store_schema`);
@@ -937,6 +942,7 @@ PLATFORM_GATED = frozenset(
 POSIX_ONLY = frozenset(
     {
         "attestation_paths_posix",
+        "project_walk",
         "checkout_token_read",
         "checkout_token_read_posix",
         "checkout_token_write",
