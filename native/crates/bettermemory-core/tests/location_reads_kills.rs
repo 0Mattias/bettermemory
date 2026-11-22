@@ -11,7 +11,7 @@ mod common;
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use bettermemory_core::location_reads::{
@@ -51,7 +51,14 @@ fn a_waiter_that_waited_the_budget_out_stalls_the_path_whatever_the_clock() {
         "a stalled path read again"
     );
     // A larger budget than the one waited out does not count it stalled.
-    let r = bounded_read(&board, "/a", "y".into(), script.make("/a", "y", "v:2"), 0.5);
+    // The read answers at once; the budget only bounds a stalled worker.
+    let r = bounded_read(
+        &board,
+        "/a",
+        "y".into(),
+        script.make("/a", "y", "v:2"),
+        60.0,
+    );
     assert_eq!(r, Ok(Read::Value("2".into())));
     script.release_all();
 }
@@ -83,16 +90,36 @@ fn hung_paths_cost_one_budget_per_slots_of_them() {
     assert!(budgets < 7.0, "{budgets} budgets: hung paths cost one each");
 }
 
+/// The threads a batch of 200 healthy reads ran on, under a clock the
+/// test sets, so no read is handed off unless the test moves the clock.
+/// With `slow_first` the first read moves the clock past the hand-off and
+/// every read then holds until three threads have read: the first lane and
+/// the two lanes the one hand-off starts. Nothing is timed; the shared
+/// deadline only ends a run where that never happens.
 fn healthy_threads(slow_first: bool) -> usize {
-    let board = B::new(clock());
-    let threads = Arc::new(Mutex::new(HashSet::new()));
+    let (clk, at) = set_clock();
+    let board = B::new(clk);
+    let seen = Arc::new((Mutex::new(HashSet::new()), Condvar::new()));
+    let end = Instant::now() + Duration::from_secs(10);
     let jobs: Vec<Job<String, String, String>> = (0..200)
         .map(|i| {
-            let t = Arc::clone(&threads);
+            let (seen, at) = (Arc::clone(&seen), Arc::clone(&at));
             let read: Box<dyn FnOnce() -> Result<String, String> + Send> = Box::new(move || {
-                t.lock().unwrap().insert(std::thread::current().id());
-                if slow_first && i == 0 {
-                    std::thread::sleep(Duration::from_millis(80));
+                let (m, c) = &*seen;
+                let mut g = m.lock().unwrap();
+                g.insert(std::thread::current().id());
+                c.notify_all();
+                if slow_first {
+                    if i == 0 {
+                        at.store(1.0f64.to_bits(), Ordering::SeqCst);
+                    }
+                    while g.len() < 3 {
+                        let left = end.saturating_duration_since(Instant::now());
+                        if left.is_zero() {
+                            break;
+                        }
+                        g = c.wait_timeout(g, left).unwrap().0;
+                    }
                 }
                 Ok(i.to_string())
             });
@@ -102,24 +129,28 @@ fn healthy_threads(slow_first: bool) -> usize {
     let out = bounded_reads(&board, jobs, 5.0, false).unwrap();
     assert_eq!(out[0], Read::Value("0".into()));
     assert_eq!(out[199], Read::Value("199".into()));
-    let n = threads.lock().unwrap().len();
+    let n = seen.0.lock().unwrap().len();
     n
 }
 
 #[test]
 fn healthy_reads_stay_on_one_thread() {
-    // A loaded machine can hand a read off; the fewest of five runs.
-    let n = (0..5).map(|_| healthy_threads(false)).min().unwrap();
-    assert_eq!(n, 1, "healthy reads spread over {n} threads");
+    // The clock stands still: no read is handed off, whatever the load.
+    for _ in 0..5 {
+        let n = healthy_threads(false);
+        assert_eq!(n, 1, "healthy reads spread over {n} threads");
+    }
 }
 
 #[test]
 fn one_hand_off_reads_on_in_two_lanes() {
     // The handed-off lane keeps its thread; the reads go on in two
     // lanes (`min(READ_LANES, 1 + handed)` not counting it): three threads.
-    // The fewest of five runs, as a loaded machine can hand off more.
-    let n = (0..5).map(|_| healthy_threads(true)).min().unwrap();
-    assert_eq!(n, 3, "one hand-off spread the batch over {n} threads");
+    // Each lane is started with a path, so each reads: no more than three.
+    for _ in 0..5 {
+        let n = healthy_threads(true);
+        assert_eq!(n, 3, "one hand-off spread the batch over {n} threads");
+    }
 }
 
 #[test]
@@ -197,10 +228,11 @@ fn a_stall_on_one_what_answers_the_path_at_once_beside_a_live_read() {
         0.05,
     );
     assert_eq!(r, Ok(Read::Unanswered));
-    // y in flight, waited on with a larger budget: not stalled.
+    // y in flight, waited on with a larger budget: not stalled. The
+    // budget far exceeds the time to the release below.
     let (b2, s2) = (board.clone(), script.clone());
     let live = std::thread::spawn(move || {
-        bounded_read(&b2, "/a", "y".into(), s2.make("/a", "y", "h:m"), 5.0)
+        bounded_read(&b2, "/a", "y".into(), s2.make("/a", "y", "h:m"), 60.0)
     });
     while !board.in_flight("/a", &"y".to_owned()) {
         std::thread::sleep(Duration::from_millis(1));
@@ -228,26 +260,27 @@ fn a_waiter_joining_a_read_waits_only_what_is_left_of_its_budget() {
     let script = Script::default();
     let (b2, s2) = (board.clone(), script.clone());
     let first = std::thread::spawn(move || {
-        bounded_read(&b2, "/a", "x".into(), s2.make("/a", "x", "h:k"), 1.0)
+        bounded_read(&b2, "/a", "x".into(), s2.make("/a", "x", "h:k"), 10.0)
     });
     while !board.in_flight("/a", &"x".to_owned()) {
         std::thread::sleep(Duration::from_millis(1));
     }
-    at.store(0.8f64.to_bits(), Ordering::SeqCst);
+    at.store(9.8f64.to_bits(), Ordering::SeqCst);
     let t = Instant::now();
     let r = bounded_read(
         &board,
         "/a",
         "x".into(),
         script.make("/a", "x", "v:no"),
-        1.0,
+        10.0,
     );
     let took = t.elapsed().as_secs_f64();
     assert_eq!(r, Ok(Read::Unanswered));
-    // 0.2 s left of the budget; the whole budget would be 1.0 s.
-    assert!(took < 0.7, "the joined wait took {took} s");
-    assert_eq!(first.join().unwrap(), Ok(Read::Unanswered));
+    // 0.2 s left of the budget; the whole budget would be 10 s.
+    assert!(took < 5.0, "the joined wait took {took} s");
+    // The first waiter still holds most of its budget: the release lands.
     script.release_all();
+    assert_eq!(first.join().unwrap(), Ok(Read::Value("late:k".into())));
 }
 
 #[test]
@@ -276,13 +309,23 @@ fn one_hung_path_more_than_the_slots_waits_a_second_budget() {
 
 #[test]
 fn a_read_landing_after_it_stalled_out_of_its_slot_frees_the_slots() {
+    // A clock the test sets: /a's read moves it past the budget before it
+    // blocks, so /a stalls by the clock; it then stands still, so /b and
+    // /c are never handed off and answer whatever the load.
     let budget = 0.05;
-    let board = B::with_limits(clock(), 0.01, READ_LANES, 1);
+    let (clk, at) = set_clock();
+    let board = B::with_limits(clk, 0.01, READ_LANES, 1);
     let script = Script::default();
     let one = |p: &str, spec: &str| -> Vec<Job<String, String, String>> {
         vec![(p.to_owned(), "x".to_owned(), script.make(p, "x", spec))]
     };
-    let out = bounded_reads(&board, one("/a", "h:k"), budget, false).unwrap();
+    let hung = script.make("/a", "x", "h:k");
+    let late: Box<dyn FnOnce() -> Result<String, String> + Send> = Box::new(move || {
+        at.store(1.0f64.to_bits(), Ordering::SeqCst);
+        hung()
+    });
+    let jobs = vec![("/a".to_owned(), "x".to_owned(), late)];
+    let out = bounded_reads(&board, jobs, budget, false).unwrap();
     assert_eq!(out, vec![Read::Unanswered]);
     // /a stalled out of the queue, then lands.
     let out = bounded_reads(&board, one("/b", "v:b"), budget, false).unwrap();
@@ -296,7 +339,7 @@ fn a_read_landing_after_it_stalled_out_of_its_slot_frees_the_slots() {
         let _ = tx.send(bounded_reads(&b3, jobs, 5.0, false));
     });
     let out = rx
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(30))
         .expect("no slot left after a stalled read landed");
     assert_eq!(out, Ok(vec![Read::Value("c".into())]));
 }
@@ -306,14 +349,21 @@ fn the_first_error_by_job_order_is_raised_not_the_first_to_land() {
     let board = B::new(clock());
     let script = Script::default();
     let gate = Script::default();
-    // Job 0 errs only once released, after job 1 erred.
+    // Job 0 errs only once released, after job 1 erred and landed.
     let slow: Box<dyn FnOnce() -> Result<String, String> + Send> = {
         let r = gate.make("/a", "x", "h:g");
         Box::new(move || r().and(Err("zero".into())))
     };
-    let g2 = gate.clone();
+    let (g2, s2, b2) = (gate.clone(), script.clone(), board.clone());
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(100));
+        let end = Instant::now() + Duration::from_secs(30);
+        let landed = || {
+            s2.ran.lock().unwrap().contains(&"e:one".to_owned())
+                && !b2.in_flight("/b", &"x".to_owned())
+        };
+        while !landed() && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(1));
+        }
         g2.release("g");
     });
     let jobs = vec![
@@ -324,7 +374,7 @@ fn the_first_error_by_job_order_is_raised_not_the_first_to_land() {
             script.make("/b", "x", "e:one"),
         ),
     ];
-    assert_eq!(bounded_reads(&board, jobs, 2.0, true), Err("zero".into()));
+    assert_eq!(bounded_reads(&board, jobs, 60.0, true), Err("zero".into()));
 }
 
 #[test]
@@ -334,14 +384,17 @@ fn a_waiter_on_a_read_in_flight_gets_its_outcome_and_starts_none() {
     let b2 = board.clone();
     let s2 = script.clone();
     let first = std::thread::spawn(move || {
-        bounded_read(&b2, "/a", "x".into(), s2.make("/a", "x", "h:k"), 2.0)
+        bounded_read(&b2, "/a", "x".into(), s2.make("/a", "x", "h:k"), 60.0)
     });
     while !board.in_flight("/a", &"x".to_owned()) {
         std::thread::sleep(Duration::from_millis(1));
     }
+    // The waiter must join before the release: nothing marks that it
+    // joined, so the release waits far longer than joining takes, and
+    // the budgets far longer than that.
     let s3 = script.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(500));
         s3.release("k");
     });
     let r = bounded_read(
@@ -349,7 +402,7 @@ fn a_waiter_on_a_read_in_flight_gets_its_outcome_and_starts_none() {
         "/a",
         "x".into(),
         script.make("/a", "x", "v:no"),
-        2.0,
+        60.0,
     );
     assert_eq!(r, Ok(Read::Value("late:k".into())));
     assert_eq!(first.join().unwrap(), Ok(Read::Value("late:k".into())));
@@ -362,10 +415,10 @@ fn a_read_that_panics_counts_as_one_that_raised() {
     let boom = || -> Job<String, String, String> {
         ("/p".into(), "x".into(), Box::new(|| panic!("read failed")))
     };
-    let out = bounded_reads(&board, vec![boom()], 1.0, false).unwrap();
+    let out = bounded_reads(&board, vec![boom()], 60.0, false).unwrap();
     assert_eq!(out, vec![Read::NotRead]);
     let raised = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        bounded_reads(&board, vec![boom()], 1.0, true)
+        bounded_reads(&board, vec![boom()], 60.0, true)
     }));
     assert!(raised.is_err());
 }

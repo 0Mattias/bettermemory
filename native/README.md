@@ -10091,6 +10091,41 @@ panicking read. `location_reads_robustness` holds a batch's growth
 (1,000 against 10,000 healthy jobs, wall clock), 20,000 jobs on one path,
 and budgets of zero, negative, NaN, infinite and huge.
 
+The hand-off is driven by a clock the test sets. `healthy_threads` runs
+200 healthy reads under a clock that stands still, so no read is handed
+off whatever the load: one thread, in each of five runs. With a slow
+first read, that read moves the clock past the hand-off and every read
+then holds until three threads have read: the first lane and the two
+lanes the one hand-off starts (each lane is started with a path, so each
+reads): three threads, in each of five runs. The earlier form slept the
+first read 80 ms on the real clock and took the fewest threads of five
+runs; on a slow runner the 0.02 s hand-off timer fired after the sleep
+ended, no hand-off happened, and one run saw one thread. Removing the
+hand-off, starting two or all lanes, starting `2 * handed` lanes, or
+`READ_LANES` at 1 fails it; `READ_LANES` at 2 still gives two lanes.
+
+Each test of the two files, judged for a result that depends on which of
+two real-time events comes first:
+
+| Test | Verdict |
+|---|---|
+| `a_waiter_that_waited_the_budget_out_stalls_the_path_whatever_the_clock` | the last read raced a 0.5 s budget; the budget is 60 s |
+| `hung_paths_cost_one_budget_per_slots_of_them` | a wall-clock bound, not an order: the lower bound holds by the clock, the upper (under 7 budgets) on the fastest of three runs; kept |
+| `healthy_reads_stay_on_one_thread` | a fast read preempted past the hand-off was handed off; a still clock, deterministic |
+| `one_hand_off_reads_on_in_two_lanes` | the hand-off timer raced an 80 ms sleep; the scripted clock and a hold on three threads, deterministic |
+| `a_budget_shorter_than_the_hand_off_answers_in_the_budget` | a wall-clock bound (under 0.6 s for a 0.05 s budget against a 1 s hand-off) on the fastest of three runs; kept |
+| `a_read_waiting_for_a_slot_sleeps_until_the_oldest_flight_runs_out` | counts clock reads, not an order; kept |
+| `a_stall_on_one_what_answers_the_path_at_once_beside_a_live_read` | the live read's release raced its 5 s budget; the budget is 60 s |
+| `a_waiter_joining_a_read_waits_only_what_is_left_of_its_budget` | 0.2 s left against a whole budget of 1 s with a 0.7 s bound; the budget is 10 s with 9.8 s gone and a 5 s bound, and the first waiter gets the released value |
+| `one_hung_path_more_than_the_slots_waits_a_second_budget` | a lower bound only, held by the clock; kept |
+| `a_read_landing_after_it_stalled_out_of_its_slot_frees_the_slots` | `/b` had to answer within a 0.05 s budget past a 0.01 s hand-off; the clock is set: `/a`'s read moves it past the budget, then it stands still, deterministic |
+| `the_first_error_by_job_order_is_raised_not_the_first_to_land` | job 0 was released after 100 ms on a 2 s budget; it is released once job 1 erred and landed, on a 60 s budget |
+| `a_waiter_on_a_read_in_flight_gets_its_outcome_and_starts_none` | the waiter must join before the release and nothing marks that it joined; the release waits 500 ms rather than 50, on 60 s budgets |
+| `a_read_that_panics_counts_as_one_that_raised` | a panic handed off past the hand-off raced a 1 s budget; the budget is 60 s |
+| `a_batch_of_healthy_reads_grows_linearly` | a growth ratio on the wall clock, not an order; kept |
+| `many_jobs_on_one_path_answer_in_order` | a read handed off still answers on a 30 s budget; no race |
+| `budgets_at_the_bounds_answer_without_panic` | hung reads at budgets of zero or below answer at once, healthy batches are checked by length, the 10 s bound is far; no race |
+
 No pattern is matched. Not built: the wiring of `location` and
 `gitfile_rule` to this runtime; until then `gitfile_rule::follow` calls
 `gitfile_rule::bounded`, and nothing calls `location_reads`. Both answer
