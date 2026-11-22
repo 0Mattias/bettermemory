@@ -1,5 +1,6 @@
 """Fixtures: the Stop's settlement of what was shown
-(``recall_settle.jsonl``).
+(``recall_settle.jsonl``) and of the interrupted turns
+(``recall_settle_interrupted.jsonl``).
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/recall_settle.rs`` and
@@ -34,6 +35,18 @@ to its body, or to ``"!nf"`` (`MemoryNotFoundError`) or ``"!tomb"``
 (`TombstonedError`). ``joined`` is what `joined_sessions` answers and
 ``chains`` what `review.find_chain` reads (``[open, standing_refused]``,
 default ``[true, false]``).
+
+``recall_settle_interrupted.jsonl`` (not gated) pins `_probe_message`
+and `settle_interrupted`: its header (``{"k": "consts", ...}``) holds
+`ATTRIBUTION_LOOKBACK_SECONDS` and the count; every other line is
+``{"k": "probe" | "int", "c": case, "log": calls, "o": answer}``. The
+probe, the pool, the transcript read, `Path` and the recorder are
+scripted fakes, so every row is the reference's plumbing over recorded
+answers: ``turns`` lists the interrupted turns as ``[prompt_id, prompt,
+reply, model]``, ``reps`` the reports the probe answers in turn (the
+last one repeated), ``pool`` the pool's size per call, ``hm`` what
+`store.has_memories` answers, ``file`` what `is_file` answers. A float
+is ``{"f": repr}``, a set ``{"set": sorted}``; an error is ``{"err": name, "msg": text}``.
 """
 
 from __future__ import annotations
@@ -44,6 +57,7 @@ from typing import Any
 from unittest import mock
 
 from bettermemory import audit, events, recall_settle, recall_state, review
+from bettermemory.handlers import search as handlers_search
 from bettermemory.store_schema import MemoryNotFoundError, TombstonedError
 
 from ._common import jsonl, neutral
@@ -462,6 +476,282 @@ def _review_cases() -> list[dict[str, Any]]:
     ]
 
 
+def _iplain(value: Any) -> Any:
+    """`_plain` with a float as ``{"f": repr}``."""
+    if isinstance(value, float):
+        return {"f": repr(value)}
+    if isinstance(value, (set, frozenset)):
+        return {"set": sorted(value)}
+    if isinstance(value, list):
+        return [_iplain(v) for v in value]
+    if isinstance(value, tuple):
+        return {"tu": [_iplain(v) for v in value]}
+    if isinstance(value, dict):
+        return {"d": [[_iplain(k), _iplain(v)] for k, v in value.items()]}
+    return _plain(value)
+
+
+def _report(rep: dict[str, Any], session_id: str, now: datetime) -> Any:
+    hits = tuple(
+        audit.MissHit(
+            id=h[0],
+            score=h[1],
+            relevance=h[2],
+            scopes=(),
+            snippet="",
+            matched_unique=h[3],
+            query_unique=h[4],
+            relevance_v2=h[5],
+        )
+        for h in rep.get("hits", [])
+    )
+    return audit.MissReport(
+        verdict=rep.get("v", "ok"),
+        checked_at=now,
+        session_id=session_id,
+        lookback_seconds=audit.ATTRIBUTION_LOOKBACK_SECONDS,
+        recent_retrieval_count=rep.get("rrc", 0),
+        threshold_rule=audit.THRESHOLD_RULE_V1,
+        top_hits=hits,
+        probe_query=rep.get("pq"),
+        no_signal_reason=rep.get("nsr"),
+        suppressed_by=rep.get("sb"),
+    )
+
+
+class _IFakes:
+    """The store, the closures and the recorder of an interrupted case."""
+
+    def __init__(self, case: dict[str, Any]) -> None:
+        self.case = case
+        self.log: list[Any] = []
+        self.calls = 0
+
+    def events_of_kinds(self, kinds: Any, *, since: datetime) -> list[dict[str, Any]]:
+        self.log.append(["eok", list(kinds), since])
+        return [dict(e) for e in self.case.get("ev", [])]
+
+    def has_memories(self) -> bool:
+        self.log.append(["hm"])
+        return bool(self.case.get("hm", False))
+
+    def path(self, text: str) -> Any:
+        fakes = self
+
+        class _P:
+            def expanduser(self) -> Any:
+                fakes.log.append(["path", text])
+                if fakes.case.get("nohome"):
+                    raise RuntimeError("Could not determine home directory.")
+                return self
+
+            def is_file(self) -> bool:
+                return bool(fakes.case.get("file", True))
+
+        return _P()
+
+    def turns(self, path: Any, *, since: datetime) -> list[Any]:
+        self.log.append(["turns", since])
+        return [
+            SimpleNamespace(prompt_id=t[0], prompt=t[1], reply=t[2], model=t[3])
+            for t in self.case.get("turns", [])
+        ]
+
+    def pool(self, store: Any, query: str, **kw: Any) -> Any:
+        self.log.append(["pool", query, sorted(kw["excluded_scopes"]), kw["admission"]])
+        sizes = self.case.get("pool", [1])
+        n = sizes[min(self.calls, len(sizes) - 1)]
+        return handlers_search.SearchPool(
+            memories=[f"r{i}" for i in range(n)],
+            corpus_stats_provider="CSP",  # type: ignore[arg-type]
+        )
+
+    def probe(self, memories: Any, user_message: str, **kw: Any) -> Any:
+        self.log.append(["probe", list(memories), user_message, {k: kw[k] for k in kw}])
+        reps = self.case.get("reps", [{}])
+        rep = reps[min(self.calls, len(reps) - 1)]
+        self.calls += 1
+        return _report(rep, kw["session_id"], kw["now"])
+
+    def recorder(self, **kw: Any) -> Any:
+        self.log.append(
+            [
+                "recorder",
+                kw["session_id"],
+                kw["enabled"],
+                kw["worktree_root"],
+                kw.get("triggered_from", ""),
+            ]
+        )
+        return self
+
+    def record(self, kind: str, **fields: Any) -> None:
+        self.log.append(["rec", kind, fields])
+
+
+def _cfg(case: dict[str, Any]) -> Any:
+    return SimpleNamespace(
+        behavior=SimpleNamespace(
+            search_mode=case.get("sm", "hybrid"),
+            recency_boost_half_life_days=case.get("hl", 30.0),
+            conversational=case.get("conv", True),
+        ),
+        telemetry=SimpleNamespace(enabled=case.get("tel", True)),
+    )
+
+
+def _irun(kind: str, case: dict[str, Any]) -> dict[str, Any]:
+    f = _IFakes(case)
+    now = _dt(case.get("now", T))
+    scopes = set(case.get("xs", ["s2", "s1"]))
+
+    def call() -> Any:
+        with (
+            mock.patch.object(recall_settle, "probe_for_miss", f.probe),
+            mock.patch.object(handlers_search, "resolve_search_pool", f.pool),
+            mock.patch.object(recall_settle, "interrupted_turns", f.turns),
+            mock.patch.object(recall_settle, "Path", f.path),
+            mock.patch.object(recall_settle, "Recorder", f.recorder),
+        ):
+            if kind == "probe":
+                return recall_settle._probe_message(
+                    cfg=_cfg(case),
+                    store=f,  # type: ignore[arg-type]
+                    user_message=case.get("msg", "how do we deploy"),
+                    session_id=case.get("sid", "S"),
+                    server_session=case.get("ss"),
+                    admission="ADM",  # type: ignore[arg-type]
+                    excluded_scopes=scopes,
+                    recent=case.get("recent", []),
+                    worktree_root=case.get("wt"),
+                    now=now,
+                    floor=case.get("floor", True),
+                ).to_dict()
+            pa = case.get("pa")
+            return recall_settle.settle_interrupted(
+                store=f,  # type: ignore[arg-type]
+                cfg=_cfg(case),
+                session_id=case.get("sid", "S"),
+                transcript_path=case.get("tp", "/t/ok.jsonl"),
+                admission="ADM",  # type: ignore[arg-type]
+                excluded_scopes=scopes,
+                recent=case.get("recent", []),
+                server_session=case.get("ss"),
+                worktree_root=case.get("wt"),
+                now=now,
+                previous_audit=None if pa is None else _dt(pa),
+                triggered_from=case.get("tf", "stop_hook"),
+                exclude_prompt_id=case.get("ex"),
+            )
+
+    try:
+        out = _iplain(call())
+    except (OverflowError, ValueError, RuntimeError) as exc:
+        out = {"err": type(exc).__name__, "msg": str(exc)}
+    return {"k": kind, "c": case, "log": _iplain(f.log), "o": out}
+
+
+_HIT = ["m1", 0.875, "high", 3, 4, "high"]
+
+
+def _probe_cases() -> list[dict[str, Any]]:
+    return [
+        {},
+        {"pool": [0], "hm": True},
+        {"pool": [0], "hm": False},
+        {"sm": "", "hl": 7.5, "conv": False, "floor": False},
+        {
+            "sm": "bm25",
+            "ss": "SRV",
+            "wt": "/w",
+            "xs": [],
+            "recent": [{"kind": "search"}],
+        },
+        {
+            "reps": [
+                {"v": "miss", "hits": [_HIT], "pq": "q", "rrc": 2, "sb": "retrieval"}
+            ]
+        },
+        {"msg": "", "sid": ""},
+    ]
+
+
+def _int_cases() -> list[dict[str, Any]]:
+    one = [["P1", "how do we deploy", "partial", "model-x"]]
+    ta = {"kind": "turn_audited", "ts": _ts(-5), "session": "S"}
+    return [
+        {"tp": None, "turns": one},
+        {"tp": "", "turns": one},
+        {"file": False, "turns": one},
+        {"nohome": True, "tp": "~nobody/t.jsonl", "turns": one},
+        {"turns": []},
+        {"turns": one},
+        {"turns": one, "pa": "2026-01-01T11:00:00+00:00"},
+        {"turns": one, "tel": False, "wt": "/w", "ss": "SRV", "tf": "prompt_hook"},
+        {
+            "turns": [
+                [None, "no id", None, None],
+                ["P2", None, "r", None],
+                ["P3", "excluded", None, None],
+                ["P4", "audited", None, None],
+                ["P5", "kept", None, None],
+                ["P6", "kept too", "", ""],
+            ],
+            "ex": "P3",
+            "ev": [{**ta, "prompt_id": "P4"}],
+        },
+        {
+            "turns": [
+                ["P1", "a", None, None],
+                ["P2", "b", None, None],
+                ["P3", "c", None, None],
+                ["P4", "d", None, None],
+                ["P5", "e", None, None],
+            ],
+            "ev": [
+                {**ta, "prompt_id": "P1", "session": "X"},
+                {**ta, "prompt_id": "P2", "session": "", "session_id": "S"},
+                {**ta, "prompt_id": 3},
+                {**ta, "prompt_id": "P4", "session": ["S"]},
+                {**ta, "prompt_id": "P5", "kind": "other"},
+                {"kind": "turn_audited", "session": "S", "prompt_id": "P3"},
+            ],
+        },
+        {"turns": [["P1", "a", None, None], ["P1", "a again", None, None]]},
+        {
+            "turns": [["P1", "a", None, None], ["P2", "b", None, None]],
+            "pool": [0, 2],
+            "hm": False,
+        },
+        {"turns": one, "sm": "", "reps": [{"v": "miss", "hits": [_HIT], "pq": "q"}]},
+        {"turns": [["P1", "a", None, None], ["P2", "b", None, None]], "tf": "bogus"},
+        {
+            "turns": [["P1", "a", None, None], ["P2", "b", None, None]],
+            "reps": [{}, {"nsr": "nope"}],
+        },
+        {"turns": one, "reps": [{"v": "no_signal", "nsr": "no_owner_prompt"}]},
+        {"turns": one, "now": "0001-01-01T12:00:00+00:00"},
+        {
+            "turns": one,
+            "now": "0001-01-01T12:00:00+00:00",
+            "pa": "0001-01-01T00:00:00+00:00",
+        },
+        {"turns": one, "ex": "P1"},
+        {"turns": one, "sid": ""},
+    ]
+
+
+def _interrupted() -> bytes:
+    rows = [_irun("probe", c) for c in _probe_cases()]
+    rows.extend(_irun("int", c) for c in _int_cases())
+    header = {
+        "k": "consts",
+        "attribution_lookback_seconds": audit.ATTRIBUTION_LOOKBACK_SECONDS,
+        "count": len(rows),
+    }
+    return jsonl([header, *rows])
+
+
 def generate() -> dict[str, bytes]:
     rows: list[dict[str, Any]] = []
     for v in _ID_VALUES:
@@ -496,4 +786,7 @@ def generate() -> dict[str, bytes]:
         "used_ev": _used_events(),
         "count": len(rows),
     }
-    return {"recall_settle.jsonl": jsonl([header, *rows])}
+    return {
+        "recall_settle.jsonl": jsonl([header, *rows]),
+        "recall_settle_interrupted.jsonl": _interrupted(),
+    }

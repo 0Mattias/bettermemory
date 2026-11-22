@@ -196,7 +196,9 @@
 //!   over a ranker trait and its retrieval shield);
 //! - [`recall_settle`]: the Stop's settlement of shown pointers
 //!   (`settle_shown`, `settle_unused`), `previous_audit_at` and
-//!   `review_unanswered`, over traits for the store, recorder and state;
+//!   `review_unanswered`, over traits for the store, recorder and state,
+//!   and in `interrupted` `_probe_message` and `settle_interrupted`, the
+//!   probe, the pool and the transcript read taken as closures;
 //! - [`recall_prompt`]: the prompt recall's turn, window, settlement,
 //!   probe and the `recall_held` and `prompt_recall` rows;
 //! - [`control_tokens`]: the chat-template delimiters a stored text may

@@ -9,7 +9,10 @@
 //! and the recorder `settle_unused` builds are closures; the clock is an
 //! argument. An event is a `PyValue` (a `dict` as the log reads it).
 //! Every datetime handed in is aware, as the reference's callers make
-//! them (`utcnow` and its arithmetic).
+//! them (`utcnow` and its arithmetic). The second unit, `_probe_message`
+//! and `settle_interrupted`, is [`interrupted`].
+
+pub mod interrupted;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -57,6 +60,10 @@ pub trait SettleStore {
     fn events_since(&mut self, since: &DateTime) -> Vec<PyValue>;
     /// `store.load_one(id).body`.
     fn load_one(&mut self, id: &[u32]) -> Result<PyStr, LoadFailure>;
+    /// `store.has_memories()`. By default not offered (None).
+    fn has_memories(&mut self) -> Option<bool> {
+        None
+    }
 }
 
 /// `events.Recorder.record(kind, **fields)`, the fields in order.

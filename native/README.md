@@ -68,7 +68,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `tool_handlers` | `_handlers.py`, unit handlers-2a: `RefusedError`, `_in_the_way`, `RetryableRefusal`, `KeptWriteRefusal`, `store_refusal`, `_ABSENT`, `_kept_or_retryable`, `_refusals_as_tool_errors`, `_read_only`, and `ToolHandlers`' `__init__`, `for_request`, `with_store` and `_run` (the nine forwarders are handlers-2b) | `tool_handlers.jsonl` |
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
 | `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields`; audit-2/3: `is_duplicate_audit`, `probe_for_miss` with its helpers, `_count_recent_retrievals`, `_retrieved_ids` (the ranker and admission as traits), with `search_lane._relevance_label_v2` | `audit_fields.jsonl`, `audit_probe.jsonl` |
-| `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`) | `recall_settle.jsonl` |
+| `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`); unit 2 (`recall_settle::interrupted`): `_probe_message` and `settle_interrupted`, the probe, the pool and the transcript read as closures | `recall_settle.jsonl`, `recall_settle_interrupted.jsonl` |
 | `recall_prompt` | `recall_prompt.py` whole: `_PromptTurn` (`PromptTurn`, `PromptTurnView`), `_prompt_window`, `_settle_before_probe`, `_prompt_probe`, `_record_hold`, `_record_delivery`; the session joins and `recall_admission`'s gate are traits, `Admission.on`, `settle_interrupted` and `_probe_message` closures | `recall_prompt.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `recall` | `recall.py`'s first unit: the constants, `WordsSeen` (`remember`, `seen`, `holds`, `clear`), `_fold`, `_bounded`, `RecallPointer`, `_annotation`, `_core`, `_one_excerpt`, `_recall_line`, `render_recall_block`; `recall_admission.summarize` and `disputed_marks`; `recall::choose`: `_seen_in_log`, `_seen_in_segment`, `_choose_hits`, `_deliver_recall`, `_unless_standing`, `_contradiction_open`, `HookResult` | `recall_render.jsonl`, `recall_render_unicode.jsonl`, `recall_choose.jsonl` |
@@ -6412,8 +6412,8 @@ unit. The map by function:
 | `settle_unused` | 272-347 | the same, `sessions.joined_sessions`, the recorder it builds | built (unit 1) |
 | `previous_audit_at` | 350-365 | the store's event reads, the clock | built (unit 1) |
 | `review_unanswered` | 466-542 | the same, the recorder, the recall state, `review.find_chain` | built (unit 1) |
-| `_probe_message` | 48-153 | the probe (`audit.probe_for_miss`), the store, the config | unit 2 (settleint) |
-| `settle_interrupted` | 368-463 | the transcript (`interrupted_turns`), the probe | unit 2 (settleint) |
+| `_probe_message` | 48-153 | the probe (`audit.probe_for_miss`), the pool (`handlers.search.resolve_search_pool`), `store.has_memories`, four settings | built (unit 2, `recall_settle::interrupted`) |
+| `settle_interrupted` | 368-463 | the transcript (`interrupted_turns`), `Path.expanduser` and `is_file`, the probe, the store's event read, the recorder it builds, the clock | built (unit 2, `recall_settle::interrupted`) |
 
 Unit 1 also builds `events._event_id_items` and `_event_id_list`
 (`events.py` 954-990) as `events::event_id_items` and `event_id_list`,
@@ -6490,7 +6490,79 @@ cases a plausible wrong port fails; `recall_settle_robustness` holds id
 fields nested 100,000 deep and 200,000 long, clocks at the ends of the
 calendar, and the event scan's growth (20,000 events against 2,000).
 
-Left for unit 2 (settleint): `_probe_message` and `settle_interrupted`.
+What unit 2 (settleint) reproduces, in `recall_settle::interrupted`.
+
+- `probe_message` (`_probe_message`): the pool first
+  (`resolve_search_pool(store, message, excluded_scopes=, admission=)`),
+  then `store.has_memories()` only when the pool is empty (the
+  reference's `bool(pool) or store.has_memories()` short-circuits), then
+  the probe with the pool's records and statistics provider, the
+  message, the recent events, the session, the server session as the
+  retrieval session, `now`, `ATTRIBUTION_LOOKBACK_SECONDS` (600, from
+  `hook`), the admission, the worktree, the excluded scopes, the mode
+  (`search_mode or "hybrid"`), the half-life, the conversational switch,
+  the caller's `floor` and `searched`. Whatever the pool or the probe
+  raises comes back as `Fault::Raised`.
+- `settle_interrupted`: nothing for no path or an empty one; the path is
+  expanded (`str(Path(p).expanduser())`, a closure, whose RuntimeError
+  for an unknown home comes back as `Fault::Raised`) and asked
+  `is_file` through `fsdata::Fs::stat` (a regular file, links followed,
+  false for a FIFO, socket, device or folder, a NUL or an unencodable
+  path, and an errno 3.13's `_ignore_error` accepts: ENOENT, ENOTDIR,
+  EBADF, ELOOP or Windows codes 21, 123, 1921; any other OSError, such as
+  ENAMETOOLONG or EACCES, raises as `Fault::Os`, as the pinned 3.13 does,
+  where 3.14's `is_file` answers False; an error known by its class
+  alone declines); `since` is
+  the previous audit, else `now` less `STATE_IDLE_SECONDS`
+  (`OverflowError` before year 1). The `turn_audited` rows the store
+  answers are filtered by session alone (a true `session`, else
+  `session_id`, equal to the hook's), neither their kind nor their stamp
+  is checked again, and each `str` `prompt_id` counts as audited. The
+  recorder is built (session, telemetry, worktree, an empty
+  `triggered_from`) before the transcript is read. Each turn with a
+  prompt id and a prompt, not the excluded id and not audited, is probed
+  at `now` with the floor and recorded as one `turn_audited` row
+  (`reply_source="interrupted"`, `RULE`, `settled_count=0`,
+  `assistant_present` when the reply is not None, an empty reply
+  included, `client_model` the turn's model). The audited set is read
+  once, so a prompt id the transcript holds twice is settled twice, as
+  the reference does. A `ValueError` of `turn_audited_fields` (a refused
+  `triggered_from` or `no_signal_reason`) is raised after that turn's
+  probe, the rows before it kept.
+
+Decisions of unit 2. `audit.probe_for_miss`,
+`handlers.search.resolve_search_pool` and `transcript.interrupted_turns`
+are closures (`Prober`, `TranscriptHost`), so this unit does not wait
+for the probe's port; the pool's record and provider types are
+parameters the probe receives as they are. The four settings read off
+the configuration are `Settings` (`search_mode`, `half_life_days`,
+`conversational`, `telemetry_enabled`), so nothing here depends on the
+shape of `config`. `SettleStore` gains `has_memories` at its end with a
+default that declines (`None`, raised as `Fault::NotOffered`), so
+existing implementations need no change. `Path.expanduser` is a closure
+because the host spells the path (`PosixPath` or `WindowsPath`);
+`is_file` encodes the expanded text as the host's `os.stat` takes it
+(`host_bytes`, with `STAT_TAKES_WIDE` set by cfg and both branches
+tested: surrogateescape on POSIX, UTF-8 on Windows). On Windows the
+reference stats a path holding a lone surrogate through the wide string;
+the port declines (`Fault::NotPorted`), recorded as class os in
+`recall_settle_interrupted_not_posix.rs`. No regular expression is used.
+
+Fixtures of unit 2: `gen_recall_settle.py` also writes
+`recall_settle_interrupted.jsonl` (not gated, 25 KB): 7 `_probe_message`
+cases and 20 `settle_interrupted` cases over scripted fakes (the probe
+answers recorded reports, the pool its recorded size, `Path` and the
+transcript their recorded answers), each with every call the fakes saw
+and the answer or the error with its message. The rows hold no real
+path: the transcript is `/t/ok.jsonl` and `is_file` is scripted.
+`golden_recall_settle_interrupted` checks every row against a
+`fsdata::MemFs`; `recall_settle_interrupted_kills` holds the cases a
+plausible wrong port fails (the repeated prompt id, the short-circuited
+`has_memories`, the scan that trusts the store, the recorder built before
+the read, the error after the probe); `recall_settle_interrupted_robustness`
+holds 20,000 turns against 10,000 audited rows, a prompt id nested 1,000
+deep, clocks at the ends of the calendar, and the settlement's growth
+(5,000 turns against 500).
 
 ## The prompt recall's steps (`recall_prompt.py`)
 
@@ -22859,8 +22931,6 @@ What the reference has and this build does not, by area:
   `events.py`'s query redaction and named event fields (unit 2, which
   reads `credentials.secret_spans`), the suppression and the hook
   deadline (unit 3), and the `Recorder` (unit 4).
-- `recall_settle.py` past its settlement: `_probe_message` and
-  `settle_interrupted` (settleint).
 - The daemon, the MCP tools (of `_handlers.py` the refusal classes and
   the bundle are built, `tool_handlers`; the nine forwarders and the
   `DESC_*` re-exports are handlers-2b's), the hooks past the pure leaves of `hook.py`
