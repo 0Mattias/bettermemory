@@ -6,6 +6,7 @@
 
 pub mod argparse;
 pub mod attestation_paths;
+pub mod audit_probe;
 pub mod bulk;
 pub mod choose;
 pub mod cli_root;

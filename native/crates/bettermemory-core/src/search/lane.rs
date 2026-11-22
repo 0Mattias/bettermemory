@@ -737,6 +737,25 @@ pub fn anchor_day(body: &[u32], created: &DateTime) -> i64 {
     local_date(created)
 }
 
+/// `_V2_HIGH_MATCHED_FLOOR`.
+pub const V2_HIGH_MATCHED_FLOOR: i64 = 4;
+
+/// `_relevance_label_v2`: the coverage label with an absolute floor of
+/// matched tokens on its "high" arm.
+pub fn relevance_label_v2(matched_unique: i64, query_unique: i64) -> &'static str {
+    if query_unique <= 0 {
+        return "low";
+    }
+    let coverage = super::num::int_true_div(i128::from(matched_unique), i128::from(query_unique));
+    if coverage >= 0.75 || matched_unique >= V2_HIGH_MATCHED_FLOOR {
+        "high"
+    } else if coverage >= 0.40 {
+        "medium"
+    } else {
+        "low"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

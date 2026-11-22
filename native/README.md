@@ -67,7 +67,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `tool_handlers` | `_handlers.py`, unit handlers-2a: `RefusedError`, `_in_the_way`, `RetryableRefusal`, `KeptWriteRefusal`, `store_refusal`, `_ABSENT`, `_kept_or_retryable`, `_refusals_as_tool_errors`, `_read_only`, and `ToolHandlers`' `__init__`, `for_request`, `with_store` and `_run` (the nine forwarders are handlers-2b) | `tool_handlers.jsonl` |
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
-| `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields` | `audit_fields.jsonl` |
+| `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields`; audit-2/3: `is_duplicate_audit`, `probe_for_miss` with its helpers, `_count_recent_retrievals`, `_retrieved_ids` (the ranker and admission as traits), with `search_lane._relevance_label_v2` | `audit_fields.jsonl`, `audit_probe.jsonl` |
 | `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`) | `recall_settle.jsonl` |
 | `recall_prompt` | `recall_prompt.py` whole: `_PromptTurn` (`PromptTurn`, `PromptTurnView`), `_prompt_window`, `_settle_before_probe`, `_prompt_probe`, `_record_hold`, `_record_delivery`; the session joins and `recall_admission`'s gate are traits, `Admission.on`, `settle_interrupted` and `_probe_message` closures | `recall_prompt.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
@@ -6265,13 +6265,15 @@ function:
 | Function | Lines | Needs from the machine | Status |
 |---|---|---|---|
 | the constants (`_RETRIEVAL_EVENT_KINDS`, `THRESHOLD_RULE_V1`, `_TOP_HITS_RETAINED`, `DEFAULT_LOOKBACK_SECONDS`, `ATTRIBUTION_LOOKBACK_SECONDS`, `REAUDIT_DEDUP_WINDOW_SECONDS`, `DEFAULT_CREATION_SHIELD_SECONDS`, `MIN_PROBE_CONTENT_TOKENS`, `_ACK_SURFACE`, `_VALID_TRIGGERED_FROM`, `Verdict`, `NO_OWNER_PROMPT`, `_VALID_NO_SIGNAL_REASON`, `_VALID_REPLY_SOURCE`, `HELD_CAUSES`) | 136-309, 477-491, 704 | nothing | built (audit-1) |
-| `_ACK_TOKENS` | 282 | the unstemmed tokenizer | with `probe_for_miss` |
+| `_ACK_TOKENS` | 282 | the unstemmed tokenizer | built (audit-2/3) |
 | `MissHit` (`to_dict`, `to_compact_dict`), `MissReport` (`is_miss`, `to_dict`) | 311-471 | nothing | built (audit-1) |
 | `no_owner_prompt_report` | 494-509 | nothing | built (audit-1) |
 | `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields` | 512-856 | nothing (the id minter passed in) | built (audit-1) |
-| `is_duplicate_audit` | 859-914 | the clock passed in; `parse_event_ts` | audit-2 |
-| `probe_for_miss` and its helpers (`_probe_now` through `_count_recent_retrievals`) | 917-1483 | the store's search, the clock, the caller's admission | audit-3 and later |
-| `_retrieved_ids` | 1486-1510 | nothing; `events._event_id_items` | with `_count_recent_retrievals` |
+| `is_duplicate_audit` | 859-914 | the clock passed in; `parse_event_ts` | built (audit-2/3) |
+| `probe_for_miss`, `_probe_now`, `_no_signal_report`, `_too_thin_to_probe`, `_created_before_shield`, `_probe_hits`, `_miss_hits`, `_probe_report`, `_probe_verdict`, `_caller_in_top_hit_project` | 917-1396 | the store's search (trait `ProbeSearch`), the clock (an argument), the caller's admission (trait `ProbeAdmission`) | built (audit-2/3) |
+| `_count_recent_retrievals` | 1399-1483 | the caller's admission | built (audit-2/3) |
+| `_retrieved_ids` | 1486-1491 | nothing; `events._event_id_items` | built (audit-2/3) |
+| `search_lane._relevance_label_v2`, `_V2_HIGH_MATCHED_FLOOR` | search_lane.py 614-684 | nothing | built (audit-2/3), in `search::lane` |
 
 What audit-1 reproduces. Every builder returns the event's fields as a
 `PyValue::Dict` in the reference's insertion order, each optional key
@@ -6319,6 +6321,81 @@ row follows the Unicode tables behind `str.isprintable`.
 `tests/audit_fields_robustness.rs` holds 2,000-hit reports, a 100,000
 code point refused text, a `settled_count` nested 200,000 deep, integer
 bounds, and the growth from 500 to 5,000 hits.
+
+What audit-2 and audit-3 reproduce (built as one unit, `audit::probe`).
+
+- `probe_for_miss` runs the reference's branches in order: a blank
+  message (`str.strip` with Python's whitespace) or an empty pool that
+  was not `searched` reports `no_signal` without a query; the thin gate
+  (when `floor`), an empty searched pool, and a ranker that returns no
+  hits report `no_signal` with the query; otherwise the report carries
+  the hits and the verdict. `now` is coerced as `_probe_now` does (a
+  naive value read as UTC, an offset kept). The creation shield keeps a
+  memory whose `created` is at or before `now - creation_shield_seconds`
+  (inclusive, compared as instants). The mode check runs after the
+  shield, so a shield cutoff out of range raises `OverflowError` before
+  a bad mode raises `ValueError`, whose message spells the mode through
+  `repr`. The retrieval shield's cutoff is computed only once there are
+  hits, so a lookback out of range raises only then.
+- `_too_thin_to_probe`: fewer than two distinct stemmed content tokens
+  (stopwords and `str.isdigit` tokens dropped), or every unstemmed
+  content token in `_ACK_TOKENS` (`audit::probe::ack_tokens`).
+- `_miss_hits` labels each hit with `relevance_label_v2`; `_probe_verdict`
+  reads the top hit's relevance as exactly `"high"`, then the shield's
+  count, then the project cohort on the top hit alone (a `projects:`
+  scope and `same_project` of its id).
+- `_count_recent_retrievals`: the cutoff first, then the window (a kind
+  in `_RETRIEVAL_EVENT_KINDS`, a `ts` that parses and is not before the
+  cutoff), then one `prime` with every window id in event order, then per
+  event: the session (`session or session_id`) in the set, the worktree
+  stamp equal, any retrieved id of the caller's project. The set leaves
+  out empty ids.
+- `is_duplicate_audit` walks newest first, skipping other kinds and
+  sessions (`session_id or session`) and unparsable stamps, and stops at
+  the first older event of the session; a dict `probe_query` matches on
+  its `hash`, a string on the text.
+
+Decisions. The ranker is the trait `ProbeSearch`, one method taking the
+shielded pool, the message, `now` and `ProbeKnobs` (mode,
+`excluded_scopes`, `max_results` = `_TOP_HITS_RETAINED`,
+`half_life_days`, `conversational`, `rescue_expansion` false); it returns
+`ProbeHit` (with `matched_unique` = `len(match_terms)`). The corpus
+statistics provider and the admission the reference forwards to
+`run_search` stay with the implementation. The admission is the local
+trait `ProbeAdmission` (`prime`, `same_project`); neither
+`store::caller::Admission` nor `store::pool::Admission` implements it
+yet, and the fixtures drive it through a fake. `now` is required (the
+reference reads the clock when it is None). An exception comes back as
+`ProbeError` by type: `TypeError` for an unhashable `kind` or session
+tested against a set, and for a naive `now` passed straight to the dedup
+or the shield once it compares a stamp; `AttributeError` for an event
+that is not a dict; `OverflowError` for a cutoff out of range. No pattern
+is matched here (the tokenizer is `lexicon`'s), so no regular expression
+is involved.
+
+Reference finding, reproduced: `_count_recent_retrievals` documents that
+"a single bad row never raises", yet an in-window retrieval event whose
+`session` is a list raises `TypeError` from the set membership test
+(`_count_recent_retrievals([{"kind": "search", "ts": <now>, "session":
+["S"]}], session_ids={"S"}, now=<now>, lookback_seconds=60)`), and so
+does any event whose `kind` is a list. `is_duplicate_audit` raises
+`TypeError` when given a naive `now` and a same-session `turn_audited`
+event, where `probe_for_miss` coerces its own.
+
+`audit_probe.jsonl` (not gated, 80 KB) holds `_ACK_TOKENS`, the thin
+gate over 19 messages, the v2 label over 120 pairs with its bounds, 75
+`probe_for_miss` cases with the ranker's recorded calls and the fake
+admission's primes and asks, 30 dedup cases and 13 shield cases. Every
+text is ASCII and every value plain JSON. `tests/audit_probe_kills.rs`
+holds the bounds, field orders, top-hit-only cohort, prime order, error
+order and naive-`now` cases; `tests/audit_probe_robustness.rs` holds a
+session nested 100,000 deep, every window at the integer bounds, the v2
+label at the `i64` bounds and the growth of the gate, the shield and the
+dedup over tenfold inputs.
+
+Left for later: an implementation of `ProbeSearch` over the store's
+search and of `ProbeAdmission` over `store::caller::Admission`, and the
+callers (`recall_settle._probe_message`, the Stop hook).
 
 ## The Stop's settlement of what was shown (`recall_settle.py`)
 

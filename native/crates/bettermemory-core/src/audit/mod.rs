@@ -1,8 +1,10 @@
 //! `audit.py`: the silent-miss audit. Its first unit holds the module's
 //! constants, the report types (`MissHit`, `MissReport`) and the event
-//! field builders in [`report`]; the probe itself (`probe_for_miss`), the
-//! re-audit dedup and everything past them are later units.
+//! field builders in [`report`]; the second (audit-2 and audit-3 as one)
+//! holds the re-audit dedup, the miss probe and its retrieval shield in
+//! [`probe`].
 
+pub mod probe;
 pub mod report;
 
 /// `_RETRIEVAL_EVENT_KINDS`, sorted: the event kinds that count as the

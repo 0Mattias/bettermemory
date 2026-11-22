@@ -188,9 +188,10 @@
 //! - [`events`]: the telemetry recorder's rows, its first unit (the
 //!   event kinds, their row classes and the fields a state row keeps)
 //!   and the id-list readers (`event_id_items`, `event_id_list`);
-//! - [`audit`]: the silent-miss audit, its first unit (the constants,
-//!   `MissHit`, `MissReport` and the `turn_audited`, `search_miss`,
-//!   `recall_held` and `prompt_recall` field builders);
+//! - [`audit`]: the silent-miss audit (the constants, `MissHit`,
+//!   `MissReport`, the `turn_audited`, `search_miss`, `recall_held` and
+//!   `prompt_recall` field builders, the re-audit dedup, the miss probe
+//!   over a ranker trait and its retrieval shield);
 //! - [`recall_settle`]: the Stop's settlement of shown pointers
 //!   (`settle_shown`, `settle_unused`), `previous_audit_at` and
 //!   `review_unanswered`, over traits for the store, recorder and state;

@@ -384,6 +384,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "tool_handlers": gen_tool_handlers.generate,
     "events_kinds": gen_events_kinds.generate,
     "audit_fields": gen_audit.generate,
+    "audit_probe": gen_audit.generate_probe,
     "recall_settle": gen_recall_settle.generate,
     "recall_prompt": gen_recall_prompt.generate,
     "control_tokens": gen_control_tokens.generate,
