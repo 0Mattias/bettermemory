@@ -107,6 +107,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
 | `claims` | units 1 and 2 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`) | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl` |
+| `symbols` | unit symcheck of `symbols.py`: the bounds (`_MAX_*`, `_FILE_SUFFIXES`), `SymbolCitation`, `SymbolDriftReport` (`missing`, `__bool__`, `to_dict`), `check_symbol_citations` over citations already parsed, `_tier`, `_live_root`, `_resolve_module`, `_module_bindings`; `ast.parse` and the name walks are a trait (`ModuleNames`) | `symbols.jsonl`, `symbols_platform.jsonl` |
 | `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`) | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json`, `store_restore_lock_hold_python.json`, `store_restore_lock_python.json` (POSIX only) |
@@ -6047,6 +6048,9 @@ that Unicode too.
 | `golden_claims`: `claims_python_every_case` | `claims_python.jsonl` | ii (Python) |
 | `golden_claims`: `claims_literal_every_case` | `claims_literal.jsonl` | i |
 | `claims_kills` (20), `claims_robustness` (15) | none | i |
+| `golden_symbols`: `symbols_every_case`, `symbols_windows_flavour_declines_or_answers_empty` | `symbols.jsonl` | i |
+| `golden_symbols_platform`: `symbols_platform_every_case` (POSIX only; `symbols_not_posix` records the gap) | `symbols_platform.jsonl` | iii (and Python) |
+| `symbols_kills` (10), `symbols_robustness` (4) | none | i |
 | `golden_pysyntax`: `pysyntax_values` | `pysyntax.jsonl` | i |
 | `golden_pysyntax`: `pysyntax_every_case` | `pysyntax_python.jsonl` | ii (Python) |
 | `pysyntax_kills` (14), `pysyntax_robustness` (7) | none | i |
@@ -16803,6 +16807,125 @@ claims).
 Units 3 and 4 above (`_Headers`, the index and its scoring; the oracle
 `check_claim`). Nothing in units 1 and 2 reads a file, a clock or git.
 
+## Symbol citations checked against a module (`symbols.py`)
+
+Read at 65aea201 (`symbols.py`, 509 lines). The module parses the
+two-token citation shape ("`name` in `pkg/mod.py`") out of a body,
+resolves the cited module under the record's worktree root and asks the
+module's AST whether the name is bound there. It is advisory: one caller
+(`memory_verify`), no staleness input. Its parser needs two patterns the
+regular expression engine is to run, and its index needs `ast.parse`, so
+the module is cut into units, the checker first.
+
+### The map, function by function
+
+| function | lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_MAX_CITATIONS_PER_BODY`, `_MAX_MODULE_PATH_LEN`, `_MAX_SYMBOL_LEN`, `_MAX_BODY_SCAN_CHARS`, `_MAX_MODULE_BYTES`, `_FILE_SUFFIXES` | 98-136 | nothing | built (symcheck) |
+| `_SYMBOL_IN_MODULE`, `_SUPPRESSING_PROSE` (re.I), `_SUPPRESSION_LOOKBACK` | 137-182 | the regular expression engine | symbols-1b |
+| `SymbolCitation`, `SymbolDriftReport` | 183-255 | nothing | built (symcheck) |
+| `extract_symbol_citations` | 256-288 | the two patterns | symbols-1b |
+| `check_symbol_citations` | 289-357 | the file system, `ast.parse` | built (symcheck), citations an argument |
+| `_tier` | 358-378 | nothing | built (symcheck) |
+| `_live_root` | 380-392 | `Path.resolve`, `is_dir` | built (symcheck) |
+| `_resolve_module` | 393-421 | `Path.resolve`, `is_file` | built (symcheck) |
+| `_module_bindings` | 422-451 | `stat`, `read_text`, `ast.parse` | built (symcheck), the parse a trait |
+| `_top_level_names`, `_all_names` | 452-509 | the AST | with the Python parser (claims-5c) |
+
+### Unit symcheck, built (`symbols`)
+
+`src/symbols.rs` (382 lines, no dependency added). Text is
+`&[u32]` (`PyStr`): a citation may hold a lone surrogate.
+
+- The bounds are constants of the same names; the ones the checker does
+  not read (the extraction's caps) wait for symbols-1b's use.
+- `SymbolCitation` with `Binding` (the five strings), `text` is
+  `__str__`. `SymbolDriftReport` with `missing`, `truthy` (`__bool__`)
+  and `to_dict` (keys in the reference's order, `unconfirmed` only when
+  there is one).
+- `check_symbol_citations(citations, worktree_root, anchor, machine,
+  names)`: `citations` is what `extract_symbol_citations(body)` answers,
+  since the parser waits for the engine. `anchor` is `ClaimAnchor` as the
+  checker reads it (`root`, `convicting`); it takes precedence over
+  `worktree_root` as in the reference: with an anchor, its root alone is
+  read, even when it is None. No citation answers the empty report before
+  any root is resolved. One read per distinct module, in a map as the
+  reference's `cache`.
+- `ModuleNames::names(source)` stands for `ast.parse` and the two walks:
+  None for SyntaxError, ValueError and RecursionError. The Python parser
+  lanes implement it; the tests replay the reference's names by the
+  SHA-256 of the text, so a text read otherwise than `read_text` reads it
+  finds nothing.
+- `Machine { fs, flavour, cwd }`: the file system is `fsdata::Fs`,
+  `Path.resolve(strict=False)` is `fsdata::realpath::realpath` with the
+  working directory an argument, `is_dir` and `is_file` are `Fs::stat`'s
+  kind (any error is no, as `os.path.isdir` and `Path.is_file` read an
+  error), `st_size` is `Fs::stat`'s.
+- A path is `os.fsencode`d: UTF-8, U+DC80 to U+DCFF as the bytes they
+  escape. A code point that does not encode (another lone surrogate) is
+  written as a NUL: the reference raises UnicodeEncodeError, a
+  ValueError, at the first `lstat` of the component holding it, and the
+  walk raises ValueError on a NUL at the same place; both callers read it
+  as None.
+- `is_relative_to` is a component prefix test on the two resolved paths
+  (`/` holds every absolute path).
+- `read_text(encoding="utf-8", errors="replace")` is the bytes read
+  through `Fs::open` and `Fs::read`, decoded with each bad sequence one
+  U+FFFD (the crate's UTF-8 replace decode, `String::from_utf8_lossy`,
+  which takes CPython's maximal subparts), then text mode's universal
+  newlines: `\r\n` and a lone `\r` read as `\n`.
+- The Windows flavour: `realpath` is not ported there (Linear ENG-124),
+  so a call that resolves a root declines (`Declined::NotPorted`) where
+  the reference on Windows answers. A call with no citation, or no root,
+  answers the empty report on either flavour.
+
+Patterns: the checker reads none. `_SYMBOL_IN_MODULE` and
+`_SUPPRESSING_PROSE` are new patterns under the decision's rule 4: they
+are never matched by hand and wait for the engine (symbols-1b), and both
+go into the engine's inventory with that unit.
+
+Fixtures (`gen_symbols`): each case a tree in a fresh scratch directory,
+the citations given to `check_symbol_citations` in place of the parser's
+answer, the root spelled relative to the case's directory, and the names
+`ast.parse` gave each file with the digest of its text.
+`symbols.jsonl` (ungated) holds the tiers, dotted names, the module
+spellings refused before the file system is asked, roots missing, a
+file, relative, dotted, with a NUL or a surrogate, the anchor's
+precedence and conviction, the size bound (2 MiB read, one byte more
+not), text that is not UTF-8, CRLF and CR newlines, a NUL, a BOM, a
+syntax error and identifiers that NFKC folds. `symbols_platform.jsonl`
+(gated on the platform and the Python release, and POSIX only) holds links (inside, out of, and to the
+root, dangling, a loop), names that differ only in case, names ending in
+a dot or a space, a FIFO and a mode-000 module; its native test writes
+the tree to disk and reads it through `StdFs`.
+
+### Reference findings
+
+- On a file system that folds case (macOS, Windows), `is_relative_to`
+  compares spellings: a root given as `<dir>/Root` for the directory
+  `<dir>/root`, with a module reached through a link whose target spells
+  `<dir>/root/...`, resolves outside the root by text though it is the
+  same directory, and the citation is unresolved. Conversely `PKG/A.py`
+  is checked against `pkg/a.py` there and unresolved on Linux.
+- A module spelled with a trailing dot or space (`pkg/a.py.`) is
+  unresolved on POSIX and, through Win32's name rules, the file `a.py`
+  on Windows; the report then names a module spelling that is no file's.
+- Under 3.11 and 3.12 `Path.resolve` raises RuntimeError on a link loop
+  and neither `_live_root` nor `_resolve_module` catches it: a cited
+  module that is a link to itself (`pkg/loop.py` -> `loop.py`) makes
+  `check_symbol_citations` raise, so the verify call dies, where 3.13
+  answers the citation unresolved. The port answers as 3.13; the row is
+  in `symbols_platform.jsonl`, which is gated on the release.
+- `read_text` translates newlines before `ast.parse`, so the size bound
+  counts bytes the parse never sees; nothing turns on it.
+
+### Left for later units
+
+symbols-1b: `extract_symbol_citations` with `_SYMBOL_IN_MODULE` and
+`_SUPPRESSING_PROSE` on the engine, and `check_symbol_citations` taking
+a body. With the Python parser (claims-5c): `_top_level_names` and
+`_all_names` as a `ModuleNames`.
+
 ## Python source as CPython reads it (`pysyntax`)
 
 `claims.py` calls `ast.literal_eval(text)` at lines 296 (`parse_claim`),
@@ -19351,6 +19474,9 @@ What the reference has and this build does not, by area:
   machine's local time).
 - `handlers/verify.py` past its pure gates: `_stamp`,
   `_load_verify_snapshot` and the handler itself (h_verify-2).
+- `symbols.py` past its checker: `extract_symbol_citations` with
+  `_SYMBOL_IN_MODULE` and `_SUPPRESSING_PROSE` (symbols-1b), and
+  `_top_level_names` and `_all_names` with the Python parser.
 
 ## Records and their errors
 

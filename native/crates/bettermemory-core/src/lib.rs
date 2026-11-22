@@ -260,6 +260,9 @@
 //! - [`claims`]: what a memory claims, its first two units (the claim
 //!   record, the path spellings and the patterns a patch is read by; the
 //!   claim parser and the literal readers over [`pysyntax`]);
+//! - [`symbols`]: `symbols.py`'s checker, its first unit: the bounds, the
+//!   citation records and `check_symbol_citations` over parsed citations,
+//!   with a module's names a trait;
 //! - [`pysyntax`]: Python source as CPython 3.13.13 reads it, its first
 //!   two units: the eval-mode tokenizer `ast.literal_eval` meets, with
 //!   string and number literals read, and the literal reader with
@@ -362,6 +365,7 @@ pub mod search_dedup;
 pub mod session;
 pub mod standing;
 pub mod store;
+pub mod symbols;
 pub mod toml;
 pub mod unicode;
 pub mod verdict_signals;

@@ -124,6 +124,7 @@ from . import (
     gen_membership_lines,
     gen_membership_queries,
     gen_claims,
+    gen_symbols,
     gen_pysyntax,
     gen_pysyntax_literal,
     gen_models,
@@ -460,6 +461,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "claims_unicode": gen_claims.generate_unicode,
     "claims_python": gen_claims.generate_python,
     "claims_literal": gen_claims.generate_literal,
+    "symbols": gen_symbols.generate,
+    "symbols_platform": gen_symbols.generate_platform,
     "pysyntax": gen_pysyntax.generate_stable,
     "pysyntax_python": gen_pysyntax.generate,
     "pysyntax_literal": gen_pysyntax_literal.generate_stable,
@@ -678,6 +681,8 @@ PYTHON_VERSION = "3.13.13"
 #: 70,000 lists deep: whether `json.loads` raises RecursionError there is
 #: the interpreter's and the system's, as 3.14 on Linux reads it
 #: (`gen_restore_lock`).
+#: ``symbols_platform`` holds a link loop, on which 3.11 and 3.12's
+#: `Path.resolve` raises RuntimeError out of the checker (`gen_symbols`).
 PYTHON_GATED = frozenset(
     {
         "argparse_python",
@@ -685,6 +690,7 @@ PYTHON_GATED = frozenset(
         "cli_common_python",
         # 3.11 and 3.12 raise RuntimeError where `Path.resolve` meets a link loop.
         "handlers_verify_gates_python",
+        "symbols_platform",
         "models_text_platform",
         "location_stamps_platform",
         "location_stamps_python",
@@ -820,9 +826,13 @@ def pydantic_core_version() -> str:
 #: POSIX host, ``WindowsPath('/')`` on Windows (`gen_fsutil`).
 #: ``log_keyfiles_darwin`` holds `KeyUnreadableError` messages whose reason
 #: is the C library's ``strerror`` (`gen_log_keyfiles`).
+#: ``symbols_platform`` resolves cited modules through links and names
+#: that differ only in case, which macOS folds and Linux does not
+#: (`gen_symbols`).
 PLATFORM = "darwin-arm64"
 PLATFORM_GATED = frozenset(
     {
+        "symbols_platform",
         "models_text_platform",
         "location_stamps_platform",
         "log_keyfiles_darwin",
@@ -955,7 +965,9 @@ PLATFORM_GATED = frozenset(
 #: `open_machine` leaves on the state directory and its two files, which
 #: the native build does not port to Windows (`gen_machine`);
 #: ``verify_anchoring_attest_posix`` resolves through a link in a scratch
-#: tree (`gen_verify_anchoring_attest`).
+#: tree (`gen_verify_anchoring_attest`);
+#: ``symbols_platform`` holds links, a FIFO and a mode-000 file
+#: (`gen_symbols`).
 POSIX_ONLY = frozenset(
     {
         "attestation_paths_posix",
@@ -963,6 +975,7 @@ POSIX_ONLY = frozenset(
         # The gates resolve paths through `posixpath`; `ntpath` asks Windows.
         "handlers_verify_gates",
         "handlers_verify_gates_python",
+        "symbols_platform",
         "checkout_token_read",
         "checkout_token_read_posix",
         "checkout_token_write",

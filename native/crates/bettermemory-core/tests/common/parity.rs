@@ -350,6 +350,10 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // Every errno number and the C library's text for it, both the
         // platform's (`gen_location_probe`).
         "location_probe_errno.jsonl" => &[Platform],
+        // Cited modules resolved through links and names that differ only
+        // in case, which macOS folds, and a link loop, on which 3.11 and
+        // 3.12's `Path.resolve` raises (`gen_symbols`).
+        "symbols_platform.jsonl" => &[Python, Platform],
         // The same by the strict walk's input shape (`gen_gitdir.gated`).
         "gitdir_read_python.jsonl" => &[Python],
         // A link loop, by the standing rule (`gen_identity.gated`).
