@@ -36,6 +36,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `records::summaries` | unit 3 of `models.py`, the result models: `MemoryHit` (`MemoryHit::new` with the model's defaults), `MemorySummary` and `TombstonedSummary` (`of` a record, as `store_records.list_summaries` and `list_tombstones` build them), and the two listings' scope filters (`summaries`, `tombstone_summaries`) | `models_hits.jsonl` |
 | `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT` until the review unit), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint` | `standing.jsonl` |
+| `mirror_format` | `mirror_format.py` whole: `TOMBSTONE_DIR`, `EPISODES_DIR`, `TOMBSTONE_SUFFIX`, `_ID_TOMBSTONE_RE` (by hand, `id_tombstone_stem`), `memory_filename`, `tombstone_filename`, `active_filename_for_tombstone`, `is_legacy_tombstone_name`, the four key tables, `memory_metadata`, `episode_metadata` | `mirror_format.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl` |
 | `path_drift_steps` | `path_drift_steps.py`: `_check_body_candidates`, its checks and keys as closures | `path_drift_steps.jsonl` |
@@ -6002,6 +6003,7 @@ that Unicode too.
 | `golden_models_text`: `models_text_platform_every_case` | `models_text_platform.jsonl` | iii |
 | `golden_models_hits`: `models_hits_every_case` | `models_hits.jsonl` | i |
 | `golden_standing`: `standing_every_case`; `standing_kills` (11), `standing_robustness` (3) | `standing.jsonl` (the last two none) | i |
+| `golden_mirror_format`: `mirror_format_every_case`; `mirror_format_kills` (10), `mirror_format_robustness` (3) | `mirror_format.jsonl` (the last two none) | i |
 | `golden_search`: `search_every_query_every_mode` | `search.jsonl` | iii |
 | `golden_search_dedup`: `search_dedup_every_case` | `search_dedup.jsonl` | i |
 | `golden_search_dedup`: `search_dedup_unicode_every_case` | `search_dedup_unicode.jsonl` | ii (Unicode) |
@@ -8142,6 +8144,95 @@ check them. Help output of a subparser (the choices' help lines) is
 argparse-2's: the help rows hand the case's stdout to the parser through the
 test `HelpText`, so they check that help ran and its exit status, not the
 `{a,b}` group or the choices' help lines.
+
+## The v8 file names and frontmatter (`mirror_format.py`)
+
+`mirror_format` is `mirror_format.py` whole (247 lines). It imports the
+first unit of `native_text.py`, built earlier (`native_text`). It needs
+nothing from the machine, and comes to about 280 lines of Rust source.
+
+### Map, by function
+
+| Function | Reference lines | Needs | Status |
+|---|---|---|---|
+| `native_text.has_surrogates` | native_text 15-22 | nothing | built earlier (`native_text`) |
+| `native_text.encoded_json` | native_text 30-32 | nothing | built earlier (`native_text`) |
+| `native_text.origin_projection` | native_text 35-41 | nothing | built earlier (`native_text`) |
+| `native_text.utf8_text` | native_text 25-27 | nothing | built earlier (`native_text::utf8_text`) |
+| `native_text.mutation_payload` and the rest | native_text 44- | nothing | later native_text units |
+| `TOMBSTONE_DIR`, `EPISODES_DIR`, `TOMBSTONE_SUFFIX` | mirror_format 29-30, 37 | nothing | built |
+| `_ID_TOMBSTONE_RE` | mirror_format 40-42 | nothing | built by hand (`id_tombstone_stem`) |
+| `memory_filename` | mirror_format 45-53 | nothing | built |
+| `tombstone_filename` | mirror_format 55-59 | nothing | built |
+| `active_filename_for_tombstone` | mirror_format 61-71 | nothing | built |
+| `is_legacy_tombstone_name` | mirror_format 73-75 | nothing | built |
+| the four key tables | mirror_format 86-131 | nothing | built |
+| `memory_metadata` | mirror_format 133-201 | nothing | built |
+| `episode_metadata` | mirror_format 203-247 | nothing | built |
+
+### What each reproduces
+
+`has_surrogates` answers whether a `str` holds a lone surrogate, at any
+depth of a mapping (keys included), list or tuple; any other value, a
+path among them, answers false. `origin_projection` keeps the mapping
+whole with no extension while nothing holds a surrogate; else it keeps
+the entries whose value holds none (an entry whose key alone holds one
+stays, as the reference tests only the value) and adds the whole mapping
+as `encoded_json`. It returns `Result` because `json.dumps` can raise on
+values an origin never holds.
+
+`_ID_TOMBSTONE_RE` is matched by hand, as the pyre decision's rule 3
+allows (an anchored literal suffix and a fixed 26-character class, no
+choice). The rule: the name, less one final newline (`$` matches before
+it), must hold no other newline (`.` matches none), end with
+`.tombstone.md`, have 26 characters of `[0-9A-HJKMNP-TV-Z]` before that,
+a `.` before them, and a non-empty stem before the dot. The suffix is
+anchored, so the greedy stem may hold dots and the id is always the last
+26 characters before it. The pattern is in the engine's inventory through
+the `ast` scan of `gen_pyre_atom`, which reads every module of the
+reference. The engine has no `api` module yet; once it does, the hand
+match may be replaced by the engine's `Regex`.
+
+`memory_filename` is `build_filename(created, make_slug(body) + "-" +
+id.lower())` with `make_slug`'s defaults of 6 words and 60 characters.
+`memory_metadata` and `episode_metadata` return `PyValue::Dict` in the
+reference's insertion order: datetimes as `PyValue::DateTime`,
+`corroborations` as `PyValue::Int` from its canonical decimal, enum
+members by their value, the origin through `Origin::dump(true)` (the
+`model_dump(mode="json", exclude_none=True)`), the actor through
+`Actor::to_record`. A memory drops a `process-cwd` origin source; an
+episode keeps it. `native_origin` precedes `origin` where the origin
+holds a surrogate. Path targets are copied as held (`dict(targets)`, not
+the JSON dump's rebuilt keys).
+
+### Decisions
+
+- `has_surrogates` walks with its own stack, in the reference's order.
+  The reference recurses (two frames a level, through the generator), so
+  a value nested past about 500 levels raises RecursionError there and
+  answers here. This is a stated difference: no origin reaches it, as an
+  origin's fields are flat text.
+- `store/write.rs` keeps a private `has_surrogates`; it is to be pointed
+  at `native_text::has_surrogates` by a later unit (the `store` tree is
+  not edited here).
+- The fixture keeps bodies ASCII and years at four digits, so neither
+  `make_slug`'s Unicode lowering nor `build_filename`'s year padding (both
+  gated in `models_text`) reaches it; `mirror_format.jsonl` is ungated.
+
+### Tests
+
+`golden_mirror_format` checks every row of `mirror_format.jsonl`: the
+tombstone names (legacy names, dotted stems, lowercase ids, each
+excluded Crockford letter, one final newline, two final newlines, an
+inner newline, an empty stem, a surrogate stem), `tombstone_filename`,
+`origin_projection` and `has_surrogates` over plain and surrogate-bearing
+mappings, the metadata of memories and episodes built through the
+models with every optional field set and unset, and the constants.
+`mirror_format_kills` holds the newline rules, the greedy stem, the
+excluded letters, the single `.md` strip, surrogate keys and paths, and
+the sort and escapes of `encoded_json`. `mirror_format_robustness` shows
+the name parse and `origin_projection` linear and walks a value nested
+200,000 deep without overflow.
 
 ## The store's writes: the reference's order (N3a design)
 

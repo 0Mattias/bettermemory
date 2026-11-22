@@ -60,6 +60,8 @@
 //! - [`standing`]: the store-free half of `standing.py`: its constants,
 //!   the standing test, the probability check, the answer a put writes,
 //!   and the lines and questions the surfaces carry;
+//! - [`mirror_format`]: the v8 file names and frontmatter the mirror
+//!   writes (`mirror_format.py` whole);
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
 //! - [`verify_candidates`]: the path candidates verification reads, its
 //!   first three units (one candidate validated; `_BACKTICK_RE`,
@@ -326,6 +328,7 @@ pub mod membership_lines;
 pub mod membership_records;
 pub mod membership_rows;
 pub mod membership_shared;
+pub mod mirror_format;
 pub mod models_text;
 pub mod native_text;
 pub mod origin_dates;
