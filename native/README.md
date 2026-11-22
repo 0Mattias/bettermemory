@@ -101,6 +101,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `standing_guard` | `handlers/_guard.py` whole: `read_words`, `record`, `Held`, `check`, `guard` and the hints, over `GuardDeps` | `standing_guard.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl` |
+| `store::docfreq` | the document frequency memo of `store_index.py`: `_memoised_document_frequencies`, `_current_inputs`, `_patched_masks`, `_admitted_mask`, `_keep_doc_freqs`, `_row_mask`, `_DocFreqInputs` and the grouping of `Store._read_doc_freq_inputs`, the memoised half of `Store.ranking_statistics`; the store's side is the trait `DocFreqSource` | `store_docfreq.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks` | `membership_shared.jsonl`, `membership_shared_python.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
@@ -2875,6 +2876,88 @@ native release (sha2 0.11.1, which uses the aarch64 SHA instructions) 142.8,
 The prediction of at least ten times is missed: both are bound by
 HMAC-SHA256 on the CPU's SHA instructions (the reference's `hmac` is
 OpenSSL's), and walking the rows costs about 29 ms of the native time.
+
+## The document frequency memo (`store_index.py`, unit store_index-1)
+
+`store::docfreq` reproduces the memo `Store.ranking_statistics` and
+`Store.document_frequencies(..., memoised=True)` price a search's BM25
+legs with. `store_index.py` as it is now holds it at these lines:
+
+| function | lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_ADMISSION_INPUTS` | 68-74 | SQLite (the store's side) | the statement, run by the trait's implementation |
+| `_DocFreqInputs` | 77-118 | nothing | built: `DocFreqInputs`, its terms held by `Entry` |
+| `DOC_FREQ_STORES`, `DOC_FREQ_TERMS` | 149-150 | nothing | built |
+| `_row_mask` | 153-159 | nothing | built: `row_mask` |
+| `_DOC_FREQS`, its lock, `_clear_doc_freqs` | 162-169 | a process-wide lock | built: `memo()`, `DocFreqMemo::clear` |
+| `_memoised_document_frequencies` | 388-433 | the store's side | built: `DocFreqMemo::document_frequencies` |
+| `_current_inputs` | 436-456 | the store's side | built |
+| `_HEAD_KINDS`, `_ADVANCE_ROWS` | 459-464 | nothing | store_index-2 |
+| `_PATCH_ROWS`, `_PATCH_WINDOW` | 467-471 | nothing | built |
+| `_advanced_inputs` | 474-602 | the log and the digest | store_index-2: the trait's `advanced_inputs`, None by default |
+| `_patched_masks` | 605-661 | the FTS table | built: `patched_masks` |
+| `_admitted_mask` | 664-677 | nothing | built: `admitted_mask` |
+| `_keep_doc_freqs` | 814-839 | the lock | built: `DocFreqMemo::keep` |
+| `Store._read_doc_freq_inputs` | store.py 1766-1830 | the digest or the memory rows | the grouping built (`DocFreqInputs::from_rows`); the reads are the trait's `admission_rows` |
+| `Store._term_masks` | store.py 1832-1851 | the FTS table | the trait's `term_masks` (store-3c) |
+| `Store.ranking_statistics` | store.py 1744-1764 | a transaction's state | the memoised half built: `DocFreqMemo::ranking_statistics`, `Ranked::Uncached` inside a transaction |
+
+The store's side is the trait `DocFreqSource`: `memory_head`,
+`store_key` (the store's path text and id), `in_transaction`,
+`admission_rows` (the rows and whether the digest answered),
+`read_inputs` (by default the grouping of those rows), `advanced_inputs`
+(by default None, so every changed head reads the inputs again until
+store_index-2), `term_masks` and `fts_rowids` (the patch's statement).
+The store's implementation is store-3c's. The test double
+`tests/common/docfreq_source.rs` runs the reference's statements over an
+in-memory SQLite database and writes out `_advanced_inputs` for the
+test; its SQL carries no parity weight.
+
+Decisions:
+
+- A mask is a bit set of `u64` words (`Mask`), of any width, as the
+  reference's Python `int`; counts are popcounts of the intersection.
+- The memo is a value (`DocFreqMemo`) with one process-wide instance
+  (`memo()`), so the tests run their own. One mutex guards the stores
+  and each entry's terms, taken as the reference takes its lock; the
+  reads of the store's side and the admit predicate run outside it. An
+  entry is compared by identity (`Arc::ptr_eq`), as the reference's `is`.
+- A row's scopes text is parsed with `json::loads` and kept as
+  `PyValue` items: a list of any items is a group's scopes, a value that
+  is not a list skips the row, and a text that is not JSON raises
+  (`DocFreqError::Py`), as `_load_json` raises there: the docstring's
+  "whose scopes parse" holds only for texts that parse to something
+  other than a list.
+- `_row_mask` raises IndexError for a position at or past its width
+  rounded up to whole bytes; `row_mask` answers `DocFreqError::IndexError`
+  there (the bound taken in `u128`, so a width near `usize::MAX` does not
+  overflow, where the reference would fail to allocate) and sets bits below that bound past the width, as the bytearray.
+  A row number read twice keeps the later position and leaves the count
+  of positions as it was (`index[rid] = position`).
+- The BM25 lengths are summed in `i128` where the reference's are
+  unbounded ints; the average is `int_div`, Python's correctly rounded
+  `int / int`, rounded once at any size (a sum past 2^53 included).
+- A term named twice in a direct call is read twice, the second answer
+  kept, as the reference's `found` dict; `ranking_statistics` makes the
+  terms sorted and unique first.
+
+Fixtures: `tests/contract/gen_store_docfreq.py` drives the reference's
+own memo over a stand-in store (`_Fake`, the reference's
+`_memory_head`, `_advanced_inputs`, `_read_doc_freq_inputs` and
+`_term_masks` over the same five tables), through write sequences, a
+term past the patch window, more than eight changed rows, more than 256
+rows since a head, no digest, a log of another history, scopes texts
+that are not lists or not JSON, a transaction, a write between the two
+head reads, nine stores and 4097 terms. Each query records the answer,
+the calls made to the store's side with every admit call, the stores
+kept and the queried store's terms. No row depends on the platform or
+the Python release, so the file is not gated. Tests:
+`golden_store_docfreq`, `store_docfreq_kills` and
+`store_docfreq_robustness` (scopes nested 100,000 deep, row numbers at
+the ends of `i64`, lengths whose sum passes `i64`, eight threads on one
+memo, a query over ten times the rows within `TENFOLD`).
+
+No regular expression is used.
 
 ## The restore lock, the writing open's side (`restore_lock.py`)
 
@@ -20024,7 +20107,9 @@ What the reference has and this build does not, by area:
   the membership log and the store id reissue (store_membership-2),
   wiring the schema steps into the writing open and `run_steps`, rekey,
   reclaim, a restore's rows, re-spelling the index. Of `store.py`'s
-  reads, the memoised branch of `document_frequencies`,
+  reads, the memoised branch of `document_frequencies` (the memo of
+  `store_index.py` is built in `store::docfreq`; `_advanced_inputs` and
+  the store's `DocFreqSource` are not),
   `ranking_statistics` and `store_orphans` (store-3).
 - A record's history past the rows that name it, their MAC under each
   chain segment's key (`_RowVerifier`, `_set`) and what each row did

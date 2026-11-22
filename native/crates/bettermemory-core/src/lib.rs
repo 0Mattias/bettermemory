@@ -116,8 +116,10 @@
 //!   `in_batch`, `wrote_record` and the store id);
 //!   `store.py`'s connection leaves and its admitted reads (`store::reads`);
 //!   the finish of a committed key rotation (`store::rotation`); the
-//!   episode journal's reads (`store::journal`); and the upgrade's proof
-//!   that no other connection holds the store (`store::upgrade`);
+//!   episode journal's reads (`store::journal`); the upgrade's proof
+//!   that no other connection holds the store (`store::upgrade`); and the
+//!   document frequency memo with the store's side as a trait
+//!   (`store::docfreq`);
 //! - [`membership_records`]: the vocabulary and records of the membership
 //!   model, units 1 to 3 (the legacy ask rule and the helpers that
 //!   compare, join and rebase recorded paths in either spelling; the

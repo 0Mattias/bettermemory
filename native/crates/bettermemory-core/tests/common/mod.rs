@@ -9,6 +9,7 @@ pub mod attestation_paths;
 pub mod bulk;
 pub mod created;
 pub mod dedup;
+pub mod docfreq_source;
 pub mod gitconfig_file;
 pub mod gitconfig_tree;
 pub mod githead;
