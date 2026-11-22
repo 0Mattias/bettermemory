@@ -35,7 +35,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves; `origin_dates::memo`: `_instant`, `commit_author_timestamps` and `_remember_dates` over the caller's `TimestampsMemo`, `MemoLeaves` and `ShallowHold` | `origin_dates_reads.jsonl`, `origin_dates_memo.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
 | `use_tokens` | the per-turn use-token bookkeeping of `handlers/_shared.py`: `_drain_expired_use_tokens`, `_emit_expired_use_tokens`, `_advance_turn`, `_event_ts_epoch`, `_scan_settled_use_events`, `_already_recorded_pending_ids` and its alias `_hook_attributed_pending_ids`, `_attach_use_tokens`; the recorder and its log are a trait (`UseLog`) | `use_tokens.jsonl`, `use_tokens_python.jsonl` |
-| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth. Unit pyre-5b: `_sre`'s ASSERT and ASSERT_NOT (`Op::Look`, `Op::LookEnd`) run in `exec` as sub-attempts on the same stack; `supports` refuses nothing. Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`). Unit pyre-6b: `Pattern.sub`, `subn` and `split` with a count, a literal or a function replacement, a literal holding a backslash refused as a template (`replace::ReplaceError::Template`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl` |
+| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth. Unit pyre-5b: `_sre`'s ASSERT and ASSERT_NOT (`Op::Look`, `Op::LookEnd`) run in `exec` as sub-attempts on the same stack; `supports` refuses nothing. Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`). Unit pyre-6b: `Pattern.sub`, `subn` and `split` with a count, a literal or a function replacement, a literal holding a backslash refused as a template (`replace::ReplaceError::Template`). Unit pyre-7 (tests only): every pattern of the reference the engine runs, built from its own text and flags, against `re` over texts that tell its mutants apart, the four data-built families, the tripwire on the reference's sites | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl`, `pyre_inventory.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `records::summaries` | unit 3 of `models.py`, the result models: `MemoryHit` (`MemoryHit::new` with the model's defaults), `MemorySummary` and `TombstonedSummary` (`of` a record, as `store_records.list_summaries` and `list_tombstones` build them), and the two listings' scope filters (`summaries`, `tombstone_summaries`) | `models_hits.jsonl` |
 | `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT` until the review unit), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint`; unit 2, the store reads: the body sha memo (`SHA_BOUND`, `clear_shas`), `current`, `answers`, `Backlog`, `backlog`, `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids`, `refusal_rows`, `held_by_removal` over `StandingStore` and `Admission` | `standing.jsonl`, `standing_reads.jsonl` |
@@ -7328,7 +7328,7 @@ Leaves first. A unit's lines are Rust source outside tests.
 | pyre-4b | `pyre/lower.rs` | nodes threaded by `next`, `_simple`, `_combine_flags`, group repeats unrolled, the arena cap, the lookbehind errors of `_compile`, the refusals that depend on flags | `_compiler.py` 31-35, 37-200, 401-408 | pyre-1, pyre-3 | built, 526 lines |
 | pyre-5 | `pyre/exec.rs` | one loop, one stack, one trail; anchors, lookarounds, the `match` and `fullmatch` acceptance rules (the must-advance attempt is pyre-6), the scan over starts, the step count | `_sre` (by differential) | pyre-4 | pyre-5a built, 489 lines; pyre-5b (lookarounds) built, 535 lines in all |
 | pyre-6 | `pyre/regex.rs` | `Regex`, `Match`, `finditer`, `findall`, `sub`, `subn`, `split`, `pos` and `endpos`, literal and function replacement | `_sre` (by differential) | pyre-5, pyre-2 | pyre-6a built (`Regex`, `Match`, `match`, `fullmatch`, `search`, `finditer`, `findall`, the attempt that must advance), 497 lines; pyre-6b built (`sub`, `subn`, `split`, in `pyre/replace.rs`), 228 lines |
-| pyre-7 | tests only | every remaining pattern of the reference built from its own text; mutants; the inventory tripwire | the reference's patterns | pyre-6 | not built |
+| pyre-7 | tests only | every remaining pattern of the reference built from its own text; mutants; the inventory tripwire | the reference's patterns | pyre-6 | built, 0 lines (642 of tests) |
 | pyre-8 | tests only | the 94 hand-written matchers against the engine | the built units | pyre-6 | not built |
 | pyre-9 | `pyre/memo.rs` | failure bits, the run and failed ends per repeat; megabyte pins by steps | none (changes no answer) | pyre-6, pyre-7 | not built |
 | pyre-10 | not scheduled | replacement templates | `_parser.py` 997-1081 | pyre-6 | not built |
@@ -8860,6 +8860,147 @@ engine's inventory gains nothing. The call sites of `sub` and `split`
 
 Left for later units: templates (pyre-10), the failure memo (pyre-9).
 
+### Unit pyre-7, built (the inventory proof, tests only)
+
+The unit adds no crate source. It proves the engine on every pattern of
+the reference it is to run, each built from the reference's own text
+and flags, and reproduces no reference function of its own: what it
+pins is `re.compile`, `Pattern.match`, `fullmatch`, `search`,
+`finditer` and `findall` of CPython 3.13.13 over those patterns, and
+`sub`, `subn` and `split` over those the reference uses through them.
+
+**The sites.** `tests/contract/_pyre_sites.py` finds them anew at each
+generation: an `ast` scan of `src/bettermemory` for every call of `re`
+that takes a pattern (216 sites), and the patterns the modules build at
+import, read in a child interpreter with `re`'s functions wrapped (262
+instances, every import-time builder among them: `_PHRASE_REGEXES`,
+`_ENVELOPES`, `_ALIAS_ANCHOR_PATTERNS`, `_PATTERN_OVERRIDES`). A site is
+named without a line number (file, enclosing functions, the name the call
+is bound to, an ordinal). Each is one of three kinds: `hand` (90, matched
+by a hand-written matcher already built, listed by id in
+`gen_pyre_inventory.HAND`; pyre-8 proves them), `builder` (5, a pattern
+built per call from data, `BUILDERS`), `engine` (121, every other).
+The child interpreter puts the scanned tree first on its path and fails
+when `bettermemory` was imported from anywhere else, so a copy of the
+tree or a non-editable install reads the tree scanned, not the one
+installed.
+
+**The methods.** Each site records the calls it is used through, as the
+method, the count of positional arguments and the keywords
+(`split/2`, `search/1:pos`): the function itself for a call of `re`
+other than `compile`, and for `compile` every pattern method called on
+the name it is bound to, in the binding scope and, for a module-level
+name, in every module importing it by name. A pattern kept in a list or
+a dict, or handed on otherwise, has no method read (57 sites, most of
+them lists such as `_TODO_PATTERNS`).
+
+**The tripwire.** The site lines (id, kind, eight hex digits of the
+SHA-256 of the site's instances, the methods) are pinned by
+`SITES_SHA256`: a new site, a changed pattern text or flag, a method
+added or gone, a `pos`, `endpos`, count or `maxsplit` argument added or
+gone, or a site gone fails the generation and names the lines that
+differ from the committed `inventory.sites` row. The tripwire runs in
+the generator; the Rust test reads the row's shape (every engine site
+has a pattern row, every method is one of the eight). A new site is classed and the constant moved in
+the same change.
+
+**The texts.** Each distinct `(pattern, flags)` of the engine sites is
+one row (168). Its texts are every text over the pattern's own cell
+representatives (its literals, each range's ends and the code point past
+it, a member of each category, a fixed base) up to the largest length
+with at most 300 texts, then 300 texts joined from up to 12 fragments
+drawn from the tree (a match or a near miss) and alphabet symbols by the
+seeded `Lcg` of `gen_pyre_tree`, then the witnesses the mutants needed.
+The Rust test regenerates the texts by the same rule (`texts` in both)
+and compares the five methods over the windows `(0, n)` and `(1, n)` by
+count and digest. Fragments and witnesses are committed, so the Rust side
+holds only the join rule, not the tree walk. A row one of whose sites
+is used through `sub`, `subn` or `split` (`replace`, 14 rows) also runs
+its texts through `subn` with `<>`, `subn` with the function `_swap` of
+`gen_pyre_api` and `split`, each with the counts 0 and 1 (the
+reference's `maxsplit=1` sites), by count and digest. The other
+methods' empty matches, counts and groups are pyre-6b's sweep; this
+check runs them on the reference's own patterns.
+
+**Mutants** (generator side only, decision section 4). Each pattern is
+rewritten the ways an engine could be wrong: greedy and lazy swapped, a
+bound off by one, `$` for `\Z` and back, `^` for `\A`, a `\b` dropped,
+the first two alternatives swapped, a flag dropped, ASCII classes. A
+mutant no committed text and no text of a hidden pool four times as
+large tells apart is equivalent (327); every other one (373) is told
+apart by at least 20 committed texts, or the generator draws more: the
+hidden texts that tell it apart become fragments, then near misses of 40
+more tree witnesses (a symbol before or after, a code point dropped, the
+fragment twice) and ten further seeded pools become witnesses, and a
+mutant still short fails the generation. 66 witnesses were needed, most
+for `$` against `\Z`, which differ only on a text that ends in a match
+and one newline. The `no fold table` mutant of the decision is the ASCII
+one under IGNORECASE; an engine without its fold tables is held by
+pyre-1's sweeps.
+
+**The four data-built families** (`inventory.builder`): the patterns
+`_project_name_matches` and `_declared_root_spans` of `scope_match.py`,
+`rf"\b{column}\b"` of `store_schema._add_membership_tables` (two sites,
+one family) and `packed_names` of `githead.py`. The generator pins each
+site's pattern argument as `ast.unparse` prints it, so a changed builder
+fails it, and writes inputs; the Rust test builds each pattern by the
+same string code with the port's `re.escape` and runs it over the input
+with every prefix and suffix of a fixed list, by count and digest.
+
+**The replay.** `native/tools/pyre_differential.py inventory FILE`
+writes every text of every row with its two answer lines;
+`pyre_inventory_differential_file` (ignored, `BM_PYRE_INVENTORY_DIFF`)
+reads it and names the first text that differs, which turns a digest
+mismatch into an input.
+
+Every pattern builds: no inventory pattern, builder or fragment found a
+refusal or a difference. Per decision rule 5 a refusal would fail
+`golden_pyre_inventory`, never be respelled.
+
+#### Fixtures and tests of pyre-7
+
+`gen_pyre_inventory.py` writes `pyre_inventory.jsonl` (not gated, 63
+KB: the sites, the 82 rows that read no Unicode table, two builders) and
+appends the 86 rows that fold case or read past ASCII and two builders
+to `pyre_unicode.jsonl` under `pyre-7` (51 KB). Under another release
+the answers are the same: only ordered windows from `0` and `1` are run.
+Importing the modules in a child interpreter is the one step that reads
+the host; every module imports on macOS, and the generator fails if one
+does not.
+
+| test | cases | what |
+| --- | --- | --- |
+| `golden_pyre_inventory` | 3 | every row of both files: the build (a refusal fails), `groups`, the group names, the tree digest, the texts regenerated and their lines by count and digest (138,892 lines), `sub`, `subn` and `split` over the texts of the `replace` rows, the builders, the sites row's shape with its methods; each row on a thread of its own, failing past ten minutes, so an engine that does not end fails; the replay (ignored) |
+| `pyre_inventory_kills` | 4 | ten inputs on which a mutant of an inventory pattern answers otherwise, the reference's answer written out; `$` and a final newline under `match` and `fullmatch`; a lazy repeat of one unit stopped at its maximum (`a{1,2}?b` on `aaab`); a member at 0xFF of a class written as a bitmap, in a `str` and a bytes pattern |
+| `pyre_inventory_robustness` | 4 | every inventory pattern over 4,000 code points of its own pieces under a budget (none stops), two scans linear at ten times the text, a million code points through one search |
+
+#### The census (T0 to T3 per site)
+
+The tiers of the hand-written design (`hw/shape_census.py` of the
+decision's receipts, read from `re._parser`'s tree): T0 no variable
+repeat and alternations decided by their first character; T1 variable
+repeats each decided where it stands; T2 choice points that do not nest;
+T3 choice points that nest. The census errs upward and reads every site
+as a scan (the methods are not read). Engine and builder sites only; the
+hand sites are pyre-8's. Counts: T0 31, T1 56, T2 33, T3 6.
+
+| tier | sites | the sites |
+| --- | --- | --- |
+| T0 | 31 | `anchor.py:_HEX64`, `backup.py:_HEX_DIGEST_RE`, `capture.py:_TOKEN_RE`, `cli/_common.py:parse_iso_cutoff.-`, `durability.py:_AS_OF_DATE_RE`, `durability.py:_ISO_DATE_RE`, `durability.py:_LEGACY_SHA_MARKER_RE`, `durability.py:_PATTERN_OVERRIDES`, `durability.py:_PATTERN_OVERRIDES#2`, `durability.py:_PHRASE_REGEXES`, `durability.py:_RELATIVE_DATE_PATTERNS#5`, `durability.py:_SENTENCE_END_RE`, `durability.py:_TODO_PATTERNS`, `durability.py:_TODO_PATTERNS#4`, `durability.py:_TODO_PATTERNS#6`, `durability.py:_USERS_OPENER_RE`, `events.py:_SECRET_PATTERNS#5`, `key_lifecycle.py:_HEX_KEY`, `location.py:_DRIVE`, `location_witness.py:_NONCE`, `machine.py:_ID_RE`, `managed.py:_parse_mounts.point`, `membership_records.py:_DRIVE_PATH`, `models.py:_SENTENCE_END_RE`, `project_file.py:_ID_RE`, `scope_match.py:_declared_root_spans.pattern`, `scope_match.py:_project_name_matches.pattern`, `search_lexicon.py:_ALIAS_ANCHOR_PATTERNS`, `store_schema.py:_add_membership_tables.lacking`, `store_schema.py:_add_membership_tables.wanted`, `supersession.py:_ASCII_DIGIT_RE` |
+| T1 | 56 | `_daemon_client.py:_NONCE`, `cli/completion_cmd.py:_OPTION`, `cli/completion_cmd.py:_WORD`, `cli/completion_cmd.py:_summary.text`, `conflicts.py:_CLAUSE_SPLIT_RE`, `conflicts.py:_NEGATION_TOKEN_RE`, `credentials.py:_URI_USERINFO_RE`, `credentials.py:_is_placeholder.tokens`, `credentials.py:_looks_like_secret.-`, `credentials.py:_looks_like_secret.-#2`, `credentials.py:_looks_like_secret.-#3`, `credentials.py:_looks_like_secret.-#5`, `credentials.py:_safe_snippet.window`, `durability.py:_NEXT_WORD_RE`, `durability.py:_PATTERN_OVERRIDES#3`, `durability.py:_QUOTED_SPAN_RE`, `durability.py:_SUITE_WORD_RE`, `durability.py:_TODO_HEADING_RE`, `durability.py:_TODO_PATTERNS#2`, `durability.py:_TODO_PATTERNS#3`, `durability.py:_TODO_PATTERNS#5`, `durability.py:_snippet_around.chunk`, `eval_model.py:_SINCE_PATTERN`, `events.py:_SECRET_PATTERNS#2`, `events.py:_SECRET_PATTERNS#3`, `events.py:_SECRET_PATTERNS#4`, `githead.py:_packed_shape.-`, `gitobjects.py:_HEX`, `handlers/write_gates.py:_HARD_WRAP_RE`, `handlers/write_gates.py:_LIST_PREFIX_RE`, `health_stats.py:_SIBLING_SUFFIX_RE`, `machine.py:_darwin_hardware.found`, `membership_migrate.py:_SHA`, `membership_records.py:_FULL_SHA`, `models.py:_LEADING_DATE_RE`, `models.py:_SLUG_RE`, `origin_gitfiles.py:_BARE_FALSE`, `posture_sandbox.py:_LEGACY_IPV4`, `recall_brief.py:_AGENT_ID`, `scope_match.py:_trim_evidence.chunk`, `secret_scan.py:_PATH_KEYS_RE`, `secret_scan.py:_PLAIN_KEY_RE`, `secret_scan.py:_PLAIN_TOKEN_RE`, `service_units.py:_UV_EPHEMERAL`, `store_index.py:_FTS_DEFINITION`, `store_schema.py:_PROPOSALS_INDEX_OBJECTS`, `store_schema.py:_SESSION_INDEX_OBJECTS`, `supersession.py:_CLAUSE_RE`, `supersession.py:_DOTTED_RE`, `supersession.py:_INTEGER_RE`, `supersession.py:_NUMERIC_TOKEN_RE`, `supersession.py:_WORD_RE`, `v8.py:_SHARD_TAG_RE`, `v8.py:_TRAILING_COUNTER_RE`, `verify_candidates.py:_BACKTICK_RE`, `verify_candidates.py:_DOMAIN_ROUTE_RE` |
+| T2 | 33 | `credentials.py:_DATETIME_SHAPE_RE`, `credentials.py:_NUMBER_SUFFIX_RE`, `credentials.py:_looks_like_secret.-#4`, `durability.py:_ASSISTANTS_ANSWER_RE`, `durability.py:_COMMIT_HASH_RE`, `durability.py:_DRIFTING_COUNT_RE`, `durability.py:_IMPERATIVE_OPENER_RE`, `durability.py:_PATTERN_OVERRIDES#4`, `durability.py:_PATTERN_OVERRIDES#5`, `durability.py:_PATTERN_OVERRIDES#6`, `durability.py:_RELATIVE_DATE_PATTERNS`, `durability.py:_RELATIVE_DATE_PATTERNS#2`, `durability.py:_RELATIVE_DATE_PATTERNS#3`, `durability.py:_RELATIVE_DATE_PATTERNS#4`, `durability.py:_TEST_TOTAL_RE`, `events.py:_SECRET_PATTERNS`, `githead.py:packed_names.line`, `handlers/write_gates.py:_SENTENCE_SPLIT_RE`, `key_lifecycle.py:_KEY_FILE_NAME`, `location_stamps.py:_DRVFS_ANAME`, `mirror_format.py:_ID_TOMBSTONE_RE`, `origin.py:_primary_root_of.m`, `owner_prompt.py:_ENVELOPES`, `review.py:_SENTENCE_BREAK_RE`, `search_lexicon.py:_spelling_tables.fts5`, `service_units.py:_LAUNCHCTL_FIELDS`, `service_units.py:_LAUNCHCTL_FIELDS#2`, `service_units.py:_LAUNCHCTL_FIELDS#3`, `store_schema.py:_V8_MEMORY_NAME`, `supersession.py:_CUE_RE`, `supersession.py:_PROPER_NOUN_RE`, `symbols.py:_SUPPRESSING_PROSE`, `verify_candidates.py:_BARE_RE` |
+| T3 | 6 | `credentials.py:_GENERIC_KEYWORD_RE`, `durability.py:_ASSISTANT_SAID_RE`, `handlers/write_gates.py:_PREFERENCE_RE`, `handlers/write_gates.py:_USER_CLAIM_RE`, `symbols.py:_SYMBOL_IN_MODULE`, `verify_candidates.py:_RELATIVE_CITATION_RE` |
+
+**Size.** The 150,000-byte cap of pyre-1 is on `pyre.jsonl` alone
+(`gen_pyre.py` and `golden_pyre_fold` assert it); this unit writes no
+row there. Its rows are in `pyre_inventory.jsonl` and the `pyre-7` rows
+of `pyre_unicode.jsonl`, which carry no cap, as no other `pyre_*.jsonl`
+of a later unit does.
+
+Left for later units: the 90 hand sites against the engine, their `sub`
+and `split` uses among them (pyre-8); the hostile recipes and sizes the
+reference cannot finish, with steps pinned per pattern (pyre-9).
+
 ### Unit pyre-5b, built (lookarounds in `pyre::exec`)
 
 The unit adds `_sre`'s ASSERT and ASSERT_NOT (`sre_lib.h`,
@@ -8953,8 +9094,8 @@ Left for later units: `sub`, `subn` and `split` (pyre-6b).
   or IGNORECASE on a bytes pattern, more than 4,096 nodes
   (`ClassPastBmpIgnorecase`, `BytesCategory`, `BytesBoundary`,
   `BytesIgnorecase`, `Nodes`).
-- pyre-7: the patterns the reference builds from parts at import, which
-  the `ast` scan of `atom.inventory` does not find.
+- pyre-7 (built): the patterns the reference builds from parts at import
+  are read by `gen_pyre_inventory`.
 
 ## The text helpers of `models.py`
 

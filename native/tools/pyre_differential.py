@@ -25,11 +25,25 @@ The file is about 14 MB and is not committed. The native side reads it with
 
 Run it under the reference Python (3.13.13, Unicode 15.1.0): the first line
 says what made the file.
+
+``python native/tools/pyre_differential.py inventory FILE``, run from the
+repository's root, writes for unit pyre-7 every line the digest of an
+``inventory.pattern`` row of ``pyre_inventory.jsonl`` and
+``pyre_unicode.jsonl`` covers: one JSON line per text of each row
+(``pattern``, ``flags``, ``bytes``, ``text`` as code points, ``lines``, the
+two answer lines of ``gen_pyre_inventory._lines``). The texts are
+regenerated from the committed rows by ``gen_pyre_inventory.texts``, so a
+digest mismatch in ``golden_pyre_inventory`` becomes the first differing
+text with
+
+    BM_PYRE_INVENTORY_DIFF=FILE cargo test --offline \\
+        --test golden_pyre_inventory -- --ignored pyre_inventory_differential_file
 """
 
 from __future__ import annotations
 
 import _sre
+import json
 import re
 import struct
 import sys
@@ -71,11 +85,66 @@ def fold(out: Path) -> None:
     )
 
 
+def _unspell(v: object) -> str:
+    if isinstance(v, str):
+        return v.replace("~", "\\")
+    assert isinstance(v, list)
+    return "".join(chr(c) for c in v)
+
+
+def _codes(v: object) -> list[int]:
+    if isinstance(v, str):
+        return [ord(c) for c in v]
+    assert isinstance(v, list)
+    return [int(c) for c in v]
+
+
+def inventory(out: Path) -> None:
+    sys.path.insert(0, str(Path.cwd()))
+    from tests.contract.gen_pyre_api import _line
+    from tests.contract.gen_pyre_inventory import JOINED, texts
+
+    golden = Path("tests/contract/golden")
+    written = 0
+    with out.open("w", encoding="ascii") as sink:
+        for name in ("pyre_inventory.jsonl", "pyre_unicode.jsonl"):
+            for raw in (golden / name).read_text(encoding="ascii").splitlines():
+                row = json.loads(raw)
+                if row["part"] != "inventory.pattern":
+                    continue
+                text = _unspell(row["pattern"])
+                flags = row.get("flags", 0)
+                pattern = text.encode("latin-1") if row["bytes"] else text
+                compiled = re.compile(pattern, flags)
+                pool = texts(
+                    row["alphabet"],
+                    [_codes(f) for f in row["fragments"]],
+                    row["seed"],
+                    JOINED,
+                ) + [_codes(w) for w in row["witnesses"]]
+                for codes in pool:
+                    t = "".join(map(chr, codes))
+                    subject = t.encode("latin-1") if row["bytes"] else t
+                    n = len(codes)
+                    lines = [_line(compiled, subject, pos, n) for pos in (0, 1)]
+                    head = {"pattern": row["pattern"], "bytes": row["bytes"]}
+                    if flags:
+                        head["flags"] = flags
+                    sink.write(
+                        json.dumps({**head, "text": codes, "lines": lines}) + "\n"
+                    )
+                    written += 1
+    print(f"{out}: {written} texts")
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 2 or argv[0] != "fold":
+    if len(argv) != 2 or argv[0] not in ("fold", "inventory"):
         print(__doc__, file=sys.stderr)
         return 2
-    fold(Path(argv[1]))
+    if argv[0] == "fold":
+        fold(Path(argv[1]))
+    else:
+        inventory(Path(argv[1]))
     return 0
 
 

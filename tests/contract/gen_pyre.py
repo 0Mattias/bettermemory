@@ -84,6 +84,7 @@ from . import (
     gen_pyre_atom,
     gen_pyre_charset,
     gen_pyre_exec,
+    gen_pyre_inventory,
     gen_pyre_lower,
     gen_pyre_parse,
     gen_pyre_tree,
@@ -513,6 +514,7 @@ _PYRE_4A = "pyre-4a"
 _PYRE_4B = "pyre-4b"
 _PYRE_5A = "pyre-5a"
 _PYRE_6A = "pyre-6a"
+_PYRE_7 = "pyre-7"
 
 _PARTS: dict[str, tuple[tuple[str, Callable[[], list[dict[str, Any]]]], ...]] = {
     "pyre.jsonl": (
@@ -528,6 +530,7 @@ _PARTS: dict[str, tuple[tuple[str, Callable[[], list[dict[str, Any]]]], ...]] = 
         (_PYRE_4B, gen_pyre_lower.unicode_rows),
         (_PYRE_5A, gen_pyre_exec.unicode_rows),
         (_PYRE_6A, gen_pyre_api.unicode_rows),
+        (_PYRE_7, gen_pyre_inventory.unicode_rows),
     ),
     "pyre_python.jsonl": (
         (_FOLD, fold_python_rows),
