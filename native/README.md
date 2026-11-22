@@ -38,7 +38,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth. Unit pyre-5b: `_sre`'s ASSERT and ASSERT_NOT (`Op::Look`, `Op::LookEnd`) run in `exec` as sub-attempts on the same stack; `supports` refuses nothing. Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`). Unit pyre-6b: `Pattern.sub`, `subn` and `split` with a count, a literal or a function replacement, a literal holding a backslash refused as a template (`replace::ReplaceError::Template`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `records::summaries` | unit 3 of `models.py`, the result models: `MemoryHit` (`MemoryHit::new` with the model's defaults), `MemorySummary` and `TombstonedSummary` (`of` a record, as `store_records.list_summaries` and `list_tombstones` build them), and the two listings' scope filters (`summaries`, `tombstone_summaries`) | `models_hits.jsonl` |
-| `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT` until the review unit), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint` | `standing.jsonl` |
+| `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT` until the review unit), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint`; unit 2, the store reads: the body sha memo (`SHA_BOUND`, `clear_shas`), `current`, `answers`, `Backlog`, `backlog`, `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids`, `refusal_rows`, `held_by_removal` over `StandingStore` and `Admission` | `standing.jsonl`, `standing_reads.jsonl` |
 | `mirror_format` | `mirror_format.py` whole: `TOMBSTONE_DIR`, `EPISODES_DIR`, `TOMBSTONE_SUFFIX`, `_ID_TOMBSTONE_RE` (by hand, `id_tombstone_stem`), `memory_filename`, `tombstone_filename`, `active_filename_for_tombstone`, `is_legacy_tombstone_name`, the four key tables, `memory_metadata`, `episode_metadata` | `mirror_format.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl` |
@@ -6859,6 +6859,7 @@ that Unicode too.
 | `golden_models_text`: `models_text_platform_every_case` | `models_text_platform.jsonl` | iii |
 | `golden_models_hits`: `models_hits_every_case` | `models_hits.jsonl` | i |
 | `golden_standing`: `standing_every_case`; `standing_kills` (11), `standing_robustness` (3) | `standing.jsonl` (the last two none) | i |
+| `golden_standing_reads`: `standing_reads_every_case`; `standing_reads_kills` (11), `standing_reads_robustness` (4) | `standing_reads.jsonl` (the last two none) | i |
 | `golden_mirror_format`: `mirror_format_every_case`; `mirror_format_kills` (10), `mirror_format_robustness` (3) | `mirror_format.jsonl` (the last two none) | i |
 | `golden_search`: `search_every_query_every_mode` | `search.jsonl` | iii |
 | `golden_search_dedup`: `search_dedup_every_case` | `search_dedup.jsonl` | i |
@@ -8941,7 +8942,10 @@ in this unit.
 | `held_lines`, `held_line` | 418-443 | nothing | built |
 | `question` | 446-456 | nothing | built (a `PyValue::Dict` in the reference's key order) |
 | `batch_hint` | 459-466 | nothing | built |
-| `_SHAS`, `_current`, `answers`, `backlog`, `Backlog`, `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids`, `refusal_rows`, `held_by_removal` | 128-140, 189-351, 363-386, 398-416 | the store, `in_force` | standing-2 |
+| `_SHA_BOUND`, `_SHAS`, `_SHAS_LOCK`, `_clear_shas` | 131-139 | a process-wide lock | built (unit 2: `SHA_BOUND`, `clear_shas`) |
+| `_current`, `answers`, `Backlog`, `backlog` | 190-245 | the store (`StandingStore`), the admission (`Admission`) | built (unit 2) |
+| `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids` | 248-350 | the store, `in_force`, the review switch | built (unit 2), the switch an argument |
+| `refusal_rows`, `held_by_removal` | 364-385, 399-415 | the store, the admission | built (unit 2) |
 
 `review.py` is not built, so `RELATED_CAP` (11), `RELATED_TEXT_CHARS`
 (600) and `STANDING_STATEMENT` are copied into `standing` as public
@@ -8990,6 +8994,86 @@ scope filter and the hit's defaults; `standing_robustness` (3) feeds ints
 of 100,000 digits and a list nested 100,000 deep, and holds `record_text`,
 the held lines and the scope filter to `timing::TENFOLD` at ten times the
 input.
+
+### `standing` (standing.py, unit 2: the store reads)
+
+Unit standing-2 is `src/standing/reads.rs` (481 lines), re-exported
+from `standing`. Its reference lines were confirmed against
+`src/bettermemory/standing.py` as it is now: the memo 131-139,
+`_current` 190-213, `answers` 216-220, `Backlog` 223-231, `backlog`
+234-245, `guarded_ids` 248-259, `makes_standing` 262-294, `held_ids`
+297-311, `standing_ids` 314-350, `refusal_rows` 364-385,
+`held_by_removal` 399-415.
+
+The store is the trait `StandingStore`, which extends
+`in_force::LinkReader` (so `in_force` runs over the same store), with
+one method per `Store` read the reference makes: `body_of`,
+`standing_rows` (rows as the struct `StandingRow`, its dict's keys as
+fields), `digest_unanswered_ids`, `returned_rows` (the marked ids in the
+dict's order; the marks' values are not read here),
+`standing_candidate_ids`, `get_many` (`records::Memory`) and
+`tombstone_links` (`ReadError::NotFound` for no tombstone). The
+admission is the trait `Admission: RecordView` with `admits_row`, shaped
+as `store::caller::Admission::admits_row`; `EveryRecord` implements it.
+Whether the write review is in force (`review.current_tau()` set) is the
+argument `tau_set` of `held_ids` and `held_by_removal`, as `asking`
+takes it. An implementation of `LinkReader::held_ids` over a real store
+calls `standing::held_ids` with its own switch; an error there cannot
+cross that trait method, which answers a set. So where the reference's
+`in_force` raises `UnicodeEncodeError` from `held_ids` (a held candidate
+whose body holds a lone surrogate, for an id `standing_ids` never hashed
+itself), `standing_ids`, `guarded_ids` and `makes_standing` cannot
+return `ReadError::Unencodable`: the implementation drops the error or
+panics. Closing this gap is a change to `in_force::LinkReader`.
+
+The memo is one process-wide `Mutex` around an ordered map: a hit moves
+its key to the end, an insert of a new key goes to the end and an insert
+of a present key keeps its place (a dict assignment), and the oldest are
+popped while the map holds more than the bound. A row without `log_mac`
+is hashed on every read and never memoized. `clear_shas` empties it (its
+registration with `_caches` is wired when that lane folds),
+`set_sha_bound` rebinds the bound as a caller may rebind the module
+global, and `sha_count` is `len(_SHAS)`. `body_sha256` hashes the body's
+UTF-8; a body holding a lone surrogate is `ReadError::Unencodable`, the
+reference's `UnicodeEncodeError`.
+
+Kept as the reference has them: `standing_ids`' pre-filter on the raw
+probability (a non-ambient row without one is skipped before the
+admission is asked), the rows' order, a held record only when `held` is
+passed; `makes_standing`'s checks in order (not standing after, history,
+held, an unchanged body already standing); `backlog`'s rows from the
+digest's ids or every row; `answers` as a dict (a repeated row keeps its
+first place and its last value); `refusal_rows`' keys `id`, `scopes`,
+`updated`, `text`, then `admitted: false` only when not admitted, the
+date of `updated` in UTC, and the ids deduplicated first-seen before
+`get_many` while `prime` sees them as given; `held_by_removal`'s
+`supersedes` targets deduplicated first-seen and kept when held. A naive
+`updated`, which the reference reads as the machine's local time, is
+`ReadError::NaiveUpdated`; an instant outside years 1 to 9999 is
+`ReadError::Date`.
+
+One stated difference: ids cross the traits as `String`, so an id
+holding a lone surrogate (a record id or a tombstone's `supersedes`
+target) is spelled with U+FFFD before `admits_id`, `held_ids` and the
+first-seen dedup, and two ids that differ only in such a code point are
+one id here. Record ids are ULIDs, which hold none.
+
+`tests/contract/gen_standing_reads.py` writes `standing_reads.jsonl`
+(36 KB, class i) over an in-memory store and admission that log every
+read: 41 cases, each a list of operations on one memo, with
+probabilities at 0.3 and its two neighbouring doubles, a memo bound
+rebound to 2 and 0, refusal dates across the UTC day boundary, and
+tombstones with every link type. `golden_standing_reads` checks every
+operation's answer and its reads in order; `standing_reads_kills` (11)
+pins the unmemoized row, the hit that moves to the end, the inclusive
+threshold, the pre-filter, held and history, the review off, the
+refusal keys and dates, the removal dedup, the repeated row, the two
+errors and the category of `makes_standing`'s first row of two; the
+memo's own unit test pins that an insert of a present key keeps its
+place; `standing_reads_robustness` (4) holds the memo at its bound past
+65,536 rows, hashes a body of two megabytes and holds `standing_ids` to
+`timing::TENFOLD` at ten times the rows, and `answers` the same (an
+index beside the ordered pairs keeps it linear). No pattern is matched here.
 
 ## The hook mains' argument parser (`argparse`, units argparse-1a and argparse-1b)
 

@@ -68,9 +68,12 @@
 //! - [`models_text`]: the text helpers of `models.py`: a memory's slug
 //!   and file name, its summary line, the truncation heuristic and the
 //!   search snippets;
-//! - [`standing`]: the store-free half of `standing.py`: its constants,
+//! - [`standing`]: `standing.py`: its constants,
 //!   the standing test, the probability check, the answer a put writes,
-//!   and the lines and questions the surfaces carry;
+//!   and the lines and questions the surfaces carry; and its store
+//!   reads (the body sha memo, the backlog, the standing, guarded and
+//!   held ids, the refusal rows) over the `StandingStore` and
+//!   `Admission` traits;
 //! - [`mirror_format`]: the v8 file names and frontmatter the mirror
 //!   writes (`mirror_format.py` whole);
 //! - [`lexicon`]: the search tokenizer and its fingerprint;

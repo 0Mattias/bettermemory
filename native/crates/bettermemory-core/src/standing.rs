@@ -7,7 +7,7 @@
 //! (`identity::Published::current_actor`). What reads the store (the body
 //! sha memo, `answers`, `backlog`, `guarded_ids`, `makes_standing`,
 //! `held_ids`, `standing_ids`, `refusal_rows`, `held_by_removal`) is
-//! standing-2's.
+//! unit standing-2's, in the submodule `reads`, re-exported here.
 
 use crate::float_repr;
 use crate::identity::Actor;
@@ -15,6 +15,9 @@ use crate::models_text::{snippet_window, strip};
 use crate::pyvalue::{self, PyError, PyStr, PyValue};
 use crate::store::home::Answer;
 use crate::unicode;
+
+mod reads;
+pub use reads::*;
 
 /// `review.RELATED_CAP` (review.py:91). Kept here until the review unit
 /// is built, which moves it and re-exports it.
