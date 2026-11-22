@@ -10,14 +10,18 @@
 //!   the reader protocols as traits, the machine, view, checkout,
 //!   project, project file and proposal records, `_live_key` and
 //!   `_found_token`.
+//! - unit 4, built: [`identity`], the portable identity (`_strings`,
+//!   `_flag`, `_FULL_SHA`, `PortableIdentity`, `ImportedProject`) and its
+//!   bounds, and [`outcomes`], the remaining frozen records.
 //!
 //! Parts of the module other units ported live where they are read:
 //! `ObjectKey`, `ProjectFileRef` and `Location` in `capture::location`,
 //! `_paths` in `capture::paths`, `relation`, `admitted`, `Home` and
 //! `Resolution` in `store::caller`, `WORDS` in `membership_lines`,
-//! `InitStamp` and `Manifest` as `capture::{Stamp, Manifest}`. The
-//! portable identity and the remaining records are later units.
+//! `InitStamp` and `Manifest` as `capture::{Stamp, Manifest}`.
 
+pub mod identity;
+pub mod outcomes;
 pub mod paths;
 pub mod records;
 

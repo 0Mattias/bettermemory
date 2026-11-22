@@ -281,6 +281,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "membership_records_paths_python": gen_membership_records.generate_python,
     "membership_records_paths_platform": gen_membership_records.generate_platform,
     "membership_records_records": gen_membership_records.generate_records,
+    "membership_records_identity": gen_membership_records.generate_identity,
+    "membership_records_identity_python": gen_membership_records.generate_identity_python,
     "membership_shared": gen_membership_shared.generate,
     "membership_shared_python": gen_membership_shared.generate_python,
     "membership_shared_heal": gen_membership_shared_heal.generate,
@@ -824,6 +826,9 @@ PYTHON_GATED = frozenset(
         "membership_lines_python",
         "membership_records_paths_python",
         "membership_records_paths_platform",
+        # `str.strip`, `str.lower` and `repr` of names and witnesses past
+        # ASCII follow the release's Unicode tables (`gen_membership_records`).
+        "membership_records_identity_python",
         "membership_rows_python",
         "membership_shared_python",
         "origin_remote_python",

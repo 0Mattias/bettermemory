@@ -926,3 +926,265 @@ def generate_records() -> dict[str, bytes]:
     )
     text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
     return {"membership_records_records.jsonl": text.encode()}
+
+
+# ---------------------------------------------------------------------------
+# Unit 4: the portable identity.
+#
+# ``membership_records_identity.jsonl``, not gated, and
+# ``membership_records_identity_python.jsonl``, gated on the Python
+# release: one JSON object per line, keys sorted, ASCII. No row holds a lone
+# surrogate or a backslash (the golden checks refuse both in a plain
+# string); the kills test covers them.
+#
+# - ``{"f": "identity", "a": raw, "o": out}``: `PortableIdentity.from_json`
+#   of the value ``raw`` spells, ``out`` ``{"raised": [class, text]}`` or
+#   ``{"json": to_json(), "digest": digest()}``. A row whose name or
+#   witnesses hold a character past ASCII goes in the gated file:
+#   `str.strip`, `str.lower` and the `isprintable` of `repr` follow the
+#   release's Unicode tables.
+# - ``{"f": "identity_sweep", "seed", "n", "o"}`` (ungated):
+#   `_IDENTITY_SWEEP` documents drawn by `_Rng` (`_identity_doc`), each
+#   answered as the digest and the parent (``<digest>|<parent>``) or
+#   ``!<text>`` of the ValueError, one per line, ``o`` the SHA-256 of the
+#   lines.
+# ---------------------------------------------------------------------------
+
+_IDENTITY_SEED = 20261122
+_IDENTITY_SWEEP = 2000
+_HEX40 = "0123456789abcdef" * 2 + "01234567"
+_HEX64 = "fedcba9876543210" * 4
+_ABSENT = object()
+_SW_NAMES = ["", "p", "Proj", "a b"]
+_SW_WITNESSES = [
+    "a" * 40,
+    "b" * 40,
+    "0" * 64,
+    " " + "c" * 40,
+    "A" * 40,
+    "a" * 39,
+    "f" * 41,
+    "1" * 64 + "\n",
+    "a" * 40,
+]
+_SW_REMOTES = ["r1", "local:x", "r0", "r1", "local:"]
+_SW_FILES = ["f2", "f1", "f2"]
+_SW_FLAGS: list[Any] = [_ABSENT, True, False, 1]
+_SW_PARENTS: list[Any] = [_ABSENT, None, 0, 3, -1, True]
+
+
+def _identity_doc(rng: _Rng) -> dict[str, Any]:
+    doc: dict[str, Any] = {"name": _SW_NAMES[rng.next(4)]}
+    for key, pool in (("remotes", _SW_REMOTES), ("file_ids", _SW_FILES)):
+        if rng.next(4):
+            doc[key] = [pool[rng.next(len(pool))] for _ in range(rng.next(4))]
+    if rng.next(4):
+        doc["witnesses"] = [
+            _SW_WITNESSES[rng.next(len(_SW_WITNESSES))] for _ in range(rng.next(5))
+        ]
+    for key in ("folder", "boundary"):
+        v = _SW_FLAGS[rng.next(4)]
+        if v is not _ABSENT:
+            doc[key] = v
+    p = _SW_PARENTS[rng.next(6)]
+    if p is not _ABSENT:
+        doc["parent"] = p
+    return doc
+
+
+def _identity_sweep() -> str:
+    rng = _Rng(_IDENTITY_SEED)
+    lines = []
+    for _ in range(_IDENTITY_SWEEP):
+        try:
+            p = mr.PortableIdentity.from_json(_identity_doc(rng))
+            lines.append(f"{p.digest()}|{p.parent}")
+        except ValueError as e:
+            lines.append(f"!{e}")
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
+def _identity_cases() -> list[Any]:
+    ok = {"name": "p"}
+    cases: list[Any] = [None, True, 1, 1.5, "p", [], [["name", "p"]], {}, ok]
+    v: Any
+    # The name: missing, every wrong type, empty.
+    for v in [None, True, 0, 1.0, "", [], ["p"], {"p": 1}, " ", "P", "\x00"]:
+        cases.append({"name": v})
+    # The parent: every wrong type, the bounds, big ints and bools.
+    for v in [
+        None,
+        True,
+        False,
+        0,
+        1,
+        -1,
+        2**63,
+        2**64 + 1,
+        -(2**70),
+        10**400,
+        1.0,
+        0.0,
+        "0",
+        [0],
+        {},
+    ]:
+        cases.append({"name": "p", "parent": v})
+    # Each list: every wrong type, an empty or non-str element.
+    for key in ("remotes", "witnesses", "file_ids"):
+        for v in [
+            None,
+            True,
+            0,
+            "a",
+            {},
+            {"a": 1},
+            [""],
+            ["a", ""],
+            [1],
+            [None],
+            [["a"]],
+            [True],
+            [],
+        ]:
+            cases.append({"name": "p", key: v})
+    for key in ("folder", "boundary"):
+        for v in [None, True, False, 0, 1, "true", [], 1.0]:
+            cases.append({"name": "p", key: v})
+    # The order of the checks: each pair of malformed fields.
+    bad = {
+        "name": "",
+        "parent": -1,
+        "remotes": 1,
+        "witnesses": ["a" * 39],
+        "file_ids": [""],
+        "folder": 1,
+        "boundary": 1,
+    }
+    keys = list(bad)
+    for i, a in enumerate(keys):
+        for b in keys[i + 1 :]:
+            doc = {"name": "p", a: bad[a], b: bad[b]}
+            cases.append(doc)
+    cases.append({**bad, "witnesses": [1]})
+    # Witnesses: lengths, case, spaces, other letters, duplicates.
+    for n in (0, 1, 39, 40, 41, 63, 64, 65, 80, 128):
+        cases.append({"name": "p", "witnesses": [(_HEX64 * 2)[:n]]})
+    for w in [
+        _HEX40.upper(),
+        " " + _HEX40 + " ",
+        "\t" + _HEX40 + "\n",
+        _HEX40 + "\x1f",
+        _HEX40 + "\x0b\x0c\r",
+        _HEX40[:39] + "g",
+        _HEX40[:20] + " " + _HEX40[20:39],
+        "x" * 200,
+        "'" * 80,
+        '"' * 80,
+        "'\"" * 50,
+        "\x00" * 40,
+        _HEX64.upper() + " ",
+        _HEX40 + _HEX64[:24],
+        _HEX40 + _HEX64[:23],
+    ]:
+        cases.append({"name": "p", "witnesses": [w]})
+    cases.append({"name": "p", "witnesses": [_HEX40, "a" * 39, "b" * 39]})
+    many = [f"{i:040x}" for i in range(70)]
+    cases.append({"name": "p", "witnesses": many})
+    cases.append({"name": "p", "witnesses": many[:3] * 30 + many[3:]})
+    cases.append({"name": "p", "witnesses": [_HEX40, _HEX40.upper(), " " + _HEX40]})
+    cases.append({"name": "p", "witnesses": many[:64] + [_HEX40[:39]]})
+    # Remotes and file ids: local keys, order, duplicates, past ASCII.
+    cases.append(
+        {
+            "name": "p",
+            "remotes": [
+                "b",
+                "local:/x",
+                "a",
+                "b",
+                "local:",
+                "Local:x",
+                "local",
+                " local:x",
+                "é",
+                "z",
+            ],
+        }
+    )
+    cases.append({"name": "p", "file_ids": ["f2", "f1", "f2", "F0", "é", "~"]})
+    cases.append(
+        {
+            "name": "p",
+            "remotes": ["local:a"],
+            "file_ids": ["x"],
+            "folder": True,
+            "boundary": True,
+            "parent": 7,
+            "witnesses": [_HEX64, _HEX40, _HEX64],
+        }
+    )
+    cases.append({"name": "p", "extra": 1, "parent": None, "folder": False})
+    # Past ASCII in the name and the witnesses (gated).
+    cases.append({"name": "été"})
+    cases.append({"name": "\U0001f600"})
+    cases.append({"name": "　"})
+    for w in [
+        "　" + _HEX40 + " ",
+        "İ" * 40,
+        "İ" * 80,
+        "K" * 40,
+        "ａ" * 40,
+        "é" * 100,
+        "\u0085" + _HEX40 + " ",
+        "​" + _HEX40,
+        "Σ" * 40,
+        "\U0001f600" * 80,
+        "͸" + _HEX40,
+        "­" * 40,
+        _HEX40[:39] + "İ",
+    ]:
+        cases.append({"name": "p", "witnesses": [w]})
+    return cases
+
+
+def _past_ascii(raw: Any) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    texts = [raw.get("name")]
+    w = raw.get("witnesses")
+    if isinstance(w, list):
+        texts.extend(w)
+    return any(isinstance(t, str) and not t.isascii() for t in texts)
+
+
+def _identity_lines(python: bool) -> bytes:
+    rows: list[dict[str, Any]] = []
+    for raw in _identity_cases():
+        if _past_ascii(raw) != python:
+            continue
+        try:
+            p = mr.PortableIdentity.from_json(raw)
+            out: Any = {"json": p.to_json(), "digest": p.digest()}
+        except Exception as e:  # noqa: BLE001
+            out = {"raised": [type(e).__name__, str(e)]}
+        rows.append({"f": "identity", "a": raw, "o": out})
+    if not python:
+        rows.append(
+            {
+                "f": "identity_sweep",
+                "seed": _IDENTITY_SEED,
+                "n": _IDENTITY_SWEEP,
+                "o": _identity_sweep(),
+            }
+        )
+    text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
+    return text.encode()
+
+
+def generate_identity() -> dict[str, bytes]:
+    return {"membership_records_identity.jsonl": _identity_lines(False)}
+
+
+def generate_identity_python() -> dict[str, bytes]:
+    return {"membership_records_identity_python.jsonl": _identity_lines(True)}

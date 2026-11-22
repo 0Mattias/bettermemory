@@ -145,10 +145,11 @@
 //!   records over a connection (`store::index_reads`,
 //!   `store::record_reads`);
 //! - [`membership_records`]: the vocabulary and records of the membership
-//!   model, units 1 to 3 (the legacy ask rule and the helpers that
+//!   model, units 1 to 4 (the legacy ask rule and the helpers that
 //!   compare, join and rebase recorded paths in either spelling; the
 //!   manifest's JSON and match, the reader traits and the checkout,
-//!   view, project and proposal records);
+//!   view, project and proposal records; the portable identity and the
+//!   remaining frozen records);
 //! - [`membership_shared`]: one git directory several machines see, its
 //!   first unit (the stamp and tick comparisons, the re-mint read from
 //!   another machine's view over carriers given, and the predicates over

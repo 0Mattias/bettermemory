@@ -292,6 +292,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // writes a separator after two that name no server and share
         // (`gen_membership_records`).
         "membership_records_paths_python.jsonl" => &[Python],
+        // `str.strip`, `str.lower` and `repr` of names and witnesses past
+        // ASCII (`gen_membership_records`).
+        "membership_records_identity_python.jsonl" => &[Python],
         // `int()` of non-ASCII digits and lines past ASCII (`gen_membership_rows`).
         "membership_rows_python.jsonl" => &[Python],
         // `str.casefold` of project names past ASCII (`gen_membership_core`).
