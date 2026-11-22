@@ -1,0 +1,44 @@
+{"cases":43}
+{"p":"repo/shallow","r":[],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n"}}
+{"p":"repo/shallow","r":[],"t":{}}
+{"p":"repo/shallow","r":[],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":""}}
+{"p":"repo/shallow","r":[],"t":{"repo/shallow":""}}
+{"p":"repo/shallow","r":[],"t":{"repo/config":"[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectformat = sha512\n","repo/shallow":""}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567","fedcba9876543210fedcba9876543210fedcba98"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\nfedcba9876543210fedcba9876543210fedcba98\n"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567","fedcba9876543210fedcba9876543210fedcba98"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"fedcba9876543210fedcba9876543210fedcba98\n0123456789abcdef0123456789abcdef01234567\nfedcba9876543210fedcba9876543210fedcba98\n"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\r\n"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567","fedcba9876543210fedcba9876543210fedcba98"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\r\nfedcba9876543210fedcba9876543210fedcba98\r\n"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567ff\n"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567zz junk\n"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567 tail\n"}}
+{"p":"repo/shallow","r":null,"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef0123456\n"}}
+{"p":"repo/shallow","r":null,"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef0123456"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789ABCDEF0123456789ABCDEF01234567\n"}}
+{"p":"repo/shallow","r":null,"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123G56789abcdef01234567\n"}}
+{"p":"repo/shallow","r":null,"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n\n"}}
+{"p":"repo/shallow","r":null,"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"\n"}}
+{"p":"repo/shallow","r":null,"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"\n0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567","fedcba9876543210fedcba9876543210fedcba98"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\nfedcba9876543210fedcba9876543210fedcba98"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo/shallow","r":["abababababababababababababababababababababababababababababababab"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectformat = sha256\n","repo/shallow":"abababababababababababababababababababababababababababababababab\n"}}
+{"p":"repo/shallow","r":["abababababababababababababababababababababababababababababababab"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectformat = sha256\n","repo/shallow":"ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABx\n"}}
+{"p":"repo/shallow","r":null,"t":{"repo/config":"[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectformat = sha256\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo/shallow","r":["abababababababababababababababababababab"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"abababababababababababababababababababababababababababababababab\n"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectformat = sha1\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo/shallow","r":null,"t":{"repo/config":"[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectformat = sha512\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo/shallow","r":null,"t":{"repo/config":"[core]\n\trepositoryformatversion = 2\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo/shallow","r":null,"t":{"repo/config":"not a config [","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"config":"[core]\n\trepositoryformatversion = 0\n","shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo//shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo/./shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo/shallow/.","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"./repo/shallow/","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo/sub/../shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n","repo/sub/x":""}}
+{"p":"repo","r":null,"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"","r":null,"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo/sh\u0000allow","r":{"e":"ValueError"},"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":"0123456789abcdef0123456789abcdef01234567\n"}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":{"n":16777176,"p":"0123456789abcdef0123456789abcdef01234567","x":"0"}}}
+{"p":"repo/shallow","r":["0123456789abcdef0123456789abcdef01234567"],"t":{"repo/config":"[core]\n\trepositoryformatversion = 0\n","repo/shallow":{"n":1000,"p":"","x":"0123456789abcdef0123456789abcdef01234567\n"}}}

@@ -35,7 +35,10 @@
 //!   PARSER `nargs`);
 //! - [`origin_history`]: how `origin` reads a repository's history: the
 //!   leaves and the memo of author dates, and (`origin_history::located`)
-//!   the repository's key, the history guard and the shallow cuts;
+//!   the repository's key, the history guard and the shallow cuts
+//!   (`cuts_in`);
+//! - [`origin_model`]: `Origin` as a caller captures it, the stored part
+//!   with the private capture state beside it;
 //! - [`origin_dates`]: the author dates a drift count is read off, its
 //!   git-asking leaves (the log reads, why `git log HEAD` was refused,
 //!   the extension of a remembered history) and (`origin_dates::memo`)
@@ -366,6 +369,7 @@ pub mod native_text;
 pub mod origin_dates;
 pub mod origin_gitfiles;
 pub mod origin_history;
+pub mod origin_model;
 pub mod origin_remote;
 pub mod path_drift_steps;
 pub mod printable;

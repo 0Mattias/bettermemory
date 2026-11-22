@@ -18,6 +18,7 @@ use crate::gitconfig::legacy::Stamp;
 use crate::gitfile_rule::bounded::Answers;
 use crate::gitfile_rule::discovery::Rule;
 use crate::gitfile_rule::follow::Records;
+use crate::gitfile_rule::gitdir::Failure;
 use crate::gitfile_rule::hostpath;
 use crate::gitfile_rule::trust::object_format_at;
 use crate::githead::discovery::{
@@ -37,8 +38,10 @@ pub type HistoryEnv = [Option<PyStr>; 4];
 /// variables. Two guards are equal as the reference's tuples are.
 pub type Guard = ([Option<Stamp>; 5], HistoryEnv);
 
-/// `ValueError` from `open` (a NUL in the path), which `cuts_in` does not
-/// catch: the reference raises it.
+/// `ValueError` from `open` (a NUL in the path), which `cuts` raises: the
+/// error of `origin_dates::memo`'s `MemoLeaves::cuts`. [`cuts`] and
+/// [`cuts_in`] give it as `Failure::Value`, beside the flavour's
+/// `Failure::NotPorted`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ValueError;
 
@@ -122,7 +125,7 @@ pub fn cuts<F: Fs, A: Answers + ?Sized, R: Records + ?Sized, O: Owners + ?Sized>
     env: &Env,
     start: &[u8],
     walk: bool,
-) -> Result<Option<Cut>, ValueError> {
+) -> Result<Option<Cut>, Failure> {
     match shallow_file(rule, host, env, start, walk) {
         None => Ok(None),
         Some(path) => cuts_in(rule, &path),
@@ -151,44 +154,52 @@ fn parent(path: &[u8]) -> Vec<u8> {
 /// empty; None where another OSError rises, the file is longer than
 /// `_CUTS_MAX` bytes, the common config's object format is not known, or
 /// a record's first `width` bytes are short or not hex. The open waits
-/// as Python's `open` does (a FIFO blocks). Under the Windows flavour it
-/// declines for every path but one holding a NUL, which raises.
+/// as Python's `open` does (a FIFO blocks), and the file is read as
+/// `handle.read(_CUTS_MAX + 1)` reads it: until that many bytes or the
+/// end. `Failure::Value` is the ValueError `open` raises for a NUL in the
+/// path, which the reference does not catch.
+///
+/// The Windows flavour declines with `Failure::NotPorted` (ENG-124) for
+/// every path but one holding a NUL, which raises there too: the
+/// reference reads the file through ntpath's `Path` and `open`, whose
+/// spelling of drives and backslashes is not ported, and an answer of
+/// None there would be a wrong answer. A failure `object_format_at`
+/// raises passes on unchanged.
 pub fn cuts_in<F: Fs, A: Answers + ?Sized, R: Records + ?Sized>(
     rule: &Rule<'_, F, A, R>,
     path: &[u8],
-) -> Result<Option<Cut>, ValueError> {
+) -> Result<Option<Cut>, Failure> {
     let ctx = rule.ctx;
     if ctx.flavour == Flavour::Windows {
-        // `Path` and `open` on Windows read drives and backslashes, which
-        // neither `pure` nor `parent` ports: a NUL still raises there, and
-        // every other path declines (the crate's stated Windows gap).
         if path.contains(&0) {
-            return Err(ValueError);
+            return Err(Failure::Value);
         }
-        return Ok(None);
+        return Err(Failure::NotPorted);
     }
     // `open(Path(...))` opens the path as `Path` spells it: no trailing
-    // slash, no empty or `.` part. Under the POSIX flavour `at` cannot
-    // fail; a failure would be a flavour not ported, so it declines.
-    let Ok(at) = ctx.at(&pure(path)) else {
-        return Ok(None);
-    };
-    let raw = match ctx.fs.open_waiting(&at) {
+    // slash, no empty or `.` part.
+    let at = ctx.at(&pure(path))?;
+    let mut file = match ctx.fs.open_waiting(&at) {
+        Ok(file) => file,
         Err(PyErr::FileNotFound) => return Ok(Some(Cut::new())),
-        Err(PyErr::Value) => return Err(ValueError),
+        Err(PyErr::Value) => return Err(Failure::Value),
         Err(_) => return Ok(None),
-        Ok(mut file) => match ctx.fs.read(&mut file, CUTS_MAX + 1) {
-            Ok(raw) => raw,
-            Err(_) => return Ok(None),
-        },
     };
+    let mut raw = Vec::new();
+    while raw.len() <= CUTS_MAX {
+        match ctx.fs.read(&mut file, CUTS_MAX + 1 - raw.len()) {
+            Ok(chunk) if chunk.is_empty() => break,
+            Ok(chunk) => raw.extend(chunk),
+            Err(_) => return Ok(None),
+        }
+    }
     if raw.len() > CUTS_MAX {
         return Ok(None);
     }
     if raw.is_empty() {
         return Ok(Some(Cut::new()));
     }
-    let Ok(Some(name)) = object_format_at(ctx, &parent(path), rule.git) else {
+    let Some(name) = object_format_at(ctx, &parent(path), rule.git)? else {
         return Ok(None);
     };
     let width = if name == b"sha256" { 64 } else { 40 };

@@ -10,10 +10,10 @@ use bettermemory_core::gitfile_rule::bounded::Hung;
 use bettermemory_core::gitfile_rule::discovery::Rule;
 use bettermemory_core::gitfile_rule::follow::NoRecords;
 use bettermemory_core::gitfile_rule::format::GitFacts;
-use bettermemory_core::gitfile_rule::gitdir::Ctx;
-use bettermemory_core::origin_history::{cuts_in, Cut, ValueError, CUTS_MAX};
+use bettermemory_core::gitfile_rule::gitdir::{Ctx, Failure};
+use bettermemory_core::origin_history::{cuts_in, Cut, CUTS_MAX};
 
-fn read(data: Vec<u8>, path: &[u8]) -> Result<Option<Cut>, ValueError> {
+fn read(data: Vec<u8>, path: &[u8]) -> Result<Option<Cut>, Failure> {
     let mut fs = MemFs::new(Flavour::Posix);
     fs.insert(b"/c", Node::Dir);
     fs.insert(
@@ -100,7 +100,7 @@ fn long_and_odd_paths() {
     );
     assert_eq!(read(records(1), b"").unwrap(), None);
     assert_eq!(read(records(1), b"/").unwrap(), None);
-    assert_eq!(read(records(1), b"\0").err(), Some(ValueError));
+    assert_eq!(read(records(1), b"\0").err(), Some(Failure::Value));
 }
 
 #[test]

@@ -8,8 +8,8 @@ use bettermemory_core::gitfile_rule::bounded::Hung;
 use bettermemory_core::gitfile_rule::discovery::Rule;
 use bettermemory_core::gitfile_rule::follow::NoRecords;
 use bettermemory_core::gitfile_rule::format::GitFacts;
-use bettermemory_core::gitfile_rule::gitdir::Ctx;
-use bettermemory_core::origin_history::{cuts_in, Cut, ValueError, CUTS_MAX};
+use bettermemory_core::gitfile_rule::gitdir::{Ctx, Failure};
+use bettermemory_core::origin_history::{cuts_in, Cut, CUTS_MAX};
 
 const V0: &[u8] = b"[core]\n\trepositoryformatversion = 0\n";
 const V256: &[u8] =
@@ -17,11 +17,7 @@ const V256: &[u8] =
 const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const B: &str = "0123456789abcdef0123456789abcdef01234567";
 
-fn read(
-    config: Option<&[u8]>,
-    shallow: Option<Node>,
-    path: &[u8],
-) -> Result<Option<Cut>, ValueError> {
+fn read(config: Option<&[u8]>, shallow: Option<Node>, path: &[u8]) -> Result<Option<Cut>, Failure> {
     let mut fs = MemFs::new(Flavour::Posix);
     fs.insert(b"/c", Node::Dir);
     if let Some(config) = config {
@@ -166,7 +162,7 @@ fn a_path_is_read_as_path_spells_it() {
 
 #[test]
 fn a_nul_raises() {
-    assert_eq!(read(Some(V0), None, b"/c/sha\0llow"), Err(ValueError));
+    assert_eq!(read(Some(V0), None, b"/c/sha\0llow"), Err(Failure::Value));
 }
 
 /// `cuts_in(path)` over `nodes`, under `flavour` with working directory
@@ -176,7 +172,7 @@ fn read_in(
     cwd: &[u8],
     nodes: &[(&[u8], Node)],
     path: &[u8],
-) -> Result<Option<Cut>, ValueError> {
+) -> Result<Option<Cut>, Failure> {
     let mut fs = MemFs::new(flavour);
     for (at, node) in nodes {
         fs.insert(at, node.clone());
@@ -221,8 +217,9 @@ fn a_bare_relative_path_reads_the_config_of_the_working_directory() {
 #[test]
 fn the_windows_flavour_declines_and_raises_only_for_a_nul() {
     // The reference on Windows answers through ntpath's `Path` and
-    // `open`, which the port does not read: every path declines, none
-    // raises but one holding a NUL, and none reads a config elsewhere.
+    // `open`, which the port does not read: every path declines with
+    // NotPorted (ENG-124), never with None, which is a wrong answer where
+    // the reference reads the file; only a path holding a NUL raises.
     let c = "c".repeat(64);
     let nodes: Vec<(&[u8], Node)> = vec![
         (b"C:\\c", Node::Dir),
@@ -243,13 +240,13 @@ fn the_windows_flavour_declines_and_raises_only_for_a_nul() {
     ] {
         assert_eq!(
             read_in(Flavour::Windows, b"C:\\c", &nodes, path),
-            Ok(None),
+            Err(Failure::NotPorted),
             "{path:?}"
         );
     }
     assert_eq!(
         read_in(Flavour::Windows, b"C:\\c", &nodes, b"sha\0llow"),
-        Err(ValueError)
+        Err(Failure::Value)
     );
 }
 

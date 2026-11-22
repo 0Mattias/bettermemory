@@ -29,7 +29,8 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `argparse` | unit argparse-1a: the flat-parser subset of CPython 3.13.13's `argparse` the hook mains use: `ArgumentParser(prog, description, add_help)`, `add_argument` (`store`, `store_true`, `help`, `version`; positionals of one argument with `choices`), `parse_args` (`_parse_known_args` with `_parse_optional`, `_get_option_tuples`, `consume_optional`, `consume_positionals`, `_match_argument`, `_match_arguments_partial`, the negative-number matcher), `error` and `_format_usage` with its wrapping, as an `Outcome` without a process exit; unit argparse-1b: `add_subparsers(dest)` with its `prog` derived from the parent's positionals, `add_parser`, the PARSER `nargs` and `_SubParsersAction.__call__` with the child's namespace merged in the reference's order and its leftovers after the parent's | `argparse.jsonl`, `argparse_python.jsonl`, `argparse_subparsers.jsonl`, `argparse_subparsers_python.jsonl` |
 | `native_text`, `caches`, `daemon_client`, `install_hints` | `native_text.py` 15-40 (`has_surrogates`, `utf8_text`, `encoded_json`, `origin_projection`), `_caches.py` whole (`register` under a key, `clear_all`), `_daemon_client.py` 149-172 (`STORE_FILENAME` re-exported, `START_TIMEOUT_SECONDS`, `HOOK_TIMEOUT_SECONDS`, `HOOK_HARNESS_TIMEOUT_SECONDS`, `HOOK_MARGIN_SECONDS`, `hook_budget_seconds`), `_install_hints.py` 41-130 (every spelling) | `native_text.jsonl`, `daemon_client.jsonl`, `install_hints.jsonl` |
-| `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks; its second unit (`src/origin_history/located.rs`): `located_key`, `history_guard`, `cuts`, `shallow_file`, `cuts_in` | `origin_history.jsonl`, `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` |
+| `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks; its second unit (`src/origin_history/located.rs`): `located_key`, `history_guard`, `cuts`, `shallow_file`, `cuts_in` | `origin_history.jsonl`, `origin_history_located.jsonl`, `origin_history_located_modes.jsonl`, `origin_history_cuts.jsonl` |
+| `origin_model` | `origin_model.py`'s `Origin` as captured: `CapturedOrigin`, the stored `records::Origin` with `_repo_url_alternates`, `git_indeterminate` and `git_refusal` beside it | `origin_model.jsonl` |
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves; `origin_dates::memo`: `_instant`, `commit_author_timestamps` and `_remember_dates` over the caller's `TimestampsMemo`, `MemoLeaves` and `ShallowHold` | `origin_dates_reads.jsonl`, `origin_dates_memo.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
 | `use_tokens` | the per-turn use-token bookkeeping of `handlers/_shared.py`: `_drain_expired_use_tokens`, `_emit_expired_use_tokens`, `_advance_turn`, `_event_ts_epoch`, `_scan_settled_use_events`, `_already_recorded_pending_ids` and its alias `_hook_attributed_pending_ids`, `_attach_use_tokens`; the recorder and its log are a trait (`UseLog`) | `use_tokens.jsonl`, `use_tokens_python.jsonl` |
@@ -6226,6 +6227,8 @@ that Unicode too.
 | `golden_origin_dates_reads`: `every_row`; `origin_dates_kills` (7), `origin_dates_robustness` (3) | `origin_dates_reads.jsonl` (the last two none) | i |
 | `golden_origin_dates_memo`: `every_row`; `origin_dates_memo_kills` (7), `origin_dates_memo_robustness` (2) | `origin_dates_memo.jsonl` (the last two none) | i |
 | `golden_origin_history_located`: `origin_history_located_every_query`, `origin_history_located_modes_every_query` (unix; `golden_origin_history_located_not_posix` records the gap off it as class os); `origin_history_located_kills` (15), `origin_history_located_robustness` (7) | `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` (the last two none) | i |
+| `golden_origin_history_cuts`: `origin_history_cuts_every_case`, `one_byte_over_the_cap_is_none`; `origin_history_cuts_kills` (11), `origin_history_cuts_robustness` (4) | `origin_history_cuts.jsonl` (the last two none) | i |
+| `golden_origin_model`: `origin_model_every_case` | `origin_model.jsonl` | i |
 | `golden_history_rows`: `every_history_rows_answer_is_the_reference_s`; `history_rows_kills` (13), `history_rows_robustness` (5) | `history_rows.jsonl` (the last two none) | i |
 | `golden_history_rows`: `every_nested_history_rows_answer_is_the_reference_s` | `history_rows_python.jsonl` | ii |
 | `golden_history_mac`: `every_history_mac_answer_is_the_reference_s`; `history_mac_kills` (7), `history_mac_robustness` (4) | `history_rows_mac.jsonl` (the last two none) | i |
@@ -14029,13 +14032,18 @@ What unit 2 reproduces (`src/origin_history/located.rs`):
   spells it (`pure`: no trailing slash, no empty or `.` part).
   FileNotFoundError is the empty set; NotADirectoryError and every other
   OSError are None; a directory is None (CPython refuses it at the open,
-  the port at the read). It reads `_CUTS_MAX + 1` bytes; an empty file is
+  the port at the read). It reads until `_CUTS_MAX + 1` bytes or the end,
+  looping on short reads as the buffered `read` does; an empty file is
   empty before the format is read; the width (64 for `sha256`, else 40)
   comes from `object_format_at(Path(path).parent)`, and a failure there
-  is None. The file splits on LF, one final empty record is dropped, and
+  passes on unchanged (none arises under the POSIX flavour). The file splits on LF, one final empty record is dropped, and
   each record's first `width` bytes, ASCII-lowercased, must be lowercase
   hex. A NUL in the path is the reference's ValueError, which it does not
-  catch: the port returns `Err(ValueError)`. `cuts` composes the two.
+  catch: the port returns `Err(Failure::Value)`. `cuts` composes the two
+  and returns the same `Failure`; `origin_dates::memo`'s
+  `MemoLeaves::cuts` keeps `ValueError` as its error, so a caller that
+  wires `cuts` there maps `Failure::Value` to it and declines on
+  `Failure::NotPorted`.
 
 No regular expression is involved.
 
@@ -14058,11 +14066,45 @@ test lays the same trees on disk and runs `StdFs`. Off unix
 `golden_origin_history_located_not_posix` records the gap (class os):
 the Windows flavour does not port `realpath`, so discovery declines
 where the reference on Windows answers (the crate's stated Windows gap,
-ENG-124). `cuts_in` declines under the Windows flavour for every path
-but one holding a NUL (which raises ValueError, as `open` does there):
-`Path` and `open` on Windows read drives and backslashes, and the port
-reads neither, so it neither raises nor reads a config from the wrong
-folder.
+ENG-124). `cuts_in` declines under the Windows flavour with
+`Failure::NotPorted` for every path but one holding a NUL (which raises
+ValueError, as `open` does there): `Path` and `open` on Windows read
+drives and backslashes, and the port reads neither, so it neither
+answers, raises nor reads a config from the wrong folder.
+
+`origin_history_cuts.jsonl` (class i, 44 trees written in a scratch
+directory entered with chdir, so no row holds a path: missing, empty,
+CRLF, a suffix, short, uppercase, a non-hex digit, empty records, no
+config, sha1 and sha256 configs, an unknown format, version 2, an
+unreadable config, a bare name, `//`, `.`, `..` and a trailing slash, a
+directory, the empty path, a NUL, exactly `CUTS_MAX` bytes, 1,000
+repeated records) pins `cuts_in` on every platform; the file of
+`CUTS_MAX + 1` bytes is built by the Rust test and answers None.
+`origin_history_cuts_kills` adds a path through a regular file
+(NotADirectoryError on POSIX, FileNotFoundError on Windows, so not a
+row), a file system whose reads stop at 4,096 bytes, the width from the
+config and not the suffix, non-ASCII, the parent's spelling, a NUL and
+the Windows flavour.
+
+### One `cuts_in`: what was reconciled
+
+Two ports of `cuts_in` were built apart: the one here
+(`origin_history::located`, over the membership rule) and one over the
+bare `gitfile_rule` context with an error type of its own (`CutsError`).
+One is kept, the one here, with its signature, corrected where it
+answered otherwise than the reference or than the crate's Windows rule.
+The other's golden file, generator, kills and robustness tests are kept,
+moved onto this signature. A differential over 4,000 generated trees,
+the reference as the oracle, found no POSIX input where the corrected
+port and the other differ.
+
+| point | the port here before | the other port | the reference | kept |
+| --- | --- | --- | --- | --- |
+| the Windows flavour, a path without a NUL | `Ok(None)` | `NotPorted` | reads the file (a set, empty or None) | `Err(Failure::NotPorted)`: None was a wrong answer where the reference reads the file; the crate's rule is to decline (ENG-124) |
+| the Windows flavour, a path with a NUL | ValueError | `NotPorted` | ValueError from `open` | ValueError (`Failure::Value`) |
+| a failure of `object_format_at` | None | passed on | raised, uncaught | passed on; under the POSIX flavour none arises, so no answer changes |
+| a failure of `Ctx::at` | None | passed on | cannot fail on POSIX | passed on |
+| a read that returns fewer bytes than asked (a pipe, a FIFO) | one `Fs::read` of `CUTS_MAX + 1` | reads until the end or the cap | `BufferedReader.read` loops until the end or the cap | the loop: one read took a short first chunk for the whole file |
 
 ## The author dates a drift count is read off (`origin_dates.py`)
 

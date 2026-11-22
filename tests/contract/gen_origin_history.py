@@ -33,13 +33,16 @@ line, by ``f``:
 from __future__ import annotations
 
 import os
+import tempfile
 import time
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
 from unittest import mock
 
-from bettermemory import _git, origin_history as oh
+from pathlib import Path
+
+from bettermemory import _git, gitfile_rule, origin_history as oh
 
 from ._common import jsonl
 
@@ -480,3 +483,129 @@ def generate() -> dict[str, bytes]:
     cases += (_run_memo(steps) for steps in _memo_cases())
     cases += _unwalked()
     return {"origin_history.jsonl": jsonl([{"cases": len(cases)}, *cases])}
+
+
+# `cuts_in` over shallow files (``origin_history_cuts.jsonl``). Each case
+# is a tree written in a fresh temporary directory, entered with chdir, so
+# no row holds its path: ``t`` maps a relative path to its bytes (a text,
+# or ``{"p": prefix, "x": char, "n": count}``), ``p`` is the path
+# `cuts_in` is given, ``r`` the commits sorted, null, or ``{"e": class}``.
+# The git on PATH is data: release 2.54, `_reads_compat` True. The file of
+# ``CUTS_MAX + 1`` bytes is the Rust test's own (one 40-digit record and
+# ``0`` repeated), pinned there as null. Nothing follows the platform: the
+# paths are relative, spelled with ``/``, and no case leans on an error
+# class a system words differently (a path through a regular file is
+# NotADirectoryError on POSIX and FileNotFoundError on Windows, so it is
+# the Rust kills test's case, not a row).
+
+_SHA1 = "[core]\n\trepositoryformatversion = 0\n"
+_SHA256 = (
+    "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectformat = sha256\n"
+)
+_SHA1_V1 = (
+    "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectformat = sha1\n"
+)
+_UNKNOWN = (
+    "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectformat = sha512\n"
+)
+_V2 = "[core]\n\trepositoryformatversion = 2\n"
+_A = "0123456789abcdef0123456789abcdef01234567"
+_B = "fedcba9876543210fedcba9876543210fedcba98"
+_L = "ab" * 32
+
+
+def _cut_cases() -> Iterator[tuple[dict[str, Any], str]]:
+    def repo(shallow: Any, config: str | None = _SHA1) -> dict[str, Any]:
+        t: dict[str, Any] = {"repo/shallow": shallow}
+        if config is not None:
+            t["repo/config"] = config
+        return t
+
+    yield {"repo/config": _SHA1}, "repo/shallow"
+    yield {}, "repo/shallow"
+    yield repo(""), "repo/shallow"
+    yield repo("", None), "repo/shallow"
+    yield repo("", _UNKNOWN), "repo/shallow"
+    yield repo(_A + "\n"), "repo/shallow"
+    yield repo(_A), "repo/shallow"
+    yield repo(_A + "\n" + _B + "\n"), "repo/shallow"
+    yield repo(_B + "\n" + _A + "\n" + _B + "\n"), "repo/shallow"
+    yield repo(_A + "\r\n"), "repo/shallow"
+    yield repo(_A + "\r\n" + _B + "\r\n"), "repo/shallow"
+    yield repo(_A + "ff\n"), "repo/shallow"
+    yield repo(_A + "zz junk\n"), "repo/shallow"
+    yield repo(_A + " tail\n"), "repo/shallow"
+    yield repo(_A[:39] + "\n"), "repo/shallow"
+    yield repo(_A[:39]), "repo/shallow"
+    yield repo(_A.upper() + "\n"), "repo/shallow"
+    yield repo(_A[:20] + "G" + _A[21:] + "\n"), "repo/shallow"
+    yield repo(_A + "\n\n"), "repo/shallow"
+    yield repo("\n"), "repo/shallow"
+    yield repo("\n" + _A + "\n"), "repo/shallow"
+    yield repo(_A + "\n" + _B), "repo/shallow"
+    yield repo(_A + "\n", None), "repo/shallow"
+    yield repo(_L + "\n", _SHA256), "repo/shallow"
+    yield repo(_L.upper() + "x\n", _SHA256), "repo/shallow"
+    yield repo(_A + "\n", _SHA256), "repo/shallow"
+    yield repo(_L + "\n", _SHA1), "repo/shallow"
+    yield repo(_A + "\n", _SHA1_V1), "repo/shallow"
+    yield repo(_A + "\n", _UNKNOWN), "repo/shallow"
+    yield repo(_A + "\n", _V2), "repo/shallow"
+    yield repo(_A + "\n", "not a config ["), "repo/shallow"
+    yield {"shallow": _A + "\n", "config": _SHA1}, "shallow"
+    yield {"shallow": _A + "\n"}, "shallow"
+    yield repo(_A + "\n"), "repo//shallow"
+    yield repo(_A + "\n"), "repo/./shallow"
+    yield repo(_A + "\n"), "repo/shallow/."
+    yield repo(_A + "\n"), "./repo/shallow/"
+    yield {**repo(_A + "\n"), "repo/sub/x": ""}, "repo/sub/../shallow"
+    yield repo(_A + "\n"), "repo"
+    yield repo(_A + "\n"), ""
+    yield repo(_A + "\n"), "repo/sh\x00allow"
+    yield (
+        {
+            "repo/shallow": {"p": _A, "x": "0", "n": oh._CUTS_MAX - 40},
+            "repo/config": _SHA1,
+        },
+        "repo/shallow",
+    )
+    yield (
+        {"repo/shallow": {"p": "", "x": _A + "\n", "n": 1000}, "repo/config": _SHA1},
+        "repo/shallow",
+    )
+
+
+def _content(value: Any) -> bytes:
+    if isinstance(value, dict):
+        return (value["p"] + value["x"] * value["n"]).encode()
+    return value.encode()
+
+
+def _cut(tree: dict[str, Any], path: str) -> dict[str, Any]:
+    saved = os.getcwd()
+    with tempfile.TemporaryDirectory() as raw:
+        os.chdir(raw)
+        try:
+            for rel, value in tree.items():
+                Path(rel).parent.mkdir(parents=True, exist_ok=True)
+                Path(rel).write_bytes(_content(value))
+            with (
+                mock.patch.object(
+                    gitfile_rule, "_git_is_at_least", lambda want: (2, 54) >= want
+                ),
+                mock.patch.object(gitfile_rule, "_reads_compat", lambda: True),
+            ):
+                try:
+                    out = oh.cuts_in(Path(path))
+                except ValueError as exc:
+                    r: Any = {"e": type(exc).__name__}
+                else:
+                    r = None if out is None else sorted(out)
+        finally:
+            os.chdir(saved)
+    return {"t": tree, "p": path, "r": r}
+
+
+def generate_cuts() -> dict[str, bytes]:
+    cases = [_cut(tree, path) for tree, path in _cut_cases()]
+    return {"origin_history_cuts.jsonl": jsonl([{"cases": len(cases)}, *cases])}
