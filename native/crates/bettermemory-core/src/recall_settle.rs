@@ -62,6 +62,20 @@ pub trait SettleStore {
 /// `events.Recorder.record(kind, **fields)`, the fields in order.
 pub trait Recorder {
     fn record(&mut self, kind: &str, fields: Vec<(PyValue, PyValue)>);
+    /// Whether `events.suppressed` is in force (`records` answers false).
+    fn suppressed(&self) -> bool {
+        false
+    }
+    /// `record` where the reference lets the write raise; the default
+    /// never does.
+    fn try_record(
+        &mut self,
+        kind: &str,
+        fields: Vec<(PyValue, PyValue)>,
+    ) -> Result<(), crate::recall_prompt::PyException> {
+        self.record(kind, fields);
+        Ok(())
+    }
 }
 
 /// A session key: `(harness, session_id)`.
@@ -85,6 +99,8 @@ pub trait SettleState {
     fn take_closed(&mut self, key: &Key) -> Option<SegmentView>;
     fn note_settled(&mut self, key: &Key, ids: &[PyStr], now: &DateTime);
     fn note_review_roots(&mut self, key: &Key, roots: &[PyStr], now: &DateTime);
+    /// `RecallState.forget(key)`: drop the session's held state.
+    fn forget(&mut self, _key: &Key) {}
 }
 
 /// `sessions.joined_sessions(events, harness_session=, worktree_root=)`.

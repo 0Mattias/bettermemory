@@ -170,6 +170,8 @@
 //! - [`recall_settle`]: the Stop's settlement of shown pointers
 //!   (`settle_shown`, `settle_unused`), `previous_audit_at` and
 //!   `review_unanswered`, over traits for the store, recorder and state;
+//! - [`recall_prompt`]: the prompt recall's turn, window, settlement,
+//!   probe and the `recall_held` and `prompt_recall` rows;
 //! - [`control_tokens`]: the chat-template delimiters a stored text may
 //!   not carry, found, counted, refused and written by their bare names;
 //! - [`recall`]: the prompt recall: the table of the user's words
@@ -393,6 +395,7 @@ pub mod pyre;
 pub mod pysyntax;
 pub mod pyvalue;
 pub mod recall;
+pub mod recall_prompt;
 pub mod recall_settle;
 pub mod records;
 pub mod repository_history;

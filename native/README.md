@@ -67,6 +67,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
 | `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields` | `audit_fields.jsonl` |
 | `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`) | `recall_settle.jsonl` |
+| `recall_prompt` | `recall_prompt.py` whole: `_PromptTurn` (`PromptTurn`, `PromptTurnView`), `_prompt_window`, `_settle_before_probe`, `_prompt_probe`, `_record_hold`, `_record_delivery`; the session joins and `recall_admission`'s gate are traits, `Admission.on`, `settle_interrupted` and `_probe_message` closures | `recall_prompt.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `recall` | `recall.py`'s first unit: the constants, `WordsSeen` (`remember`, `seen`, `holds`, `clear`), `_fold`, `_bounded`, `RecallPointer`, `_annotation`, `_core`, `_one_excerpt`, `_recall_line`, `render_recall_block`; `recall_admission.summarize` and `disputed_marks`; `recall::choose`: `_seen_in_log`, `_seen_in_segment`, `_choose_hits`, `_deliver_recall`, `_unless_standing`, `_contradiction_open`, `HookResult` | `recall_render.jsonl`, `recall_render_unicode.jsonl`, `recall_choose.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
@@ -5870,6 +5871,92 @@ fields nested 100,000 deep and 200,000 long, clocks at the ends of the
 calendar, and the event scan's growth (20,000 events against 2,000).
 
 Left for unit 2 (settleint): `_probe_message` and `settle_interrupted`.
+
+## The prompt recall's steps (`recall_prompt.py`)
+
+`recall_prompt` reproduces `src/bettermemory/recall_prompt.py` (280 lines
+at origin/v9) whole, in one unit (recall_prompt-1). The map by function:
+
+| Function | Lines | Needs from the machine | Status |
+|---|---|---|---|
+| `_PromptTurn` | 74-95 | nothing | built (`PromptTurn`, read through `PromptTurnView`) |
+| `_prompt_window` | 98-121 | the store's event reads, `sessions.bridged_session` and `_disabled_scopes_from_events`, the clock (an argument) | built |
+| `_settle_before_probe` | 124-157 | `recall_settle.settle_interrupted` (a closure), `previous_audit_at`, `Admission.on` (a closure) | built |
+| `_prompt_probe` | 160-186 | `recall_settle._probe_message` (a closure), `Admission.on` | built |
+| `_record_hold` | 189-221 | the recorder (a factory closure), `audit.recall_held_fields`, `recall_admission._delivery_membership` | built |
+| `_record_delivery` | 224-280 | the same, `audit.prompt_recall_fields`, `recall_admission._rc3_admitted`, `RecallState.forget` | built |
+
+What it reproduces.
+
+- `prompt_window`: the dedup cut (`now - REAUDIT_DEDUP_WINDOW_SECONDS`)
+  first, then the own cut: the segment's start when `view.segment > 0`,
+  else `now - STATE_IDLE_SECONDS`. The comparison is Python's: an int, a
+  bool or a float compares, anything else (None, a string, a list) raises
+  `TypeError` before the log is read; a clock less than an hour (or, for
+  a first segment, a day) after year 1 raises `OverflowError`. Then the
+  log since the dedup cut, the bridged session over it (the harness
+  session and the caller's worktree) and the scopes switched off.
+- `settle_before_probe`: the admission on POOL_PREFILTER, then the
+  previous audit's stamp, then `settle_interrupted` with the reference's
+  keyword arguments (`triggered_from` "prompt_hook", no excluded prompt).
+  The stamp is read inside the reference's `try`, so its `OverflowError`
+  is swallowed like the settlement's own failures and the settlement is
+  not called. The warning the reference logs (`interrupted turns not
+  settled at the prompt: <class>: <str(exc)>`) is the return value.
+- `prompt_probe`: the probe over the owner's words, under the admission
+  on POOL_PREFILTER when the surface is PROMPT_RECALL and under the turn's
+  own admission otherwise, never floored.
+- `record_hold`: the recorder is built first, whatever follows; the row
+  is built only when the recorder records `recall_held` (not inside
+  `events.suppressed`, and with telemetry on, since it is a measurement
+  row), so a refused cause raises `ValueError` only then. The row is
+  `recall_held_fields` (probe mode the search mode, or "hybrid" when it
+  is empty or None; `RULE`; the segment, prompt id, transcript and
+  harness), then `admission` set to the surface and the membership keys
+  merged as `dict.update` does: a key already there keeps its place.
+- `record_delivery`: `prompt_recall_fields` with the mode as the
+  delivered reason and the block's length in code points; `event_id`
+  overwritten in place, `admission`, the membership keys, then
+  `rc3_admitted`: the gate's ids in order, duplicates kept, less the
+  chosen pointers that were not shown. A row the recorder fails to write
+  forgets the session's held state (`SettleState::forget`) and raises;
+  `record_hold` forgets nothing.
+
+Decisions. The configuration is read through its two switches
+(`telemetry`, `search_mode`); the closures that need the rest of it hold
+it themselves. The resolution, admission and caller are type parameters
+the closures and `DeliveryGate` read; `caller.worktree_root` is a field
+of its own. `Admission.on` is a closure, `settle_interrupted` and
+`_probe_message` are closures over the store and an argument struct, so
+this unit does not wait for settleint. The recorder factory takes
+`recall_settle::RecorderSpec` with an empty `triggered_from`, the
+`Recorder` dataclass's default. `recall_settle::Recorder` gains two
+methods with default bodies, `suppressed` (false) and `try_record` (a
+write that cannot fail), and `SettleState` gains `forget` (a no-op by
+default), so existing implementations need no change. A chosen hit is
+`Chosen<M, T>` (the hit, the record, its trust row, its in-force entry);
+only the hit's id is read. POOL_PREFILTER and PROMPT_RECALL are local
+constants, pinned by the golden header. No regular expression is used.
+
+Fixtures: `gen_recall_prompt.py` writes `recall_prompt.jsonl` (not
+gated, 24 KB): each step over a real `_PromptTurn` and scripted fakes,
+with every call the fakes saw in order (the store's reads and their
+bounds, the joins, `Admission.on`, the settlement's and the probe's
+arguments, the warning, the recorder built and the rows it wrote, the
+membership and rc3 calls, `forget`) and the answer or the error raised.
+`golden_recall_prompt` checks every row; `recall_prompt_kills` holds the
+cases a plausible wrong port fails (the segment comparison, the order of
+the cuts, the swallowed stamp failure, the admission per surface, the
+recorder asked before the row is built, the probe mode default, the event
+id kept in place, code point lengths, the drop, the forget on a failed
+delivery only); `recall_prompt_robustness` holds a 100,000-event window,
+clocks at both ends of the calendar, segment numbers past machine
+integers, a megabyte block and the drop's growth (20,000 pointers against
+2,000).
+
+Nothing is left for a later unit. `settle_interrupted` and
+`_probe_message` arrive with settleint and are handed in by the caller
+(`recall.prompt_recall`, not built).
 
 ## Chat-template control tokens (`control_tokens.py`)
 
