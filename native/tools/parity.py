@@ -7,7 +7,9 @@ project environment's), e.g. ``uv run python native/tools/parity.py --lint``.
 Steps:
 
 0. Lint (with ``--lint``): ``cargo build --locked``, ``cargo clippy --locked
-   --all-targets -- -D warnings``, ``cargo fmt --check``.
+   --all-targets -- -D warnings``, then ``rustfmt --check`` over the root
+   file of every workspace target in batches (``fmt_check``): ``cargo fmt
+   --check`` puts every root on one command line, which Windows refuses.
 1. ``cargo test --locked`` against the committed golden files. They were made
    on darwin-arm64 under Python 3.13.13, SQLite 3.50.4, Unicode 15.1.0; on
    another platform the score-bearing cases that differ are set aside, named
@@ -109,6 +111,91 @@ def read_log(path: Path) -> dict[tuple[str, str], Record]:
     return out
 
 
+#: The most characters of file arguments one rustfmt call is given. Windows
+#: refuses a command line over 32,767 characters (os error 206), and `cargo
+#: fmt --check` passes the root file of every target, several hundred
+#: integration test files among them, on one line; this bound stays far
+#: under that limit with room for the program name and flags.
+FMT_ARG_BOUND = 8000
+
+
+def fmt_batches(paths: list[str], bound: int = FMT_ARG_BOUND) -> list[list[str]]:
+    """Splits ``paths``, in order, into batches whose joined length (one
+    separator per argument) is at most ``bound``. A path longer than the
+    bound alone forms a batch of its own; every path is in exactly one batch."""
+    out: list[list[str]] = []
+    batch: list[str] = []
+    size = 0
+    for path in paths:
+        cost = len(path) + 1
+        if batch and size + cost > bound:
+            out.append(batch)
+            batch, size = [], 0
+        batch.append(path)
+        size += cost
+    if batch:
+        out.append(batch)
+    return out
+
+
+def fmt_roots(native: Path, env: dict[str, str]) -> dict[str, list[str]]:
+    """The root file of every target of every workspace member, grouped by
+    the target's edition, as paths relative to ``native``: the files `cargo
+    fmt` hands rustfmt. rustfmt reaches the rest through `mod` items."""
+    meta = json.loads(
+        subprocess.run(
+            ["cargo", "metadata", "--no-deps", "--format-version", "1", "--locked"],
+            cwd=native,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout
+    )
+    members = set(meta["workspace_members"])
+    roots: dict[str, set[str]] = {}
+    for package in meta["packages"]:
+        if package["id"] not in members:
+            continue
+        for target in package["targets"]:
+            path = Path(target["src_path"]).resolve()
+            rel = path.relative_to(native.resolve()).as_posix()
+            roots.setdefault(target["edition"], set()).add(rel)
+    return {edition: sorted(files) for edition, files in sorted(roots.items())}
+
+
+def fmt_check(native: Path, env: dict[str, str]) -> int:
+    """`cargo fmt --check` without one command line of every file: runs
+    ``rustfmt --check`` over the target root files in batches under
+    ``FMT_ARG_BOUND``. Prints the first differing file; returns 1 when any
+    batch fails (rustfmt's own status otherwise)."""
+    print("\n=== fmt: rustfmt --check over every target root, in batches", flush=True)
+    status = 0
+    first_diff: str | None = None
+    count = 0
+    for edition, files in fmt_roots(native, env).items():
+        count += len(files)
+        for batch in fmt_batches(files):
+            code, lines = run(
+                f"fmt (edition {edition}, {len(batch)} files)",
+                ["rustfmt", "--check", "--edition", edition, *batch],
+                native,
+                env,
+            )
+            if code:
+                status = status or code
+                if first_diff is None:
+                    first_diff = next(
+                        (line for line in lines if line.startswith("Diff in ")),
+                        f"rustfmt exit {code} on a batch starting {batch[0]}",
+                    )
+    if first_diff is not None:
+        print(f"first difference: {first_diff}", flush=True)
+    print(f"=== fmt: {count} root files, exit {status}", flush=True)
+    return status
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="native/tools/parity.py")
     parser.add_argument("--lint", action="store_true", help="build, clippy, fmt first")
@@ -157,11 +244,13 @@ def main(argv: list[str] | None = None) -> int:
                     "warnings",
                 ],
             ),
-            ("fmt", ["cargo", "fmt", "--check"]),
         ]:
             status, _ = run(title, cmd, NATIVE, env)
             if status:
                 failures.append(f"{title} failed (exit {status})")
+        status = fmt_check(NATIVE, env)
+        if status:
+            failures.append(f"fmt failed (exit {status})")
 
     step1_log = work / "step1.jsonl"
     step1 = (0, 0, 0)

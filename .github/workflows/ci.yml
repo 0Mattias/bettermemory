@@ -472,7 +472,8 @@ jobs:
 
   # The native build (native/, unit PAR) against the Python reference on
   # each platform. Everything is native/tools/parity.py, so a local run is
-  # this job: lint (cargo build, clippy -D warnings, fmt --check); step 1,
+  # this job: lint (cargo build, clippy -D warnings, rustfmt --check in
+  # batches, since one cargo fmt command line is too long for Windows); step 1,
   # cargo test against the committed golden files, which were made on
   # darwin-arm64 under Python 3.13.13, SQLite 3.50.4 and Unicode 15.1.0, so
   # elsewhere a score-bearing case that differs is set aside and counted
