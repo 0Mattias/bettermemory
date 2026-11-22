@@ -85,7 +85,8 @@
 //!   record, the id minted from given bytes, the clone rule; the hardware
 //!   id, the hostname, the id file's object and the two files read;
 //!   `open_machine` and `_write_record`, with the machine's own reads);
-//! - [`search`]: `search.search` over records in memory, bit for bit;
+//! - [`search`]: `search.search` over records in memory, bit for bit,
+//!   the query-biased snippet and its memos, and the token cache;
 //! - [`search_dedup`]: write-time dedup, the Jaccard scorer and its
 //!   token cache;
 //! - [`records`]: the reference's record models (memory, tombstone,

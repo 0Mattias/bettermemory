@@ -55,7 +55,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
 | `response_render` | `_response.py`'s `ResponseBuilder.render_hit`, `render_show`, `_SHOW_DEFAULTS`, `_NATIVE_SEP`, `_slashed`, `_path_states`, `_compact_origin`, `_grouped_links` | `response_render.jsonl` |
 | `response_reason`, `response_trust` | `_response.py`'s `check_reason` (`_named`, `_REASON_PATHS`, `_rejection_note`), `_UNTRUSTED_PROVENANCE`, `_untrusted`, `verdict_and_reason`, `_row_reason`, `_claim_at_index`, `TRUST_UNAVAILABLE_RECOMMENDATION`, `ResponseBuilder.attach_provenance`, `apply_trust_unavailable`, `apply_trust`; `verdict.py`'s `_OBJECTED` and `with_objection` | `response_reason.jsonl` |
-| `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
+| `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms; `_query_biased_snippet` with its memos (`snippet`), `_memory_tokens`, `seed_memory_tokens` and their LRU (`token_cache`), `top_hit_leads_runner_up` | `search.jsonl`, `search_ranker.jsonl`, `search_snippet.jsonl`, `search_snippet_unicode.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `history` | `history.py`'s first two units: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection; `_RowVerifier` and `_set` | `history_rows.jsonl`, `history_rows_python.jsonl`, `history_rows_mac.jsonl` |
@@ -2354,6 +2354,82 @@ string, and the only limit before it is the MCP SDK's 4 MiB request body
 (about 400,000 such terms). What upstream does bound is the records: the
 handler ranks a pool it draws from FTS5 (`handlers/search.py`,
 `POOL_SIZE` 200), not the whole store. No cap is added here.
+
+## Snippets and the token cache (`search.py`)
+
+`search::snippet` and `search::token_cache` reproduce the snippet path and
+the per-candidate token cache of `search.py`. They need nothing from the
+machine but the tokenizer; each memo is a value the caller holds, as
+`search_dedup::RawTokenCache` is.
+
+### Map, by function
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `TOKEN_CACHE_ENTRIES`, `_TOKEN_CACHE`, `clear_token_cache` | 522-534 | a process-wide cache and its lock | built (`TokenCache`, `TokenCache::clear`) |
+| `_memory_tokens` | 538-563 | the cache | built (`TokenCache::memory_tokens`, a memory as its body and scopes) |
+| `seed_memory_tokens` | 567-600 | the cache | built (`TokenCache::seed_memory_tokens`) |
+| `search_bm25.term_counts`, `_scope_tokens` | bm25 119-123, 167-172 | nothing | built (`token_cache::term_counts`, `search::scope_tokens`, `search::body_stream`, which `Corpus::new` now calls) |
+| `EXPAND_TOP_SCORE_MARGIN`, `top_hit_leads_runner_up` | 646, 649-667 | nothing | built (`snippet`) |
+| `_SNIPPET_SCAN_CHARS`, `_SnippetTokens` | 819-858 | nothing | built (`SNIPPET_SCAN_CHARS`, `SnippetTokens`) |
+| `SNIPPET_TOKEN_ENTRIES`, `TOKEN_SURFACE_ENTRIES`, `clear_snippet_caches` | 859-878 | two process-wide memos and their locks | built (`SnippetMemo`, `SnippetMemo::clear`) |
+| `_token_surfaces`, `_snippet_tokens` | 880-917 | the memos | built |
+| `_query_biased_snippet` | 918-1040 | the memos | built |
+| `_build_hit`, `_claim_anchors` | 1041-1118, 1964-1979 | the store | not built (unit search-1b) |
+
+### What each part reproduces, and the decisions
+
+- **The LRUs.** `token_cache::Lru` is an `OrderedDict` used as the
+  reference uses it: a hit moves the key to the end, a new key goes at the
+  end, a held key keeps its place and takes the new value (`d[k] = v`),
+  and past the bound the front goes. The three memos share it. Each
+  look-up-and-touch and each insert-and-evict holds a lock; the
+  tokenizing runs outside it, as in the reference. The bounds are the
+  reference's (5,000, 5,000 and 20,000); `with_entries` takes another
+  bound as a `usize`, the golden file's eviction cases run at bounds of 0
+  to 3 (the generator sets the module constants for those rows). A bound
+  the reference could be patched to below zero (where `popitem` of an
+  empty dict raises KeyError) has no counterpart. The
+  `_caches.register` calls are left to the unit that wires `_caches`.
+- **The token cache.** The key is `(body, tuple(scopes))`: scopes in
+  another order are another key. `MemoryTokens.body_tf` keeps the dict's
+  order, first occurrence first. `seed_memory_tokens` splits the index
+  text on single spaces, so two spaces give an empty token, and an empty
+  text gives no tokens; a held entry stands and is touched.
+- **The scan.** `lexicon::token_spans` is `_TOKEN_RE.finditer` over the
+  existing hand matcher `find_tokens`, giving each match's offsets. The
+  surfaces of a raw token are interned by its text, in scan order, so the
+  surface memo's eviction order is the reference's.
+- **The alias anchors.** `_ALIAS_ANCHOR_PATTERNS` are the four
+  `_SYMBOL_ALIASES` literals under IGNORECASE (flags 34).
+  `lexicon::alias_anchor_starts` extends the existing hand matcher of
+  those literals with an ASCII case fold: under `re`'s IGNORECASE no code
+  point but the ASCII pair matches `c`, `f`, `n`, `e` or `t` (checked over
+  every code point on 3.13.13). Under the regex decision this is rule 3
+  (a matcher already built, the search tokenizer); no new pattern is
+  written, and the four patterns are in the engine's inventory through
+  the `ast` scan of `search_lexicon.py`.
+- **The window.** Anchors keep duplicates (a token and an alias at one
+  offset count twice), the window arithmetic is signed (`max_chars` may
+  be zero or negative), and a tie keeps the earliest window.
+- **The matched terms** are Rust strings: a search's `matched` holds
+  tokens, which never hold a surrogate. Bodies are code points.
+
+### Fixtures
+
+`gen_search_snippet.py` writes `search_snippet.jsonl` (ungated) and
+`search_snippet_unicode.jsonl` (UNICODE_GATED: `\w`, `str.strip`, NFKC and
+the fold past ASCII). Each snippet row is written for the terms as given
+and again for each term's first token (the stemmed form a search
+matches), so both a miss and a hit of an unstemmed spelling are pinned.
+Long bodies are spelled as repeated pieces, a memo key past 200
+characters as its length and a SHA-256 prefix, and a seeded sweep (1,500
+ASCII bodies, 300 past ASCII, from a 64-bit LCG the Rust test runs too)
+as a digest.
+
+Tests: `golden_search_snippet`, `search_snippet_kills`,
+`search_snippet_robustness` (the scan's time does not grow with the body
+past `_SNIPPET_SCAN_CHARS`).
 
 ## Write-time dedup (`search_dedup.py`)
 
@@ -6241,6 +6317,9 @@ that Unicode too.
 | `golden_search_dedup`: `search_dedup_every_case` | `search_dedup.jsonl` | i |
 | `golden_search_dedup`: `search_dedup_unicode_every_case` | `search_dedup_unicode.jsonl` | ii (Unicode) |
 | `search_dedup_kills` (12), `search_dedup_robustness` (6) | none | i |
+| `golden_search_snippet`: `search_snippet_every_case` | `search_snippet.jsonl` | i |
+| `golden_search_snippet`: `search_snippet_unicode_every_case` | `search_snippet_unicode.jsonl` | ii (Unicode) |
+| `search_snippet_kills` (12), `search_snippet_robustness` (6) | none | i |
 | `golden_search`: `search_ranker_every_query_every_mode` | `search_ranker.jsonl` | iii |
 | `sqlite_spike`: `fts5_prefilter_matches_the_reference_sqlite` | `search.jsonl` (bm25 bits) | iii |
 | `golden_search_store`: `every_query_every_caller_pool_and_hits`, `every_store_line`, `offline_runs_equal_the_in_memory_ranking` (and three class (i) checks: the clamp, the digest's fingerprint, awkward queries) | `search_store.jsonl`, `search.jsonl` | iii |

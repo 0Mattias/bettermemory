@@ -293,6 +293,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "membership_records_paths_platform.jsonl" => &[Python, Platform],
         // The tokenizer and `str.strip` past ASCII (`gen_search_dedup`).
         "search_dedup_unicode.jsonl" => &[Unicode],
+        // The tokenizer, `str.strip` and `\w` past ASCII (`gen_search_snippet`).
+        "search_snippet_unicode.jsonl" => &[Unicode],
         "models.jsonl" => &[Pydantic],
         // Episodes read through the model (`gen_store_journal`).
         "store_journal.jsonl" => &[Pydantic],

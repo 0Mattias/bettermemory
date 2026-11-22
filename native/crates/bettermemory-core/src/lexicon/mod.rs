@@ -350,6 +350,53 @@ fn find_tokens<T: Sym>(text: &[T], mut found: impl FnMut(&[T])) {
     }
 }
 
+/// `[(m.start(), m.end()) for m in _TOKEN_RE.finditer(text)]`, over the
+/// same matcher as `findall`.
+pub fn token_spans(text: &[u32]) -> Vec<(usize, usize)> {
+    let base = text.as_ptr() as usize;
+    let mut out = Vec::new();
+    find_tokens(text, |m: &[u32]| {
+        let start = (m.as_ptr() as usize - base) / std::mem::size_of::<u32>();
+        out.push((start, start + m.len()));
+    });
+    out
+}
+
+/// `_ALIAS_ANCHOR_PATTERNS`: each `_SYMBOL_ALIASES` literal, whether
+/// `(?!\w)` follows it, and the alias it stands for. The reference
+/// compiles them with IGNORECASE; no code point but the ASCII pair matches
+/// `c`, `f`, `n`, `e` or `t` under it, so the fold is ASCII's.
+pub const ALIAS_ANCHORS: [(&str, bool, &str); 4] = [
+    ("c++", false, "cpp"),
+    ("c#", true, "csharp"),
+    ("f#", true, "fsharp"),
+    (".net", true, "dotnet"),
+];
+
+/// `[m.start() for m in pattern.finditer(text)]` of one
+/// `_ALIAS_ANCHOR_PATTERNS` pattern: `(?<!\w)<literal>` and, with `guard`,
+/// `(?!\w)`, case-insensitively; matches do not overlap.
+pub fn alias_anchor_starts(text: &[u32], literal: &str, guard: bool) -> Vec<usize> {
+    let n = literal.len();
+    let lit = literal.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < text.len() {
+        let hit = text.len() >= i + n
+            && lit
+                .iter()
+                .zip(&text[i..])
+                .all(|(&b, &c)| c < 0x80 && (c as u8).to_ascii_lowercase() == b);
+        if hit && (i == 0 || !word_at(text, i - 1)) && !(guard && word_at(text, i + n)) {
+            out.push(i);
+            i += n;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 /// Code points as text; a token holds no surrogate, since `\w` matches
 /// none, and one that did would be dropped.
 fn push_cps(text: &[u32], out: &mut String) {

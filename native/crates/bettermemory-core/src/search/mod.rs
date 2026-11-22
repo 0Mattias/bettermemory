@@ -18,6 +18,8 @@
 pub mod expansion;
 pub mod lane;
 pub mod num;
+pub mod snippet;
+pub mod token_cache;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -53,6 +55,17 @@ impl SearchError {
             SearchError::InvalidInput => "InvalidInput",
         }
     }
+}
+
+/// A body's token stream, `_expand_kebab(tokenize(body))`: what the
+/// scorers count against (`_MemoryTokens.body`).
+pub fn body_stream(body: &[u32]) -> Vec<String> {
+    lexicon::expand_kebab(&lexicon::tokenize(body))
+}
+
+/// `search_bm25._scope_tokens`: `_expand_kebab(tokenize(scope))`.
+pub fn scope_tokens(scope: &str) -> Vec<String> {
+    lexicon::expand_kebab(&lexicon::tokenize_str(scope))
 }
 
 /// The fields of a `Memory` ranking reads.
@@ -292,7 +305,7 @@ impl Corpus {
                 return Err(SearchError::InvalidInput);
             }
             let ri = u32::try_from(ri).map_err(|_| SearchError::InvalidInput)?;
-            let body = lexicon::expand_kebab(&lexicon::tokenize(&r.body));
+            let body = body_stream(&r.body);
             let mut ids: Vec<u32> = Vec::with_capacity(body.len());
             let mut content_len = 0u64;
             for t in &body {
@@ -315,7 +328,7 @@ impl Corpus {
             }
             let mut scope_set: Vec<u32> = Vec::new();
             for scope in &r.scopes {
-                let toks = lexicon::expand_kebab(&lexicon::tokenize_str(scope));
+                let toks = scope_tokens(scope);
                 for t in &toks {
                     scope_set.push(intern(
                         t,
