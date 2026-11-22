@@ -168,7 +168,10 @@ impl<S: MembershipStore> Membership<S> {
         if k.git_dir.is_none() || is(&k.kind, BARE) {
             return Ok(());
         }
-        let written = self.token_writer.as_ref().and_then(|w| w(k));
+        let written = match &self.token_writer {
+            Some(w) => w(k).map_err(Error::Raised)?,
+            None => None,
+        };
         let left = match &written {
             None => true,
             Some((token, status)) => {

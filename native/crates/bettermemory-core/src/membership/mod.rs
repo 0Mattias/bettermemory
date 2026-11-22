@@ -125,8 +125,9 @@ pub(crate) fn key_error<T, E>(key: &[u32]) -> Result2<T, E> {
 pub type Liveness = Box<dyn Fn(&Checkout, &View) -> PyStr>;
 /// `path_liveness_many`: many views read at once.
 pub type LivenessMany = Box<dyn Fn(&[(Checkout, View)]) -> Vec<Option<PyStr>>>;
-/// `TokenWriter`: the token and status written, or None.
-pub type TokenWriter = Box<dyn Fn(&Checkout) -> Option<(Option<PyStr>, PyStr)>>;
+/// `TokenWriter`: the token and status written, or None; `Err` is what
+/// the writer raises, which passes out of the model call unchanged.
+pub type TokenWriter = Box<dyn Fn(&Checkout) -> Result<Option<(Option<PyStr>, PyStr)>, Raised>>;
 /// `now`: stamps rows; read by no rule.
 pub type Now = Box<dyn Fn() -> DateTime>;
 
@@ -250,6 +251,11 @@ impl<S: MembershipStore> Membership<S> {
     /// The token writer the model was given.
     pub fn token_writer(&self) -> Option<&TokenWriter> {
         self.token_writer.as_ref()
+    }
+
+    /// The session the model was given.
+    pub fn session(&self) -> Option<&PyStr> {
+        self.session.as_ref()
     }
 
     /// The sequence numbers of the rows the current call wrote.

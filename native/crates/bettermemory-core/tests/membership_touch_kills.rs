@@ -4,12 +4,13 @@
 //! counted as live, the previous view taken as the first, `_give_token`
 //! given `token_written`'s guard against a `superseded` status, an event
 //! for a write left to another machine, and `_foreign` read as any
-//! status.
+//! status, and a raise of the writer swallowed.
 
 mod common;
 
 use bettermemory_core::membership::touch::{foreign, CONTENDED, OTHER_MACHINE_SKIP};
-use bettermemory_core::membership::TokenWriter;
+use bettermemory_core::membership::{Error, TokenWriter};
+use bettermemory_core::membership_lines::Raised;
 use bettermemory_core::membership_records::records::Checkout;
 use bettermemory_core::pyvalue::{PyStr, PyValue};
 use bettermemory_core::unicode::cps;
@@ -57,7 +58,7 @@ fn touch(m: &mut Model, id: &str, root: &str) -> (Checkout, Vec<String>) {
 
 fn one(id: &'static str, token: Option<&str>, status: &str) -> TokenWriter {
     let w = (token.map(cps), cps(status));
-    Box::new(move |k: &Checkout| (k.id == cps(id)).then(|| w.clone()))
+    Box::new(move |k: &Checkout| Ok((k.id == cps(id)).then(|| w.clone())))
 }
 
 #[test]
@@ -202,4 +203,18 @@ fn the_name_is_the_newest_views_base_name() {
     assert_eq!(m.checkout_name(&k), cps("b"));
     let k = m.checkout(&cps("K7")).unwrap();
     assert_eq!(m.checkout_name(&k), cps("x"));
+}
+
+#[test]
+fn a_raise_of_the_writer_passes_out_of_give_token() {
+    let w: TokenWriter = Box::new(|_: &Checkout| {
+        Err(Raised {
+            class: "OSError",
+            message: "no".into(),
+        })
+    });
+    let mut m = base(&[], Some(w));
+    let k = m.checkout(&cps("K6")).unwrap();
+    let r = m.give_token(&k);
+    assert!(matches!(r, Err(Error::Raised(e)) if e.class == "OSError"));
 }

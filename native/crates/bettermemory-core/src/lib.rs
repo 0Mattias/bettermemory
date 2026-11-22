@@ -175,6 +175,8 @@
 //!   counts by project), and rung 2 of the resolution ladder in
 //!   `membership::rung` (`_token_now`, `_token_read`, `_by_object`,
 //!   `_rung_two` of `membership_resolve.py`);
+//! - [`declare`]: `declare.py`'s `declaring_model`, the model a
+//!   declaration opens, with its token writer (`write_token`);
 //! - [`location_continuity`]: `location.continuity`, witness O where birth
 //!   time cannot decide;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
@@ -359,6 +361,7 @@ pub mod control_tokens;
 pub mod credentials;
 pub mod daemon_client;
 pub mod datetime;
+pub mod declare;
 pub mod difflib;
 pub mod durability;
 pub mod entry;

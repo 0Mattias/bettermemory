@@ -114,6 +114,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks`; unit 2a in `membership::shared_heal`: `_carriers`, `_restamped`, `_healed`, `_chosen`, `retired_into`, `_folded`, and the `MembershipLog` trait | `membership_shared.jsonl`, `membership_shared_python.jsonl`, `membership_shared_heal.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
 | `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal`; unit mqueries of `membership_queries.py` in `queries`: `home`, `homes`, `_home_from`, `admit_recall`, `restated`, `_written_afresh`, `_restatement`, `filed_elsewhere`, the trait `ScopeReader`; unit membership-4a: `_touch_view`, `_checkout_name`, `_give_token`, `token_written`, `_foreign`; unit mlegacy in `legacy`: `pending`, `settle_legacy_questions`, `below_root`, `_declared_below`, `_record_counts`, `_records_by_project`, and `first_output` of `membership_queries.py`; rung 2 of `membership_resolve.py` in `rung`: `_token_now`, `_token_read`, `_by_object`, `_rung_two` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl`, `membership_queries.jsonl`, `membership_touch.jsonl`, `membership_legacy.jsonl`, `membership_rung.jsonl` |
+| `declare` | `declare.py` whole: `declaring_model` and its inner `write_token`, with the re-mint, the machine row's write, the liveness and the clock as arguments | `declare.jsonl` |
 | `location_continuity` | `location.continuity` (`location.py` 1040-1094) | `location_continuity.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `membership_migrate` | `membership_migrate.py`, unit 1: the constants (`LIVE`, `GONE`, `REPLACED`, `UNREACHABLE`, `RULE_PREFIX`, `LEGACY_REASON`, `MIGRATED`, `_RECORD_TABLES`, `_RECORD_KINDS`, `_SHA`, `_PROBE_BUDGET`, `_PROBE_WORKERS`), `RootDecision`, `RootlessHome`, `LegacyQuestion`, `MigrationTotals` (`to_dict`), `MigrationReport` (`homed`, `to_dict`, `lines`), `_basename`, `_origin`, `_text`, `_id_order`, `_repository_name`, `_shas`, `_json_list` | `membership_migrate_report.jsonl`, `membership_migrate_report_python.jsonl` |
@@ -4951,6 +4952,54 @@ forced true for one row). Tests: `golden_membership_rung`,
 `membership_rung_not_posix`. Left for later
 units: every other function of the table above, and the wiring of
 `resolve` that gives `_token_now` its `_token_read`.
+
+## The declaring model (`declare.py`)
+
+`declare.py` (50 lines) holds one function, `declaring_model` (19-47),
+built whole in `declare` (one unit, declmodel). It needs nothing from the
+machine itself: every effect is an argument.
+
+| function | lines | needs | status |
+| --- | --- | --- | --- |
+| `declaring_model` | 19-47 | the store, the machine identity, the liveness and clock defaults | built |
+| inner `write_token` | 35-45 | `checkout_token.remint` | built |
+
+`declaring_model(store, identity, write_token_policy, session, liveness,
+now, remint, record)` is `Membership::open` with the identity's id as the
+machine and the token writer `write_token`. The identity is an argument
+because `location.process_machine` is the location unit's memo; the
+policy is `config.membership.write_token` read by the caller; the
+liveness and clock are the `Membership` defaults the reference takes
+implicitly; `record` is `record_machine` (unit membership-2b), passed as
+`Membership::open` takes it, and its raise passes through. `remint` is
+`checkout_token.remint`, called with a `RemintCall` that holds its
+argument and keywords. `Membership::session` is added as an accessor so a
+test can read the session the model was given.
+
+`write_token` answers `(None, "skipped:other_machine")` for a checkout
+whose git directory is None or whose machine is not the identity's id
+(exact equality, no case fold); otherwise it re-mints with the policy,
+`bare` as the exact equality of the kind with `"bare"`, `replacing` as
+the checkout's `lineage` (None without an object key or with a malformed
+token, device or inode) and `only_siblings` true, and answers the
+re-mint's token and status. A raise of the re-mint (`fsync_dir` sits
+outside its `try` blocks) is the writer's `Err` (`membership::TokenWriter`
+answers a `Result`) and passes out of the model call that gave the token
+as `Error::Raised`, as the reference's raise passes out of `Membership`.
+An empty git directory is not None and is
+re-minted, as the reference does. No regular expression is involved
+(`lineage`'s decimal test is `checkout_token`'s, already ported).
+
+Fixtures: `gen_declare.py` writes `declare.jsonl` (not gated, about
+12 KB): the reference with `location.process_machine`, `checkout_token.remint`
+and `Membership.open` replaced by recorders, under each policy, then the
+token writer over 24 checkouts (no git directory, an empty one, other
+machines, kinds that resemble `bare`, malformed lineages, non-ASCII and
+backslash paths). Tests: `golden_declare`, `declare_kills`,
+`declare_robustness`. Left for later units: the callers (`cli/project_cmd.py`,
+`cli/memory_move_cmd.py`, `handlers/questions.py`), which supply
+`process_machine`, the config's policy and the real `remint` (lane
+ctremint).
 
 ## The fold check
 

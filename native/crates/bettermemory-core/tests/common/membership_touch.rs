@@ -56,7 +56,7 @@ pub fn writer(spec: &PyValue) -> Option<TokenWriter> {
         })
         .collect();
     Some(Box::new(move |k: &Checkout| {
-        writes.get(&k.id).cloned().flatten()
+        Ok(writes.get(&k.id).cloned().flatten())
     }))
 }
 
