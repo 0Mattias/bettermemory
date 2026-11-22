@@ -53,7 +53,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
 | `response_rows` | `_response.py` unit resphit: `SIMILAR_HITS_SHOWN`, `ResponseBuilder.__init__`, `hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict` | `response_hits.jsonl` |
 | `handlers::verify` | unit h_verify-1 of `handlers/verify.py`: the caps, `_check_verify_args`, `_refuse_stale_stored_claims`, `_refuse_unverifiable_stored_attestations`, `_relative_to_root`, `_refuse_evidence_free_stamp`, `_record_root`, `_within`, `_is_callers_tree` | `handlers_verify_args.jsonl`, `handlers_verify_args_unicode.jsonl`, `handlers_verify_gates.jsonl`, `handlers_verify_gates_python.jsonl` |
-| `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations`; unit passes: `_relative_attestation_keys`, `_read_attestations`, `_AttestationRead`, `_attestation_read`, `_read_citations`, `_check_anchored_attestations`, `_is_checkable_citation`, `_check_anchored_citations` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl`, `verify_anchoring_passes.jsonl`, `verify_anchoring_passes_unicode.jsonl` |
+| `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations`; unit passes: `_relative_attestation_keys`, `_read_attestations`, `_AttestationRead`, `_attestation_read`, `_read_citations`, `_check_anchored_attestations`, `_is_checkable_citation`, `_check_anchored_citations`; unit detect: `holds_commit`, `detect_path_drift`, `_detect_unanchored`, `_AnchoredRead` (`report`), `_detect_anchored` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl`, `verify_anchoring_passes.jsonl`, `verify_anchoring_passes_unicode.jsonl`, `verify_anchoring_detect.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
 | `response_render` | `_response.py`'s `ResponseBuilder.render_hit`, `render_show`, `_SHOW_DEFAULTS`, `_NATIVE_SEP`, `_slashed`, `_path_states`, `_compact_origin`, `_grouped_links` | `response_render.jsonl` |
@@ -1140,13 +1140,13 @@ predicates; the drift readers are verify_anchoring-2.
 | `CONVICTING_ANCHORS`, `UNANCHORED`, `SPARSE_CHECKOUT`, `UNCONFIRMED_COMMIT`, `GLOBAL_RECORD` | 298-317 | nothing | built (2a) |
 | `ClaimAnchor` (`convicting`, `declared_root`, `absolute`, `commit_root`) | 319-410 | `expected_home`, `relative_under` (a trait), `holds_commit` (a closure) | built (2a) |
 | `_HELD_COMMIT_MEMO_CAP`, `Anchoring` (`prime`, `home`, `caller_root`, `for_record`, `_recorded_checkout`, `_commit_standin`, `holds`, `translate`, `_view_paths`) | 413-571 | the membership model (a trait), `inside`, `expanduser` | built (2a) |
-| `holds_commit` | 574-595 | discovery and the object reader | 2 |
+| `holds_commit` | 574-595 | discovery and the object reader | built (detect) |
 | `_join_under`, `_resolves_under`, `_worktree_root_is_live` | 1510-1584 | `expanduser`, `isabs`, `realpath`, `isdir` (the host and the file system) | built (attest) |
 | `_is_absolute_attestation`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations` | 1721-1926 | the host of `attestation_paths`; `_normalize_for_compare`, `_path_exists`, `_absent_by_sparsity`, `_claim_key` (closures) | built (attest) |
 | `_relative_attestation_keys`, `_read_attestations`, `_AttestationRead`, `_attestation_read`, `_read_citations` | 1237-1384 | the host of `attestation_paths`; `_claim_key`, `_path_exists`, `_absent_by_sparsity`, `_resolves_under`, `os.path.isdir` (the trait `ClaimReads`); `_RELATIVE_CITATION_RE` (a closure) | built (passes) |
 | `_check_anchored_attestations` | 1387-1507 | as above | built (passes) |
 | `_is_checkable_citation`, `_check_anchored_citations` | 1587-1718 | as above | built (passes) |
-| `detect_path_drift`, `_detect_unanchored` and the rest | 893 on | | 2 |
+| `detect_path_drift`, `_detect_unanchored`, `_AnchoredRead`, `_detect_anchored` | 893-1234 | the candidate scan (home and user lookup), the module functions (the trait `DriftReads`), the anchor (`ReadAnchor`), `_RELATIVE_CITATION_RE` (a closure) | built (detect) |
 
 The cut: the whole of 598-890 with its fixture world (a MemFs `Rule`
 for discovery, stamps that move during a read) is past one unit's
@@ -1474,6 +1474,103 @@ linear time in the number of attestations). The refused-spelling and
 escapes-root guards of `attestation_read` are copied from the reference
 and reached by no input: `interpret_path` already answers `None` for
 every such spelling.
+
+### What the drift readers reproduce
+
+Unit verify_anchoring-detect (`verify_anchoring/detect.rs`), reference
+lines confirmed at 34526cdc: `holds_commit` 574-595, `detect_path_drift`
+893-988, `_detect_unanchored` 991-1086, `_AnchoredRead` 1089-1146,
+`_detect_anchored` 1149-1234.
+
+- `detect_path_drift` keeps the reference's order of effects: an anchor
+  sends the read to `detect_anchored` at once; otherwise the candidates
+  are scanned, the root asked `_worktree_root_is_live`, and an empty
+  candidate list without a live root answers the empty report before any
+  attestation is read (so an attestation whose `expanduser` raises
+  raises only when there is something to read).
+- `detect_unanchored` normalizes both attestation lists with the read's
+  claim key, drops each body candidate whose key a relative attestation
+  joined under the live root defers to, runs
+  `path_drift_steps::check_body_candidates`, then
+  `check_anchored_attestations`, then (with a live root)
+  `check_anchored_citations`: the pass order body, attestations,
+  citations, over one seen set. The live root reaches the passes as
+  `str(Path(root))` under the host's flavour (`attest::pure_text`).
+- `detect_anchored` reads each candidate at `anchor.absolute(path)`: a
+  target whose key a relative attestation defers to is skipped; no target
+  leaves an attested claim unconfirmed under the rule and passes over the
+  rest; a missing, unattested target is arbitrated by its spaced prefix,
+  dropped where ambiguous, or recorded as a route under its cited
+  spelling; then the seen set, the expected absence, the miss rule, the
+  present attested absence (convicting) or its unconfirmed reading, and
+  the verified bucket. `read_attestations` follows, and `read_citations`
+  where the anchor has a root. The reference's `_read_citations` asserts
+  a root; the port's returns at once without one, so the gate here is
+  kept for the reference's shape and no test can tell it from a call
+  made always.
+- `anchored_report` is `_AnchoredRead.report(rule)`; the buckets and
+  `first`, `unconfirm` and `miss` are the passes' `AnchoredRead`.
+- `holds_commit(rule, env, root, sha)` locates with
+  `githead::discovery::locate` (not walking, not as git) and asks
+  `ObjectReader::has` of the common directory. An `OSError` or
+  `ValueError` answers False, as the reference catches only those (the
+  one such raise `has` can reach is the `ValueError` of `realpath` over
+  an alternates entry holding a NUL, `Stop::Raised`; a pack index lookup
+  raises only `IndexError`, on an empty name `has` never asks); the
+  reader's `IndexError`, `struct.error`, `OverflowError` and `KeyError`
+  are passed up (`Fault`), as the reference passes them, and the Windows
+  flavour's decline is passed up.
+
+Decisions. The module functions reach the read through `DriftReads`, the
+passes' `ClaimReads` with `routelike` (`_is_multi_segment_routelike`)
+and `root_is_live` (`_worktree_root_is_live`), so one implementation binds
+`_claim_key`, `_path_exists`, `_absent_by_sparsity`, `_resolves_under`
+and `os.path.isdir` for every pass. `_extract_candidates` is the crate's
+scan without the body parse memo (a later unit), with the home and the
+user lookup in `Effects`. The body pass and `PathDriftReport` hold
+`String`: a candidate, key or reported path holding a lone surrogate
+declines (`Raised::NotPorted`) where the reference answers. The
+`ReadAnchor` implementation for `ClaimAnchor` (its paths are `String`
+and its `absolute` takes `AnchorPaths`) is left to the unit that wires
+`Anchoring` into the verify handler.
+
+Patterns: `_RELATIVE_CITATION_RE` is the passes' closure
+(`CitationMatches`), as there. No other pattern is used.
+
+The Windows gap: the candidate scan declines off Unix and `holds_commit`
+declines under the Windows flavour (`fsdata::realpath`, ENG-124),
+recorded in `verify_anchoring_detect_not_posix`.
+
+Fixtures: `tests/contract/gen_verify_anchoring_detect.py` writes
+`verify_anchoring_detect.jsonl` (POSIX only: the reference's candidate
+scan spells paths through the host's `Path`, and `holds_commit` locates
+through `os.path.realpath`). Drift rows run `detect_path_drift` over the
+scripted host and the passes' stub rules and anchors, with a route rule
+and a live rule added and each effect logged, over six bodies, three
+attestation kinds, four roots (none, live, dead, `~`) and every stub
+anchor, raising attestations included, and anchored rows over a stub
+with two more translations (a route target that is not the cited path, a
+bare spaced citation whose prefix alone exists) for the deferral, the
+spaced prefix and the verified bucket. Holds rows ask `holds_commit` of
+four repositories written by hand (loose and packed, SHA-1 and SHA-256,
+each object one stored deflate block written by the generator, since
+`zlib.compress` writes what the linked compressor writes), a linked
+worktree, a folder below a repository, a `.git` folder as the root, a
+broken `.git` file, an unknown object format, a plain file and a missing
+path, two stores whose alternates entry holds a NUL, with full,
+uppercase, abbreviated, foreign, empty and malformed names. Rows from a
+real git are not pinned: no gate on the git version exists, and the
+hand-written stores cover both formats.
+
+Tests: `golden_verify_anchoring_detect`, `verify_anchoring_detect_kills`
+(the pass order, the early empty answer, the deferral to a relative
+attestation, the cited spelling in the route bucket where the target
+differs, the anchored verdicts on an attested absence, the root-only
+store question, the caught `ValueError` of an alternates entry),
+`verify_anchoring_detect_robustness` (a megabyte body and lone
+surrogates answered as the reference answers them, a lone surrogate in
+a report path declining; a 100,000-digit name; linear time in the
+number of attestations).
 
 ## The response layer's leaves (`_response_links.py`, the drift memo, the verdict ladder)
 

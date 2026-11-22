@@ -266,7 +266,8 @@
 //!   two units and unit 2a (the sparse-checkout switch, git's varint, the
 //!   index's skip-worktree reader, and the probe that reads them from disk
 //!   with its memo; the drift report and the claim anchors; the attestation
-//!   write gate; the attestation and citation read passes);
+//!   write gate; the attestation and citation read passes; the drift
+//!   readers `detect_path_drift` and `holds_commit`);
 //! - [`verify_status`] and [`attribution`]: a memory's verification
 //!   staleness, and phrase-match attribution of memories to a reply;
 //! - [`response_rows`]: `ResponseBuilder`'s search and list serializers

@@ -218,6 +218,7 @@ from . import (
     gen_verify_anchoring_sparse,
     gen_verify_anchoring_anchor,
     gen_verify_anchoring_attest,
+    gen_verify_anchoring_detect,
     gen_verify_anchoring_passes,
     gen_response_leaf,
     gen_store_provenance,
@@ -441,6 +442,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "verify_anchoring_attest": gen_verify_anchoring_attest.generate,
     "verify_anchoring_attest_posix": gen_verify_anchoring_attest.generate_posix,
     "verify_anchoring_attest_unicode": gen_verify_anchoring_attest.generate_unicode,
+    "verify_anchoring_detect": gen_verify_anchoring_detect.generate,
     "verify_anchoring_passes": gen_verify_anchoring_passes.generate,
     "verify_anchoring_passes_unicode": gen_verify_anchoring_passes.generate_unicode,
     "response_leaf": gen_response_leaf.generate,
@@ -1068,6 +1070,9 @@ PLATFORM_GATED = frozenset(
 #: the native build does not port to Windows (`gen_machine`);
 #: ``verify_anchoring_attest_posix`` resolves through a link in a scratch
 #: tree (`gen_verify_anchoring_attest`);
+#: ``verify_anchoring_detect`` spells candidates through the host's `Path`
+#: and locates repositories through `os.path.realpath`
+#: (`gen_verify_anchoring_detect`);
 #: ``symbols_platform`` holds links, a FIFO and a mode-000 file
 #: (`gen_symbols`);
 #: ``project_file_parse_posix`` parses a real tree with a FIFO, links, a
@@ -1087,6 +1092,7 @@ POSIX_ONLY = frozenset(
         "verify_candidates_scan",
         "verify_candidates_scan_unicode",
         "verify_anchoring_attest_posix",
+        "verify_anchoring_detect",
         "checkout_token_remint",
         "checkout_token_remint_posix",
         "project_file_parse_posix",

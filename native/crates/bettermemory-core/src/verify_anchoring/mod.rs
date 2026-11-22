@@ -5,10 +5,13 @@
 //! report and the claim anchors (unit verify_anchoring-2a), in [`report`]
 //! and [`anchor`]; the attestation write gate and its predicates (unit
 //! verify_anchoring-attest), in [`attest`]; the attestation and citation
-//! read passes (unit verify_anchoring-passes), in [`passes`].
+//! read passes (unit verify_anchoring-passes), in [`passes`]; the drift
+//! readers and `holds_commit` (unit verify_anchoring-detect), in
+//! [`detect`].
 
 pub mod anchor;
 pub mod attest;
+pub mod detect;
 pub mod passes;
 pub mod report;
 pub mod skip;
