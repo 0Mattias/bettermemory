@@ -42,6 +42,7 @@ pub mod settings_create;
 pub mod settle;
 pub mod stores;
 pub mod txs;
+pub mod verify_anchoring_attest;
 pub mod verify_anchoring_skip;
 pub mod written;
 

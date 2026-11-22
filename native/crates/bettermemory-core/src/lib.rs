@@ -205,7 +205,8 @@
 //! - [`verify_anchoring`]: whether cited paths are anchored, its first
 //!   two units and unit 2a (the sparse-checkout switch, git's varint, the
 //!   index's skip-worktree reader, and the probe that reads them from disk
-//!   with its memo; the drift report and the claim anchors);
+//!   with its memo; the drift report and the claim anchors; the attestation
+//!   write gate);
 //! - [`verify_status`] and [`attribution`]: a memory's verification
 //!   staleness, and phrase-match attribution of memories to a reply;
 //! - [`response_links`], [`response_memo`] and [`verdict_signals`]: the

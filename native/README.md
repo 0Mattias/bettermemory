@@ -42,7 +42,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record`; unit 3 (`machine::open`): `_write_record`, `open_machine`, `StdMachine` (`gethostuuid`, the `ioreg` spawn) | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_python.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl`, `machine_open.jsonl`, `machine_open_platform.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
-| `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl` |
+| `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
@@ -802,7 +802,9 @@ cut into units. Unit verify_anchoring-1a (`verify_anchoring/sparse.rs`)
 holds the leaves of the sparse-checkout reading; the rest of that reading
 is unit verify_anchoring-1b (`verify_anchoring/skip.rs`). Unit verify_anchoring-2a
 (`verify_anchoring/report.rs`, `verify_anchoring/anchor.rs`) holds the
-report and the claim anchors; the drift readers are verify_anchoring-2.
+report and the claim anchors; unit verify_anchoring-attest
+(`verify_anchoring/attest.rs`) holds the attestation write gate and its
+predicates; the drift readers are verify_anchoring-2.
 
 ### The map
 
@@ -822,6 +824,8 @@ report and the claim anchors; the drift readers are verify_anchoring-2.
 | `ClaimAnchor` (`convicting`, `declared_root`, `absolute`, `commit_root`) | 319-410 | `expected_home`, `relative_under` (a trait), `holds_commit` (a closure) | built (2a) |
 | `_HELD_COMMIT_MEMO_CAP`, `Anchoring` (`prime`, `home`, `caller_root`, `for_record`, `_recorded_checkout`, `_commit_standin`, `holds`, `translate`, `_view_paths`) | 413-571 | the membership model (a trait), `inside`, `expanduser` | built (2a) |
 | `holds_commit` | 574-595 | discovery and the object reader | 2 |
+| `_join_under`, `_resolves_under`, `_worktree_root_is_live` | 1510-1584 | `expanduser`, `isabs`, `realpath`, `isdir` (the host and the file system) | built (attest) |
+| `_is_absolute_attestation`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations` | 1721-1926 | the host of `attestation_paths`; `_normalize_for_compare`, `_path_exists`, `_absent_by_sparsity`, `_claim_key` (closures) | built (attest) |
 | `detect_path_drift`, `_detect_unanchored` and the rest | 893 on | | 2 |
 
 The cut: the whole of 598-890 with its fixture world (a MemFs `Rule`
@@ -992,6 +996,75 @@ the reference's own, which are ported by their own units.
 Tests: `golden_verify_anchoring_anchor`, `verify_anchoring_anchor_kills`,
 `verify_anchoring_anchor_robustness` (megabyte paths, 50,000 records, the
 memo past its cap; linear time in the number of asks).
+
+### What the attestation checks reproduce
+
+Unit verify_anchoring-attest (`verify_anchoring/attest.rs`), reference
+lines confirmed at 166a59d7.
+
+- `is_absolute_attestation` is `_is_absolute_attestation`: a `/` or `~`
+  start, `$HOME/` or `${HOME}/`, or a first code point `str.isalpha`
+  accepts (the crate's Unicode table, so a non-ASCII letter is a drive)
+  before a colon and either slash. It is the same test as
+  `attestation_paths::absolute_spelling`, written again because the
+  reference keeps the two apart.
+- `join_under` is `_join_under`: None where `_escapes_root` refuses the
+  relative part; else `_normalize_candidate` of `str(Path(root) / rel)`,
+  which is `os.path.join` under the host's flavour followed by the
+  `PurePath` spelling (`pure_text`: two leading slashes stay two, `.`
+  segments and a trailing slash go). The Windows spelling goes through
+  `config::pure_path`, which takes text, so a lone surrogate under the
+  Windows flavour declines (`Raised::NotPorted`).
+- `resolves_under` is `_resolves_under` with `os.getcwd()` as an argument:
+  `expanduser` (its raise passed up, as the reference passes it), then
+  `isabs`, then both sides resolved by `fsdata::realpath` (non-strict, as
+  `Path.resolve(strict=False)` is `os.path.realpath`) and compared by
+  parts. An unencodable code point or a NUL is the caught ValueError, so
+  False. The Windows flavour declines, the crate's stated Windows gap
+  (ENG-124), recorded in `verify_anchoring_attest_not_posix`.
+  A path inside a link loop is under the loop, as `realpath` answers on
+  CPython 3.13 (3.12's `Path.resolve` raises there, so False): pinned in
+  `verify_anchoring_attest_kills`, not in the fixture.
+- `worktree_root_is_live` is `_worktree_root_is_live`: `os.path.isdir` of
+  the expanded root, an OSError or ValueError of `expanduser` False and
+  anything else it raises passed up.
+- `unverifiable_attestations` and `unverifiable_at` keep the input order
+  and the skip rules: the reference-mode strip, the placeholder test
+  before the absolute test, a relative entry skipped without a root, a
+  None interpretation or join skipped. `worktree_root` is read as
+  `str(Path(worktree_root))` under the host's flavour, spelled at the
+  first non-empty entry. Under the Windows flavour a lone surrogate passes
+  through the spelling as an unused private-use code point and is mapped
+  back, so a surrogate root answers as the reference does; only a root that
+  holds both stand-in ranges (U+F0000 to U+F07FF and U+100000 to U+1007FF)
+  declines (`Raised::NotPorted`). The closures arrive
+  in `Reads`; `_absent_by_sparsity` is asked only for a refusing miss, as
+  the reference asks it.
+- The anchor is the trait `AnchorView`. The reference reads four things of
+  a `ClaimAnchor` here, not two: `root`, `convicting`, `declared_root`
+  (whether it is None) and `absolute(path)`, so the trait has those four.
+  `ClaimAnchor` implements it in the unit that wires the drift readers.
+- `normalize_attestations` answers a `BTreeSet`, the empty key dropped.
+- No pattern of `re` is used by this unit.
+
+Left for later units: `_relative_attestation_keys` and
+`_is_checkable_citation`, and the `AnchorView` implementation for
+`ClaimAnchor`.
+
+`tests/contract/gen_verify_anchoring_attest.py` writes
+`verify_anchoring_attest.jsonl` (not gated: the host of
+`gen_attestation_paths` is scripted, `Path` is the flavour's pure class,
+and the closures answer by rule, each call logged in order),
+`verify_anchoring_attest_unicode.jsonl` (gated on the Unicode release: the
+drive test over every code point, by count and SHA-256) and
+`verify_anchoring_attest_posix.jsonl` (POSIX only: resolution through a
+link and a loop in a scratch tree).
+
+Tests: `golden_verify_anchoring_attest`,
+`golden_verify_anchoring_attest_posix`, `verify_anchoring_attest_not_posix`,
+`verify_anchoring_attest_kills`, `verify_anchoring_attest_robustness`
+(megabyte spellings, 100,000 climbing segments; linear time in the number
+of entries).
 
 ## The response layer's leaves (`_response_links.py`, the drift memo, the verdict ladder)
 

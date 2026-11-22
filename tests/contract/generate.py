@@ -179,6 +179,7 @@ from . import (
     gen_witness_questions,
     gen_verify_anchoring_sparse,
     gen_verify_anchoring_anchor,
+    gen_verify_anchoring_attest,
     gen_response_leaf,
     gen_store_provenance,
     gen_store_bulk,
@@ -353,6 +354,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "witness_questions": gen_witness_questions.generate,
     "verify_anchoring_sparse": gen_verify_anchoring_sparse.generate,
     "verify_anchoring_anchor": gen_verify_anchoring_anchor.generate,
+    "verify_anchoring_attest": gen_verify_anchoring_attest.generate,
+    "verify_anchoring_attest_posix": gen_verify_anchoring_attest.generate_posix,
+    "verify_anchoring_attest_unicode": gen_verify_anchoring_attest.generate_unicode,
     "response_leaf": gen_response_leaf.generate,
     "verify_anchoring_skip": gen_verify_anchoring_sparse.generate_skip,
     "githead": gen_githead.generate,
@@ -470,6 +474,7 @@ UNICODE_GATED = frozenset(
         "attribution_unicode",
         "lexicon",
         "verify_candidates_unicode",
+        "verify_anchoring_attest_unicode",
         "verify_candidates_scan_unicode",
         "verify_candidates_patterns_unicode",
         "unicode",
@@ -908,7 +913,9 @@ PLATFORM_GATED = frozenset(
 #: (`gen_store_rotation`).
 #: ``machine_open`` and ``machine_open_platform`` record the POSIX modes
 #: `open_machine` leaves on the state directory and its two files, which
-#: the native build does not port to Windows (`gen_machine`).
+#: the native build does not port to Windows (`gen_machine`);
+#: ``verify_anchoring_attest_posix`` resolves through a link in a scratch
+#: tree (`gen_verify_anchoring_attest`).
 POSIX_ONLY = frozenset(
     {
         "attestation_paths_posix",
@@ -918,6 +925,7 @@ POSIX_ONLY = frozenset(
         "checkout_token_write_posix",
         "verify_candidates_scan",
         "verify_candidates_scan_unicode",
+        "verify_anchoring_attest_posix",
         "store_restore_lock",
         "store_restore_lock_hold",
         "store_restore_lock_python",
