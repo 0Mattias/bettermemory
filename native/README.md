@@ -3476,7 +3476,7 @@ as the fixture, with `restore_lock_hold_not_posix.rs` recording the gap
 ## Windows fixes to the settings write and the restore lock (winfix3)
 
 A fix unit; it ports nothing. Its Windows behaviour is not run locally:
-CI's native parity job on windows-latest is its test.
+CI's native parity jobs on windows-latest are its test.
 
 - The default configuration text. `config/default_config.toml` is embedded
   with `include_str!`, which keeps the bytes as they are on disk. Without a
@@ -7084,13 +7084,26 @@ the generators enumerate from fixed inputs, so a set regenerated anywhere
 has the same counts. Under a Python minor other than 3.13 the version-gated
 files' headers say so (`"python"`), and the tests read it from the manifest.
 
-**The CI job** `native parity (<os>)` (`.github/workflows/ci.yml`) runs
-`tools/parity.py --lint` on ubuntu-latest, macos-latest and windows-latest,
-and the same command runs it here:
+**The CI jobs** `native parity (<os>, K/4)` and `native lint (<os>)`
+(`.github/workflows/ci.yml`) run `tools/parity.py --shard K/4` for K from 1
+to 4 and `tools/parity.py --lint-only` on ubuntu-latest, macos-latest and
+windows-latest; the unsharded command runs it all here:
 
 ```sh
-uv run python native/tools/parity.py --lint     # what CI runs
+uv run python native/tools/parity.py --lint     # every CI job's work at once
+uv run python native/tools/parity.py --list --shard 2/4   # a shard's calls, run nothing
 ```
+
+A shard runs steps 1, 1b, 2a and 2b over its part of the test targets: the
+unit, example and doc tests of the workspace, then every integration test
+target sorted by package and name, item i in shard i % N + 1, named to
+cargo as `--workspace --test NAME ...` in batches under the fmt bound. Step
+2a makes the whole set in every shard, so the manifest the gates open by is
+the one an unsharded run reads. A shard that selects nothing fails.
+`tests/test_parity_shards.py` holds the split to one shard per target for
+every N from 1 to 8 and the workflow's matrix to shards 1 to N of the N its
+run line passes. The jobs build with `CARGO_INCREMENTAL=0` and line tables
+only for the dev and test profiles; a panic's file and line still print.
 
 It lints (`cargo build --locked`, `clippy --all-targets -D warnings`, `fmt
 --check`, all under the toolchain `rust-toolchain.toml` pins, 1.94.1);

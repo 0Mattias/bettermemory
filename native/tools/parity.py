@@ -1,8 +1,10 @@
 """Run the native build against the Python reference on this machine (unit PAR).
 
-The CI job `native parity` runs this script and nothing else, so a local run
-is the job. Run it from the repository root with the reference Python (the
-project environment's), e.g. ``uv run python native/tools/parity.py --lint``.
+The CI jobs `native parity (<os>, K/N)` and `native lint (<os>)` run only
+this script, and a local run with --lint and no --shard covers all of them.
+Run it from the repository root with the reference Python (the project
+environment's), e.g.
+``uv run python native/tools/parity.py --lint``.
 
 Steps:
 
@@ -35,6 +37,20 @@ failed.
 ``--golden DIR`` skips the generation and uses DIR (made earlier with
 ``--as-found``): how a perturbed or foreign set is tried locally.
 ``BM_PLATFORM_KEY`` makes both sides report another platform.
+
+``--shard K/N`` runs steps 1, 1b, 2a and 2b over one part of the test
+targets: the list ``shard_items`` makes (the unit, example and doc tests of
+every library first, then each integration test target, sorted by package
+and name) split by index modulo N, so item i is in shard ``i % N + 1``.
+A shard names its targets to cargo (``--workspace --test NAME ...``, in
+batches under ``FMT_ARG_BOUND``); the unit, example and doc tests run in
+shard 1 only, a binary of ``RELEASE_TESTS`` in step 1b of the shard its
+target is in. Step 2a makes the whole set in every shard, so the manifest
+the gates open by is the one an unsharded run reads. A shard that selects
+nothing fails. Without ``--shard`` every call is the one it always was.
+``--list`` prints the selection and the cargo calls and runs nothing;
+``--lint-only`` runs step 0 alone. The CI jobs `native parity (<os>,
+K/N)` run one shard each and `native lint (<os>)` runs ``--lint-only``.
 """
 
 from __future__ import annotations
@@ -58,6 +74,11 @@ NATIVE = ROOT / "native"
 #: asks `Lit::matches` of the candidate code points in a debug build and of
 #: every code point in a release build (native/README.md, "Unit 1, built").
 RELEASE_TESTS = ("golden_pyre_fold",)
+
+#: The item of the shard list that stands for every library's unit tests,
+#: every example and every doc test: what a plain `cargo test` runs besides
+#: the integration test targets. It is item 0, so shard 1 runs it.
+UNIT_ITEM = "(unit, example and doc tests)"
 
 
 def run(
@@ -142,17 +163,7 @@ def fmt_roots(native: Path, env: dict[str, str]) -> dict[str, list[str]]:
     """The root file of every target of every workspace member, grouped by
     the target's edition, as paths relative to ``native``: the files `cargo
     fmt` hands rustfmt. rustfmt reaches the rest through `mod` items."""
-    meta = json.loads(
-        subprocess.run(
-            ["cargo", "metadata", "--no-deps", "--format-version", "1", "--locked"],
-            cwd=native,
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        ).stdout
-    )
+    meta = cargo_metadata(native, env)
     members = set(meta["workspace_members"])
     roots: dict[str, set[str]] = {}
     for package in meta["packages"]:
@@ -196,6 +207,110 @@ def fmt_check(native: Path, env: dict[str, str]) -> int:
     return status
 
 
+def parse_shard(text: str) -> tuple[int, int]:
+    """``K/N`` with 1 <= K <= N."""
+    try:
+        k, n = (int(part) for part in text.split("/"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not K/N: {text!r}") from None
+    if not 1 <= k <= n:
+        raise argparse.ArgumentTypeError(f"not 1 <= K <= N: {text!r}")
+    return k, n
+
+
+def test_targets(meta: Record) -> list[str]:
+    """The integration test targets cargo runs in a plain `cargo test` of
+    the workspace (kind ``test``, ``test`` not off), sorted by package and
+    name. Names are unique across the workspace, since a shard names them
+    with ``--workspace --test NAME``."""
+    members = set(meta["workspace_members"])
+    found: list[tuple[str, str]] = []
+    for package in meta["packages"]:
+        if package["id"] not in members:
+            continue
+        for target in package["targets"]:
+            if "test" in target["kind"] and target.get("test", True):
+                found.append((package["name"], target["name"]))
+    names = [name for _, name in sorted(found)]
+    if len(set(names)) != len(names):
+        raise SystemExit("two workspace packages have a test target of one name")
+    return names
+
+
+def shard_items(targets: list[str]) -> list[str]:
+    """The list shards split: ``UNIT_ITEM``, then the targets in order."""
+    return [UNIT_ITEM, *targets]
+
+
+def shard_select(items: list[str], k: int, n: int) -> list[str]:
+    """Shard ``k`` of ``n``: the items whose index modulo ``n`` is ``k - 1``."""
+    return [item for i, item in enumerate(items) if i % n == k - 1]
+
+
+def test_batches(names: list[str], bound: int = FMT_ARG_BOUND) -> list[list[str]]:
+    """``--test NAME`` arguments for ``names``, in order, in batches whose
+    joined length (one separator per argument) is at most ``bound``."""
+    return [
+        [arg for pair in batch for arg in pair.split(" ", 1)]
+        for batch in fmt_batches([f"--test {name}" for name in names], bound)
+    ]
+
+
+def test_calls(selection: list[str] | None, release: bool = False) -> list[list[str]]:
+    """The cargo calls of step 1 or 2b (``release`` False) or step 1b over
+    ``selection`` (``None``: no shard, the calls of an unsharded run)."""
+    base = ["cargo", "test", "--locked"]
+    if release:
+        base = [*base, "--release", "--no-fail-fast"]
+        names = [
+            name for name in RELEASE_TESTS if selection is None or name in selection
+        ]
+        if not names:
+            return []
+        return [[*base, *(arg for name in names for arg in ("--test", name))]]
+    base.append("--no-fail-fast")
+    if selection is None:
+        return [base]
+    calls: list[list[str]] = []
+    if UNIT_ITEM in selection:
+        calls.append([*base, "--workspace", "--lib", "--bins", "--examples"])
+        calls.append([*base, "--workspace", "--doc"])
+    names = [item for item in selection if item != UNIT_ITEM]
+    calls += [[*base, "--workspace", *batch] for batch in test_batches(names)]
+    return calls
+
+
+def cargo_metadata(native: Path, env: dict[str, str]) -> Record:
+    meta: Record = json.loads(
+        subprocess.run(
+            ["cargo", "metadata", "--no-deps", "--format-version", "1", "--locked"],
+            cwd=native,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout
+    )
+    return meta
+
+
+def run_calls(
+    title: str, calls: list[list[str]], env: dict[str, str]
+) -> tuple[int, tuple[int, int, int]]:
+    """Runs every call (each one, whatever the one before gave); returns the
+    first non-zero status and the summed tally."""
+    status = 0
+    total = (0, 0, 0)
+    for i, cmd in enumerate(calls, 1):
+        part = title if len(calls) == 1 else f"{title} (call {i} of {len(calls)})"
+        code, lines = run(part, cmd, NATIVE, env)
+        status = status or code
+        passed, failed, ignored = tally(lines)
+        total = (total[0] + passed, total[1] + failed, total[2] + ignored)
+    return status, total
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="native/tools/parity.py")
     parser.add_argument("--lint", action="store_true", help="build, clippy, fmt first")
@@ -207,6 +322,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--skip-committed", action="store_true", help="skip step 1 (local experiments)"
+    )
+    parser.add_argument(
+        "--shard",
+        type=parse_shard,
+        metavar="K/N",
+        help="run steps 1, 1b, 2a and 2b over shard K of N of the test targets",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="print the selection and the cargo calls, run nothing",
+    )
+    parser.add_argument(
+        "--lint-only", action="store_true", help="run step 0 (lint) alone"
     )
     args = parser.parse_args(argv)
 
@@ -222,6 +351,29 @@ def main(argv: list[str] | None = None) -> int:
     env.setdefault("CARGO_TERM_COLOR", "never")
     failures: list[str] = []
 
+    selection: list[str] | None = None
+    shard_label = ""
+    if args.shard is not None:
+        k, n = args.shard
+        shard_label = f" (shard {k}/{n})"
+        items = shard_items(test_targets(cargo_metadata(NATIVE, env)))
+        selection = shard_select(items, k, n)
+    if args.list:
+        if selection is not None:
+            print(
+                f"shard {args.shard[0]}/{args.shard[1]}: {len(selection)} of {len(items)} items"
+            )
+            for item in selection:
+                print(f"  {item}")
+        for title, calls in (
+            ("step 1 and step 2b", test_calls(selection)),
+            ("step 1b", test_calls(selection, release=True)),
+        ):
+            print(f"{title}: {len(calls)} call(s)")
+            for cmd in calls:
+                print("  " + " ".join(cmd))
+        return 0
+
     for tool in (["rustc", "-Vv"], ["cargo", "-V"]):
         run(tool[0], tool, NATIVE, env)
     print(
@@ -229,7 +381,7 @@ def main(argv: list[str] | None = None) -> int:
         f"platform {platform_key()}"
     )
 
-    if args.lint:
+    if args.lint or args.lint_only:
         for title, cmd in [
             ("build", ["cargo", "build", "--locked"]),
             (
@@ -251,35 +403,34 @@ def main(argv: list[str] | None = None) -> int:
         status = fmt_check(NATIVE, env)
         if status:
             failures.append(f"fmt failed (exit {status})")
+    if args.lint_only:
+        print("\nVerdict: " + ("FAIL" if failures else "pass"))
+        for failure in failures:
+            print(f"- {failure}")
+        return 1 if failures else 0
+    if selection is not None and not selection:
+        failures.append(f"shard{shard_label} selects no test target")
 
     step1_log = work / "step1.jsonl"
     step1 = (0, 0, 0)
     if not args.skip_committed:
         step1_log.unlink(missing_ok=True)
-        status, lines = run(
+        status, step1 = run_calls(
             "step 1: cargo test against the committed files",
-            ["cargo", "test", "--locked", "--no-fail-fast"],
-            NATIVE,
+            test_calls(selection),
             {**env, "BM_PARITY_LOG": str(step1_log)},
         )
-        step1 = tally(lines)
         if status:
             failures.append(f"step 1 (committed files) failed (exit {status})")
-        status, lines = run(
+        release = test_calls(selection, release=True)
+        if not release:
+            print("\n=== step 1b: no binary of RELEASE_TESTS in this shard", flush=True)
+        status, (passed, failed, ignored) = run_calls(
             "step 1b: the same files, a release build of the tests that read "
             "every case only there",
-            [
-                "cargo",
-                "test",
-                "--locked",
-                "--release",
-                "--no-fail-fast",
-                *(arg for name in RELEASE_TESTS for arg in ("--test", name)),
-            ],
-            NATIVE,
+            release,
             env,
         )
-        passed, failed, ignored = tally(lines)
         step1 = (step1[0] + passed, step1[1] + failed, step1[2] + ignored)
         if status:
             failures.append(f"step 1b (a release build) failed (exit {status})")
@@ -320,10 +471,9 @@ def main(argv: list[str] | None = None) -> int:
 
     step2_log = work / "step2.jsonl"
     step2_log.unlink(missing_ok=True)
-    status, lines = run(
+    status, step2 = run_calls(
         "step 2b: cargo test against the fixtures made here",
-        ["cargo", "test", "--locked", "--no-fail-fast"],
-        NATIVE,
+        test_calls(selection),
         {
             **env,
             "BM_GOLDEN_DIR": str(golden.resolve()),
@@ -331,7 +481,6 @@ def main(argv: list[str] | None = None) -> int:
             "BM_PARITY_LOG": str(step2_log),
         },
     )
-    step2 = tally(lines)
     if status:
         failures.append(f"step 2 (fixtures made here) failed (exit {status})")
 
@@ -348,7 +497,9 @@ def main(argv: list[str] | None = None) -> int:
             f"this is {platform_key()}: step 2 is no parity claim"
         )
 
-    report = summary(manifest, s1, s2, step1, step2, failures, args.skip_committed)
+    report = summary(
+        manifest, s1, s2, step1, step2, failures, args.skip_committed, shard_label
+    )
     print("\n" + report)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
@@ -373,9 +524,10 @@ def summary(
     step2: tuple[int, int, int],
     failures: list[str],
     skipped1: bool,
+    shard_label: str = "",
 ) -> str:
     out = [
-        f"## native parity: {manifest['platform']}",
+        f"## native parity: {manifest['platform']}{shard_label}",
         "",
         f"Reference: Python {manifest['python']}, SQLite {manifest['sqlite']}, "
         f"Unicode {manifest['unicode']}, machine {manifest['machine']}, "

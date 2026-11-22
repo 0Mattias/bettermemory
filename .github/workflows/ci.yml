@@ -472,45 +472,66 @@ jobs:
 
   # The native build (native/, unit PAR) against the Python reference on
   # each platform. Everything is native/tools/parity.py, so a local run is
-  # this job: lint (cargo build, clippy -D warnings, rustfmt --check in
-  # batches, since one cargo fmt command line is too long for Windows); step 1,
-  # cargo test against the committed golden files, which were made on
-  # darwin-arm64 under Python 3.13.13, SQLite 3.50.4 and Unicode 15.1.0, so
-  # elsewhere a score-bearing case that differs is set aside and counted
-  # (class iii) while the rest is compared strictly; step 2, the fixtures
-  # regenerated as found with this runner's Python 3.13 (the newest patch;
-  # platform.json records it) and cargo test against them: the parity claim
-  # on this platform. The job fails on any strict difference, on a class
-  # (iii) case step 2 set aside, and on a generator that raised; a class
-  # (ii) difference under a Python or Unicode other than the port's
-  # (3.13.13, 15.1.0) is printed and counted, not failed. The manifest and
-  # the per-test table go to the log and the step summary
-  # (native/README.md, "Parity").
+  # these jobs: step 1, cargo test against the committed golden files,
+  # which were made on darwin-arm64 under Python 3.13.13, SQLite 3.50.4 and
+  # Unicode 15.1.0, so elsewhere a score-bearing case that differs is set
+  # aside and counted (class iii) while the rest is compared strictly;
+  # step 2, the fixtures regenerated as found with this runner's Python
+  # 3.13 (the newest patch; platform.json records it) and cargo test
+  # against them: the parity claim on this platform. A job fails on any
+  # strict difference, on a class (iii) case step 2 set aside, and on a
+  # generator that raised; a class (ii) difference under a Python or
+  # Unicode other than the port's (3.13.13, 15.1.0) is printed and
+  # counted, not failed. The manifest and the per-test table go to the log
+  # and the step summary (native/README.md, "Parity").
+  #
+  # Each system runs the test targets in four shards (`--shard K/4`: the
+  # targets sorted by package and name, item i in shard i % 4 + 1, the
+  # unit, example and doc tests in shard 1, golden_pyre_fold's release
+  # build in the shard its target is in) and lints once in native-lint.
+  # tests/test_parity_shards.py holds this matrix to shards 1 to N of the
+  # N the run line passes. Every shard makes the whole golden set (step
+  # 2a): the manifest the gates open by, and the files several tests read,
+  # are then the ones an unsharded run reads.
   #
   # Not a release gate: the crate is not shipped, and under workflow_call
   # the github context is the caller's, so `github.workflow` is "Release"
   # there and release.yml's gate skips this job.
   native-parity:
-    name: native parity (${{ matrix.os }})
+    name: native parity (${{ matrix.os }}, ${{ matrix.shard }}/4)
     if: github.workflow == 'CI'
     runs-on: ${{ matrix.os }}
-    # Two hours. The job runs the crate's whole test suite twice (against the
-    # committed files, then against the files made on the runner), and the
-    # suite grows with every unit ported: on macos-latest it took 49, 55.5,
-    # 54.6 and then 60.5 minutes over four pushes of 2026-11-21, and the last
-    # was cancelled at the 60-minute limit this line held until then; Linux
-    # took 36 to 52 minutes and Windows 38 to 58. A job that is cancelled
-    # reports nothing about parity.
-    timeout-minutes: 120
+    # Unsharded, on 57e23b0d (2026-11-22) the job took 70.1 minutes on
+    # Linux, 64.2 on macOS and 86.9 on Windows. On Windows: lint 11.5
+    # (build 0.7, clippy 8.7, fmt 2.1), step 1 38.8 (16.0 compiling about
+    # 650 test binaries, 22.8 running them), step 1b 1.8, step 2a 10.5,
+    # step 2b 22.2. A shard compiles and runs a quarter of the binaries and
+    # makes the whole set, so a Windows shard is expected at about 30
+    # minutes (setup 3, compiling 4 and the library 1 to 2, step 1 running
+    # 6, step 1b 2 in one shard, step 2a 10.5, step 2b 6), Linux and macOS
+    # at 20 to 25; a unit ported adds a quarter of its tests' time and its
+    # generator's whole time. The estimate assumes a cold target folder,
+    # which is not cached (see the cache step). The limit is twice the
+    # expected worst case. A job that is cancelled reports nothing about
+    # parity.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         shell: bash
+    # No incremental build and line tables only for the debug and test
+    # profiles: a CI build is made once, and a panic's file and line come
+    # from its location, which debug information does not carry. No test
+    # reads a backtrace or debug information.
     env:
       CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -539,7 +560,14 @@ jobs:
           cargo -V
           cargo clippy -V
 
-      - name: Restore cargo's registry and target directory
+      # Only cargo's registry is cached, one entry per system and lock file,
+      # saved by shard 1 and restored by every shard and the lint job. The
+      # target folder is not cached: a whole native/target is about 3 GB
+      # (2979 MB restored on Windows on 57e23b0d), and an entry for each
+      # system and shard would pass the repository's 10 GB cache limit and
+      # evict one another. The dependencies are three small crates, so a
+      # cold target costs well under a minute; the estimate above assumes it.
+      - name: Restore cargo's registry
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -547,22 +575,83 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            native/target
-          key: native-${{ runner.os }}-${{ hashFiles('native/Cargo.lock') }}
+          key: native-registry-${{ runner.os }}-${{ hashFiles('native/Cargo.lock') }}
 
       - name: Native parity
-        run: uv run --no-sync python native/tools/parity.py --lint --work "$RUNNER_TEMP/native-parity"
+        run: uv run --no-sync python native/tools/parity.py --shard ${{ matrix.shard }}/4 --work "$RUNNER_TEMP/native-parity"
 
-      - name: Keep cargo's registry and target directory
-        if: ${{ !cancelled() && steps.cargo-cache.outputs.cache-hit != 'true' }}
+      - name: Keep cargo's registry
+        if: ${{ !cancelled() && matrix.shard == 1 && steps.cargo-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            native/target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+  # Step 0 of native/tools/parity.py once per system: cargo build, clippy
+  # --all-targets -D warnings, and rustfmt --check over every target root in
+  # batches, since one cargo fmt command line is too long for Windows. On
+  # Windows it took 11.5 minutes of the unsharded job (clippy 8.7).
+  native-lint:
+    name: native lint (${{ matrix.os }})
+    if: github.workflow == 'CI'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Sync dependencies
+        run: uv sync --locked --extra dev --python 3.13
+
+      # native/rust-toolchain.toml pins the toolchain (1.94.1 with clippy and
+      # rustfmt) for every cargo call under native/; the runner's own newer
+      # Rust brought lints the tree was never held to (clippy 1.99 in the
+      # first run). The preinstalled rustup installs the pin here.
+      - name: Rust toolchain
+        working-directory: native
+        run: |
+          rustup toolchain install --no-self-update
+          rustc -V
+          cargo -V
+          cargo clippy -V
+
+      # Restore only: the registry entry is the one native-parity's shard 1
+      # saves, and the target folder is built cold (see native-parity).
+      - name: Restore cargo's registry
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: native-registry-${{ runner.os }}-${{ hashFiles('native/Cargo.lock') }}
+
+      - name: Native lint
+        run: uv run --no-sync python native/tools/parity.py --lint-only --work "$RUNNER_TEMP/native-lint"
 
   commit-lint:
     name: commit messages
