@@ -238,6 +238,7 @@ from . import (
     gen_verify_anchoring_passes,
     gen_response_leaf,
     gen_verify_basis,
+    gen_verify_weak,
     gen_store_provenance,
     gen_store_bulk,
 )
@@ -488,6 +489,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "verify_anchoring_passes_unicode": gen_verify_anchoring_passes.generate_unicode,
     "response_leaf": gen_response_leaf.generate,
     "verify_basis": gen_verify_basis.generate,
+    "verify_weak": gen_verify_weak.generate,
     "verify_anchoring_skip": gen_verify_anchoring_sparse.generate_skip,
     "githead": gen_githead.generate,
     "githead_discovery": gen_githead_discovery.generate,

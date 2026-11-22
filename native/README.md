@@ -57,7 +57,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `handlers::verify` | unit h_verify-1 of `handlers/verify.py`: the caps, `_check_verify_args`, `_refuse_stale_stored_claims`, `_refuse_unverifiable_stored_attestations`, `_relative_to_root`, `_refuse_evidence_free_stamp`, `_record_root`, `_within`, `_is_callers_tree` | `handlers_verify_args.jsonl`, `handlers_verify_args_unicode.jsonl`, `handlers_verify_gates.jsonl`, `handlers_verify_gates_python.jsonl` |
 | `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations`; unit passes: `_relative_attestation_keys`, `_read_attestations`, `_AttestationRead`, `_attestation_read`, `_read_citations`, `_check_anchored_attestations`, `_is_checkable_citation`, `_check_anchored_citations`; unit detect: `holds_commit`, `detect_path_drift`, `_detect_unanchored`, `_AnchoredRead` (`report`), `_detect_anchored` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl`, `verify_anchoring_passes.jsonl`, `verify_anchoring_passes_unicode.jsonl`, `verify_anchoring_detect.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
-| `verify_basis`, `verify::status` | `verify_basis.py` whole (`unread_recommendation`, `dates_since`, `date_count_uncertainty`, `_count_since_verify` over the `AnchorWalk` trait) and `verify.py`'s status leaves (`CommitDriftStatus`, `_drift_recommendation`, `_claim_drift_recommendation`, `ResolvedCommitDrift`, `_index_paths`, `_unreadable`, `_gated_claims`, `commit_drift_status`, `staleness_verdict_from_report`) | `verify_basis.jsonl` |
+| `verify_basis`, `verify::status` | `verify_basis.py` whole (`unread_recommendation`, `dates_since`, `date_count_uncertainty`, `_count_since_verify` over the `AnchorWalk` trait) and `verify.py`'s status leaves (`CommitDriftStatus`, `_drift_recommendation`, `_claim_drift_recommendation`, `ResolvedCommitDrift`, `_index_paths`, `_unreadable`, `_gated_claims`, `commit_drift_status`, `staleness_verdict_from_report`), and the claim-level narrowing (`_weak_tier_evaluation`, `_claim_legs`, `_resolve_reachable`, `_resolve_with_claims`, `resolve_commit_drift` over the `DriftGit` and `Spelling` traits, and `LiteralReader`, the `LiteralLines` of the built literal reader) | `verify_basis.jsonl`, `verify_weak.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
 | `response_render` | `_response.py`'s `ResponseBuilder.render_hit`, `render_show`, `_SHOW_DEFAULTS`, `_NATIVE_SEP`, `_slashed`, `_path_states`, `_compact_origin`, `_grouped_links` | `response_render.jsonl` |
 | `response_reason`, `response_trust` | `_response.py`'s `check_reason` (`_named`, `_REASON_PATHS`, `_rejection_note`), `_UNTRUSTED_PROVENANCE`, `_untrusted`, `verdict_and_reason`, `_row_reason`, `_claim_at_index`, `TRUST_UNAVAILABLE_RECOMMENDATION`, `ResponseBuilder.attach_provenance`, `apply_trust_unavailable`, `apply_trust`; `verdict.py`'s `_OBJECTED` and `with_objection` | `response_reason.jsonl` |
@@ -1757,7 +1757,9 @@ reference's re-exports of `Anchoring`, `PathDriftReport`,
 | `_unreadable`, `_gated_claims` | `verify.py` 674-702 | nothing | built |
 | `commit_drift_status` | `verify.py` 1536-1597 | nothing | built |
 | `staleness_verdict_from_report` | `verify.py` 1803-1817 | nothing | built |
-| `_weak_tier_evaluation`, `_claim_legs`, `_resolve_reachable`, `_resolve_with_claims`, `resolve_commit_drift` | `verify.py` 455-1535 | git, the claim index | lane vweak |
+| `_weak_tier_evaluation` | `verify.py` 455-576 | git (`DriftGit`), the spellings (`Spelling`), the literal reader (`LiteralLines`) | built (`verify::weak`) |
+| `resolve_commit_drift` | `verify.py` 595-671 | as above, and `resolve_commit_drift_count` (a closure) | built (`verify::legs`) |
+| `_claim_legs`, `_resolve_reachable`, `_resolve_with_claims` | `verify.py` 705-921 | as above | built (`verify::legs`) |
 | `resolve_commit_drift_count` onward | `verify.py` 1600 on | git, the store | lane vcount |
 
 ### Decisions
@@ -1802,6 +1804,70 @@ toplevel, the walk, the give-up and the dates scripted through
 restored), and the status leaves over constructed values, texts with
 surrogates written through `text_field`. No git runs. Rust tests:
 `golden_verify_basis`, `verify_basis_kills`, `verify_basis_robustness`.
+
+### The claim-level narrowing (`verify::weak`, `verify::legs`, `verify::literal_lines`)
+
+`src/verify/weak.rs` reproduces `_weak_tier_evaluation`: the window
+bound (`MAX_PATCH_STREAM_COMMITS`, 256, inclusive), the size check, the
+stream or its split over local commits, the demotion of a stream the
+index could not read (a parse mismatch, or a non-blank stream naming no
+file, which a merge's mark alone is), the split's marks, the literal
+floor and its demotion, then per claim the spellings the stream holds
+(every spelling for an absent claim, with the indexed leaves under it),
+the drifted render in claim order and the implicated commits, the whole
+window where a fired claim implicates nothing (or, in a split, where any
+fired claim implicates no window commit), and the counted, floor and
+unindexed commits. The answer is the implicated commits intersected with
+the window. `src/verify/legs.rs` reproduces `_claim_legs`,
+`_resolve_reachable`, `_resolve_with_claims` and `resolve_commit_drift`.
+`src/verify/literal_lines.rs` is `LiteralReader`, the `LiteralLines` of
+`claim_drift` over `claims::literal`.
+
+Decisions:
+
+- Every git read is one method of the trait `DriftGit`, None where the
+  reference answers None: `resolve_repo_pathspecs`,
+  `commit_author_sha_pairs_touching_pathspecs`, `paths_in_history`,
+  `too_large`, `commit_patch_stream`, `local_patch_window` (a
+  `PatchWindow` with `stream`, `counted`, `touched`, `deleted` and
+  `mark`), `literal_floor` (a `LiteralFloor`) and `spelled`, which
+  answers a boxed `Spelling` (`Spelled.of`, `declined`, and `names` as
+  the reference's dict-ordered union). None of `origin`, `origin_dates`,
+  `origin_patch`, `verify_layout` or `verify_spelling` is ported here.
+  `verify_spelling.literal_pathspecs` reads the environment and is a
+  closure; `resolve_commit_drift_count`, called only for a memory with
+  neither claims nor a walk, is a closure too (lane vcount ports it).
+- `cwd` and the toplevel are code points (`Place`), as in `verify_basis`.
+- Sets are `BTreeSet`s: the reference's sets have no order a caller
+  reads; only the count of the escalating set leaves the resolvers, the
+  drifted renders keep claim order, and a window's order is the shas'.
+  `replace(claim, rel_path=p)` is a clone with the path.
+- `WeakError` carries what the reference raises (`IntTooLong`, the
+  `int()` ValueError of a hunk count past 4,300 digits;
+  `NaiveAware`, the TypeError of a naive author date against the stamp)
+  and a literal the crate cannot read yet (`Literal`, a gap, never an
+  answer). `LiteralReader` cannot return a gap through `LiteralLines`,
+  whose methods have no error: it keeps the first gap, which the caller
+  reads with `gap()` after the index and the scoring and must treat as
+  no answer.
+- No pattern of `re` is used by these functions.
+
+Fixtures: `tests/contract/gen_verify_weak.py` writes `verify_weak.jsonl`
+(not gated, about 27 KB): every git read scripted through `verify`'s own
+bindings, logged per call and restored, over literal `git log -p -U0`
+streams: fired and unfired literal, symbol, path and absent claims,
+absent directories with indexed leaves, header-only creations and
+deletions, marks only, an unparsed stream, a parse mismatch, the split
+window with counted commits and bare claims, the floor's demotion and
+coverage, twin spellings, the window bound, unreadable, gated and
+unaddressable claims, both bases, naive and offset stamps. A run of more
+than eight of the generator's hashes is written `{"seq": n}`, a hash
+of one repeated letter `"#"` and the letter, a named stream `"$"` and
+its name (the header holds the streams and the walk). The lone
+surrogate a claim path may hold is not written (serde_json refuses one);
+`verify_weak_kills` holds that case. Rust tests: `golden_verify_weak`,
+`verify_weak_kills`, `verify_weak_robustness`, sharing the scripted git
+in `tests/verify_weak_script`.
 
 ## The wire shapes of a search hit and of `memory_show` (`_response.py`)
 
@@ -23363,7 +23429,9 @@ What the reference has and this build does not, by area:
   parse memo), and `verify.py` past its verdict ladder (`verdict_signals`)
   and its status leaves (`CommitDriftStatus`, the two recommendations,
   `ResolvedCommitDrift`, `_index_paths`, `_unreadable`, `_gated_claims`,
-  `commit_drift_status`, `staleness_verdict_from_report`).
+  `commit_drift_status`, `staleness_verdict_from_report`) and its
+  claim-level narrowing (`_weak_tier_evaluation`, `_claim_legs`,
+  `_resolve_reachable`, `_resolve_with_claims`, `resolve_commit_drift`).
   Of the response layer, `_response_links.py`, the drift memo,
   `check_reason`, `verdict_and_reason`, the trust appliers,
   `verdict.with_objection`, `render_hit`, `render_show` and the search
