@@ -1,4 +1,4 @@
-{"count":156,"fixture":"machine_facts"}
+{"count":155,"fixture":"machine_facts"}
 {"b":"","f":"rid","r":null}
 {"b":"6265747465726d656d6f7279206d616368696e652069642076310a","f":"rid","r":null}
 {"b":"6265747465726d656d6f7279206d616368696e652069642076310a3031323334353637383941424344454647484a4b4d4e50515253","f":"rid","r":"0123456789ABCDEFGHJKMNPQRS"}
@@ -75,7 +75,6 @@
 {"f":"rrec","k":"dir","r":null}
 {"f":"rrec","k":"nul","r":null}
 {"f":"rrec_deep","n":50,"r":"ok"}
-{"f":"rrec_deep","n":100000,"x":"RecursionError"}
 {"f":"lin","files":[null,null],"r":null}
 {"f":"lin","files":["6162630a","6465660a"],"r":"abc"}
 {"f":"lin","files":[null,"6465660a"],"r":"def"}

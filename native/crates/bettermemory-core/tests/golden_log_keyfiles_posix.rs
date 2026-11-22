@@ -2,6 +2,8 @@
 //! a real keys directory in a scratch folder, with links, mode-000 files,
 //! folders where files are expected and anchors nested past the JSON
 //! limit; the answer or the error, then every entry under the folder.
+//! The rows nested 100,000 levels are in `log_keyfiles_posix_python.jsonl`
+//! (gated on the Python release), read the same way.
 //! And every case of `log_keyfiles_darwin.jsonl` (platform gated): the
 //! message of a `KeyUnreadableError` whose reason is `strerror`'s.
 
@@ -233,18 +235,24 @@ fn run(files: &KeyFiles, op: &[Value], root: &Path) -> (Value, Option<String>) {
     }
 }
 
-#[test]
-fn log_keyfiles_posix_every_case() {
-    let lines = jsonl("log_keyfiles_posix.jsonl");
+/// Every row of `file`, each in a fresh scratch folder: the failures and
+/// the count checked. The darwin messages are met in order against
+/// `ledger`; when `rows_gated`, a row's own answer is weighed by `ledger`
+/// too (the file's), else a differing row is a failure.
+fn check_rows(
+    file: &str,
+    want_messages: &mut std::slice::Iter<'_, Value>,
+    ledger: &mut Ledger,
+    rows_gated: bool,
+) -> (Vec<String>, usize) {
+    let lines = jsonl(file);
     let rows = &lines[1..];
     assert_eq!(lines[0]["cases"].as_u64(), Some(rows.len() as u64));
     let id = PyValue::str(lines[0]["store_id"].as_str().expect("id"));
-    let darwin = jsonl("log_keyfiles_darwin.jsonl");
-    let mut want_messages = darwin[1..].iter();
-    let mut ledger = Ledger::new("golden_log_keyfiles_posix", "log_keyfiles_darwin.jsonl");
+    let stem = file.trim_end_matches(".jsonl");
     let base = fs::canonicalize(std::env::temp_dir())
         .expect("temp")
-        .join(format!("bm-keyfiles-{}", std::process::id()));
+        .join(format!("bm-keyfiles-{}-{stem}", std::process::id()));
     let mut failures = Vec::new();
     let mut checked = 0;
     for (i, row) in rows.iter().enumerate() {
@@ -260,7 +268,12 @@ fn log_keyfiles_posix_every_case() {
         fs::remove_dir_all(&scratch).expect("cleanup");
         let got = json!({"out": out, "after": after});
         let want = json!({"out": row["out"], "after": row["after"]});
-        if got != want {
+        let differs = if rows_gated {
+            ledger.differs_fatally(name, got == want)
+        } else {
+            got != want
+        };
+        if differs {
             failures.push(format!("{name}:\n  expected {want}\n  got      {got}"));
         }
         if let Some(message) = message {
@@ -274,6 +287,21 @@ fn log_keyfiles_posix_every_case() {
         checked += 1;
     }
     let _ = fs::remove_dir_all(&base);
+    assert_count(file, checked, rows.len());
+    (failures, checked)
+}
+
+#[test]
+fn log_keyfiles_posix_every_case() {
+    let darwin = jsonl("log_keyfiles_darwin.jsonl");
+    let mut want_messages = darwin[1..].iter();
+    let mut ledger = Ledger::new("golden_log_keyfiles_posix", "log_keyfiles_darwin.jsonl");
+    let (failures, _) = check_rows(
+        "log_keyfiles_posix.jsonl",
+        &mut want_messages,
+        &mut ledger,
+        false,
+    );
     assert!(want_messages.next().is_none(), "every darwin row met");
     assert!(
         failures.is_empty(),
@@ -281,6 +309,24 @@ fn log_keyfiles_posix_every_case() {
         failures.len(),
         failures.join("\n")
     );
-    assert_count("log_keyfiles_posix.jsonl", checked, rows.len());
     ledger.finish(darwin.len() - 1);
+}
+
+/// The rows whose file is nested 100,000 levels (gated on the Python
+/// release): the port raises RecursionError at its fixed depth, as 3.13.13
+/// does. None of them writes a darwin message.
+#[test]
+fn log_keyfiles_posix_python_every_case() {
+    let file = "log_keyfiles_posix_python.jsonl";
+    let mut ledger = Ledger::new("golden_log_keyfiles_posix_python", file);
+    let none: [Value; 0] = [];
+    let mut want_messages = none.iter();
+    let (failures, checked) = check_rows(file, &mut want_messages, &mut ledger, true);
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    ledger.finish(checked);
 }

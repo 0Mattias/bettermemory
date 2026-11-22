@@ -349,7 +349,11 @@ def generate_python() -> dict[str, bytes]:
 #   ``b`` (hex), or of ``k``: ``missing`` (no file), ``dir`` (a folder),
 #   ``nul`` (a path holding a NUL); ``r`` the answer (``rrec`` in neutral
 #   form) or ``x`` the class raised;
-# - ``rrec_deep``: `_read_record` of ``n`` nested lists inside an object;
+# - ``rrec_deep``: `_read_record` of ``n`` nested lists inside an object.
+#   The row of 100,000 lists is in ``machine_facts_python.jsonl`` (gated on
+#   the Python release): whether `json.loads` raises RecursionError there
+#   is the interpreter's and the system's (3.14 on Linux measures the C
+#   stack and reads it); the row of 50 is in ``machine_facts.jsonl``;
 # - ``dar``: `_darwin_hardware` with ``gethostuuid`` returning 0 and the
 #   bytes ``g`` (hex), returning 1 (``g`` ``"fail"``) or raising
 #   AttributeError (``"raise"``), and ``ioreg`` printing ``o`` (null: the
@@ -502,10 +506,10 @@ def _read_rows(
     return rows
 
 
-def _deep_record_rows(root: Path) -> list[dict[str, Any]]:
+def _deep_record_rows(root: Path, depths: tuple[int, ...]) -> list[dict[str, Any]]:
     rows = []
     path = root / "deep"
-    for n in (50, 100_000):
+    for n in depths:
         path.write_text('{"a": ' + "[" * n + "]" * n + "}", encoding="utf-8")
         answer = _call_x(lambda: m._read_record(path))
         if "r" in answer:
@@ -776,7 +780,7 @@ def _facts_rows() -> list[dict[str, Any]]:
         root = Path(tmp)
         rows = _read_rows(root, "rid", m._read_id, _ID_FILES)
         rows += _read_rows(root, "rrec", m._read_record, _RECORDS)
-        rows += _deep_record_rows(root)
+        rows += _deep_record_rows(root, (50,))
         rows += _lin_rows(root)
     rows += _dar_rows()
     rows += [_win(v) for v in _WIN_VALUES]
@@ -788,6 +792,12 @@ def _facts_rows() -> list[dict[str, Any]]:
 
 def generate_facts() -> dict[str, bytes]:
     return {"machine_facts.jsonl": _file(_facts_rows(), "machine_facts")}
+
+
+def generate_facts_python() -> dict[str, bytes]:
+    with tempfile.TemporaryDirectory() as tmp:
+        rows = _deep_record_rows(Path(tmp), (100_000,))
+    return {"machine_facts_python.jsonl": _file(rows, "machine_facts_python")}
 
 
 def generate_facts_unicode() -> dict[str, bytes]:

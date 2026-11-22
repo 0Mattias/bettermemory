@@ -318,6 +318,13 @@ fn machine_facts_every_case() {
     check_file("machine_facts.jsonl");
 }
 
+/// The row nested 100,000 levels, gated on the Python release: the port
+/// raises at its fixed depth as 3.13.13 does.
+#[test]
+fn machine_facts_python_every_case() {
+    check_file("machine_facts_python.jsonl");
+}
+
 #[test]
 fn machine_facts_unicode_every_case() {
     check_file("machine_facts_unicode.jsonl");

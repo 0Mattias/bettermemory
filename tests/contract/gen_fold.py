@@ -53,10 +53,16 @@ the native build is compared against its own SQLite (no gate there, as
 for ``store_files.jsonl``). Not on the platform: no score bits, and no
 path is recorded. It runs on every platform (file URIs come from
 `connect_read_only`, nothing POSIX-only).
+
+``fold_python.jsonl`` holds the cases of `PYTHON_CASES`, with the same
+header but only the preludes they name: a payload nested past where `json.loads` stops recursing, which
+is the interpreter's and the system's. It carries the Python gate as well
+as fold's own.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import shutil
@@ -1035,7 +1041,9 @@ def _no_edit_is_a_no_op(lines: list[dict[str, Any]]) -> None:
             raise AssertionError(f"{name}: no longer a blind spot")
 
 
-def generate() -> dict[str, bytes]:
+@functools.cache
+def _made() -> tuple[dict[str, Any], tuple[dict[str, Any], ...]]:
+    """The header and every case line, made once for both files."""
     from bettermemory.store_schema import _MEMBERSHIP_SPECS, MUTATION_KINDS
 
     from ._sandbox import world
@@ -1204,7 +1212,28 @@ def generate() -> dict[str, bytes]:
         "table_entry": "a table with nothing unaccounted or missing is its row count",
         "fold_same": "log_verify's fold is '=refold' when it equals refold's",
     }
-    return {"fold.jsonl": jsonl([header, *lines])}
+    return header, tuple(lines)
 
 
-__all__ = ["generate"]
+#: Cases whose answer is where the interpreter stops recursing: `json.loads`
+#: of a payload opened ``len(DEEP)`` times raises RecursionError under 3.11
+#: to 3.13 and under 3.14 on macOS, and reads to its end (a ValueError the
+#: fold reports) under 3.14 on Linux, whose guard is the C stack's depth.
+PYTHON_CASES = frozenset({"raised_recursion"})
+
+
+def generate() -> dict[str, bytes]:
+    header, lines = _made()
+    kept = [line for line in lines if line["case"] not in PYTHON_CASES]
+    return {"fold.jsonl": jsonl([header, *kept])}
+
+
+def generate_python() -> dict[str, bytes]:
+    header, lines = _made()
+    gated = [line for line in lines if line["case"] in PYTHON_CASES]
+    named = {n for line in gated for n in line["prelude"]}
+    preludes = {n: ops for n, ops in header["preludes"].items() if n in named}
+    return {"fold_python.jsonl": jsonl([{**header, "preludes": preludes}, *gated])}
+
+
+__all__ = ["generate", "generate_python"]

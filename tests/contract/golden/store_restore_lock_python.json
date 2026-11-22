@@ -1,0 +1,26 @@
+{
+ "admit": [
+  {
+   "admit": {
+    "error": "RecursionError",
+    "refused": true
+   },
+   "helper": null,
+   "lock_dir": false,
+   "marker": [
+    [
+     "5b",
+     70000
+    ]
+   ],
+   "marker_after": false,
+   "missing_dir": false,
+   "name": "deep",
+   "record_mode": false,
+   "restore_state": {
+    "error": "RecursionError"
+   },
+   "swap": false
+  }
+ ]
+}

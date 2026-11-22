@@ -16,7 +16,9 @@ are the case's, so no Python release or platform decides), and
 `_file_url_path` with `_PATH` set to `ntpath` and `_url_path` to
 `nturl2path.url2pathname`, and that function alone (each backslash of an
 answer spelled ``<b>``): its text changed in
-3.13 patch releases and again in 3.14.
+3.13 patch releases and again in 3.14. Every text answer is written
+through `text_field`: 3.13.18 answers some inputs with a lone surrogate,
+which a plain JSON string cannot carry to a strict reader.
 
 ``location_leaves_posix`` (POSIX only: links on disk) pins
 `remote_key`'s local keys through `realpath`, `kept_apart`, `_real_git`,
@@ -44,7 +46,7 @@ from typing import Any, cast
 
 from bettermemory import gitdir_pin, location, location_git
 
-from ._common import jsonl
+from ._common import jsonl, text_field
 
 
 @contextmanager
@@ -246,6 +248,14 @@ def _bs(value: Any) -> Any:
     return value.replace("\\", "<b>") if isinstance(value, str) else value
 
 
+def _answer(value: Any) -> dict[str, Any]:
+    """A text answer through `text_field` (key ``r``, or ``r_cps`` when it
+    holds a surrogate: `nturl2path.url2pathname` of 3.13.18 answers an
+    undecodable byte as one where 3.13.13 answers U+FFFD), anything else
+    under ``r`` as it is."""
+    return text_field("r", value) if isinstance(value, str) else {"r": value}
+
+
 def _file_rows(nt: bool) -> Iterator[dict[str, Any]]:
     import ntpath
 
@@ -256,17 +266,19 @@ def _file_rows(nt: bool) -> Iterator[dict[str, Any]]:
         if nt:
             with _patched(location, _PATH=ntpath, _url_path=nturl2path.url2pathname):
                 got = _raised(functools.partial(location._file_url_path, url))
-            yield {"k": "filent", "u": url, "r": _bs(got)}
+            yield {"k": "filent", "u": url, **_answer(_bs(got))}
             path = url[len("file:") :]
             yield {
                 "k": "nt",
                 "u": path,
-                "r": _bs(_raised(functools.partial(nturl2path.url2pathname, path))),
+                **_answer(
+                    _bs(_raised(functools.partial(nturl2path.url2pathname, path)))
+                ),
             }
         else:
             with _patched(location, _PATH=posixpath):
                 got = _raised(functools.partial(location._file_url_path, url))
-            yield {"k": "file", "u": url, "r": got}
+            yield {"k": "file", "u": url, **_answer(got)}
 
 
 def _file(name: str, rows: list[dict[str, Any]]) -> dict[str, bytes]:

@@ -1,4 +1,5 @@
-//! `log_keyfiles_posix.jsonl` and `log_keyfiles_darwin.jsonl` have no
+//! `log_keyfiles_posix.jsonl`, `log_keyfiles_posix_python.jsonl` and
+//! `log_keyfiles_darwin.jsonl` have no
 //! Windows case: their generator makes links, mode-000 files and folders,
 //! which Windows answers otherwise, and the reference locks the keys
 //! directory there with `msvcrt.locking`, which `log::ring::FileLock` does
@@ -18,6 +19,18 @@ fn the_posix_key_ring_fixture_has_no_case_here() {
         0,
         &["every case of the fixture".to_owned()],
         &["the fixture makes links and mode-000 files; Windows has no case".to_owned()],
+    );
+}
+
+#[test]
+fn the_deep_key_ring_rows_have_no_case_here() {
+    common::parity::record(
+        "golden_log_keyfiles_posix_python",
+        "log_keyfiles_posix_python.jsonl",
+        "os",
+        0,
+        &["every case of the fixture".to_owned()],
+        &["the fixture's scratch keys directory is POSIX only; Windows has no case".to_owned()],
     );
 }
 

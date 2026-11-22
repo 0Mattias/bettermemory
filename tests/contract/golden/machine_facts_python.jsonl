@@ -1,0 +1,2 @@
+{"count":1,"fixture":"machine_facts_python"}
+{"f":"rrec_deep","n":100000,"x":"RecursionError"}

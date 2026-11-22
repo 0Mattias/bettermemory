@@ -38,8 +38,8 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `path_drift_steps` | `path_drift_steps.py`: `_check_body_candidates`, its checks and keys as closures | `path_drift_steps.jsonl` |
 | `attestation_paths` | `attestation_paths.py` whole: `LiteralPaths`/`ReferencePaths` (`Paths` and its `Kind`), `path_mode`, `interpret_path`, `_may_be_literal`, `joined_path`, `_REFERENCE_ROOT`, `absolute_spelling`, `literal_path`, `reference_path`, `placeholder_spelling`, `target_path`, `record_paths`, `commit_paths`, `compile_targets`, `unverifiable_inputs`, with `ntpath.splitdrive` and both `commonpath`s; the host (`os.name`, `expanduser`, `lstat`, `ntpath.normcase` on Windows) a trait | `attestation_paths.jsonl`, `attestation_paths_posix.jsonl` |
 | `project_file` | unit 1 of `project_file.py`: the constants, `ErrorReason`, `ProjectFile`, `ProjectFileError` (`directory`, `line`), `Found`, `Above`, `mint_id`, `render`, `_ID_RE` (`id_text`), `_bad_name`, `_bad_char`, `_toml_string` | `project_file.jsonl` |
-| `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store` | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_darwin.jsonl` |
-| `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record` | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl` |
+| `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store` | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_posix_python.jsonl`, `log_keyfiles_darwin.jsonl` |
+| `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record` | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_python.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
 | `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl` |
@@ -87,7 +87,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `difflib` | `history._body_diff` (`body_diff`), `str.splitlines`, and CPython 3.13.13's `difflib.unified_diff` as it calls it: `SequenceMatcher` with autojunk (`__chain_b`, `find_longest_match`, `get_matching_blocks`, `get_opcodes`, `get_grouped_opcodes`), `_format_range_unified`, `unified_diff` with `lineterm=""` and no dates (`unified_diff_lines` joined with newlines) | `difflib.jsonl` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks` | `membership_shared.jsonl`, `membership_shared_python.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
@@ -100,7 +100,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `claims` | units 1 and 2 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`) | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl` |
 | `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`) | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
-| `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json` (POSIX only) |
+| `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json`, `store_restore_lock_python.json` (POSIX only) |
 | `durability` | unit 1 of `durability.py`: `canonical_marker`, `quoted_spans`, `in_quoted_span`, `TransientMatch`, `_snippet_around`, `_at_sentence_start`, `_is_titlecase_name` with `str.istitle`, `sentence_around` | `durability.jsonl`, `durability_unicode.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
@@ -1207,10 +1207,13 @@ reads any OSError as absent. No fixture row holds any of these.
 
 **Fixtures.** `gen_log_keyfiles.py` writes `log_keyfiles.jsonl` (the id
 check over 21 ids, no file system), `log_keyfiles_posix.jsonl` (POSIX
-only: 94 scenarios over a scratch keys directory with links, mode-000
-files, folders where files are expected and files nested past the JSON
-limit; each the answer or the error class and errno name, then every
-entry under the scratch folder with its bytes and mode) and
+only: 88 scenarios over a scratch keys directory with links, mode-000
+files and folders where files are expected; each the answer or the error
+class and errno name, then every entry under the scratch folder with its
+bytes and mode), `log_keyfiles_posix_python.jsonl` (POSIX only and gated
+on the Python release: the 6 scenarios whose file is nested 100,000
+levels, where `json.loads` raising RecursionError is the interpreter's
+and the system's) and
 `log_keyfiles_darwin.jsonl` (platform gated: the message of each
 `KeyUnreadableError` whose reason is `strerror`'s, since glibc words some
 errnos otherwise; a Linux runner writes and compares its own). A
@@ -1564,7 +1567,8 @@ Left for unit 3: `_write_record`, `open_machine`, and the machine's own
 
 | test (file: function) | golden file | class |
 | --- | --- | --- |
-| `golden_machine_facts`: `machine_facts_every_case` | `machine_facts.jsonl` (156 cases: `_read_id` over 46 files and three paths, `_read_record` over 23 files, three paths and two depths, `_linux_hardware`, `_darwin_hardware`, `_windows_hardware`, `current_hostname`, `read_hardware_id` per platform and its memo, `_file_object` over patched stats) | i |
+| `golden_machine_facts`: `machine_facts_every_case` | `machine_facts.jsonl` (155 cases: `_read_id` over 46 files and three paths, `_read_record` over 23 files, three paths and 50 nested lists, `_linux_hardware`, `_darwin_hardware`, `_windows_hardware`, `current_hostname`, `read_hardware_id` per platform and its memo, `_file_object` over patched stats) | i |
+| `golden_machine_facts`: `machine_facts_python_every_case` | `machine_facts_python.jsonl` (1 case: `_read_record` of 100,000 nested lists, RecursionError as 3.13.13 raises it) | ii (Python) |
 | `golden_machine_facts`: `machine_facts_unicode_every_case` | `machine_facts_unicode.jsonl` (8 cases: line breaks and whitespace past ASCII) | ii (Unicode) |
 | `golden_machine_facts`: `machine_facts_platform_every_case` | `machine_facts_platform.jsonl` (1 case: a real file's stat, the birth time attribute in the header) | ii (Python), iii (platform) |
 | `machine_facts_kills` (12) | none | i |
@@ -2253,13 +2257,16 @@ reader's `RestoreRunningError`, which stays for the read-only path only.
 confirms once its temporary store is taken, before the schema is written.
 No pattern of `re` is involved.
 
-Pinned by the `admit` rows of `store_restore_lock.json` (54 cases: 37
+Pinned by the `admit` rows of `store_restore_lock.json` (53 cases: 36
 marker shapes, a helper holding the directory shared or exclusively with
 and without a marker, an unreadable marker, a missing directory, the
 record mode free, empty, marked, held exclusively and shared, a directory
 at the lock path, the store file swapped between `admit` and `confirm`,
 a marker left after `admit`, and the same two in directory mode, where
-neither refuses). Each row holds `admit`'s answer, `confirm`'s and then
+neither refuses). The marker nested 70,000 lists deep is the one row of
+`store_restore_lock_python.json`, gated on the Python release too:
+whether `json.loads` raises RecursionError there is the interpreter's and
+the system's. Each row holds `admit`'s answer, `confirm`'s and then
 `restore_state`'s, with the store spelled `<store>` and the lock
 `<lock>`; an unreadable marker's `str(exc)` (C library text) is not
 recorded. Tests: `golden_restore_lock_admit` (the rows),
@@ -3509,7 +3516,10 @@ is NULL or a blob is labelled by that value (`null_key_planted`,
 `blob_key`), and labels that print alike sort in the order the rows were
 read (`keys_that_print_alike`).
 
-`fold.jsonl` (`tests/contract/gen_fold.py`): 163 cases, each the
+`fold.jsonl` (`tests/contract/gen_fold.py`): 162 cases (the 163rd,
+`raised_recursion`, a payload opened 20,000 times, is in
+`fold_python.jsonl`, gated on the Python release: whether `json.loads`
+raises RecursionError there is the interpreter's and the system's), each the
 reference's `refold()` and `log_verify()` (`path` left out) on a store the
 native test rebuilds: the 40 cases of `store_files.jsonl` (17 refused at
 open, compared as a refusal), `store_real.sqlite`, and the intact base
@@ -5142,6 +5152,7 @@ that Unicode too.
 | `golden_log_keyring`: `log_keyring_every_case` | `log_keyring.jsonl` | i |
 | `golden_log_keyfiles`: `log_keyfiles_every_case`; `log_keyfiles_kills` (6), `log_keyfiles_robustness` (2) | `log_keyfiles.jsonl` (the last two none) | i |
 | `golden_log_keyfiles_posix`: `log_keyfiles_posix_every_case` (POSIX only; `log_keyfiles_not_posix` records the gap) | `log_keyfiles_posix.jsonl` | os |
+| `golden_log_keyfiles_posix`: `log_keyfiles_posix_python_every_case` (POSIX only; `log_keyfiles_not_posix` records the gap) | `log_keyfiles_posix_python.jsonl` | ii (Python), os |
 | `golden_log_keyfiles_posix`: `log_keyfiles_posix_every_case` | `log_keyfiles_darwin.jsonl` | iii |
 | `golden_search`: `search_ranker_tables` | `search_ranker.jsonl` header (word lists) | i |
 | `parity_provenance`: both tests | `generate.py`, the manifest | i |
@@ -5245,6 +5256,7 @@ that Unicode too.
 | `golden_verify_candidates`: `verify_candidates_every_case`, `verify_candidates_constants` | `verify_candidates.jsonl` | i |
 | `golden_verify_candidates`: `verify_candidates_unicode_every_case` | `verify_candidates_unicode.jsonl` | ii (Unicode) |
 | `golden_fold`: `fold_every_case` | `fold.jsonl` | ii (Unicode, pydantic-core) |
+| `golden_fold`: `fold_python_every_case` | `fold_python.jsonl` (`raised_recursion`) | ii (Python, Unicode, pydantic-core) |
 | `golden_fold`: `hostile_inputs_never_panic` | `fold.jsonl` as input only | i |
 | `fold_writer` | `fold.jsonl`'s `populated` prelude as input only | i |
 | `golden_store_rows`: `store_rows_leaves_every_case` | `store_rows_leaves.jsonl` | i |
@@ -5353,6 +5365,33 @@ on this platform. A class (ii) difference under a Python or Unicode other
 than the port's, and a class (os) case, is printed and counted, and does
 not fail. The job is not
 a release gate (release.yml skips it).
+
+**Two guards on what a generator writes** (`tests/test_contract_golden.py`,
+run for every generator under every interpreter, before any skip for
+drift). CI on 65aea201 found two faults no local run could see.
+
+- No lone surrogate in a JSON string. Under 3.13.18
+  `nturl2path.url2pathname` answers an undecodable byte as a surrogate
+  where 3.13.13 answers U+FFFD, and `location_leaves_python.jsonl` wrote
+  that answer as a plain string. serde_json refuses the line, so the whole
+  Rust test failed in step 2 before its open Python gate could set the
+  differing rows aside. A text that may hold a surrogate goes through
+  `tests.contract._common.text_field` (`r`, or `r_cps` as code points),
+  and the Rust test reads either spelling. The guard names the generator,
+  the file and the line. Three files hold lone surrogates by design and
+  are read through the port's own `json::loads`, never serde_json
+  (`SURROGATE_READERS`, each with the test that reads it).
+- No RecursionError row in a file outside `PYTHON_GATED`. 3.14 on Linux
+  guards recursion by the C stack's real depth and reads JSON nested
+  100,000 arrays deep, where 3.11 to 3.13, and 3.14 on macOS, raise. So
+  such a row follows the interpreter and the system: its place is the
+  unit's Python-gated `<name>_python.jsonl`, as for
+  `log_keyfiles_posix_python.jsonl`, `machine_facts_python.jsonl`,
+  `fold_python.jsonl` and `store_restore_lock_python.json`.
+  `RECURSION_ROWS` lists the files allowed to hold one, with the count and
+  why every interpreter answers alike there: `membership_core.jsonl`
+  (Python's own limit of 1,000 frames, counted alike everywhere). The port
+  keeps its fixed depth, which reproduces 3.13.13.
 
 ## Regenerating the Unicode tables
 

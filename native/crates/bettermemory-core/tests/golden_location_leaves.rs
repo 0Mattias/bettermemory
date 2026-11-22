@@ -3,7 +3,8 @@
 //! `location::leaves`: `_statx_birth` over scripted answers, `_birth` over
 //! scripted stat attributes, `_file_url_path` under both flavours and
 //! `nturl2path.url2pathname` (a Windows answer's backslashes spelled
-//! `<b>`, as the host-fact guard asks).
+//! `<b>`, as the host-fact guard asks). A text answer is `r`, or `r_cps`
+//! when it holds a surrogate (`text_field`), and is read either way.
 
 mod common;
 
@@ -105,12 +106,30 @@ fn answer(row: &Value) -> Value {
     }
 }
 
+/// The answer a row records, and the port's, alike spelled: a text as its
+/// code points when the row writes it as `r_cps` (a text holding a
+/// surrogate, which the port, reproducing 3.13.13, never answers), else
+/// as JSON.
+fn compared(row: &Value, got: Value) -> (Value, Value) {
+    match row.get("r_cps") {
+        Some(want) => {
+            let got = match got {
+                Value::String(s) => json!(cps(&s)),
+                other => other,
+            };
+            (want.clone(), got)
+        }
+        None => (row["r"].clone(), got),
+    }
+}
+
 fn run(name: &str) {
     let rows = common::jsonl(name);
     let mut ledger = Ledger::new("golden_location_leaves", name);
     for (i, row) in rows.iter().enumerate().skip(1) {
         ledger.case(format!("{name}:{i}"), || {
-            assert_eq!(answer(row), row["r"], "{name} row {i}: {row}");
+            let (want, got) = compared(row, answer(row));
+            assert_eq!(got, want, "{name} row {i}: {row}");
         });
     }
     assert!(rows.len() > 1, "{name} holds no case");

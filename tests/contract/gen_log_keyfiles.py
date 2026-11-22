@@ -1,5 +1,6 @@
 """Fixtures: the key ring's files (``log_keyfiles.jsonl``,
-``log_keyfiles_posix.jsonl``, ``log_keyfiles_darwin.jsonl``).
+``log_keyfiles_posix.jsonl``, ``log_keyfiles_posix_python.jsonl``,
+``log_keyfiles_darwin.jsonl``).
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/log/ring.rs`` (`KeyRing.__post_init__`,
@@ -23,6 +24,13 @@ name, and the message when the text is the module's own), then
 mode, a link as its target. A link's own mode is left out (macOS and
 Linux give links different modes). The errno names are those macOS and
 glibc share.
+
+``log_keyfiles_posix_python.jsonl`` (POSIX only, gated on the Python
+release) holds the rows of the same shape whose file is nested
+``DEEP`` levels (the ``deep`` setup step): there `json.loads` raising
+RecursionError is the interpreter's and the system's. 3.11 to 3.13 and
+3.14 on macOS raise; 3.14 on Linux measures the C stack, which on the
+main thread is deep enough to read the file.
 
 ``log_keyfiles_darwin.jsonl`` (platform gated) holds the message of
 each `KeyUnreadableError` whose reason is the C library's ``strerror``,
@@ -337,10 +345,21 @@ def _unlock(root: Path) -> None:
                 os.chmod(path, 0o700)
 
 
-def _files() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _deep(setup: list[list[Any]]) -> bool:
+    """Whether a scenario writes a file nested ``DEEP`` levels."""
+    return any(step[0] == "deep" for step in setup)
+
+
+def _files(
+    deep: bool | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The rows and the darwin texts of every scenario, or of those whose
+    setup nests a file deep (`deep` True) or does not (False)."""
     rows: list[dict[str, Any]] = []
     texts: list[dict[str, Any]] = []
     for name, setup, op in _scenarios():
+        if deep is not None and _deep(setup) != deep:
+            continue
         # The scratch folder by its real path (macOS's temporary folder is
         # under a link), so a resolved path and the root spell alike.
         scratch = Path(os.path.realpath(tempfile.mkdtemp(prefix="bm-keyfiles-")))
@@ -416,10 +435,18 @@ def generate() -> dict[str, bytes]:
     return {"log_keyfiles.jsonl": jsonl([header, *records])}
 
 
+def _posix_file(name: str, deep: bool) -> dict[str, bytes]:
+    rows, _texts = _files(deep)
+    header = {"fixture": name, "cases": len(rows), "store_id": STORE_ID}
+    return {f"{name}.jsonl": jsonl([header, *rows])}
+
+
 def generate_posix() -> dict[str, bytes]:
-    rows, _texts = _files()
-    header = {"fixture": "log_keyfiles_posix", "cases": len(rows), "store_id": STORE_ID}
-    return {"log_keyfiles_posix.jsonl": jsonl([header, *rows])}
+    return _posix_file("log_keyfiles_posix", False)
+
+
+def generate_posix_python() -> dict[str, bytes]:
+    return _posix_file("log_keyfiles_posix_python", True)
 
 
 def generate_darwin() -> dict[str, bytes]:

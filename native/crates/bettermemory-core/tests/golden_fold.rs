@@ -1,4 +1,5 @@
-//! Every case of `fold.jsonl`: its store rebuilt with SQLite (a base of
+//! Every case of `fold.jsonl` and `fold_python.jsonl` (gated on the Python
+//! release: payloads nested past where `json.loads` stops recursing): its store rebuilt with SQLite (a base of
 //! `store_bases.json`, a prelude from the fixture's header, its recipe; or
 //! the committed `store_real.sqlite`), opened read-only, and the native
 //! `refold` and `log_verify` reports compared field for field with the
@@ -245,9 +246,20 @@ fn same_refusal(name: &str, want: &Value, got: &Value) -> bool {
 
 #[test]
 fn fold_every_case() {
-    let mut lines = jsonl("fold.jsonl");
+    every_case("fold_every_case", "fold.jsonl");
+}
+
+/// The cases nested past where `json.loads` stops recursing, gated on the
+/// Python release: the port raises at its fixed depth as 3.13.13 does.
+#[test]
+fn fold_python_every_case() {
+    every_case("fold_python_every_case", "fold_python.jsonl");
+}
+
+fn every_case(test: &str, file: &str) {
+    let mut lines = jsonl(file);
     let header = lines.remove(0);
-    let mut ledger = Ledger::new("golden_fold::fold_every_case", "fold.jsonl");
+    let mut ledger = Ledger::new(&format!("golden_fold::{test}"), file);
     let mut slowest = (Duration::ZERO, String::new());
     for (i, case) in lines.iter().enumerate() {
         let name = case["case"].as_str().expect("case").to_owned();

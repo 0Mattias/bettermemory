@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import sys
 import tempfile
@@ -113,6 +114,120 @@ def _no_lone_surrogate_logged(name: str, records: list[logging.LogRecord]) -> No
             )
 
 
+#: A JSON string literal on one line of a golden file.
+_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+
+def _lone_surrogate_at(data: bytes) -> int | None:
+    """The first line of a ``.json`` or ``.jsonl`` file holding a JSON
+    string (a key or a value, at any depth) with a lone surrogate, or None.
+    A plain JSON string cannot carry one to a strict reader (serde_json
+    refuses ``"\\udcc3"``), so the native tests could not read the file
+    at all, not even to set its differing rows aside under an open gate."""
+    for number, line in enumerate(data.decode("utf-8").splitlines(), 1):
+        for literal in _STRING.findall(line):
+            text = json.loads(literal)
+            if any(0xD800 <= ord(ch) <= 0xDFFF for ch in text):
+                return number
+    return None
+
+
+#: Files that hold lone surrogates by design, each read by its native test
+#: through the port's own `json::loads` (Python's reader, which takes a
+#: lone surrogate), never through serde_json: the test file named.
+SURROGATE_READERS: dict[str, str] = {
+    "capture_vocabulary.jsonl": "golden_capture_vocabulary.rs",
+    "identity_caller.jsonl": "golden_identity_caller.rs",
+    "membership_records_records.jsonl": "golden_membership_records_records.rs",
+}
+
+_NATIVE_TESTS = (
+    Path(__file__).resolve().parent.parent
+    / "native"
+    / "crates"
+    / "bettermemory-core"
+    / "tests"
+)
+
+
+def test_the_surrogate_readers_read_through_the_port() -> None:
+    for filename, test in SURROGATE_READERS.items():
+        source = (_NATIVE_TESTS / test).read_text(encoding="utf-8")
+        assert filename in source, (filename, test)
+        assert "json::loads(&unicode::cps(" in source, (filename, test)
+
+
+def _no_lone_surrogate_written(name: str, produced: dict[str, bytes]) -> None:
+    for filename, data in sorted(produced.items()):
+        if not filename.endswith((".json", ".jsonl")):
+            continue
+        if filename in SURROGATE_READERS:
+            continue
+        line = _lone_surrogate_at(data)
+        if line is not None:
+            pytest.fail(
+                f"generator {name} wrote a lone surrogate into {filename} at "
+                f"line {line} under Python {python_version()}; write the text "
+                "through tests.contract._common.text_field (a ``_cps`` code "
+                "point list when it holds a surrogate)",
+                pytrace=False,
+            )
+
+
+#: Golden files outside ``PYTHON_GATED`` that may hold RecursionError: the
+#: number of lines holding it, and why the answer is the same under every
+#: interpreter the files are compared under. Any other such file fails
+#: `_no_recursion_row_ungated`: a raise at the depth where `json.loads` or
+#: the C stack stops is the interpreter's and the system's (3.14 on Linux
+#: reads 100,000 nested arrays that 3.11 to 3.13 refuse), so its rows go
+#: in the unit's Python-gated ``<name>_python`` sibling.
+RECURSION_ROWS: dict[str, tuple[int, str]] = {
+    "membership_core.jsonl": (
+        1,
+        "`Membership._event` passes the event's payload, 1,000 lists deep, "
+        "through `membership_rows._jsonable`, a Python function that calls "
+        "itself per level: the raise is Python's recursion limit of 1,000 "
+        "frames, which counts Python frames alike on every release and "
+        "system (gen_membership_core._deep_event)",
+    ),
+}
+
+
+def _no_recursion_row_ungated(name: str, produced: dict[str, bytes]) -> None:
+    """No committed file of a generator outside ``PYTHON_GATED`` holds a
+    RecursionError row unless `RECURSION_ROWS` lists it with its count."""
+    if name in PYTHON_GATED:
+        return
+    for filename in sorted(produced):
+        path = GOLDEN / filename
+        if not path.is_file() or b"RecursionError" not in path.read_bytes():
+            continue
+        lines = path.read_bytes().splitlines()
+        count = sum(1 for line in lines if b"RecursionError" in line)
+        listed = RECURSION_ROWS.get(filename)
+        assert listed is not None and listed[0] == count, (
+            f"{filename} (generator {name}, not Python gated) holds {count} "
+            "lines with RecursionError, where the interpreter's recursion "
+            "budget decides the answer: move those rows to a Python-gated "
+            "sibling <name>_python.jsonl, or list the file in "
+            "RECURSION_ROWS with the count and why every interpreter and "
+            "system answers alike"
+        )
+
+
+def test_the_recursion_table_is_current() -> None:
+    """Each `RECURSION_ROWS` entry whose file exists names its count of
+    RecursionError lines and belongs to no Python-gated generator."""
+    for filename, (count, reason) in RECURSION_ROWS.items():
+        assert reason
+        path = GOLDEN / filename
+        if not path.is_file():
+            continue
+        lines = path.read_bytes().splitlines()
+        assert sum(1 for line in lines if b"RecursionError" in line) == count, filename
+        assert filename.rsplit(".", 1)[0] not in PYTHON_GATED, filename
+
+
 def _compare_with_the_reference(name: str) -> None:
     if name in POSIX_ONLY and sys.platform == "win32":
         pytest.skip(f"{name}: {_NOT_POSIX}")
@@ -129,6 +244,10 @@ def _compare_with_the_reference(name: str) -> None:
         warnings.warn(reason, stacklevel=1)
         pytest.skip(reason)
     assert produced, name
+    # Both guards run before any skip for drift: they hold under every
+    # interpreter, whatever the gates.
+    _no_lone_surrogate_written(name, produced)
+    _no_recursion_row_ungated(name, produced)
     for filename, data in sorted(produced.items()):
         committed = (GOLDEN / filename).read_bytes()
         if data != committed and drift:

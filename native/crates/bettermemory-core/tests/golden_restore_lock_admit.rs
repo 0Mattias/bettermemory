@@ -1,5 +1,7 @@
 //! The writing open's side of the restore lock against the `admit` rows of
-//! `store_restore_lock.json` (`restore_lock.admit`, its `confirm`, and
+//! `store_restore_lock.json` and `store_restore_lock_python.json` (the
+//! marker nested 70,000 lists deep, gated on the Python release)
+//! (`restore_lock.admit`, its `confirm`, and
 //! `restore_state`): each marker shape, a helper holding the store's
 //! directory (here an open file of this process, which `flock` sets
 //! against this one's as it does another process's), an unreadable
@@ -25,6 +27,7 @@ use common::stores::scratch;
 use serde_json::Value;
 
 const FILE: &str = "store_restore_lock.json";
+const FILE_PYTHON: &str = "store_restore_lock_python.json";
 const WAIT: Duration = Duration::from_millis(200);
 
 fn marker_bytes(pieces: &Value) -> Vec<u8> {
@@ -171,17 +174,29 @@ fn run(case: &Value) {
     }
 }
 
-#[test]
-fn writing_opens_meet_the_restore_lock_as_the_reference() {
-    let text = fs::read_to_string(common::golden_path(FILE)).expect("file");
+fn admit_rows(test: &str, file: &str) {
+    let text = fs::read_to_string(common::golden_path(file)).expect("file");
     let doc: Value = serde_json::from_str(&text).expect("JSON");
     let cases = doc["admit"].as_array().expect("admit rows");
-    let mut ledger = Ledger::new("writing_opens_meet_the_restore_lock_as_the_reference", FILE);
+    let mut ledger = Ledger::new(test, file);
     for case in cases {
         ledger.case(case["name"].as_str().expect("name"), || run(case));
     }
     assert!(!cases.is_empty());
     ledger.finish(cases.len());
+}
+
+#[test]
+fn writing_opens_meet_the_restore_lock_as_the_reference() {
+    admit_rows("writing_opens_meet_the_restore_lock_as_the_reference", FILE);
+}
+
+#[test]
+fn a_deep_marker_meets_the_restore_lock_as_the_reference() {
+    admit_rows(
+        "a_deep_marker_meets_the_restore_lock_as_the_reference",
+        FILE_PYTHON,
+    );
 }
 
 /// `describe` of an empty marker, through `printable`.

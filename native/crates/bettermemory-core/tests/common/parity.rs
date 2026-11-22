@@ -208,6 +208,11 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "machine_identity_python.jsonl"
         | "store_rotation_python.jsonl"
         | "membership_shared_python.jsonl"
+        // Rows whose input is nested past where `json.loads` stops
+        // recursing, which is the interpreter's and the system's
+        // (`gen_log_keyfiles`, `gen_machine`).
+        | "log_keyfiles_posix_python.jsonl"
+        | "machine_facts_python.jsonl"
         | "capture_vocabulary_python.jsonl" => &[Python],
         // `str.isspace` and `str.isalnum` past ASCII (`gen_control_tokens`).
         "control_tokens_unicode.jsonl" => &[Unicode],
@@ -289,6 +294,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // rows are its tokens.
         "store_open.jsonl" => &[Unicode],
         "fold.jsonl" => &[Unicode, Pydantic],
+        // The cases of `fold.jsonl` whose payload is nested past where
+        // `json.loads` stops recursing (`gen_fold.PYTHON_CASES`).
+        "fold_python.jsonl" => &[Python, Unicode, Pydantic],
         // The index text is the tokenizer's; a refusal's text is the first
         // line of a pydantic ValidationError.
         "store_write.jsonl"
@@ -376,6 +384,10 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // The restore lock is a directory `flock` on POSIX, a record file
         // and a handle on Windows; the generator runs on POSIX only.
         "store_restore_lock.json" | "store_restore_lock_hold.json" => &[Platform],
+        // The `admit` row of a marker nested 70,000 lists deep: whether
+        // `json.loads` raises RecursionError there is the interpreter's
+        // and the system's (`gen_restore_lock`).
+        "store_restore_lock_python.json" => &[Platform, Python],
         // The rows hold the tokenizer's spelling; the records are built
         // through the models.
         "store_provenance.jsonl" => &[Unicode, Pydantic],

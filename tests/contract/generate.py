@@ -206,10 +206,12 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "log_chain": gen_log.generate,
     "log_keyfiles": gen_log_keyfiles.generate,
     "log_keyfiles_posix": gen_log_keyfiles.generate_posix,
+    "log_keyfiles_posix_python": gen_log_keyfiles.generate_posix_python,
     "log_keyfiles_darwin": gen_log_keyfiles.generate_darwin,
     "machine_identity": gen_machine.generate,
     "machine_identity_python": gen_machine.generate_python,
     "machine_facts": gen_machine.generate_facts,
+    "machine_facts_python": gen_machine.generate_facts_python,
     "machine_facts_unicode": gen_machine.generate_facts_unicode,
     "machine_facts_platform": gen_machine.generate_facts_platform,
     "log_keyring": gen_log_ring.generate,
@@ -286,6 +288,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "models_stores": gen_models.stores,
     "store_restore_lock": gen_restore_lock.generate,
     "store_restore_lock_hold": gen_restore_lock.generate_hold,
+    "store_restore_lock_python": gen_restore_lock.generate_python,
     "toml": gen_toml.generate,
     "events_kinds": gen_events_kinds.generate,
     "audit_fields": gen_audit.generate,
@@ -295,6 +298,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "recall_render": gen_recall_render.generate,
     "recall_render_unicode": gen_recall_render.generate_unicode,
     "fold": gen_fold.generate,
+    "fold_python": gen_fold.generate_python,
     "store_create": gen_store_create.generate,
     "store_open": gen_store_open.generate,
     "store_write": gen_store_write.generate,
@@ -484,6 +488,7 @@ UNICODE_GATED = frozenset(
         "machine_facts_unicode",
         "durability_unicode",
         "fold",
+        "fold_python",
         "store_create",
         "store_open",
         "store_write",
@@ -618,6 +623,16 @@ PYTHON_VERSION = "3.13.13"
 #: (`gen_store_rotation`).
 #: ``argparse_subparsers_python`` is the same for subparsers: the invalid
 #: choice text and the choice listing are worded otherwise before 3.12.
+#: ``log_keyfiles_posix_python``, ``machine_facts_python`` and
+#: ``fold_python`` hold the rows whose input is nested 20,000 or 100,000
+#: levels, where `json.loads` raising RecursionError is the interpreter's
+#: and the system's: 3.11 to 3.13 and 3.14 on macOS raise, 3.14 on Linux
+#: measures the C stack and reads the input (CI run of 65aea201,
+#: "test (ubuntu-latest, py3.14)"). Their siblings ``log_keyfiles_posix``,
+#: ``machine_facts`` and ``fold`` hold every other row and are not gated
+#: on the release (`gen_log_keyfiles`, `gen_machine`, `gen_fold`).
+#: ``store_restore_lock_python`` holds the `admit` row of a marker nested
+#: 70,000 lists deep, for the same reason (`gen_restore_lock`).
 PYTHON_GATED = frozenset(
     {
         "argparse_python",
@@ -672,6 +687,10 @@ PYTHON_GATED = frozenset(
         "machine_facts_platform",
         "location_probe_python",
         "store_rotation_python",
+        "log_keyfiles_posix_python",
+        "machine_facts_python",
+        "fold_python",
+        "store_restore_lock_python",
     }
 )
 
@@ -702,6 +721,7 @@ PYDANTIC_GATED = frozenset(
         "models_rows",
         "models_stores",
         "fold",
+        "fold_python",
         "store_write",
         "store_tx",
         "store_records",
@@ -761,6 +781,7 @@ PLATFORM_GATED = frozenset(
         "store_files",
         "store_restore_lock",
         "store_restore_lock_hold",
+        "store_restore_lock_python",
         "mcp",
         "origin_gitfiles_darwin",
         "hooks",
@@ -772,7 +793,8 @@ PLATFORM_GATED = frozenset(
 )
 
 
-#: Generators with no case on Windows: ``store_restore_lock`` drives a
+#: Generators with no case on Windows: ``store_restore_lock`` and
+#: ``store_restore_lock_python`` drive a
 #: POSIX directory ``flock`` (the lock there is a record file and a handle
 #: on the store, ENG-321). Under ``--as-found`` on Windows they are named in
 #: the manifest (``not_here``) and write no file; that is no raise, and the
@@ -862,8 +884,9 @@ PLATFORM_GATED = frozenset(
 #: ``store_schema_posix`` runs the schema steps on a mode-0444 store file
 #: and spells a v8 folder's path as the host's ``Path`` does
 #: (`gen_store_schema`);
-#: ``log_keyfiles_posix`` and ``log_keyfiles_darwin`` drive the key ring
-#: over links, mode-000 files and folders (`gen_log_keyfiles`);
+#: ``log_keyfiles_posix``, ``log_keyfiles_posix_python`` and
+#: ``log_keyfiles_darwin`` drive the key ring over links, mode-000 files
+#: and folders (`gen_log_keyfiles`);
 #: ``origin_gitfiles_root_posix`` makes links, a FIFO and a mode-000 file
 #: and spells a root as the host's ``Path`` does (`gen_origin_gitfiles_root`).
 #: ``store_rotation`` and ``store_rotation_python`` finish key rotations
@@ -880,6 +903,7 @@ POSIX_ONLY = frozenset(
         "verify_candidates_scan_unicode",
         "store_restore_lock",
         "store_restore_lock_hold",
+        "store_restore_lock_python",
         "store_schema_posix",
         "settings_paths",
         "settings_paths_python",
@@ -910,6 +934,7 @@ POSIX_ONLY = frozenset(
         "location_stamps",
         "location_stamps_python",
         "log_keyfiles_posix",
+        "log_keyfiles_posix_python",
         "log_keyfiles_darwin",
         "gitconfig_tree",
         "gitconfig_legacy",

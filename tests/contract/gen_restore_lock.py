@@ -272,8 +272,12 @@ _MARKERS: tuple[tuple[str, list[list[Any]] | None], ...] = (
     ("past_cap_blank", [["20", 1 << 16], [b'{"pid": 1}'.hex(), 1]]),
     ("past_cap_cut", [[b'{"stage": "x"'.hex(), 1], ["20", 1 << 16], ["7d", 1]]),
     ("at_cap", [[b'{"stage": "x"'.hex(), 1], ["20", (1 << 16) - 14], ["7d", 1]]),
-    ("deep", [["5b", 70000]]),
 )
+
+#: The marker nested 70,000 lists deep. Whether `json.loads` raises
+#: RecursionError there is the interpreter's and the system's (3.14
+#: measures the C stack), so its row is in ``store_restore_lock_python.json``.
+_DEEP: tuple[str, list[list[Any]]] = ("deep", [["5b", 70000]])
 
 
 def _marker_bytes(pieces: list[list[Any]]) -> bytes:
@@ -860,5 +864,16 @@ def generate_hold() -> dict[str, bytes]:
     return {
         "store_restore_lock_hold.json": (
             json.dumps(document, indent=1, sort_keys=True) + "\n"
+        ).encode("utf-8")
+    }
+
+
+def generate_python() -> dict[str, bytes]:
+    """The `admit` row of the marker nested 70,000 lists deep."""
+    with world() as w:
+        admit = [_admit_case(w.root / "admit" / "markers", *_DEEP)]
+    return {
+        "store_restore_lock_python.json": (
+            json.dumps({"admit": admit}, indent=1, sort_keys=True) + "\n"
         ).encode("utf-8")
     }
