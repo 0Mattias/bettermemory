@@ -118,10 +118,12 @@
 //!   members index, the witness, file-binding and checkout reads; the
 //!   witness, remote, file-binding, boundary and checkout writes; the
 //!   views and their liveness, continuity, the checkout of an object
-//!   store, the history readings) and unit 2b (the machine rows and the
-//!   proposals), and the read side of `membership_queries.py` in
-//!   `membership::queries` (homes, the prompt recall's admission, a
-//!   question as it is shown);
+//!   store, the history readings), unit 2b (the machine rows and the
+//!   proposals) and unit 4a (the sighting of a known checkout,
+//!   `_touch_view`, and the token re-mints: `_checkout_name`,
+//!   `_give_token`, `token_written`, `_foreign`), and the read side of
+//!   `membership_queries.py` in `membership::queries` (homes, the prompt
+//!   recall's admission, a question as it is shown);
 //! - [`location_continuity`]: `location.continuity`, witness O where birth
 //!   time cannot decide;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;

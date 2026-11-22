@@ -2,7 +2,8 @@
 //! units membership-1 and membership-2: the state of `Membership`, its
 //! store plumbing, its projects with their merges followed, the members
 //! index, the witness and file-binding reads, the checkout reads, and
-//! (`writes`) the evidence, boundary and checkout writes.
+//! (`writes`) the evidence, boundary and checkout writes; (`touch`) the
+//! sightings of a known checkout and its token re-mints.
 //!
 //! The model reaches the store only through [`MembershipStore`] and the
 //! files a view names only through a [`Liveness`] it is given, so every
@@ -16,6 +17,7 @@ pub mod projects;
 pub mod proposals;
 pub mod queries;
 pub mod reads;
+pub mod touch;
 pub mod views;
 pub mod vocab;
 pub mod writes;
