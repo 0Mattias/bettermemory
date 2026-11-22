@@ -29,6 +29,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `argparse` | unit argparse-1a: the flat-parser subset of CPython 3.13.13's `argparse` the hook mains use: `ArgumentParser(prog, description, add_help)`, `add_argument` (`store`, `store_true`, `help`, `version`; positionals of one argument with `choices`), `parse_args` (`_parse_known_args` with `_parse_optional`, `_get_option_tuples`, `consume_optional`, `consume_positionals`, `_match_argument`, `_match_arguments_partial`, the negative-number matcher), `error` and `_format_usage` with its wrapping, as an `Outcome` without a process exit; unit argparse-1b: `add_subparsers(dest)` with its `prog` derived from the parent's positionals, `add_parser`, the PARSER `nargs` and `_SubParsersAction.__call__` with the child's namespace merged in the reference's order and its leftovers after the parent's | `argparse.jsonl`, `argparse_python.jsonl`, `argparse_subparsers.jsonl`, `argparse_subparsers_python.jsonl` |
 | `native_text`, `caches`, `daemon_client`, `install_hints` | `native_text.py` 15-40 (`has_surrogates`, `utf8_text`, `encoded_json`, `origin_projection`), `_caches.py` whole (`register` under a key, `clear_all`), `_daemon_client.py` 149-172 (`STORE_FILENAME` re-exported, `START_TIMEOUT_SECONDS`, `HOOK_TIMEOUT_SECONDS`, `HOOK_HARNESS_TIMEOUT_SECONDS`, `HOOK_MARGIN_SECONDS`, `hook_budget_seconds`), `_install_hints.py` 41-130 (every spelling) | `native_text.jsonl`, `daemon_client.jsonl`, `install_hints.jsonl` |
+| `transcript` | `transcript.py`'s first unit: `CHUNK_BYTES`, `WALK_BYTES`, `ReverseLines`, `_row`, `_prompt_id`, `StopTurn`, `_Pending`, `stop_turn`; the file (`Opener`) and `owner_prompt.py` (`OwnerPrompt`) are traits | `transcript.jsonl`, `transcript_python.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks; its second unit (`src/origin_history/located.rs`): `located_key`, `history_guard`, `cuts`, `shallow_file`, `cuts_in` | `origin_history.jsonl`, `origin_history_located.jsonl`, `origin_history_located_modes.jsonl`, `origin_history_cuts.jsonl` |
 | `origin_model` | `origin_model.py`'s `Origin` as captured: `CapturedOrigin`, the stored `records::Origin` with `_repo_url_alternates`, `git_indeterminate` and `git_refusal` beside it | `origin_model.jsonl` |
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves; `origin_dates::memo`: `_instant`, `commit_author_timestamps` and `_remember_dates` over the caller's `TimestampsMemo`, `MemoLeaves` and `ShallowHold` | `origin_dates_reads.jsonl`, `origin_dates_memo.jsonl` |
@@ -20772,6 +20773,98 @@ recorded in any fixture.
 | `store_bulk_cross.rs` | native's renames, prune and batch read by the reference equal to a twin it runs; the reference continues and native after it; the reverse; both sides on one fixed monotonic schedule with recorded pauses (no sleep), each call's chunk begins, commits and pauses asserted and equal to the reference's | i |
 | `store_bulk_kills.rs` | 152 kills at all 76 boundaries of a five-chunk rename and a two-chunk prune (abort in WAL, exit in rollback journal): the log holds exactly the chunks committed before the point, each whole; the reference opens, verifies and writes after each; at 58 sampled kills (every third point, each commit) the surviving log equals the reference's chunk placement for the same schedule | i |
 | `store_bulk_robustness.rs` | stored values nested 9,998 and 100,000 deep on a 512 KiB stack, a run of 100,000 items (and one failing at item 50,001), hostile scopes (empty, NUL, lone surrogates, 1 MiB), ages out of the calendar and a naive `now`; `put_plain` against `put_memory` over ten stored states | i |
+
+## A transcript read from its end (`transcript.py`)
+
+`transcript.py` reads a Claude Code transcript newest row first, for the
+hooks. Its map, by function, against the reference at `origin/v9`:
+
+| function | lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `CHUNK_BYTES`, `WALK_BYTES` | 46-56 | nothing | transcript-1a, built |
+| `ReverseLines` | 58-130 | open, `fstat` size, seek, read | transcript-1a, built |
+| `_row`, `_prompt_id` | 131-148 | nothing (`json.loads`) | transcript-1a, built |
+| `StopTurn`, `_Pending`, `stop_turn` | 149-258 | through `ReverseLines` | transcript-1a, built |
+| `InterruptedTurn`, `interrupted_turns` | 259-400 | as `stop_turn`, `parse_event_ts` | transcript-1b |
+| `owner_words`, `compact_marker` | 400-450 | as `stop_turn` | transcript-1b |
+
+The module is cut in two: 1a (this unit, `src/transcript`) and 1b, which
+reads `owner_prompt(row, cut=False)` (reference line 388) and
+`datetime::parse_event_ts`.
+
+What 1a reproduces:
+
+- `ReverseLines` (`transcript::reverse`): the iterator opens the file at
+  its first `next`, as the reference's generator does, takes the size
+  once, and walks back chunk by chunk, each read with the byte before it.
+  The carry of a line that runs across a chunk's start, the budget's floor
+  (`max(0, end - budget)`, a negative budget reading nothing), the needle
+  filter (a chunk whose complete lines lack the needle yields nothing,
+  while a chunk that holds it yields every line, with or without it),
+  `reached_start = (end == 0)` set only when the loop ends by itself, and
+  the end of the walk on any OSError (the open, the size, a seek, a read)
+  or on a read shorter than asked (a file truncated under the walk) are
+  the reference's. `reached_start` stays False after any of those.
+- The file is reached through the trait `transcript::Opener` (open, size,
+  seek, read), not through `gitobjects::stream::Handle`, which has no
+  size. `FsOpener` adapts any `fsdata::Fs`: `open_waiting` (Python's
+  `open` sets no `O_NONBLOCK`), `fstat`'s size, `Fs::seek` and `Fs::read`
+  (a buffered read: the count asked, fewer only at the end). A folder is
+  refused after the open, as `io.FileIO` refuses it; a file system that
+  does not offer `seek` declines, which ends the walk as an OSError would.
+  No path is resolved, so the Windows flavour has no gap here.
+- `_row` (`transcript::row`): blank by `bytes.strip()` (ASCII
+  whitespace), decoded with `errors="replace"` (`String::from_utf8_lossy`
+  replaces the same maximal subparts as CPython), `json::loads`, dicts
+  only. RecursionError is no ValueError: the reference raises it out of
+  `_row` and out of `stop_turn`, and the port answers `Err` from both.
+  Where the decoder stops recursing follows the release and the system,
+  so those rows are in `transcript_python.jsonl`.
+- `_prompt_id`, `StopTurn`, `_Pending` and `stop_turn`
+  (`transcript::stop`): the walk, the passing over of newer turns, the
+  break on an older turn, the undecided answer when the budget ended
+  inside the turn, and the turn without ids ended by its newest submitted
+  row, as the reference's `for ... else`.
+- The calls into `owner_prompt.py` (`is_submitted`, `owner_prompt` with
+  `cut`, `submitted_text`, `text_blocks`) are the trait
+  `transcript::OwnerPrompt`, with `INTERRUPT_OPENING` a constant here.
+  The unit that ports `owner_prompt.py` implements it. The golden test
+  gives back the answers the reference's own functions gave, in the order
+  `stop_turn` asked, and fails on a call out of order or missing.
+
+Decisions:
+
+- `chunk_bytes` is a `NonZeroUsize`. With 0 the reference never ends: a
+  chunk is then the one byte before `end`, `end` does not move, and the
+  same line is yielded for ever (reference finding; reproduction:
+  `list(ReverseLines(path, chunk_bytes=0))` over `b"a\n"` does not
+  return). A negative chunk size is not representable here either: with
+  -1 the reference never ends (`end` climbs by one each pass and no line
+  is yielded), with -2 the first read asks for -1 bytes, reads to the
+  end, comes back short and ends the walk with nothing yielded and
+  `reached_start` false, and with -3 or less `handle.read` raises
+  `ValueError`, which is not an `OSError` and leaves the iteration.
+- The needle test is linear in the chunk (Knuth-Morris-Pratt), as the
+  reference's `in` is.
+- Two conditions carry equivalent mutants and so no kill: dropping
+  `in_turn` from the undecided-walk check (without it `submitted` is
+  false and the next check also answers None), and dropping 0x0b from the
+  whitespace set of `_row` (a line of whitespace alone fails `json.loads`
+  either way).
+- No regular expression is used: transcript-1a has no pattern.
+
+Golden files: `transcript.jsonl` (not gated: walks over small files with
+every chunk size from 1 to 64 and budgets from -3 to 2^30, CRLF ends, no
+trailing newline, invalid UTF-8, needles, a missing file, a folder, a size
+larger than the file, a file truncated mid-walk, a line longer than
+several chunks, four walks over a 2.4 MB file pinned as count and SHA-256,
+`_row` over blank, broken and non-dict lines, `stop_turn` over 33
+transcripts) and `transcript_python.jsonl` (gated on the Python release:
+lines nested 20,000 deep). Tests: `golden_transcript`,
+`transcript_kills`, `transcript_robustness`.
+
+Left for transcript-1b: `InterruptedTurn`, `interrupted_turns`,
+`owner_words` and `compact_marker` (reference lines 259-450).
 
 ## Not built yet
 

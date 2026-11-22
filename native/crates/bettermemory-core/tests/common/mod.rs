@@ -49,6 +49,7 @@ pub mod store_reads;
 pub mod stores;
 pub mod symbols;
 pub mod tool_handlers;
+pub mod transcript;
 pub mod txs;
 pub mod use_tokens;
 pub mod verify_anchoring_attest;

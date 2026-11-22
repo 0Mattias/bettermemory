@@ -180,6 +180,7 @@ from . import (
     gen_store_write,
     gen_store_path,
     gen_time,
+    gen_transcript,
     gen_toml,
     gen_tool_handlers,
     gen_events_kinds,
@@ -287,6 +288,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "argparse_python": gen_argparse.generate_python,
     "argparse_subparsers": gen_argparse.generate_subparsers,
     "argparse_subparsers_python": gen_argparse.generate_subparsers_python,
+    "transcript": gen_transcript.generate,
+    "transcript_python": gen_transcript.generate_python,
     "origin_history": gen_origin_history.generate,
     "origin_dates_reads": gen_origin_dates_reads.generate,
     "origin_dates_memo": gen_origin_dates_memo.generate,
@@ -777,6 +780,9 @@ PYTHON_GATED = frozenset(
         # The TypeError's text of an unhashable set element (3.14 words it
         # otherwise).
         "use_tokens_python",
+        # Where the JSON decoder stops recursing on a line nested 20,000
+        # deep follows the release and the system (`gen_transcript`).
+        "transcript_python",
         "settings_python",
         "settings_paths_python",
         "membership_lines_python",

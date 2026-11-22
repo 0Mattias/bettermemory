@@ -33,6 +33,9 @@
 //!   parse through, its first two units (optionals and positionals of one
 //!   argument, the error exits and the usage line; subparsers and the
 //!   PARSER `nargs`);
+//! - [`transcript`]: a transcript read from its end, its first unit
+//!   (`ReverseLines`, `_row`, `_prompt_id`, `stop_turn`), with the file
+//!   and `owner_prompt.py` as traits;
 //! - [`origin_history`]: how `origin` reads a repository's history: the
 //!   leaves and the memo of author dates, and (`origin_history::located`)
 //!   the repository's key, the history guard and the shallow cuts
@@ -405,6 +408,7 @@ pub mod store;
 pub mod symbols;
 pub mod toml;
 pub mod tool_handlers;
+pub mod transcript;
 pub mod unicode;
 pub mod use_tokens;
 pub mod verdict_signals;

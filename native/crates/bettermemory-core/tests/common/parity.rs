@@ -198,6 +198,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "toml.jsonl"
         // The TypeError's text of an unhashable set element (`gen_use_tokens`).
         | "use_tokens_python.jsonl"
+        // Where the JSON decoder stops recursing (`gen_transcript`).
+        | "transcript_python.jsonl"
         | "settings_python.json"
         | "settings_paths_python.json"
         | "membership_lines_python.jsonl"
