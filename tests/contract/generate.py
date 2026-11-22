@@ -39,6 +39,7 @@ from . import (
     gen_checkout_token,
     gen_checkout_token_read,
     gen_checkout_token_write,
+    gen_checkout_token_remint,
     gen_cli,
     gen_cli_common,
     gen_config,
@@ -415,6 +416,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "checkout_token_read_posix": gen_checkout_token_read.generate_posix,
     "checkout_token_write": gen_checkout_token_write.generate,
     "checkout_token_write_posix": gen_checkout_token_write.generate_posix,
+    "checkout_token_remint": gen_checkout_token_remint.generate,
+    "checkout_token_remint_posix": gen_checkout_token_remint.generate_posix,
     "gitconfig_file": gen_gitconfig_file.generate,
     "gitconfig_tree": gen_gitconfig_tree.generate,
     "gitconfig_tree_rules": gen_gitconfig_tree.generate_rules,
@@ -939,7 +942,9 @@ PLATFORM_GATED = frozenset(
 #: so its bytes follow the OS family (`gen_checkout_token_read`);
 #: ``checkout_token_write`` runs `write` over the same scripted OS and
 #: ``checkout_token_write_posix`` writes real trees with modes and real
-#: errno texts (`gen_checkout_token_write`);
+#: errno texts (`gen_checkout_token_write`); ``checkout_token_remint`` and
+#: ``checkout_token_remint_posix`` do the same for `remint`
+#: (`gen_checkout_token_remint`);
 #: ``verify_candidates_scan`` and ``verify_candidates_scan_unicode`` expand
 #: ``~`` through the host's ``Path``, whose Windows flavour parses and
 #: spells paths otherwise (`gen_verify_candidates`);
@@ -990,6 +995,8 @@ POSIX_ONLY = frozenset(
         "verify_candidates_scan",
         "verify_candidates_scan_unicode",
         "verify_anchoring_attest_posix",
+        "checkout_token_remint",
+        "checkout_token_remint_posix",
         "store_restore_lock",
         "store_restore_lock_hold",
         "store_restore_lock_python",

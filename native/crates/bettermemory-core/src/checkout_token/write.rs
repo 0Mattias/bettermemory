@@ -32,7 +32,8 @@ pub const FILE_MODE: u32 = 0o644;
 /// `_READONLY_ERRNOS`, by name.
 pub const READONLY_ERRNOS: [&str; 3] = ["EACCES", "EPERM", "EROFS"];
 
-/// `WriteStatus`, less the re-mint's two (unit 4).
+/// `WriteStatus`; the last two only a re-mint gives (`CONTENDED`,
+/// `CLAIM_BLOCKED`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteStatus {
     Written,
@@ -43,6 +44,8 @@ pub enum WriteStatus {
     SkippedPolicy,
     FailedReadonly,
     FailedIo,
+    SkippedContended,
+    FailedClaimBlocked,
 }
 
 impl WriteStatus {
@@ -57,6 +60,8 @@ impl WriteStatus {
             WriteStatus::SkippedPolicy => "skipped:policy",
             WriteStatus::FailedReadonly => "failed:readonly",
             WriteStatus::FailedIo => "failed:io",
+            WriteStatus::SkippedContended => "skipped:contended",
+            WriteStatus::FailedClaimBlocked => "failed:claim_blocked",
         }
     }
 }
@@ -137,6 +142,12 @@ pub trait TokenFs: Fs {
     /// `os.stat(path).st_mtime`.
     fn stat_mtime(&self, path: &[u8]) -> Result<f64, OsError> {
         self.stat(path).map(|s| st_mtime(s.mtime_ns))
+    }
+    /// `os.replace(src, dst)`. The default declines: an error with no
+    /// errno name, which `failed` answers as not ported.
+    fn replace(&self, src: &[u8], dst: &[u8]) -> Result<(), OsError> {
+        let _ = (src, dst);
+        Err(OsError::of_class(PyErr::Os))
     }
 }
 
@@ -600,6 +611,10 @@ impl TokenFs for StdFs {
 
     fn link(&self, src: &[u8], dst: &[u8]) -> Result<(), OsError> {
         std::fs::hard_link(host(src)?, host(dst)?).map_err(io)
+    }
+
+    fn replace(&self, src: &[u8], dst: &[u8]) -> Result<(), OsError> {
+        std::fs::rename(host(src)?, host(dst)?).map_err(io)
     }
 
     #[cfg(unix)]

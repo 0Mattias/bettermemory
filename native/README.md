@@ -91,7 +91,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `fsutil` | units 1 and 2 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads; `flock_excl` (`lock_path`, a guard held until dropped) and its Windows branch `_flock_windows` over an `Msvcrt` trait, with `FLOCK_TIMEOUT_SECONDS` and the process-wide `_FLOCK_WARNED` | `fsutil.jsonl`, `fsutil_python.jsonl`, `fsutil_flock.jsonl`, `fsutil_flock_python.jsonl`, `fsutil_flock_platform.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`); unit 4, `gitobjects::files::reader`: `ObjectReader`'s `has`, `has_many`, `name_length`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `_raw`, `_places`, `_object`, `_take_loose`, `_loose`, `_packed` | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl`, `gitobjects_reader.jsonl`, `gitobjects_reader_zlib.jsonl`, `gitobjects_reader_posix.jsonl` |
 | `gitfile_rule` | the rule a `.git` entry is followed by, whole on POSIX (units 1, 2a, 2b, 3, 4 and 5): `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data; 2a: `gitdir`, git's reading of a git directory (`_read`, `_real`, `_real_to_last`, `_valid_headref`, `_git_common`, `_git_read`); 2b: `identity` (`_names_here`, `_names_folder`, `_same_folder`, `_is_link`, `_tree_of`, `_working_tree_of`); 3: `trust` (`tree_format`, `own_refusal`, `inside_reading`, `reads_worktree_config`, `object_format_at`, `_common_of`, `_commondir`, `_foreign_commondir`, `_registered`, `_is_git_directory`); 4: `follow` (`gitfile_refusal`, `_refusal`, `_recorded_reading`, `_spells`, `_read_recorded`, `earliest_naming`, `names_git_dir`, `_entry_names`, and `gitdir_pin`'s `recorded` with the text of a pin record); 5: `discovery` (`Entry`, `judge`, `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees`) | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl`, `gitdir_read.jsonl`, `gitdir_read_python.jsonl`, `gitfile_identity.jsonl`, `gitfile_identity_python.jsonl`, `gitfile_trust.jsonl`, `gitfile_trust_python.jsonl`, `gitfile_follow.jsonl`, `gitfile_follow_python.jsonl`, `gitfile_pin_text.jsonl`, `gitfile_pin_text_python.jsonl`, `gitfile_discovery.jsonl`, `gitfile_discovery_python.jsonl` |
-| `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text`; its write (`checkout_token::write`): `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_fs_now`, `_sweep`, `_place`, `_after_race`, `_failed`, `_unlink_quietly`, `TokenWrite` | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only), `checkout_token_write.jsonl`, `checkout_token_write_posix.jsonl` (POSIX only) |
+| `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text`; its write (`checkout_token::write`): `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_fs_now`, `_sweep`, `_place`, `_after_race`, `_failed`, `_unlink_quietly`, `TokenWrite`; its re-mint (`checkout_token::remint`): `remint`, `_replace_named`, `_claim`, `_wait_for`, `_take`, `_blocked`, `_holder`, `_claim_read`, `_break`, `_break_marks`, `_release`, `_remove_holding`, `replace_atomic`'s retry | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only), `checkout_token_write.jsonl`, `checkout_token_write_posix.jsonl` (POSIX only), `checkout_token_remint.jsonl`, `checkout_token_remint_posix.jsonl` (POSIX only) |
 | `config` | `config._config_from_data`, `load_config(create=False)`, `load_config(create=True)`'s first-run write (`config::create`: `DEFAULT_CONFIG`, the parents made, the atomic write, the notice), the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json`, `settings_create.jsonl`, `settings_create_posix.jsonl` |
 | `difflib` | `history._body_diff` (`body_diff`), `str.splitlines`, and CPython 3.13.13's `difflib.unified_diff` as it calls it: `SequenceMatcher` with autojunk (`__chain_b`, `find_longest_match`, `get_matching_blocks`, `get_opcodes`, `get_grouped_opcodes`), `_format_range_unified`, `unified_diff` with `lineterm=""` and no dates (`unified_diff_lines` joined with newlines) | `difflib.jsonl` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
@@ -6171,6 +6171,9 @@ that Unicode too.
 | `golden_checkout_token_write`: `every_scripted_write_answers_and_calls_as_the_reference` (unix); `checkout_token_write_kills` (unix) | `checkout_token_write.jsonl` | i; os elsewhere (`checkout_token_write_not_posix`) |
 | `golden_checkout_token_write_posix`: `every_real_write_answers_as_the_reference` (unix) | `checkout_token_write_posix.jsonl` | i; os elsewhere (`checkout_token_write_not_posix`) |
 | `checkout_token_write_robustness` (8; the child-process and mode 0o200 tests unix only) | none | i |
+| `golden_checkout_token_remint`: `every_scripted_remint_answers_and_calls_as_the_reference` (unix); `checkout_token_remint_kills` (unix) | `checkout_token_remint.jsonl` | i; os elsewhere (`checkout_token_remint_not_posix`) |
+| `golden_checkout_token_remint_posix`: `every_real_remint_answers_as_the_reference` (unix) | `checkout_token_remint_posix.jsonl` | i; os elsewhere (`checkout_token_remint_not_posix`) |
+| `checkout_token_remint_robustness` (4) | none | i |
 | `golden_location_stamps_posix`: `every_case_answers_as_the_reference` (unix) | `location_stamps.jsonl` | i; os elsewhere (`location_stamps_not_posix`) |
 | `golden_location_stamps_posix`: `every_release_bound_case_answers_as_the_reference` (unix) | `location_stamps_python.jsonl` | ii (Python); os elsewhere (`location_stamps_not_posix`) |
 | `golden_location_stamps`: `device_names_answer_as_each_platform_that_made_them` | `location_stamps_platform.jsonl` | ii (Python, platform) |
@@ -15229,7 +15232,7 @@ the file system, so it is cut into units, leaves first.
 | `_cut_short`, `_malformed_detail` | 851-871 | nothing | built |
 | `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock` | 353-363, 753-848 | open, stat, fstat, read, close, fcntl and a pause | built (unit 2) |
 | `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_fs_now`, `_sweep`, `_place`, `_after_race`, `_failed`, `_unlink_quietly` | 366-398, 466-484, 690-701, 874-1015 | mkdir, exclusive create, fsync, hard link, unlink, owner, the file system's clock, a monotonic clock and a pause | built (unit 3) |
-| `remint`, `_replace_named`, `_claim`, `_wait_for`, `_take`, `_blocked`, `_holder`, `_claim_read`, `_break`, `_break_marks`, `_release`, `_remove_holding` | 401-465, 487-750 | rename, exclusive create, unlink, a clock and a pause | unit 4 |
+| `remint`, `_replace_named`, `_claim`, `_wait_for`, `_take`, `_blocked`, `_holder`, `_claim_read`, `_break`, `_break_marks`, `_release`, `_remove_holding` | 401-465, 487-750 | rename, exclusive create, unlink, a clock and a pause | built (unit 4) |
 
 ### Unit 1, built (`checkout_token`)
 
@@ -15603,7 +15606,117 @@ doubles, every scripted failure point, and two processes writing one
 fresh git directory over eight rounds: one token, reported by both, no
 temporary file left; seen on macOS).
 
-Left for later units: `remint` and the claim (unit 4).
+Left for later units: `remint` and the claim (unit 4, built below).
+
+### Unit 4, built (`checkout_token::remint`)
+
+Line ranges confirmed against the source: `remint` 401-458,
+`_replace_named` 487-512, `_claim` 515-537, `_wait_for` 540-561, `_take`
+564-598, `_blocked` 601-608, `_holder` 611-620, `_claim_read` 623-634,
+`_break` 637-659, `_break_marks` 662-687, `_release` 704-708,
+`_remove_holding` 711-750, the constants 105-159, and `replace_atomic`'s
+retry in `_fsutil.py` 333-384. With this unit `checkout_token.py` is
+whole. The claim (`_claim` through `_remove_holding`) is about 330 lines
+of Rust, under the 350 of the split rule, so `remint` and the claim are
+one unit in `checkout_token/remint.rs`.
+
+- `remint` guards as `write` does (`write::guard`), draws the value
+  (`mint`, or `successor` of the lineage), makes the temporary file
+  (`info_dir`, `write_temp`), then renames it over the token: straight
+  through `replace_atomic` without a lineage, under the claim
+  (`_replace_named`) with one. An OSError the reference raises anywhere
+  inside is `_failed`'s answer, computed before the temporary file is
+  unlinked, as the reference's `except` runs before its `finally`;
+  `fsync_dir` of `info` follows success, skipped on Windows as `fsync_dir`
+  skips it.
+- Inside, an exception the reference raises travels as `Fault::Raised`;
+  every `except` of the reference is a match on the error's class at the
+  same place (`FileExistsError`, `PermissionError`, `FileNotFoundError`,
+  `OSError`, with a ValueError never caught).
+- `_replace_named` reads the token (`read_at`), answers `exists` for
+  another token (with `only_siblings`, only for one that `succeeds` the
+  lineage), then what kept the claim, then renames; the claim taken is
+  released last, whatever happened, and a raise of the release replaces
+  the answer, as a raise in a `finally` does.
+- `_claim` makes the own file holding a fresh nonce (one write; the
+  close's error replaces the write's), waits, and unlinks the own file
+  even after a raise. `_wait_for` reads its deadline once, before the
+  loop; pauses run from 0.01 s doubling to 0.2 s, each cut to what is
+  left; the first holder seen (None until a look reads one) is the one
+  broken when it still holds at the deadline, judged by `_fs_now` of the
+  temporary file.
+- `_take`: a link of the own file; EEXIST is false; any other error
+  falls to the exclusive create and one write, a claim left unfinished
+  unlinked; a PermissionError at that create is false on Windows and
+  raised elsewhere.
+- `_blocked` is `lstat` (through `Ctx::at`, as the reads are) finding
+  anything but a regular file; an OSError is false.
+- `_claim_read` and `_holder` read through `read_text`; a text that is
+  not a token's is named `"<state>: <detail>"`.
+- `_break_marks`: BLAKE2b-8 (`checkout_token::blake2b`) of the holder's
+  UTF-8 (the holder is ASCII text read from the claim, so `'replace'`
+  never applies), from generation 0; a mark found is stale only when
+  strictly more than 5.0 s older than `now` (a NaN age is stale, as
+  `age <= 5.0` is false for it); no clock, or an unreadable mark, is
+  live. The create and close are one step, as `os.close(os.open(...))`
+  in one `try` is.
+- `_remove_holding` (and `_release`) runs `fsutil::unlink_retrying_by`
+  over a small `Remover` of the claim, `still` the claim holding `held`.
+  A raise inside `still` ends the retry at once (the closure answers
+  false, which ends it without a further call) and is raised from the
+  `try` after it, where `FileNotFoundError` returns and any other OSError
+  passes to the next read, as in the reference.
+- `replace_atomic`: off Windows one `os.replace`; on Windows up to
+  `fsutil::REPLACE_ATTEMPTS`, only a PermissionError retried after
+  `REPLACE_BACKOFF_S` doubling, the last error raised.
+
+Two additions to `checkout_token/write.rs`: `TokenFs::replace`, whose
+default declines (an error without an errno name, which `failed` answers
+as not ported), implemented for `StdFs` with `std::fs::rename`; and the
+two statuses only a re-mint gives, `WriteStatus::SkippedContended`
+(`skipped:contended`) and `WriteStatus::FailedClaimBlocked`
+(`failed:claim_blocked`), which `TokenWrite` must be able to carry. No
+pattern is matched. Under the Windows flavour a relative git directory
+declines at the first read (`Ctx::at`), the crate's stated Windows gap
+(ENG-124).
+
+Fixtures (`tests/contract/gen_checkout_token_remint.py`):
+`checkout_token_remint.jsonl` (64 rows, POSIX only, for the write
+file's reasons) runs `remint` over the write file's scripted OS, with
+`os.link`, `os.replace`, `os.lstat` and the stat of a break mark taking
+their answers in turn and a read past the row's list finding nothing:
+the guard's skips, no lineage on each platform with the rename refused,
+retried and given up on Windows, the own file's create, write and close
+failing, the token absent, malformed, unreadable, named, another, a
+sibling, with and without `only_siblings`, the release finding the claim
+held, another's, unreadable, its unlink refused, gone and retried on
+Windows, a close failing in its read, the link refused and the create
+taken, existing, refused on each platform, failing to write or close, a
+blocked claim, an `lstat` refused, the claim held through the wait and
+broken, not taken after, a live mark, one at the bound, stale ones, a
+mark's stat refused, no clock, the mark's create refused on each
+platform, failing or failing to close, a mark's unlink refused, the
+claim's unlink refused to the end, changing holders, unreadable, absent,
+empty and malformed claims through the wait, and a NUL in the git
+directory. `checkout_token_remint_posix.jsonl` (10 rows, POSIX only)
+re-mints real git directories: fresh and existing without a lineage,
+the token named, none, another, another and a sibling with
+`only_siblings`, a folder at the claim's name, a malformed file and a
+missing git directory; a row holds that the file then reads as the token
+written, whether it succeeds the lineage, and the names left in `info`.
+
+Tests: `golden_checkout_token_remint` (unix; every row with the call
+log, over `tests/ct_remint_script`, which wraps `tests/ct_write_script`)
+and `golden_checkout_token_remint_posix` (unix; every row through
+`StdFs`), both recorded as having no case on Windows by
+`checkout_token_remint_not_posix`; `checkout_token_remint_kills` (unix:
+a mark at the bound live and one past it stale, the PermissionError
+branches on each platform, the close's error over the write's, the
+deadline read before the wait, the release after the rename,
+`replace_atomic`'s five attempts on Windows and one elsewhere,
+`only_siblings`); `checkout_token_remint_robustness` (git directories of
+200,000 bytes and lineage fields of a megabyte linear in time, 3,000
+stale marks passed in linear time, clocks at the ends of the doubles).
 
 ## The plain record writers
 
@@ -19487,8 +19600,7 @@ What the reference has and this build does not, by area:
   `_link_change_rows`, `HistoryRow` and `_RecordWalk` are built):
   `history.py`'s `record_history` and the renderers.
 - Reading a checkout: `origin_gitfiles.py` past its decoders, machine leaves,
-  config facts and the config memo with the refused root (units 6 and 7), `checkout_token.py` past its text, reads and write (the
-  remint and the claim: unit 4), the origin's settling
+  config facts and the config memo with the refused root (units 6 and 7), the origin's settling
   (`origin.py`), `location.py` past its view continuity, the
   capture's filesystem leaves and its capture signature and cache
   (`continuity`, `view_state`, their helpers and unit 1's leaves in

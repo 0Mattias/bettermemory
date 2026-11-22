@@ -1,0 +1,11 @@
+{"count":10,"fixture":"checkout_token_remint_posix"}
+{"n":"fresh, no lineage","r":{"detail":"","info":["bettermemory"],"placed":true,"status":"written","succeeds":false},"rep":null,"sib":false}
+{"n":"token, no lineage","r":{"detail":"","info":["bettermemory"],"placed":true,"status":"written","succeeds":false},"rep":null,"sib":false}
+{"n":"token named","r":{"detail":"","info":["bettermemory"],"placed":true,"status":"written","succeeds":true},"rep":["0123456789ABCDEFGHJKMNPQRS","1","2"],"sib":false}
+{"n":"no token, lineage","r":{"detail":"","info":["bettermemory"],"placed":true,"status":"written","succeeds":true},"rep":["0123456789ABCDEFGHJKMNPQRS","1","2"],"sib":false}
+{"n":"other token","r":{"detail":"","info":["bettermemory"],"status":"exists","token":"ZZZZZZZZZZZZZZZZZZZZZZZZZZ"},"rep":["0123456789ABCDEFGHJKMNPQRS","1","2"],"sib":false}
+{"n":"other token, only siblings","r":{"detail":"","info":["bettermemory"],"placed":true,"status":"written","succeeds":true},"rep":["0123456789ABCDEFGHJKMNPQRS","1","2"],"sib":true}
+{"n":"sibling, only siblings","r":{"detail":"","info":["bettermemory"],"status":"exists","token":"0000000000000BE8CTNH4HS6C8"},"rep":["0123456789ABCDEFGHJKMNPQRS","1","2"],"sib":true}
+{"n":"claim name a folder","r":{"detail":"no regular file at the claim","info":["bettermemory","bettermemory.tmp-claim"],"status":"failed:claim_blocked","token":null},"rep":["0123456789ABCDEFGHJKMNPQRS","1","2"],"sib":false}
+{"n":"malformed, lineage","r":{"detail":"","info":["bettermemory"],"placed":true,"status":"written","succeeds":true},"rep":["0123456789ABCDEFGHJKMNPQRS","1","2"],"sib":false}
+{"n":"missing git dir","r":{"detail":"No such file or directory (ENOENT)","info":null,"status":"failed:io","token":null},"rep":["0123456789ABCDEFGHJKMNPQRS","1","2"],"sib":false}
