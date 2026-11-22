@@ -324,6 +324,10 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_membership.jsonl"
         | "store_rows_written.jsonl"
         | "store_bulk.jsonl" => &[Unicode, Pydantic],
+        // Records read through pydantic models (`gen_store_reads_seams`).
+        "store_reads_seams.jsonl" => &[Pydantic],
+        // `Cursor.fetchmany`'s size check is the release's.
+        "store_reads_seams_python.jsonl" => &[Python],
         // Payloads nested near `json.loads`'s recursion budget
         // (`gen_history_rows`).
         "history_rows_python.jsonl" => &[Python],

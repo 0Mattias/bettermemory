@@ -100,7 +100,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `standing_guard` | `handlers/_guard.py` whole: `read_words`, `record`, `Held`, `check`, `guard` and the hints, over `GuardDeps` | `standing_guard.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_python.jsonl` |
 | `store::docfreq` | the document frequency memo of `store_index.py`: `_memoised_document_frequencies`, `_current_inputs`, `_patched_masks`, `_admitted_mask`, `_keep_doc_freqs`, `_row_mask`, `_DocFreqInputs` and the grouping of `Store._read_doc_freq_inputs`, the memoised half of `Store.ranking_statistics`; the store's side is the trait `DocFreqSource` | `store_docfreq.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks` | `membership_shared.jsonl`, `membership_shared_python.jsonl` |
@@ -16530,6 +16530,122 @@ links on a 512 KiB thread, hostile ids, wrong types, the checks before a
 held lock with no clock read, the RecursionError of the relink at the
 parser's limit with every file of the store unchanged after a refusal,
 and a `ConnSource` seeing its own transaction's uncommitted row).
+
+## The plain reads of the index and the records
+
+The reads of `store_index.py` and `store_records.py` that the search path
+and `in_force` call, ported as functions over a `&rusqlite::Connection`
+(the reference's `self._conn`), in `src/store/index_reads.rs` and
+`src/store/record_reads.rs`. They need nothing from the machine but the
+connection: no clock, no file, no environment.
+
+| Function | Reference | Port |
+| --- | --- | --- |
+| `_ranked_batches` | `store_index.py:239-268` | `RankedQuery::new`, `RankedQuery::batches` |
+| `rows_updated_since` | `store_index.py:285-298` | `rows_updated_since` |
+| `inbound_links` | `store_index.py:339-366` | `inbound_links` |
+| `_MEMORY_SELECT` | `store_records.py:101-104` | `MEMORY_ONE` (private) |
+| `body_of` | `store_records.py:305-310` | `body_of` |
+| `get_memory` | `store_records.py:313-317` | `get_memory` |
+| `has_memory` | `store_records.py:320-326` | `has_memory` |
+| `get_many` | `store_records.py:329-338` | `get_many` |
+| `light_many` | `store_records.py:341-369` | `light_many` (`seed_tokens=False`) |
+| `light_by_ids` | `store_records.py:372-392` | `light_by_ids` (`seed_tokens=False`) |
+| `memory_ids` | `store_records.py:472-476` | `memory_ids` |
+| `count_memories` | `store_records.py:479-480` | `count_memories` |
+| `has_memories` | `store_records.py:483-485` | `has_memories` |
+| `filename_for` | `store_records.py:488-494` | `filename_for` |
+| `load_one`, `_active_or_raise` | `store_records.py:1011-1031` | `load_one` |
+
+What each reproduces:
+
+- `_ranked_batches` is two steps, because a Rust iterator cannot hold a
+  statement and the rows it is reading together without `unsafe`:
+  `RankedQuery::new` holds the prepared statement (none for a text that
+  is empty or all `str.isspace`, or whose `fts_match_query` is empty), and
+  `batches(batch)` runs it once and yields the row numbers `batch` at a
+  time in `bm25` order, the row number breaking a tie. Dropping the
+  iterator resets the statement, as the reference's `finally` closes its
+  cursor. The size check is CPython 3.13's `Cursor.fetchmany`: a negative
+  size raises ValueError ("value must be positive") and one past
+  `u32::MAX` OverflowError ("Python int too large for C uint32_t"), both at
+  the first batch and only once the statement ran; zero yields nothing.
+  The first batch takes the statement's first step before it checks the
+  size, as `conn.execute` steps before `fetchmany` looks at its argument,
+  so a step that fails raises SQLite's error for any size.
+  3.11 and 3.12 answer every row in one batch for a size of zero or less
+  and overflow past a C `int`; 3.14 words the ValueError "Cannot convert
+  negative int". Those rows are in the Python-gated file.
+- `rows_updated_since` cuts `since` in UTC to its first nineteen
+  characters (`isoformat()`, the fraction cut, not rounded) and compares
+  as text, newest first, the greater id first among equal stamps. An
+  instant outside years 1 to 9999 in UTC is OverflowError ("date value out
+  of range"). A naive `since` is read by the reference as the machine's
+  local time; the port declines it (`NotPorted`), and the search caller
+  passes an aware one.
+- `inbound_links` dedups the targets in order and sorts the types, reads
+  `provenance::BATCH` targets per statement, and keeps only links whose
+  source has an active row (the join), oldest source first by `updated`
+  as text, the source id breaking a tie. Its answer is
+  `HashMap<String, Vec<in_force::Inbound>>`; the `LinkReader` trait is not
+  implemented here.
+- `get_memory`, `get_many` and `load_one` read through `_MEMORY_SELECT`
+  (the signed row's payload beside the record, so a `native_origin` there
+  is the record's origin); `light_many` and `light_by_ids` read
+  `NULL AS attestation_payload` and so drop it. `get_many` keeps an id
+  asked twice; the light reads keep the first sight. `light_by_ids` files
+  a row under its record's id. A row whose record does not validate
+  raises the record's error (`records::rows::memory`), whichever read.
+- `get_memory` and `filename_for` raise NotFoundError (a KeyError, so
+  `str()` is the id's `repr`) for an id with no active row; `body_of`
+  answers None.
+- `load_one` is `_active_or_raise` over a plain connection with the texts
+  of `writers::active_or_raise`, its transaction twin: "invalid id:
+  'x'" for an id `is_valid_ulid` refuses, then the active row, then
+  "memory X was removed: reason" for a tombstone, then "no memory with id
+  X". An id with both an active row and a tombstone answers the record.
+
+Decisions. Rows are built as `writers::one_row` builds them (column names
+from the statement, values through `store::sql_value`), in a private copy
+(`rows_of`), so `writers.rs` is unchanged. `str()` of a column value is
+spelled as Python spells it for text, integers and floats; a blob is
+`NotPorted`. The errors are `record_reads::ReadError`, whose `class()` and
+`text()` follow `writers::RecordWriteError`'s: an error of the stored
+record (`ReadError::Record`) has its class but no text, since
+`records::RecordError` carries none (the reference prints, for one,
+"Invalid isoformat string" with the column's value). Ids are `&str` except in
+`load_one`, which takes code points as `writers::active_or_raise` does: a
+`&str` cannot hold a lone surrogate, which the reference's `sqlite3` would
+refuse to encode. No pattern of `re` is involved.
+
+Fixtures. `gen_store_reads_seams.py` calls each reference function with a
+stand-in whose `_conn` is an in-memory connection holding
+`store_schema.SCHEMA` (the native test runs the same text from
+`reference_schema.json`), and records every row of `memories`,
+`memory_links`, `tombstones` and `log` in the header. The records are
+written by `_write_memory_row`; by hand: an id that is no ULID, a stamp
+spelled `+00:00`, `links_json` of `[]` beside link rows, a link whose
+source has no row, two links that differ in their note, three tombstones
+(one shadowed by an active row, one whose reason holds a quote and a line
+feed), a signed row with a `native_origin`. Ranked batches at 1, 3 and
+1000. A bulk store of 1,203 rows by a rule the test repeats
+(`tests/common/store_reads.rs`) pins ranked batches past 1,000, the light
+reads and `inbound_links` past one `BATCH`, by count and SHA-256.
+`store_reads_seams.jsonl` (113 cases) is gated on pydantic-core, as the
+other record fixtures are; `store_reads_seams_python.jsonl` (5 cases) on
+the Python release. Nothing in either depends on the platform: every body
+and query is ASCII, and tied scores come from equal texts.
+
+Tests: `golden_store_reads_seams.rs` (both files, Ledger),
+`store_reads_seams_kills.rs`, `store_reads_seams_robustness.rs` (texts of
+460 KB, FTS syntax in the query, lone surrogates, a 1 MiB id, `i64`
+bounds for the batch size and the row numbers, instants at the ends of the
+calendar, 2,000 types against 5,000 targets; and the reads at 400 and
+4,000 rows held to `timing::TENFOLD`).
+
+Left for later units: `records_linking_to` and `iter_memory_rows`
+(store_records-1c), `seed_tokens=True` (the search unit's), the standing
+reads and the tombstone reads (lane srecstand), the memo (lane sidxmemo).
 
 ## Text made safe to show, and the membership lines
 

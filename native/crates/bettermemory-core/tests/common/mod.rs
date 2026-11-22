@@ -43,6 +43,7 @@ pub mod schema_steps;
 pub mod session;
 pub mod settings_create;
 pub mod settle;
+pub mod store_reads;
 pub mod stores;
 pub mod symbols;
 pub mod tool_handlers;

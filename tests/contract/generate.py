@@ -159,6 +159,7 @@ from . import (
     gen_store_files,
     gen_store_open,
     gen_store_records,
+    gen_store_reads_seams,
     gen_store_records_b,
     gen_store_records_c,
     gen_store_records_d,
@@ -348,6 +349,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_write": gen_store_write.generate,
     "store_tx": gen_store_tx.generate,
     "store_records": gen_store_records.generate,
+    "store_reads_seams": gen_store_reads_seams.generate,
+    "store_reads_seams_python": gen_store_reads_seams.generate_python,
     "store_records_b": gen_store_records_b.generate,
     "store_records_c": gen_store_records_c.generate,
     "store_records_d": gen_store_records_d.generate,
@@ -639,6 +642,9 @@ PYTHON_VERSION = "3.13.13"
 #: recursion budget (`gen_history_rows`). ``membership_shared_python``
 #: holds log payloads nested 200,000 arrays deep, which `json.loads` reads
 #: whole under 3.14 on Linux (`gen_membership_shared`).
+#: ``store_reads_seams_python`` holds `Cursor.fetchmany` sizes past its
+#: bounds, which 3.13 checks otherwise than 3.12 and words otherwise than
+#: 3.14 (`gen_store_reads_seams`).
 #: ``origin_remote_python`` holds URLs with a bracket, whose host checks in
 #: `urlsplit` and `ipaddress` are the release's (`gen_origin_remote`).
 #: ``gitfile_pin_text_python`` holds pin records read through ``ntpath``
@@ -768,6 +774,7 @@ PYTHON_GATED = frozenset(
         "machine_identity_python",
         "machine_facts_platform",
         "machine_open_platform",
+        "store_reads_seams_python",
         "location_probe_python",
         "store_rotation_python",
         "log_keyfiles_posix_python",
@@ -810,6 +817,7 @@ PYDANTIC_GATED = frozenset(
         "store_write",
         "store_tx",
         "store_records",
+        "store_reads_seams",
         "store_records_b",
         "store_records_c",
         "store_records_d",

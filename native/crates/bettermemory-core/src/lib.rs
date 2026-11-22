@@ -117,9 +117,11 @@
 //!   `store.py`'s connection leaves and its admitted reads (`store::reads`);
 //!   the finish of a committed key rotation (`store::rotation`); the
 //!   episode journal's reads (`store::journal`); the upgrade's proof
-//!   that no other connection holds the store (`store::upgrade`); and the
+//!   that no other connection holds the store (`store::upgrade`); the
 //!   document frequency memo with the store's side as a trait
-//!   (`store::docfreq`);
+//!   (`store::docfreq`); and the plain reads of the index and the
+//!   records over a connection (`store::index_reads`,
+//!   `store::record_reads`);
 //! - [`membership_records`]: the vocabulary and records of the membership
 //!   model, units 1 to 3 (the legacy ask rule and the helpers that
 //!   compare, join and rebase recorded paths in either spelling; the

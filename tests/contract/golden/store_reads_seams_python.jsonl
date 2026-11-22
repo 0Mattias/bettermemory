@@ -1,0 +1,6 @@
+{"cases":5,"fixture":"store_reads_seams_python"}
+{"args":["alpha",0],"fn":"ranked","out":{"ok":[]},"store":"full"}
+{"args":["alpha",-1],"fn":"ranked","out":{"raised":"ValueError","text":"value must be positive"},"store":"full"}
+{"args":["alpha",4294967295],"fn":"ranked","out":{"ok":[[1,6,4,2,40,41]]},"store":"full"}
+{"args":["alpha",4294967296],"fn":"ranked","out":{"raised":"OverflowError","text":"Python int too large for C uint32_t"},"store":"full"}
+{"args":["",-1],"fn":"ranked","out":{"ok":[]},"store":"full"}
