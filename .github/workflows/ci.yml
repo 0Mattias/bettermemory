@@ -493,7 +493,14 @@ jobs:
     name: native parity (${{ matrix.os }})
     if: github.workflow == 'CI'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # Two hours. The job runs the crate's whole test suite twice (against the
+    # committed files, then against the files made on the runner), and the
+    # suite grows with every unit ported: on macos-latest it took 49, 55.5,
+    # 54.6 and then 60.5 minutes over four pushes of 2026-11-21, and the last
+    # was cancelled at the 60-minute limit this line held until then; Linux
+    # took 36 to 52 minutes and Windows 38 to 58. A job that is cancelled
+    # reports nothing about parity.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
