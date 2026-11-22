@@ -8,8 +8,9 @@
 mod common;
 mod pyre_api_support;
 
+use bettermemory_core::pyre::replace::ReplaceError;
 use common::parity::Ledger;
-use pyre_api_support::{build, codes, line, refusal_name, reversed, windows, Built};
+use pyre_api_support::{build, codes, line, refusal_name, replaced, reversed, windows, Built};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -128,7 +129,61 @@ fn check_kill(row: &Value) {
     assert_eq!(got, text(&row["answer"]), "{row}");
 }
 
-fn check(ledger: &mut Ledger, row: &Value) {
+fn check_replace(row: &Value) {
+    let b = built(row);
+    let repl = row.get("repl").map(codes).unwrap_or_default();
+    let got = replaced(
+        &b,
+        &codes(&row["text"]),
+        text(&row["method"]),
+        &repl,
+        int(row, "count"),
+    );
+    match row.get("refused") {
+        Some(name) => {
+            assert_eq!(text(name), "Template", "{row}");
+            assert_eq!(got, Err(ReplaceError::Template), "{row}");
+        }
+        None => assert_eq!(got.as_deref(), Ok(text(&row["answer"])), "{row}"),
+    }
+}
+
+/// `gen_pyre_api._replace_sweep` over the accepted `api.fuzz` rows of
+/// the file, in order.
+fn check_replace_sweep(row: &Value, file: &[Value]) {
+    let counts: Vec<isize> = row["counts"]
+        .as_array()
+        .expect("counts")
+        .iter()
+        .map(|c| c.as_i64().expect("a count") as isize)
+        .collect();
+    let long = int(row, "long") as usize;
+    let mut digest = Sha256::new();
+    let mut calls = 0u64;
+    for fuzz in file
+        .iter()
+        .filter(|r| r["part"] == "api.fuzz" && r.get("refused").is_none())
+    {
+        let b = built(fuzz);
+        for n in 0..=long {
+            for t in texts(&[97, 98], n) {
+                for &c in &counts {
+                    let answers = ["subn", "subn_fn", "split"].map(|m| {
+                        replaced(&b, &t, m, &[60, 62], c).unwrap_or_else(|e| panic!("{e}"))
+                    });
+                    digest.update(answers.join(" ").as_bytes());
+                    digest.update(b"\n");
+                    calls += 1;
+                }
+            }
+        }
+    }
+    assert!(calls > 0, "a sweep of no call");
+    assert_eq!(calls, row["count"].as_u64().expect("count"));
+    assert_eq!(common::hex(&digest.finalize()), text(&row["sha256"]));
+}
+
+fn check(ledger: &mut Ledger, row: &Value, file: &[Value]) {
     let part = text(&row["part"]);
     let name = format!(
         "{part} {} {}",
@@ -139,6 +194,8 @@ fn check(ledger: &mut Ledger, row: &Value) {
         "api.sweep" => ledger.case(name, || check_sweep(row)),
         "api.fuzz" => ledger.case(name, || check_fuzz(row)),
         "api.kill" => ledger.case(name, || check_kill(row)),
+        "api.replace" => ledger.case(name, || check_replace(row)),
+        "api.replace_sweep" => ledger.case(name, || check_replace_sweep(row, file)),
         other => panic!("a part this test does not know: {other}"),
     }
 }
@@ -150,7 +207,7 @@ fn pyre_api_every_row() {
     assert_eq!(header["part"], "header");
     let mut ledger = Ledger::new("pyre_api_every_row", "pyre_api.jsonl");
     for row in &file {
-        check(&mut ledger, row);
+        check(&mut ledger, row, &file);
     }
     common::assert_count(
         "pyre_api.jsonl header",
@@ -175,7 +232,7 @@ fn shared(name: &str, test: &str) {
     );
     let mut ledger = Ledger::new(test, name);
     for row in &rows {
-        check(&mut ledger, row);
+        check(&mut ledger, row, &file);
     }
     ledger.finish(rows.len());
 }

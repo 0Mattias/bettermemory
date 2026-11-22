@@ -40,6 +40,27 @@ Parts:
   that took no part (``None`` against ``''``), ``lastgroup``, clamped and
   reversed windows.
 
+Unit pyre-6b adds ``sub``, ``subn`` and ``split`` (``pyre/replace.rs``):
+
+- ``api.replace``: one call written out (`REPLACE_KILLS`): ``subn`` with a
+  literal, ``subn_fn`` with the function `_swap`, or ``split``, with a
+  count. ``subn`` answers the result as a piece (`_piece`) and the count,
+  joined by ``|``; ``split`` each item inside ``[]`` joined by ``,``, a
+  group that took no part as ``None``. A literal holding a backslash is a
+  template in the reference and refused by the engine: such a row holds
+  ``refused`` and, under ``reference``, the reference's answer or ``!``
+  and the name of its exception.
+- ``api.replace_sweep``: the accepted ``api.fuzz`` patterns of this file,
+  in order, each over every text over ``ab`` of at most ``FUZZ_LONG``
+  code points and each count of ``REPLACE_COUNTS``: the count of calls
+  and the SHA-256 over the lines of the three answers (``subn`` with
+  ``<>``, ``subn_fn``, ``split``) joined by a space.
+
+`_swap`, the function replacement, models the group swap of the
+reference's function replacements: ``None`` for an empty match, else the
+groups from the last to the first (``''`` for one that took no part), or
+with no group the match's text reversed.
+
 A pattern under IGNORECASE reads the fold tables, so its rows are in
 ``pyre_unicode.jsonl``, with the sweeps whose alphabet goes past ASCII.
 """
@@ -120,6 +141,63 @@ KILLS: list[tuple[str | bytes, int, str, int, int, str]] = [
     ("", 0, "abc", 2, 1, "findall"),
     ("", 0, "abc", 2, 1, "match"),
     ("a*", 0, "aaa", 2, 0, "findall"),
+]
+
+
+REPLACE_COUNTS = (0, 1, 2, -1)
+
+#: ``(pattern, text, method, repl, count)``; ``repl`` is ``None`` for
+#: ``subn_fn``.
+REPLACE_KILLS: list[tuple[str | bytes, str, str, str | None, int]] = [
+    # Empty matches, adjacent to non-empty ones, and the attempt after one.
+    ("x*", "abc", "subn", "-", 0),
+    ("a*", "baaac", "subn", "-", 0),
+    ("a*?", "aab", "subn", "-", 0),
+    ("|a", "ab", "subn", "-", 0),
+    ("b*|a", "ab", "subn", "-", 0),
+    ("", "", "subn", "-", 0),
+    ("", "abc", "subn", "", 0),
+    ("x*", "abc", "split", None, 0),
+    ("a*", "baaac", "split", None, 0),
+    ("", "abc", "split", None, 0),
+    ("", "", "split", None, 0),
+    ("a*?", "aab", "split", None, 0),
+    ("|a", "ab", "split", None, 0),
+    ("$", "a\nb\n", "split", None, 0),
+    # The count: 0 is no bound, a negative count finds nothing.
+    ("a", "aaaa", "subn", "-", 1),
+    ("a", "aaaa", "subn", "-", 3),
+    ("a", "aaaa", "subn", "-", 9),
+    ("a", "aaaa", "subn", "-", -1),
+    ("x*", "abc", "subn", "-", 2),
+    ("a", "aaaa", "split", None, 1),
+    ("a", "aaaa", "split", None, 2),
+    ("a", "aaaa", "split", None, -1),
+    ("x*", "abc", "split", None, 1),
+    ("a", "bab", "split", None, 0),
+    ("a", "a", "split", None, 0),
+    # Groups in split: None for a group that took no part.
+    ("(a)|b", "abc", "split", None, 0),
+    ("(a)(x)?", "bab", "split", None, 0),
+    ("(?:(a)|b)", "ab", "split", None, 1),
+    ("()", "ab", "split", None, 0),
+    # Function replacement: the group swap and None.
+    ("(a)(b)", "xabyab", "subn_fn", None, 0),
+    ("(a)(b)?", "aab", "subn_fn", None, 0),
+    ("(a)|(b)", "ab", "subn_fn", None, 0),
+    ("ab|", "abc", "subn_fn", None, 0),
+    ("a*", "baac", "subn_fn", None, 0),
+    ("(a)(b)", "abab", "subn_fn", None, 1),
+    # Bytes.
+    (b"a*", "baac", "subn", "-", 0),
+    (b"(a)|b", "abc", "split", None, 0),
+    (b"(a)(b)", "abab", "subn_fn", None, 0),
+    # A literal with a backslash: a template in the reference, refused.
+    ("a", "ab", "subn", "\\n", 0),
+    ("(a)", "ab", "subn", "<\\1>", 0),
+    ("a", "ab", "subn", "\\2", 0),
+    ("a", "b", "subn", "\\", 0),
+    (b"a", "ab", "subn", "\\g<0>", 0),
 ]
 
 
@@ -371,6 +449,85 @@ def _kill_reversed(case: tuple[str | bytes, int, str, int, int, str]) -> bool:
     return _reversed(len(text), pos, endpos)
 
 
+def _swap(m: re.Match[Any]) -> Any:
+    """The function replacement of the fixtures (see the module text)."""
+    if m.start() == m.end():
+        return None
+    empty = m.string[:0]
+    if m.re.groups:
+        return empty.join(m.group(g) or empty for g in range(m.re.groups, 0, -1))
+    return m.group(0)[::-1]
+
+
+def _replaced(
+    compiled: re.Pattern[Any], method: str, repl: Any, text: Any, count: int
+) -> str:
+    if method == "split":
+        items = compiled.split(text, count)
+        return "[" + ",".join("None" if x is None else _piece(x) for x in items) + "]"
+    out, n = compiled.subn(_swap if method == "subn_fn" else repl, text, count)
+    return f"{_piece(out)}|{n}"
+
+
+def _replace_kill(
+    case: tuple[str | bytes, str, str, str | None, int],
+) -> dict[str, Any]:
+    pattern, text, method, repl, count = case
+    compiled = _compiled(pattern, 0)
+    as_bytes = isinstance(pattern, bytes)
+    subject: Any = text.encode("latin-1") if as_bytes else text
+    row: dict[str, Any] = {
+        "part": "api.replace",
+        **_head(pattern, 0),
+        "text": [ord(ch) for ch in text],
+        "method": method,
+        "count": count,
+    }
+    if repl is not None:
+        row["repl"] = [ord(ch) for ch in repl]
+    literal: Any = repl.encode("latin-1") if as_bytes and repl is not None else repl
+    try:
+        answer = _replaced(compiled, method, literal, subject, count)
+    except re.error:
+        # ``re.error`` is named ``PatternError`` from 3.13, so the row
+        # names the class as every release can.
+        answer = "!re.error"
+    if repl is not None and "\\" in repl:
+        row["refused"] = "Template"
+        row["reference"] = answer
+    else:
+        row["answer"] = answer
+    return row
+
+
+def _replace_sweep() -> dict[str, Any]:
+    accepted, _ = _fuzz_cases()
+    digest = hashlib.sha256()
+    count = 0
+    for _, pattern, flags in accepted:
+        if _folds(pattern, flags):
+            continue
+        compiled = _compiled(pattern, flags)
+        repl: Any = b"<>" if isinstance(pattern, bytes) else "<>"
+        for n in range(FUZZ_LONG + 1):
+            for chars in itertools.product("ab", repeat=n):
+                text = _text(pattern, chars)
+                for c in REPLACE_COUNTS:
+                    line = " ".join(
+                        _replaced(compiled, method, repl, text, c)
+                        for method in ("subn", "subn_fn", "split")
+                    )
+                    digest.update((line + "\n").encode("ascii"))
+                    count += 1
+    return {
+        "part": "api.replace_sweep",
+        "counts": list(REPLACE_COUNTS),
+        "long": FUZZ_LONG,
+        "count": count,
+        "sha256": digest.hexdigest(),
+    }
+
+
 def rows() -> list[dict[str, Any]]:
     out = [_sweep(p, False) for p in _inventory() if not _unicode(p)]
     out += _fuzz_rows(False)
@@ -379,6 +536,8 @@ def rows() -> list[dict[str, Any]]:
         for case in KILLS
         if not _kill_reversed(case) and not _folds(case[0], case[1])
     ]
+    out += [_replace_kill(case) for case in REPLACE_KILLS]
+    out.append(_replace_sweep())
     return out
 
 

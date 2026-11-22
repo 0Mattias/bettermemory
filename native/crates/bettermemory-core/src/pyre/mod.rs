@@ -26,6 +26,9 @@
 //! - [`regex`]: `re.Pattern` and `re.Match`: a pattern built from its text
 //!   and flags, and `match`, `fullmatch`, `search`, `finditer` and
 //!   `findall` with `pos` and `endpos` (unit pyre-6a).
+//! - [`replace`]: `sub`, `subn` and `split` with a count, a literal or a
+//!   function replacement, a literal holding a backslash refused as a
+//!   template (unit pyre-6b).
 
 pub mod atom;
 pub mod charset;
@@ -34,6 +37,7 @@ pub mod fold;
 pub mod lower;
 pub mod parse;
 pub mod regex;
+pub mod replace;
 pub mod token;
 pub mod tree;
 

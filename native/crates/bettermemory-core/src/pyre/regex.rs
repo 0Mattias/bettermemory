@@ -5,7 +5,7 @@
 //! `finditer` and `findall` with `pos` and `endpos` (`Modules/_sre/sre.c`
 //! `pattern_new_match`, `scanner_search`, `pattern_findall`, compared by
 //! value with the interpreter). `sub`, `subn` and `split` are unit
-//! pyre-6b.
+//! pyre-6b, in [`super::replace`].
 //!
 //! A pattern goes through [`parse`] (with the engine's refusals), [`lower`]
 //! and [`supports`]; each distinct class is compiled once when the pattern
@@ -377,7 +377,7 @@ impl Regex {
     }
 
     /// `pattern_new_match`.
-    fn wrap(&self, found: &Found, len: isize, pos: isize, endpos: isize) -> Match {
+    pub(super) fn wrap(&self, found: &Found, len: isize, pos: isize, endpos: isize) -> Match {
         let mut regs = vec![(found.start, found.end)];
         for g in 0..self.groups {
             let a = found.marks.get(2 * g).copied().unwrap_or(-1);
@@ -415,13 +415,16 @@ impl Regex {
     }
 
     /// The matches of `scanner_search` and `pattern_findall`, in order,
-    /// each handed to `each` as it is found.
-    fn scan<T: Subject + ?Sized>(
+    /// each handed to `each` as it is found, at most `limit` of them: the
+    /// loop of `pattern_subx` and `pattern_split` checks its count before
+    /// each search, so no search runs once `limit` matches are found.
+    pub(super) fn scan<T: Subject + ?Sized>(
         &self,
         text: &T,
         pos: isize,
         endpos: isize,
         budget: Option<u64>,
+        limit: usize,
         mut each: impl FnMut(Found),
     ) -> Result<(), CallError> {
         self.check::<T>()?;
@@ -429,10 +432,11 @@ impl Regex {
         let end = endpos.clamp(0, len);
         let mut start = pos.clamp(0, len);
         let mut must_advance = false;
+        let mut found_so_far = 0usize;
         let run = |prog: &Program, at: isize, mode: Mode| {
             exec(prog, &self.classes, text, at, endpos, mode, budget)
         };
-        while start <= end {
+        while found_so_far < limit && start <= end {
             let found = if must_advance {
                 match run(&self.advance, start, Mode::Match)? {
                     None if start < end => run(&self.prog, start + 1, Mode::Search)?,
@@ -446,6 +450,7 @@ impl Regex {
             };
             must_advance = found.end == found.start;
             start = found.end;
+            found_so_far += 1;
             each(found);
         }
         Ok(())
@@ -473,7 +478,7 @@ impl Regex {
     ) -> Result<Vec<Match>, CallError> {
         let len = isize::try_from(text.len()).map_err(|_| CallError::Memory)?;
         let mut out = Vec::new();
-        self.scan(text, pos, endpos, budget, |f| {
+        self.scan(text, pos, endpos, budget, usize::MAX, |f| {
             out.push(self.wrap(&f, len, pos, endpos));
         })?;
         Ok(out)
@@ -501,7 +506,7 @@ impl Regex {
             }
         };
         let groups = self.groups;
-        self.scan(text, pos, endpos, budget, |f| {
+        self.scan(text, pos, endpos, budget, usize::MAX, |f| {
             out.push(match groups {
                 0 => Item::One(text.piece(f.start as usize, f.end as usize)),
                 1 => Item::One(piece(&f, 0)),
