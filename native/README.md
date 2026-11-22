@@ -8092,10 +8092,11 @@ generator's run).
   reference takes 4 to 6 ms; a release build, about as long, is held to
   50 ms; a debug build, 30 to 100 times slower, to 2 s; the fastest of up
   to ten rounds); and the three fast paths of `sre_lower` (A to Z, the
-  BMP's flags, past the table's last key) each under a quarter of the
-  time of a table search in a debug build, which removing any of them
-  breaks, and under three quarters in a release build, where a search
-  costs 6 to 10 ns against 2 and only removing the A to Z path breaks it.
+  BMP's flags, past the table's last key) shown to skip the table search
+  for every code point of each kind, and the cased code points of each
+  range to take it, through `sre_lower_by` (test-only, hidden), which
+  runs the body `sre_lower` runs and names the way taken; removing any
+  of the three paths breaks it on any machine, loaded or not.
   Nothing in this unit nests or backtracks.
 - `pyre_fold_first_read` (1 test, a binary of its own so that nothing in
   the process has read the dense table before): eight threads released

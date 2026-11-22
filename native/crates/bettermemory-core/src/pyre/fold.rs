@@ -41,14 +41,43 @@ pub const ASCII: u32 = 256;
 /// `_sre.unicode_tolower` (`_PyUnicode_ToLowercase`): the first code point
 /// of the full lower-case mapping of `c`, or `c`.
 pub fn sre_lower(c: u32) -> u32 {
+    sre_lower_by(c).0
+}
+
+/// The way [`sre_lower`] answered for one code point.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lowering {
+    /// Below U+0080, by arithmetic.
+    Arithmetic,
+    /// A code point of the BMP whose dense flags say it has no lower case.
+    Flags,
+    /// Past the lower-case table's last key.
+    PastLastKey,
+    /// The lower-case table was searched.
+    Searched,
+}
+
+/// [`sre_lower`] and the way it answered, for the tests that show the
+/// fast paths skip the table search. [`sre_lower`] runs this body.
+#[doc(hidden)]
+#[inline]
+pub fn sre_lower_by(c: u32) -> (u32, Lowering) {
     if c < 0x80 {
-        return if (0x41..=0x5A).contains(&c) {
+        let lower = if (0x41..=0x5A).contains(&c) {
             c + 0x20
         } else {
             c
         };
+        return (lower, Lowering::Arithmetic);
     }
-    unicode::lower_first(c)
+    let (lower, by) = unicode::lower_first_by(c);
+    let by = match by {
+        unicode::LowerBy::Flags => Lowering::Flags,
+        unicode::LowerBy::PastLastKey => Lowering::PastLastKey,
+        unicode::LowerBy::Searched => Lowering::Searched,
+    };
+    (lower, by)
 }
 
 /// `_PyUnicode_ToUppercase`, which `_sre` calls `sre_upper_unicode`: the

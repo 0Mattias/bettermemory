@@ -4,7 +4,7 @@
 //! texts. No panic in a debug or a release build; time linear in the text
 //! (ten times the text costs under thirty times the time); one literal over
 //! every code point in a bounded time; and the three fast paths of the
-//! lower case cheaper than a search of its table. The tables read first
+//! lower case taking no search of its table. The tables read first
 //! from many threads at once are `pyre_fold_first_read`, a binary of its
 //! own.
 //!
@@ -14,7 +14,8 @@
 use std::time::{Duration, Instant};
 
 use bettermemory_core::pyre::fold::{
-    extra_cases, sre_iscased, sre_lower, sre_upper, Lit, Unreproduced, IGNORECASE, LOCALE, UNICODE,
+    extra_cases, sre_iscased, sre_lower, sre_lower_by, sre_upper, Lit, Lowering, Unreproduced,
+    IGNORECASE, LOCALE, UNICODE,
 };
 use bettermemory_core::unicode;
 
@@ -229,92 +230,62 @@ fn building_a_literal_for_every_code_point_is_linear() {
     panic!("build: fastest {best:?}");
 }
 
-/// The time `sre_lower` takes over `text`.
-fn lowering(text: &[u32]) -> Duration {
-    let t = Instant::now();
-    let sum: u64 = text
-        .iter()
-        .map(|&c| u64::from(sre_lower(std::hint::black_box(c))))
-        .sum();
-    std::hint::black_box(sum);
-    t.elapsed()
-}
-
 #[test]
 fn the_fast_paths_skip_the_table_search() {
     // `sre_lower` answers three kinds of code point without searching the
     // lower-case table: ASCII (A to Z by arithmetic), a code point of the
     // BMP whose dense flags say it has no lower case, and one past the
-    // table's last key (U+1E921). Each is timed against code points of its
-    // range that are searched; without its fast path it is searched too
-    // and costs about as much.
-    //
-    // Measured on the machine the fixtures were made on, as a share of the
-    // searched time: a debug build 0.02 to 0.05, where a search costs 0.4
-    // to 1.5 us; a release build 0.14 for A to Z, 0.2 to 0.46 for the other
-    // two, and without the fast path 0.8 to 1.15, 0.48 and 0.54 (a search
-    // costs 6 to 10 ns there, a lookup of the flags 2). So a debug build, which
-    // the parity job runs, holds each to a quarter; a release build holds
-    // each to three quarters, which removing the ASCII path breaks and the
-    // other two do not. Every text is 100,000 code points; each time is the
-    // fastest of 3 to 10 rounds in a debug build, of 20 to 50 in a release
-    // one, whose rounds take milliseconds and whose cores differ in speed.
-    let ((num, den), (least, most)) = if cfg!(debug_assertions) {
-        ((1, 4), (3, 10))
-    } else {
-        ((3, 4), (20, 50))
-    };
-    let cycle = |set: Vec<u32>| -> Vec<u32> {
-        assert!(!set.is_empty());
-        (0..100_000).map(|i| set[i % set.len()]).collect()
-    };
+    // table's last key (U+1E921). `sre_lower_by` runs the same body and
+    // names the way it took, so each code point of each kind is shown to
+    // skip the search, and the cased code points of each range to take
+    // it, whatever the machine's load. A wall-clock comparison of the two
+    // ways stood here before: a debug build's fast paths took 0.02 to 0.05
+    // of the searched time on the machine the fixtures were made on, and a
+    // loaded runner measured 0.27 against a bound of 0.25.
     let has_lower = |c: &u32| sre_lower(*c) != *c;
-    // A to Z, and Latin-1 and Cyrillic capitals, each a short cycle.
-    let capitals = cycle((0x41..=0x5A).collect());
-    let capitals_searched = cycle(
-        (0xC0..=0xDE)
-            .filter(|&c| c != 0xD7)
-            .chain(0x410..=0x42F)
-            .collect(),
-    );
-    let bmp_none = cycle(
-        (0x80..0x10000)
-            .filter(|c| !has_lower(c) && !(0xD800..0xE000).contains(c))
-            .collect(),
-    );
-    let bmp_searched = cycle((0x80..0x10000).filter(has_lower).collect());
-    let past_last = cycle((0x1E922..N).collect());
-    let past_searched = cycle((0x10000..N).filter(has_lower).collect());
-    let texts = [
-        &capitals,
-        &capitals_searched,
-        &bmp_none,
-        &bmp_searched,
-        &past_last,
-        &past_searched,
+    let ways: [(Vec<u32>, Lowering); 6] = [
+        ((0..0x80).collect(), Lowering::Arithmetic),
+        (
+            (0xC0..=0xDE)
+                .filter(|&c| c != 0xD7)
+                .chain(0x410..=0x42F)
+                .collect(),
+            Lowering::Searched,
+        ),
+        (
+            (0x80..0x10000)
+                .filter(|c| !has_lower(c) && !(0xD800..0xE000).contains(c))
+                .collect(),
+            Lowering::Flags,
+        ),
+        (
+            (0x80..0x10000).filter(has_lower).collect(),
+            Lowering::Searched,
+        ),
+        ((0x1E922..N).collect(), Lowering::PastLastKey),
+        ((0x10000..N).filter(has_lower).collect(), Lowering::Searched),
     ];
-    // (fast text, searched text, the fast path)
-    let pairs = [
-        (0, 1, "A to Z by arithmetic"),
-        (2, 3, "the BMP's flags"),
-        (4, 5, "past the last key"),
-    ];
-    let held = |best: &[Duration], &(fast, searched, _): &(usize, usize, &str)| {
-        best[fast] * den < best[searched] * num
-    };
-    let mut best = [Duration::MAX; 6];
-    for round in 1..=most {
-        for (b, text) in best.iter_mut().zip(texts) {
-            *b = (*b).min(lowering(text));
-        }
-        if round >= least && pairs.iter().all(|pair| held(&best, pair)) {
-            return;
+    for (set, way) in &ways {
+        assert!(!set.is_empty());
+        let other: Vec<u32> = set
+            .iter()
+            .copied()
+            .filter(|&c| sre_lower_by(c).1 != *way)
+            .take(5)
+            .collect();
+        assert!(other.is_empty(), "not {way:?}: {other:x?}");
+    }
+    // Every value, a code point or not, is lowered as `sre_lower` lowers
+    // it, and a search is taken by no ASCII value and by nothing past the
+    // last key.
+    let mut searched = 0u32;
+    for c in (0..=N + 0x100).chain(u32::MAX - 0x100..=u32::MAX) {
+        let (lower, way) = sre_lower_by(c);
+        assert_eq!(lower, sre_lower(c), "{c:#x}");
+        if way == Lowering::Searched {
+            assert!((0x80..=0x1E921).contains(&c), "{c:#x}");
+            searched += 1;
         }
     }
-    let failed: Vec<String> = pairs
-        .iter()
-        .filter(|pair| !held(&best, pair))
-        .map(|&(fast, searched, what)| format!("{what}: {:?} of {:?}", best[fast], best[searched]))
-        .collect();
-    panic!("over {num}/{den}: {}", failed.join("; "));
+    assert!(searched > 0);
 }

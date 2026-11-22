@@ -119,7 +119,19 @@ fn a_store_named_dotdot_keeps_its_name() {
     let d = store_refusal_case::base("k-dotdot");
     fs::create_dir(d.join("e")).unwrap();
     fs::write(d.join("e").join("...restore-lock"), b"{}").unwrap();
-    let store = d.join("e").join("..");
+    // The store's text ends in `e/..` as the reference's `Path` keeps it.
+    // `Path::join` does not do for this on Windows: the scratch folder is
+    // canonical there (`\\?\C:\...`), and std's push into a verbatim path
+    // folds `..` away, which handed the port the scratch folder itself and
+    // so its sibling's record. The text is built whole instead.
+    // The reference answers `unfinished` on every system: `with_name`
+    // puts `...restore-lock` inside `e`, and that text has no `..` for the
+    // system to fold (on Windows a name of three dots and more is a name).
+    let mut text = d.join("e").into_os_string();
+    text.push(std::path::MAIN_SEPARATOR_STR);
+    text.push("..");
+    let store = std::path::PathBuf::from(text);
+    assert!(store.as_os_str().to_string_lossy().ends_with(".."));
     let (state, marker) = restore_state(&store).unwrap();
     assert_eq!(
         (state, marker.map(|m| m.len())),

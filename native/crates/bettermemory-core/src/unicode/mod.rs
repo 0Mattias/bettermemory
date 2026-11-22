@@ -521,14 +521,36 @@ fn first_mapped(index: &[(u32, u32)], data: &'static [u32], cp: u32) -> u32 {
         .unwrap_or(cp)
 }
 
+/// How [`lower_first_by`] answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LowerBy {
+    /// The dense BMP flags say the code point has no lower case.
+    Flags,
+    /// The code point is past the lower-case table's last key.
+    PastLastKey,
+    /// The lower-case table was searched.
+    Searched,
+}
+
 /// The first code point of `str.lower` of `cp` alone, `cp` itself where it
 /// has no mapping: `_PyUnicode_ToLowercase`, by which `re` lowers one
 /// character (`pyre::fold`). No final-sigma context, one code point out.
-pub(crate) fn lower_first(cp: u32) -> u32 {
+/// Returned with the way it answered (see [`LowerBy`]).
+#[inline]
+pub(crate) fn lower_first_by(cp: u32) -> (u32, LowerBy) {
     if bmp_flag(cp, F_LOWER) == Some(false) {
-        return cp;
+        return (cp, LowerBy::Flags);
     }
-    first_mapped(tables::LOWER_INDEX, tables::LOWER_DATA, cp)
+    if tables::LOWER_INDEX
+        .last()
+        .is_none_or(|&(last, _)| cp > last)
+    {
+        return (cp, LowerBy::PastLastKey);
+    }
+    let lower = mapped(tables::LOWER_INDEX, tables::LOWER_DATA, cp)
+        .and_then(|seq| seq.first().copied())
+        .unwrap_or(cp);
+    (lower, LowerBy::Searched)
 }
 
 /// The first code point of `str.upper` of `cp` alone, `cp` itself where it
