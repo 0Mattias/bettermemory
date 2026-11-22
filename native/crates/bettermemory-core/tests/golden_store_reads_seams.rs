@@ -1,5 +1,5 @@
-//! Every case of `store_reads_seams.jsonl` and
-//! `store_reads_seams_python.jsonl` against `store::index_reads` and
+//! Every case of `store_reads_seams.jsonl`,
+//! `store_reads_seams_platform.jsonl` and `store_reads_seams_python.jsonl` against `store::index_reads` and
 //! `store::record_reads`: the header's tables replayed into an in-memory
 //! store holding the reference's schema, each call's answer (a record as
 //! its canonical payload text) or exception compared, and the bulk
@@ -28,7 +28,7 @@ fn check(name: &str) {
     } else {
         None
     };
-    // The Python-gated file holds `full` cases only: its store is the main
+    // The gated files carry no tables: their `full` store is the main
     // file's.
     let full_store = match full_store {
         Some(s) => s,
@@ -67,4 +67,9 @@ fn store_reads_seams() {
 #[test]
 fn store_reads_seams_python() {
     check("store_reads_seams_python.jsonl");
+}
+
+#[test]
+fn store_reads_seams_platform() {
+    check("store_reads_seams_platform.jsonl");
 }

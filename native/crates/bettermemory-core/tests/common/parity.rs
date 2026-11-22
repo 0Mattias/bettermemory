@@ -336,6 +336,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_bulk.jsonl" => &[Unicode, Pydantic],
         // Records read through pydantic models (`gen_store_reads_seams`).
         "store_reads_seams.jsonl" => &[Pydantic],
+        // A bulk ranking whose order turns on two `bm25()` scores one unit
+        // in the last place apart (`gen_store_reads_seams`).
+        "store_reads_seams_platform.jsonl" => &[Platform, Pydantic],
         // `Cursor.fetchmany`'s size check is the release's.
         "store_reads_seams_python.jsonl" => &[Python],
         // Payloads nested near `json.loads`'s recursion budget

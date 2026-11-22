@@ -370,6 +370,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_records": gen_store_records.generate,
     "store_reads_seams": gen_store_reads_seams.generate,
     "store_reads_seams_python": gen_store_reads_seams.generate_python,
+    "store_reads_seams_platform": gen_store_reads_seams.generate_platform,
     "store_records_b": gen_store_records_b.generate,
     "store_records_c": gen_store_records_c.generate,
     "store_records_d": gen_store_records_d.generate,
@@ -856,6 +857,7 @@ PYDANTIC_GATED = frozenset(
         "store_tx",
         "store_records",
         "store_reads_seams",
+        "store_reads_seams_platform",
         "store_records_b",
         "store_records_c",
         "store_records_d",
@@ -931,6 +933,7 @@ PLATFORM_GATED = frozenset(
         "machine_facts_platform",
         "fsutil_flock_platform",
         "machine_open_platform",
+        "store_reads_seams_platform",
     }
 )
 

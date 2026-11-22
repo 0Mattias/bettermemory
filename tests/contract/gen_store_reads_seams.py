@@ -1,6 +1,6 @@
 """Fixtures: the plain reads of the index and the records that the search
 path and ``in_force`` call (``store_reads_seams.jsonl``,
-``store_reads_seams_python.jsonl``).
+``store_reads_seams_platform.jsonl``, ``store_reads_seams_python.jsonl``).
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/store/index_reads.rs`` and
@@ -30,6 +30,10 @@ and answer the batches; ``since`` cases give the datetime's
 ``bulk`` is a store of `BULK_N` rows made by a rule the native test
 repeats (`_bulk_rows`): its cases record the count and SHA-256 of the
 answer's JSON instead of the answer.
+
+``store_reads_seams_platform.jsonl`` holds the bulk ``ranked`` case
+whose order follows ``bm25()`` score bits that differ by one unit in the
+last place between two bodies (`_PLATFORM_CASES`).
 
 ``store_reads_seams_python.jsonl`` holds the ``ranked`` cases whose
 answer is CPython's ``Cursor.fetchmany`` size check, which changed in
@@ -346,13 +350,22 @@ def _bulk_arg(arg: Any) -> Any:
 def _bulk_cases() -> list[tuple[str, str, list[Any]]]:
     return [
         ("bulk", "ranked", ["alpha", 1000]),
-        ("bulk", "ranked", ["alpha filler", 7]),
         ("bulk", "since", ["2001-02-03T04:05:30+00:00"]),
         ("bulk", "light_many", ["@rowids"]),
         ("bulk", "light_by_ids", ["@ids"]),
         ("bulk", "inbound", ["@ids", ["supersedes"]]),
         ("bulk", "memory_ids", []),
     ]
+
+
+#: Bulk ``ranked`` cases whose order turns on ``bm25()`` score bits: under
+#: "alpha filler" two classes of body score one unit in the last place
+#: apart (-3.0035701352031004e-06 and -3.0035701352031e-06 on
+#: darwin-arm64), and the platform's `log` and double arithmetic decide
+#: which ranks first: CI's Linux runners answer another digest.
+_PLATFORM_CASES: list[tuple[str, str, list[Any]]] = [
+    ("bulk", "ranked", ["alpha filler", 7]),
+]
 
 
 _PYTHON_CASES: list[tuple[str, str, list[Any]]] = [
@@ -372,7 +385,12 @@ def _stores() -> dict[str, sqlite3.Connection]:
     return {"full": full, "empty": _connect(), "bulk": bulk}
 
 
-def _file(name: str, cases: list[tuple[str, str, list[Any]]], tables: bool) -> bytes:
+def _file(
+    name: str,
+    cases: list[tuple[str, str, list[Any]]],
+    tables: bool,
+    bulk: bool,
+) -> bytes:
     stores = _stores()
     lines = []
     for store, fn, args in cases:
@@ -382,6 +400,7 @@ def _file(name: str, cases: list[tuple[str, str, list[Any]]], tables: bool) -> b
     header: dict[str, Any] = {"fixture": name, "cases": len(lines)}
     if tables:
         header["tables"] = _dump(stores["full"])
+    if bulk:
         header["bulk"] = {
             "n": BULK_N,
             "first": _dump_row(stores["bulk"], 1),
@@ -399,7 +418,18 @@ def _dump_row(conn: sqlite3.Connection, rowid: int) -> dict[str, Any]:
 def generate() -> dict[str, bytes]:
     return {
         "store_reads_seams.jsonl": _file(
-            "store_reads_seams", _cases() + _bulk_cases(), True
+            "store_reads_seams", _cases() + _bulk_cases(), True, True
+        )
+    }
+
+
+def generate_platform() -> dict[str, bytes]:
+    """The bulk ``ranked`` cases whose order follows ``bm25()`` score bits
+    (the file is gated on the platform). The header carries the bulk rule
+    and no tables: the native test builds the bulk store from it."""
+    return {
+        "store_reads_seams_platform.jsonl": _file(
+            "store_reads_seams_platform", _PLATFORM_CASES, False, True
         )
     }
 
@@ -409,6 +439,6 @@ def generate_python() -> dict[str, bytes]:
     (the file is gated on the release)."""
     return {
         "store_reads_seams_python.jsonl": _file(
-            "store_reads_seams_python", _PYTHON_CASES, False
+            "store_reads_seams_python", _PYTHON_CASES, False, False
         )
     }
