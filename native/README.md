@@ -61,6 +61,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `history` | `history.py`'s first two units: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection; `_RowVerifier` and `_set` | `history_rows.jsonl`, `history_rows_python.jsonl`, `history_rows_mac.jsonl` |
 | `history_rows` | `history.py`'s third unit: `HistoryRow` with `to_dict`, `_changed` (with `py_ne`, Python's `!=` over payload values), `_body_diff` (through `difflib::body_diff`), `_set`, `_event_detail`, `_RecordWalk`, `_record_row`, `_link_change_rows` | `history_detail.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
+| `tool_handlers` | `_handlers.py`, unit handlers-2a: `RefusedError`, `_in_the_way`, `RetryableRefusal`, `KeptWriteRefusal`, `store_refusal`, `_ABSENT`, `_kept_or_retryable`, `_refusals_as_tool_errors`, `_read_only`, and `ToolHandlers`' `__init__`, `for_request`, `with_store` and `_run` (the nine forwarders are handlers-2b) | `tool_handlers.jsonl` |
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
 | `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields` | `audit_fields.jsonl` |
 | `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`) | `recall_settle.jsonl` |
@@ -5184,6 +5185,75 @@ compares it. The Rust test reads the committed file on every host.
 Left for later units: `history.py`'s unit 3 (`_changed`, `_event_detail`)
 calls `body_diff`.
 
+## The refusals and the bundle of the tool handlers (`_handlers.py`, unit handlers-2a)
+
+`tool_handlers` reproduces the part of `_handlers.py` that is not one of
+the nine served tools. The map, by reference line:
+
+| Function | Lines | What it needs from the machine | Status |
+| --- | --- | --- | --- |
+| `DESC_*` | 70-78 | nothing (re-exports of `handlers/__init__.py`) | handlers-2b re-exports them |
+| `RefusedError` | 81-96 | nothing | built: `Refusal` with `RefusalClass::Refused` |
+| `_in_the_way` | 99-106 | nothing | built: `in_the_way` |
+| `RetryableRefusal` | 109-132 | nothing | built: `retryable_refusal` |
+| `KeptWriteRefusal` | 135-153 | nothing | built: `kept_write_refusal` |
+| `store_refusal` | 156-169 | the store's classification | built: `store_refusal`, classification an argument |
+| `_ABSENT` | 172 | nothing | built: `Failure::Absent` |
+| `_kept_or_retryable` | 186-207 | the store's commit counter | built: `kept_or_retryable` |
+| `_refusals_as_tool_errors` | 210-261 | nothing | built: `refusals_as_tool_errors` |
+| `_read_only` | 264-268 | nothing | built: `read_only` |
+| `ToolHandlers.__init__`, `for_request`, `with_store`, `_run` | 271-367 | a store source, a worker pool | built: `ToolHandlers` |
+| `memory_search` through `memory_admin` | 370-650 | the per-tool modules | handlers-2b |
+
+A tool body is a closure answering a value or a `Failure`, the exception
+it raised: `Value` (a `ValueError`), `Absent` (one of `_ABSENT`, by
+`store::schema::Absent` and its args), `Sqlite` (a
+`sqlite3.OperationalError`: its `sqlite_errorcode` and `str()`), `Tool`
+(a `ToolError`, the refusal classes among them), `Other` (any other
+exception, raised as it is) and `Py` (an error `absent_text` raised).
+Another `sqlite3.Error` subclass is `Other`: the reference catches only
+`OperationalError`. The bodies run synchronously: the reference awaits
+nothing that yields inside one, so no async runtime is needed.
+
+Decisions:
+
+- `store.retryable_code` and `STORE_BUSY` are lane storereads' (`store`
+  reads). Every function that classifies takes it as an argument,
+  `Fn(&SqliteFailure) -> Option<&'static str>`; the tests use a
+  test-only mapping of the low byte (5 and 6 busy, 13 full).
+  `STORE_FULL` is spelled here because `_in_the_way` compares with it.
+- `sqlite_errorcode` is `Option<i64>`: an attribute that is not an
+  `int` is None, as `getattr` and `isinstance` read it. Python's `int`
+  has no bound; a caller that holds a larger code passes it wrapped to
+  64 bits (`wrap_code` wraps a decimal spelling), which keeps the low
+  byte, the only part either check reads.
+- The store is a trait, `BundleStore`: `commits` and `same_store`, the
+  identity `resolved is self.store` (pointer identity, `Arc::ptr_eq`).
+  The recorder's `dataclasses.replace(recorder, store=store)` is
+  `RebindStore::with_store`. The store source is `StoreSource`, whose
+  request context is opaque (`Option<&dyn Any>`) until handlers-2b
+  settles the MCP context's type. `for_request` answers a borrowed
+  bundle where the reference answers `self`, and a shallow copy (the
+  recorder not rebound) with no offload otherwise.
+- `Offload` is a closure that is given the body over a worker's store
+  and runs it.
+- The refusal texts of a store error and of the read-only refusal carry
+  the error's text as it is, control tokens included, and a `ToolError`
+  a body raises passes unchanged: the reference defangs only a
+  `ValueError`'s text and the `_ABSENT` texts. The port does the same
+  (rows of `tool_handlers.jsonl` pin it).
+
+No regular expression is used. `tool_handlers.jsonl` (ungated) is
+written by `tests/contract/gen_tool_handlers.py`: each scripted body
+through the wrapper and, with the commits moved or not, through
+`_kept_or_retryable`. The errors are built by hand with fixed messages
+and codes, so no row holds SQLite's own text.
+
+Left for handlers-2b: the nine forwarders (`memory_search` at line 370
+through the end of `memory_admin`, about line 650), each a
+`refusals_as_tool_errors` over `for_request(ctx).run(...)` of its
+per-tool module, and the `DESC_*` re-exports.
+
 ## The event kinds and their row classes (`events.py`)
 
 `events` reproduces the telemetry recorder's module, unit by unit. The map
@@ -6009,6 +6079,7 @@ that Unicode too.
 | `golden_search`: `search_ranker_tables` | `search_ranker.jsonl` header (word lists) | i |
 | `parity_provenance`: both tests | `generate.py`, the manifest | i |
 | `golden_toml`: `toml_every_document` | `toml.jsonl` | ii (Python) |
+| `golden_tool_handlers`: `tool_handlers_every_case`; `tool_handlers_kills` (11), `tool_handlers_robustness` (3) | `tool_handlers.jsonl` (the last two none) | i |
 | `golden_control_tokens`: `control_tokens_every_case` | `control_tokens.jsonl` | i |
 | `golden_control_tokens`: `control_tokens_unicode_every_case` | `control_tokens_unicode.jsonl` | ii (Unicode) |
 | `control_tokens_kills` (3), `control_tokens_robustness` (4) | none | i |
@@ -19847,7 +19918,9 @@ What the reference has and this build does not, by area:
   deadline (unit 3), and the `Recorder` (unit 4).
 - `recall_settle.py` past its settlement: `_probe_message` and
   `settle_interrupted` (settleint).
-- The daemon, the MCP tools, the hooks past the pure leaves of `hook.py`
+- The daemon, the MCP tools (of `_handlers.py` the refusal classes and
+  the bundle are built, `tool_handlers`; the nine forwarders and the
+  `DESC_*` re-exports are handlers-2b's), the hooks past the pure leaves of `hook.py`
   (hook-1a, in `hook.rs`) and the Stop audit's front half (hook-2a, a
   sequence over `StopSide` in `hook_stop.rs`), and the command line. Of
   the hook mains' argument parsing, the flat parser (argparse-1a) and

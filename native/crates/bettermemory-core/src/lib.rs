@@ -143,6 +143,8 @@
 //! - [`location_continuity`]: `location.continuity`, witness O where birth
 //!   time cannot decide;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
+//! - [`tool_handlers`]: the refusal classes and the dependency bundle of
+//!   `_handlers.py`, its first unit (the nine forwarders are later);
 //! - [`events`]: the telemetry recorder's rows, its first unit (the
 //!   event kinds, their row classes and the fields a state row keeps)
 //!   and the id-list readers (`event_id_items`, `event_id_list`);
@@ -379,6 +381,7 @@ pub mod standing_guard;
 pub mod store;
 pub mod symbols;
 pub mod toml;
+pub mod tool_handlers;
 pub mod unicode;
 pub mod use_tokens;
 pub mod verdict_signals;

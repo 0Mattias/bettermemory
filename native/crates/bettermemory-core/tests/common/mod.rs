@@ -44,6 +44,7 @@ pub mod settings_create;
 pub mod settle;
 pub mod stores;
 pub mod symbols;
+pub mod tool_handlers;
 pub mod txs;
 pub mod use_tokens;
 pub mod verify_anchoring_attest;
