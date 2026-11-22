@@ -180,6 +180,7 @@ from . import (
     gen_store_records_c,
     gen_store_records_d,
     gen_store_records_e,
+    gen_store_returned,
     gen_store_membership,
     gen_store_rotation,
     gen_history_rows,
@@ -408,6 +409,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_records_c": gen_store_records_c.generate,
     "store_records_d": gen_store_records_d.generate,
     "store_records_e": gen_store_records_e.generate,
+    "store_returned": gen_store_returned.generate,
+    "store_returned_posix": gen_store_returned.generate_posix,
     "store_membership": gen_store_membership.generate,
     "store_rotation": gen_store_rotation.generate,
     "store_rotation_python": gen_store_rotation.generate_python,
@@ -635,6 +638,7 @@ UNICODE_GATED = frozenset(
         "store_records_c",
         "store_records_d",
         "store_records_e",
+        "store_returned_posix",
         "store_membership",
         "identity_caller_unicode",
         "membership_lines_unicode",
@@ -918,6 +922,7 @@ PYDANTIC_GATED = frozenset(
         "store_records_c",
         "store_records_d",
         "store_records_e",
+        "store_returned_posix",
         "store_membership",
         "store_rows_written",
         "store_provenance",
@@ -1010,7 +1015,8 @@ PLATFORM_GATED = frozenset(
 #: ``store_open`` reads modes and writes the key ring's binding as a
 #: resolved POSIX path under a POSIX ``flock``; ``store_write`` records the
 #: same state after each write, ``store_tx`` after each transaction,
-#: ``store_records`` after each writer call.
+#: ``store_records`` after each writer call, ``store_returned_posix`` after
+#: each backfill step.
 #: ``githead_posix`` reads links, FIFOs and ENOTDIR, which Windows answers
 #: otherwise (`gen_githead`); ``githead_discovery`` walks trees with links,
 #: FIFOs and modes and reads owners and devices through ``os.lstat`` and
@@ -1153,6 +1159,7 @@ POSIX_ONLY = frozenset(
         "store_records_c",
         "store_records_d",
         "store_records_e",
+        "store_returned_posix",
         "store_membership",
         "store_rotation",
         "store_rotation_python",

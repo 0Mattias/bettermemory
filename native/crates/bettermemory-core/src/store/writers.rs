@@ -1544,19 +1544,14 @@ fn linking_sources(conn: &Connection, record_id: &str) -> Result<Vec<String>, Re
 }
 
 /// What the relink needs to read provenance inside the transaction.
-struct Ring {
+pub(crate) struct Ring {
     keys_dir: std::path::PathBuf,
     store_id: String,
 }
 
-/// `_relink` and `_put_relinked` (696-741) inside `tx`: each active record
-/// whose links name `record_id` put again unchanged with the relink mark,
-/// unless its label reads `unaccounted` or its rows carry fields this
-/// build does not define (a payload nested past the parser's limit there
-/// raises RecursionError and the restore writes nothing). The labels are
-/// read once, before any put, on the transaction's own connection,
-/// verified under the ring's current key (the writer's), with the
-/// caller's `strict_provenance` and refold's ids.
+/// `_relink` (696-703) inside `tx`: each active record whose links name
+/// `record_id` put again unchanged with the relink mark
+/// ([`put_relinked`]).
 fn relink(
     tx: &mut Transaction<'_>,
     ring: &Ring,
@@ -1564,7 +1559,29 @@ fn relink(
     record_id: &str,
     session: Option<&str>,
 ) -> Result<Vec<String>, RecordWriteError> {
-    let sources = linking_sources(tx.connection(), record_id)?;
+    let sources: Vec<(String, String)> = linking_sources(tx.connection(), record_id)?
+        .into_iter()
+        .map(|source| (source, record_id.to_owned()))
+        .collect();
+    put_relinked(tx, ring, reads, &sources, session)
+}
+
+/// `_put_relinked` (706-741) inside `tx`: each record of `sources` (its
+/// id, then the record whose rows it puts back, in the mapping's order)
+/// put again unchanged with the relink mark, unless its label reads
+/// `unaccounted` or its rows carry fields this build does not define (a
+/// payload nested past the parser's limit there raises RecursionError and
+/// the transaction writes nothing), or it is no longer active. The labels
+/// are read once, before any put, on the transaction's own connection,
+/// verified under the ring's current key (the writer's), with the
+/// caller's `strict_provenance` and refold's ids. Returns the ids put.
+pub(crate) fn put_relinked(
+    tx: &mut Transaction<'_>,
+    ring: &Ring,
+    reads: Relink<'_>,
+    sources: &[(String, String)],
+    session: Option<&str>,
+) -> Result<Vec<String>, RecordWriteError> {
     if sources.is_empty() {
         return Ok(Vec::new());
     }
@@ -1576,11 +1593,11 @@ fn relink(
         let reader = super::provenance::Provenance::new(&source, &keys, true, reads.strict)
             .map_err(provenance_failed)?
             .with_unaccounted(reads.unaccounted.iter().cloned());
-        let ids: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let ids: Vec<&str> = sources.iter().map(|(id, _)| id.as_str()).collect();
         reader.provenance_for(&ids).map_err(provenance_failed)?
     };
     let mut put = Vec::new();
-    for source_id in &sources {
+    for (source_id, record_id) in sources {
         let label = labels.iter().find(|(id, _)| id == source_id);
         if label.is_some_and(|(_, l)| l == super::provenance::UNACCOUNTED) {
             continue;
@@ -1637,7 +1654,7 @@ fn put_restored(
 }
 
 impl WritableStore {
-    fn ring(&self) -> Ring {
+    pub(crate) fn ring(&self) -> Ring {
         Ring {
             keys_dir: self.keys_dir().to_path_buf(),
             store_id: self.store_id().to_owned(),

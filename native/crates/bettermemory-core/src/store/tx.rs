@@ -505,6 +505,19 @@ impl Transaction<'_> {
         self.step(|tx| tx.write_row(kind, payload, session))
     }
 
+    /// `_mutate(tx, "returned_put", payload, session=)` as
+    /// `store_returned.backfill` calls it (a direct
+    /// [`Transaction::mutate`] refuses the kind): the row appended and
+    /// applied under a savepoint of its own, as `settle`'s rows are. The
+    /// kind names no record for `settle`.
+    pub(crate) fn mutate_returned_put(
+        &mut self,
+        payload: &PyValue,
+        session: Option<&str>,
+    ) -> Result<LogRow, WriteError> {
+        self.step(|tx| tx.write_row("returned_put", payload, session))
+    }
+
     /// `_mutate` for a membership table's own kind
     /// (`MEMBERSHIP_MUTATION_KINDS`, `native_member_put` and
     /// `native_member_delete` among them), the rows only

@@ -127,6 +127,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL; f-strings with a field deferred | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json`, `store_restore_lock_hold_python.json`, `store_restore_lock_python.json` (POSIX only) |
+| `store::returned` | `store_returned.py`'s backfill half on the writable store: `missing_links`, `returned_rows`, `backfill`, `ensure_backfilled` (`has_key` given, its log lines returned); `Store._put_relinked` as `store::writers::put_relinked`; the `returned_put` row a backfill appends (`Transaction::mutate_returned_put`) | `store_returned.jsonl`, `store_returned_posix.jsonl` (POSIX only) |
 | `durability` | unit 1 of `durability.py`: `canonical_marker`, `quoted_spans`, `in_quoted_span`, `TransientMatch`, `_snippet_around`, `_at_sentence_start`, `_is_titlecase_name` with `str.istitle`, `sentence_around` | `durability.jsonl`, `durability_unicode.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
@@ -20193,6 +20194,119 @@ conflicts, imports and quarantine put, re-put, deleted, missing, refused;
 rollback-journal mode; the `homes` and `standing` tables dropped; every
 type as a body, scopes, a takeaway, a conflict record and a standing giver.
 
+## The returned marks' backfill (`store::returned`)
+
+`store::returned` (`src/store/returned.rs`): the half of
+`store_returned.py` a writing open runs once an upgrade's step 2 left
+meta's `returned_backfill` key. The other half is built elsewhere:
+`_is_active` and `_targets` are `store::write::is_active` and
+`targets`, `before` and `candidates` are `store::write`'s, `settle` is
+`store::tx`'s, `linking_sources` is `store::writers`'. Reference read at
+1e6fae21; line numbers are that commit's.
+
+| function | reference | needs | status |
+| --- | --- | --- | --- |
+| `missing_links` | `store_returned.py` 236-267 | a connection | built |
+| `returned_rows` | 270-298 | a connection | built |
+| `backfill` | 301-368 | the writable store, its key ring, the clocks | built |
+| `ensure_backfilled` | 371-398 | the same, `has_key` given | built |
+| `_put_relinked` | `store_records.py` 706-741 | the transaction, the key ring | built (`store::writers::put_relinked`) |
+| wiring into the writing open | `Store.open` | | later (unit store-3c) |
+
+- `missing_links(conn)` reads every id (`str(id)`), every index row
+  (`str()` of its source, type and target, the note as stored), then each
+  record with a link list other than NULL and `'[]'` in id order. The
+  list is `json.loads`'d (TypeError and ValueError pass the record over;
+  a blob, which `json.loads` would decode, declines as
+  `WriterNotPorted::Blob`) and iterated as Python iterates it: a list's
+  items, a str's characters, a dict's keys, TypeError for a number, a
+  bool or null. A link counts when it is an object whose `target_id`
+  (the last of a repeated key) names an active record and no index row
+  holds its source, type, target and note. The tuple test is reproduced
+  as Python makes it: the target is hashed first (a list or object
+  raises TypeError), then the type and the note; the source matches only
+  a text id (an integer id is never the index's `str()`), the type only
+  a str, the note by Python's `==` between a JSON value and a column
+  (`1 == 1.0`, `True == 1`, a str never equal to a blob, an integer past
+  64 bits compared exactly with a real). Each record maps to its least
+  lost target. The index rows are held in a map by source, type and
+  target, so the read is linear, as the reference's sets make it. A
+  target or a type holding a lone surrogate equals no text the database
+  holds: such a target is never active and such a type never indexed,
+  even beside an id or a type that spells the escape out.
+- `returned_rows(conn, ids)` answers a list of (record id, `via`,
+  `returned`) in the order the reads return them, each column through
+  `str()` (a NULL is `None`). The ids are taken once each in their first
+  order and read 500 at a time with the reference's own statement; an
+  empty list reads nothing. An error whose text holds "no such table"
+  answers none; any other passes out.
+- `WritableStore::backfill(provider, session, reads)` reads the named
+  records before its transaction, on the store's connection: each
+  `tombstone_delete` row's `json_extract` id that is text, each
+  `supersedes` target (a str other than the record's own id) of a
+  `memory_put` row's record, less each id a `returned_put` or
+  `returned_delete` row names. A put whose payload does not parse, or is
+  not an object, is passed over; one whose `memory` is a truthy value
+  other than an object raises AttributeError, and one whose `links` is a
+  truthy number or bool raises TypeError, as in the reference (neither is
+  caught by `ensure_backfilled`). A `json_extract` over a payload that is
+  not JSON raises SQLite's "malformed JSON". Inside the transaction:
+  `missing_links` on its connection, `put_relinked` over them (the
+  labels read once with the caller's `Relink`), the wall clock read once
+  (always, as the reference reads it), then for each named record in id
+  order that is active, superseded by no other active record and not
+  marked, a `returned_put` row `{"returned": {"record_id", "via",
+  "returned"}}` with `via` the record itself, appended through
+  `Transaction::mutate_returned_put` (`Transaction::mutate` refuses the
+  kind: it is outside `write.rs`'s `KINDS`). Then meta's key is deleted
+  and the transaction commits, `settle` writing the marks the relinked
+  puts leave due. A store whose file lacks the `returned` table raises
+  "no such table: returned" at the first record that reaches the mark
+  test. The named ids are held as code points and ordered as Python
+  orders a str; a `supersedes` target holding a lone surrogate is kept
+  as it is, and when the loop reaches it the backfill raises the
+  UnicodeEncodeError sqlite3 raises binding it ("'utf-8' codec can't
+  encode character '\ud800' in position 0: surrogates not allowed"),
+  so the transaction rolls back and `ensure_backfilled` logs it and
+  keeps the key.
+- `WritableStore::ensure_backfilled(provider, has_key, reads)` answers
+  nothing without the key or without meta's key (the value is read, so
+  a text that is not UTF-8 raises), else runs `backfill` with no
+  session. A failure of class `sqlite3.Error`, `OSError` or `ValueError`
+  (pydantic's ValidationError and `UnknownFieldsError` among them) is
+  logged at WARNING as "returned: the backfill failed and will run at
+  the next open: " and `str(exc)`, and marks nothing; a success that
+  marked records logs at INFO their count. The lines are returned as
+  `LogLine { level, message }`, the message None where it carries an
+  exception text this build does not word. What this build does not
+  port, and a clock it could not read, pass out uncaught.
+- `store::writers::put_relinked(tx, ring, reads, sources, session)` is
+  the relink of a restore split in two: `relink` builds its sources from
+  `linking_sources` and calls it, as `Store._relink` calls
+  `_put_relinked`. Its behaviour is unchanged.
+
+No pattern of `re` is involved.
+
+Fixtures: `gen_store_returned.py`. `store_returned.jsonl` (45 cases,
+14,745 bytes, ungated) pins `missing_links` and `returned_rows` over a
+bare in-memory connection whose cells are typed (a lone surrogate in a link, a repeated mark); a raise is recorded by
+its class only, since CPython 3.14 words an unhashable value's TypeError
+otherwise. `store_returned_posix.jsonl` (12 cases, 109 steps, 164,608
+bytes; POSIX only, gated as `store_records_e.jsonl` is) runs whole stores
+through `gen_store_records_b.run_case`: a chain whose head an earlier
+build deleted under the log, restores whose marks and rows were taken
+away, index rows a restore left out, records this build marked, a link
+into the record itself, a store without the table, a malformed
+`tombstone_delete` payload, record puts that are passed over or
+raise, a named record no longer active, a target holding a lone
+surrogate, an unaccounted linking record and fold problems at seqs 2
+and 10; each step's rows, clock reads, state and index compared.
+Tests: `golden_store_returned.rs`, `golden_store_returned_posix.rs`,
+`store_returned_not_posix.rs` (the Windows gap, class os),
+`store_returned_kills.rs`, `store_returned_robustness.rs`. On Windows
+the backfill runs as on POSIX; the crate's Windows flavour does not
+resolve paths (ENG-124), which this unit does not need.
+
 ## The store's connection leaves and admitted reads (`store::reads`)
 
 `src/store/reads.rs` ports the connection leaves of `store.py` and the
@@ -22511,7 +22625,9 @@ What the reference has and this build does not, by area:
   (`store::home`, `store::tables`): the rest of the public record API
   (the episode prune), the membership kinds' native (surrogate) writes,
   the membership log and the store id reissue (store_membership-2),
-  wiring the schema steps into the writing open and `run_steps`, rekey,
+  wiring the schema steps and `ensure_backfilled` (the returned marks'
+  backfill, built in `store::returned`) into the writing open (store-3c)
+  and `run_steps`, rekey,
   reclaim, a restore's rows, re-spelling the index. Of `store.py`'s
   reads, the memoised branch of `document_frequencies` (the memo of
   `store_index.py` is built in `store::docfreq`; `_advanced_inputs` and

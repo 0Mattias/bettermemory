@@ -106,12 +106,13 @@ pub fn decode(value: PyValue) -> PyValue {
 pub fn refold(file: &Path) -> Value {
     let store = bettermemory_core::store::StoreFile::open(file).expect("open");
     let report = store.refold().expect("refold");
-    let mut problems: Vec<Value> = report
-        .problems
+    // Python sorts the lists by seq as an int, then kind, then detail.
+    let mut sorted: Vec<_> = report.problems.iter().collect();
+    sorted.sort_by(|a, b| (a.seq, &a.kind, &a.detail).cmp(&(b.seq, &b.kind, &b.detail)));
+    let problems: Vec<Value> = sorted
         .iter()
         .map(|p| json!([p.seq, p.kind, p.detail]))
         .collect();
-    problems.sort_by_key(|p| p.to_string());
     json!({"status": report.status, "problems": problems})
 }
 
