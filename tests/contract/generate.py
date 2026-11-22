@@ -56,6 +56,7 @@ from . import (
     gen_daemon,
     gen_edges,
     gen_fold,
+    gen_store_event_reads,
     gen_follow,
     gen_discovery,
     gen_fs_realpath,
@@ -414,6 +415,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "recall_choose": gen_recall_choose.generate,
     "fold": gen_fold.generate,
     "fold_python": gen_fold.generate_python,
+    "store_event_reads": gen_store_event_reads.generate,
+    "store_event_reads_naive": gen_store_event_reads.generate_naive,
     "store_create": gen_store_create.generate,
     "store_digest_query": gen_store_digest_query.generate,
     "store_digest_query_sqlite": gen_store_digest_query.generate_sqlite,
@@ -1149,8 +1152,12 @@ PLATFORM_GATED = frozenset(
 #: (`gen_symbols`);
 #: ``project_file_parse_posix`` parses a real tree with a FIFO, links, a
 #: loop and a mode-000 file, worded by the C library (`gen_project_file`).
+#: ``store_event_reads_naive`` reads a naive instant under a ``TZ`` the
+#: generator sets with `time.tzset`, which Windows lacks
+#: (`gen_store_event_reads`).
 POSIX_ONLY = frozenset(
     {
+        "store_event_reads_naive",
         # `os.fsencode` encodes a surrogate with `surrogatepass` on Windows.
         "response_write_posix",
         "attestation_paths_posix",

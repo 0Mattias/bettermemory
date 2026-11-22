@@ -146,7 +146,8 @@
 //!   episode journal's reads (`store::journal`); the upgrade's proof
 //!   that no other connection holds the store (`store::upgrade`); the
 //!   document frequency memo with the store's side as a trait
-//!   (`store::docfreq`); the plain reads of the index and the
+//!   (`store::docfreq`); the event and capture readers and the window
+//!   floor (`store::event_reads`); the plain reads of the index and the
 //!   records over a connection (`store::index_reads`,
 //!   `store::record_reads`); and the returned marks' backfill on the
 //!   writable store (`store::returned`: `missing_links`,
