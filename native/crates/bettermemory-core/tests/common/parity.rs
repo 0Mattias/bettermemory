@@ -287,6 +287,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // The tokenizer and `str.strip` past ASCII (`gen_search_dedup`).
         "search_dedup_unicode.jsonl" => &[Unicode],
         "models.jsonl" => &[Pydantic],
+        // Episodes read through the model (`gen_store_journal`).
+        "store_journal.jsonl" => &[Pydantic],
         // `str.strip`, `str.lower` and NFKC past ASCII (`gen_origin_remote`).
         "origin_remote_unicode.jsonl" => &[Unicode],
         // A bracketed host: `urlsplit`'s and `ipaddress`'s checks are the

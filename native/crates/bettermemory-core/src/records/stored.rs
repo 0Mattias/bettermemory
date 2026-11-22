@@ -6,7 +6,7 @@
 //! (`StoreFile::each_memory` and kin) stay as they are: the fold needs
 //! both.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, ToSql};
 
 use super::rows::{self, Row};
 use super::{Episode, Memory, RecordError, Tombstone};
@@ -21,16 +21,35 @@ pub const MEMORY_SELECT: &str =
 pub const TOMBSTONE_SELECT: &str = "SELECT tombstones.*, (SELECT payload FROM log WHERE mac = tombstones.log_mac \
      AND kind = 'tombstone_put' LIMIT 1) AS attestation_payload FROM tombstones ORDER BY tombstones.rowid";
 
+/// `store_journal._EPISODE_SELECT` as the reference spells it, with no
+/// order: the readers of `store::journal` append to it what the
+/// reference appends.
+#[macro_export]
+macro_rules! episode_select_prefix {
+    () => {
+        "SELECT episodes.*, (SELECT payload FROM log WHERE mac = episodes.log_mac \
+         AND kind = 'episode_put' LIMIT 1) AS attestation_payload FROM episodes"
+    };
+}
+
 /// `store_journal._EPISODE_SELECT`, in rowid order.
-pub const EPISODE_SELECT: &str = "SELECT episodes.*, (SELECT payload FROM log WHERE mac = episodes.log_mac \
-     AND kind = 'episode_put' LIMIT 1) AS attestation_payload FROM episodes ORDER BY episodes.rowid";
+pub const EPISODE_SELECT: &str = concat!(episode_select_prefix!(), " ORDER BY episodes.rowid");
 
 /// Every row `select` returns, each as a [`Row`] of its named columns.
 /// A text value that is not UTF-8 fails the read, as `sqlite3` fails it.
 pub fn select_rows(conn: &Connection, select: &str) -> Result<Vec<Row>, StoreError> {
+    select_rows_with(conn, select, &[])
+}
+
+/// [`select_rows`] of a statement with parameters bound in order.
+pub fn select_rows_with(
+    conn: &Connection,
+    select: &str,
+    params: &[&dyn ToSql],
+) -> Result<Vec<Row>, StoreError> {
     let mut statement = conn.prepare(select)?;
     let names: Vec<String> = statement.column_names().map(str::to_owned).collect();
-    let mut rows = statement.query([])?;
+    let mut rows = statement.query(params)?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         let mut columns = Vec::with_capacity(names.len());

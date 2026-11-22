@@ -134,6 +134,8 @@ from . import (
     gen_search_dedup,
     gen_store,
     gen_store_schema,
+    gen_store_journal,
+    gen_store_upgrade,
     gen_membership_records,
     gen_membership_shared,
     gen_membership_rows,
@@ -226,6 +228,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store": gen_store.generate,
     "store_schema_steps": gen_store_schema.generate,
     "store_schema_posix": gen_store_schema.generate_posix,
+    "store_journal": gen_store_journal.generate,
+    "store_upgrade": gen_store_upgrade.generate,
+    "store_upgrade_posix": gen_store_upgrade.generate_posix,
     "membership_records_paths": gen_membership_records.generate,
     "membership_records_paths_python": gen_membership_records.generate_python,
     "membership_records_paths_platform": gen_membership_records.generate_platform,
@@ -742,6 +747,7 @@ def zlib_version() -> str:
 PYDANTIC_CORE_VERSION = "2.50.1"
 PYDANTIC_GATED = frozenset(
     {
+        "store_journal",
         "models",
         "models_rows",
         "models_stores",
@@ -913,6 +919,8 @@ PLATFORM_GATED = frozenset(
 #: ``store_schema_posix`` runs the schema steps on a mode-0444 store file
 #: and spells a v8 folder's path as the host's ``Path`` does
 #: (`gen_store_schema`);
+#: ``store_upgrade_posix`` holds SQLite's file locks from a second
+#: connection, seen on POSIX only (`gen_store_upgrade`);
 #: ``log_keyfiles_posix``, ``log_keyfiles_posix_python`` and
 #: ``log_keyfiles_darwin`` drive the key ring over links, mode-000 files
 #: and folders (`gen_log_keyfiles`);
@@ -941,6 +949,7 @@ POSIX_ONLY = frozenset(
         "store_restore_lock_python",
         "store_restore_lock_hold_python",
         "store_schema_posix",
+        "store_upgrade_posix",
         "settings_paths",
         "settings_paths_python",
         "settings_create_posix",

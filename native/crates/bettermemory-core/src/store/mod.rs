@@ -43,6 +43,7 @@ pub mod create;
 pub mod digest;
 pub mod fold;
 pub mod home;
+pub mod journal;
 pub mod keys;
 pub mod membership;
 pub mod mint;
@@ -56,6 +57,7 @@ pub mod rows;
 pub mod schema;
 pub mod tables;
 pub mod tx;
+pub mod upgrade;
 pub mod write;
 pub mod writers;
 

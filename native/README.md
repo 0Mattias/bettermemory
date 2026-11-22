@@ -89,7 +89,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `difflib` | `history._body_diff` (`body_diff`), `str.splitlines`, and CPython 3.13.13's `difflib.unified_diff` as it calls it: `SequenceMatcher` with autojunk (`__chain_b`, `find_longest_match`, `get_matching_blocks`, `get_opcodes`, `get_grouped_opcodes`), `_format_range_unified`, `unified_diff` with `lineterm=""` and no dates (`unified_diff_lines` joined with newlines) | `difflib.jsonl` |
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks` | `membership_shared.jsonl`, `membership_shared_python.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
@@ -2885,6 +2885,111 @@ growth claims through `timing`).
 Left for later units: wiring the steps into the writing open and
 `run_steps` (`store_steps.py`), the log's warning itself (no `log.py`
 dependency here), and the engine cross-check of `_V8_MEMORY_NAME`.
+
+## The episode journal's reads and the upgrade's proof (`store_journal.py`, `store_upgrade.py`)
+
+`store::journal` reproduces the read half of `store_journal.py` over a
+`rusqlite::Connection`, and `store::upgrade` the proof of
+`store_upgrade.py` that no other connection holds a store open. Lines as
+in `src/bettermemory` at the unit's base.
+
+| function | reference | needs from the machine | status |
+| --- | --- | --- | --- |
+| `get_episode` | `store_journal.py` 62-68 | the connection | built |
+| `iter_episodes` | 71-80 (both branches; the list, not the generator) | the connection | built |
+| `count_episodes` | 83-84 | the connection | built |
+| `episodes_by_session`, `sort_by_created` | 149-152 | the connection | built |
+| `episodes_by_swarm` | 155-163 | the connection | built |
+| `episode_session_ids` | 166-174 | the connection | built |
+| `prunable_episode_sessions`, `cutoff` | 177-194 | the connection, the clock (`now`, `None` reads it) | built |
+| `episode_volume`, `EpisodeVolume`, `DEFAULT_EPISODE_TTL_DAYS` | 248-268, `store_schema.py` 539-562 | the connection, the clock as above | built |
+| `TRANSACTION_WRITER_REVISION` | `store_upgrade.py` 23 | nothing | built |
+| `prove_exclusive`, `sqlite_class`, `refusal` | 26-47 | the connection (SQLite's file locks) | built |
+| `prune_episode_sessions` | `store_journal.py` 197-245 | a writing store | left for a later unit |
+| `quiescent` | `store_upgrade.py` 51-67 | `restore_lock.held_here`, `acquire` | left for unit store_steps-2 |
+
+What each reproduces:
+
+- The statements are the reference's text. `records::stored` spells the
+  episode select without an order once (`episode_select_prefix!`), and
+  `EPISODE_SELECT` is that prefix with ` ORDER BY episodes.rowid`, byte
+  for byte as before; each read appends what the reference appends
+  (` WHERE id = ?` with no order, ` ORDER BY rowid`,
+  ` WHERE session_id = ? ORDER BY rowid`,
+  ` WHERE swarm_id = ? ORDER BY created, rowid`), so SQLite gives the
+  reference's order. Rows are read by `select_rows_with` (the loop
+  `select_rows` now calls) and `records::rows::episode`.
+- `episodes_by_session` sorts stably as `list.sort(key=created)` does:
+  aware values by their UTC instant, so equal instants in different
+  offsets keep rowid order; naive values by their fields; a naive and an
+  aware value among two or more raise `TypeError`
+  (`JournalError::NaiveAware`). `_dt` makes every stored value aware,
+  so no row reaches that branch. `episodes_by_swarm` orders by the
+  `created` text, so the same rows can come in another order there.
+- `prunable_episode_sessions` answers none for a TTL of zero or less
+  without reading the clock; else the cutoff is
+  `(now - timedelta(days=ttl)).isoformat()` in `now`'s own offset (or
+  naive), `OverflowError` past `timedelta`'s 999,999,999 days or out of
+  the years 1 to 9999, and `HAVING newest < ?` compares TEXT: a cutoff
+  spelled in another offset can take a session whose newest instant is
+  not before it.
+- `get_episode` raises `NotFoundError(episode_id)` (`JournalError::NotFound`;
+  `absent()` is its `absent_text`). A row the model refuses raises what
+  `_row_to_episode` raises (`JournalError::Record`). `iter_episodes`
+  answers the list: where the reference's generator yields the rows
+  before a bad one and then raises, the port answers the raise.
+- A session id column that is neither text nor an integer (a blob) is
+  declined as `JournalError::NotPorted` (class `NotPorted`); the
+  reference answers `str(bytes)`.
+  The schema's `TEXT NOT NULL` column holds such a value only if written
+  by hand.
+- `prove_exclusive` reads the busy timeout and locking mode, then sets
+  no wait and the exclusive mode and runs `BEGIN EXCLUSIVE` and
+  `ROLLBACK`, each statement stepped once as `sqlite3` steps it. An
+  error `_sqlite3` classes as `OperationalError` becomes the
+  `StoreVersionError` refusal (`quoted(str(Path(path)))` with the
+  host's path flavour, so `a//b/` shows as `a/b` and an empty name as
+  `.`; key and needed `None`);
+  any other propagates with its class (`UpgradeError::Sqlite`).
+  `sqlite_class` is `_pysqlite_seterror`'s table by primary result
+  code: `ERROR`, `PERM`, `ABORT`, `BUSY`, `LOCKED`, `READONLY`,
+  `INTERRUPT`, `IOERR`, `FULL`, `CANTOPEN`, `PROTOCOL`, `EMPTY`,
+  `SCHEMA` are `OperationalError`; `CONSTRAINT` and `MISMATCH`
+  `IntegrityError`; `MISUSE` and `RANGE` `InterfaceError`; `TOOBIG`
+  `DataError`; `INTERNAL` and `NOTFOUND` `InternalError`; `NOMEM`
+  `MemoryError`; every other code (`CORRUPT`, `NOTADB`, `NOLFS`,
+  `AUTH`, `FORMAT`) `DatabaseError`. The clean-up runs on both paths
+  in the reference's order (a transaction still open rolled back, the
+  mode put back, `schema_version` read, the timeout put back), and an
+  error there replaces the pending outcome. On a connection already in
+  a transaction the proof refuses and rolls the caller's transaction
+  back.
+
+Reference findings, reproduced:
+
+- A second connection holding `BEGIN EXCLUSIVE` on a rollback-journal
+  store: the proof's `BEGIN EXCLUSIVE` fails (the refusal pending), the
+  locking mode returns to normal, and the `schema_version` read in the
+  `finally` fails with `database is locked` because the busy timeout is
+  still 0. That `OperationalError` replaces the refusal, and the
+  caller's busy timeout is left at 0 (`store_upgrade_posix.jsonl`, case
+  `delete_exclusive`).
+- `prune_episode_sessions`' cutoff and `prunable_episode_sessions` order
+  by `created` text, not by instant (above).
+
+Fixtures: `gen_store_journal.py` writes `store_journal.jsonl` (gated on
+pydantic-core: the episodes are read through the model) from an
+in-memory store holding `store_schema.SCHEMA`; `gen_store_upgrade.py`
+writes `store_upgrade.jsonl` (a connection alone on its store, both
+journal modes, the exclusive mode, its own transaction open, a name
+that needs quoting) and `store_upgrade_posix.jsonl` (POSIX only: a
+second connection open, reading, reserved or exclusive, in both journal
+modes; its file locks were seen on POSIX only).
+`store_upgrade_not_posix.rs` records that gap. No pattern of the
+reference is matched here (no regular expression). Tests:
+`golden_store_journal`, `golden_store_upgrade`,
+`golden_store_upgrade_posix`, `store_journal_kills`,
+`store_journal_robustness`.
 
 ## The membership records (`membership_records.py`)
 
