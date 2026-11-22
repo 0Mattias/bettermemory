@@ -3,6 +3,13 @@
 //! for each pattern, `match`, `fullmatch` and `search` over every window of
 //! the texts `gen_pyre_exec._windows` names, regenerated here by the same
 //! rule and compared by count and digest; and the calls written out.
+//!
+//! A row's program is lowered from `re._parser`'s tree, and the pattern is
+//! also built through the admitted path (`parse::parse`, which asks
+//! `parse::refusal`, then `lower`): an `exec.sweep` or `exec.kill` row must
+//! build there to the same program, and an `exec.beyond.` row must be
+//! refused with the feature it names. The beyond rows reach the matcher
+//! only through the tree, below the refusal.
 
 mod common;
 mod pyre_exec_support;
@@ -10,7 +17,7 @@ mod pyre_lower_support;
 
 use bettermemory_core::pyre::exec::Mode;
 use common::parity::Ledger;
-use pyre_exec_support::{answer, codes, mode_named, program, reversed, text, windows};
+use pyre_exec_support::{admitted, answer, codes, mode_named, program, reversed, text, windows};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -81,6 +88,21 @@ fn check_kill(row: &Value) {
     assert_eq!(got, text(&row["answer"]), "{row}");
 }
 
+/// The admitted path against the row: the same program, or the refusal
+/// the row names.
+fn check_admission(row: &Value) {
+    let built = admitted(row);
+    match row.get("refused") {
+        None => assert_eq!(built.expect("admitted"), program(row), "{}", row["pattern"]),
+        Some(feature) => assert_eq!(
+            format!("{:?}", built.expect_err("refused")),
+            text(feature),
+            "{}",
+            row["pattern"]
+        ),
+    }
+}
+
 fn check(ledger: &mut Ledger, row: &Value) {
     let part = text(&row["part"]);
     let name = format!(
@@ -89,8 +111,14 @@ fn check(ledger: &mut Ledger, row: &Value) {
         row.get("text").unwrap_or(&Value::Null)
     );
     match part {
-        "exec.sweep" => ledger.case(name, || check_sweep(row)),
-        "exec.kill" => ledger.case(name, || check_kill(row)),
+        "exec.sweep" | "exec.beyond.sweep" => ledger.case(name, || {
+            check_admission(row);
+            check_sweep(row)
+        }),
+        "exec.kill" | "exec.beyond.kill" => ledger.case(name, || {
+            check_admission(row);
+            check_kill(row)
+        }),
         other => panic!("a part this test does not know: {other}"),
     }
 }

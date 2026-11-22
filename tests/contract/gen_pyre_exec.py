@@ -24,6 +24,9 @@ Parts:
   (decision section 3, item 1), are digested in ``pyre_python.jsonl``.
 - ``exec.kill``: one call written out, for the cases a plausible wrong
   engine fails.
+- ``exec.beyond.sweep`` and ``exec.beyond.kill``: as the two above, for
+  the patterns beyond the matcher's admitted subset (`BEYOND_PATTERNS`,
+  `BEYOND_KILLS`), with the refusal they meet under ``refused``.
 
 A pattern under IGNORECASE reads the fold tables, so its rows are in
 ``pyre_unicode.jsonl`` (ordered windows) and ``pyre_python.jsonl``.
@@ -98,6 +101,29 @@ PATTERNS: list[tuple[str | bytes, int, str, int, int]] = [
     ("(?i)s+", 0, "sSſ", 4, 8),
     ("(?i)ab*", 0, "aAB", 4, 8),
     ("(?i:a)*", 0, "aA", 6, 12),
+    # Lookarounds (pyre-5b): ASSERT and ASSERT_NOT.
+    ("a(?=b)", 0, "ab", 6, 12),
+    ("a(?!b)", 0, "ab", 6, 12),
+    ("(?<=a)b", 0, "ab", 6, 12),
+    ("(?<!a)b", 0, "ab", 6, 12),
+    ("(?=a)", 0, "ab", 6, 12),
+    ("(?!a)", 0, "ab", 6, 12),
+    ("(?<=a)", 0, "ab", 6, 12),
+    ("(?<!a)", 0, "ab", 6, 12),
+    ("(?<=ab)c", 0, "abc", 4, 8),
+    ("(?<!ab)c", 0, "abc", 4, 8),
+    ("(?<=a|b)c", 0, "abc", 4, 8),
+    ("(?<![ab])c", 0, "abc", 4, 8),
+    ("a(?=b|$)", 0, "ab", 6, 12),
+    ("(?=a*b)a", 0, "ab", 6, 12),
+    ("(?=a|ab)ab", 0, "ab", 6, 12),
+    ("x*(?!y)", 0, "xy", 6, 12),
+    ("(?!(?!a))a", 0, "ab", 6, 12),
+    ("(?<=a(?=b))b", 0, "ab", 6, 12),
+    (r"(?<!\d)\.|\.(?!\d)", 0, ".1a", 4, 7),
+    (r"(?<=\.)\s+|\n+", 0, ". \n", 4, 7),
+    (r"[.!?](?=\s|$)", 0, ".a ", 4, 7),
+    (r"\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{2,4}\b", 0, "a1 ", 4, 7),
 ]
 
 #: ``(pattern, flags, text, pos, endpos, mode)``.
@@ -160,7 +186,80 @@ KILLS: list[tuple[str | bytes, int, str, int, int, str]] = [
     ("", 0, "abc", 2, 1, "fullmatch"),
     ("", 0, "abc", 2, 1, "search"),
     (rb"(?:[ \t\n\r]+|[#;][^\n]*)*", 0, "ab\ncd", 2, 1, "match"),
+    # A lookbehind reads before pos and measures from the string's start.
+    ("(?<=a)b", 0, "ab", 1, 2, "match"),
+    ("(?<!a)b", 0, "ab", 1, 2, "match"),
+    ("(?<=a)b", 0, "ab", 1, 2, "search"),
+    ("(?<!ab)b", 0, "b", 0, 1, "match"),
+    ("(?<=ab)", 0, "abc", 1, 3, "search"),
+    ("(?<=a)", 0, "a", 1, 1, "fullmatch"),
+    # A failed or negated lookaround keeps the marks set before it.
+    ("(a)(?!b)", 0, "ac", 0, 2, "match"),
+    ("(a)(?:(?!b)x|b)", 0, "ab", 0, 2, "match"),
+    # A lookahead stops at endpos.
+    ("a(?=b)", 0, "ab", 0, 1, "match"),
+    ("a(?!b)", 0, "ab", 0, 1, "match"),
+    ("a(?=$)", 0, "ab", 0, 1, "match"),
+    ("(?=ab)", 0, "ab", 0, 1, "search"),
+    # Patterns of the reference.
+    ("[-_]?(?<!\\d)\\d+$", 0, "a-12", 0, 4, "search"),
+    (r"(?<!\w)c\+\+", 0, "c++ xc++", 1, 8, "search"),
+    (r"(?<!\w)c#(?!\w)", 0, "c#x c#", 0, 6, "search"),
+    (r"(?<=\w)['\u2019](?:s|t|d|m|ll|re|ve)\b", 0, "it's", 0, 4, "search"),
+    (
+        r"(?<![.!?:\n])\n(?=\S)(?![-*+>])(?!\d{1,3}[.)]\s)",
+        0,
+        "a\nb\n1. x",
+        0,
+        9,
+        "search",
+    ),
+    (r"(?<=[.!?])\s+|\n+", 0, "a. b", 2, 4, "search"),
+    (r"=(?!=)", 0, "a==b=c", 0, 6, "search"),
 ]
+
+
+#: Patterns beyond the matcher's admitted subset: each holds a capture
+#: inside a lookaround, which ``parse::refusal`` (pyre-3c) refuses as
+#: ``CaptureInLookaround``, so no call of the crate reaches the matcher
+#: with one. Their rows pin what ``exec`` does with such a body (the marks
+#: a positive body keeps, those a negative body drops, the cut of a body's
+#: choice points, which only a group inside the body shows), reached below
+#: the refusal from ``re._parser``'s tree; parts ``exec.beyond.sweep`` and
+#: ``exec.beyond.kill``, each row naming the refusal under ``refused``.
+BEYOND_PATTERNS: list[tuple[str | bytes, int, str, int, int]] = [
+    ("(?=(a))a", 0, "ab", 6, 12),
+    ("(?=(a+))", 0, "ab", 6, 12),
+    ("(?=(a|ab))a(b)?", 0, "ab", 6, 12),
+    ("(?!(a)b)(a)", 0, "ab", 6, 12),
+    ("(?=(a)|b)(a|b)", 0, "ab", 6, 12),
+    ("(?<=(a))b", 0, "ab", 6, 12),
+]
+
+#: Calls beyond the admitted subset, as `BEYOND_PATTERNS`.
+BEYOND_KILLS: list[tuple[str | bytes, int, str, int, int, str]] = [
+    # Marks: kept after a positive body, dropped after a negative one.
+    ("(?=(a))a", 0, "a", 0, 1, "match"),
+    ("(?!(a)b)(a)", 0, "ac", 0, 2, "match"),
+    ("(?!(a)c)a", 0, "ab", 0, 2, "match"),
+    ("(?:(?=(a))x|a)", 0, "a", 0, 1, "match"),
+    ("(?=(a)(b)?)", 0, "a", 0, 1, "match"),
+    # The body's choice points are cut.
+    ("(?=(a|ab))ab", 0, "ab", 0, 2, "match"),
+    ("(?=(a*))a*b", 0, "aab", 0, 3, "fullmatch"),
+    ("(?=(a*?))(a*?)$", 0, "aa", 0, 2, "match"),
+]
+
+#: The refusal every pattern of `BEYOND_PATTERNS` and `BEYOND_KILLS` meets.
+BEYOND = "CaptureInLookaround"
+
+
+def _beyond(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **row,
+        "part": "exec.beyond." + row["part"][len("exec.") :],
+        "refused": BEYOND,
+    }
 
 
 def _compiled(pattern: str | bytes, flags: int) -> tuple[Any, re.Pattern[Any]]:
@@ -267,6 +366,8 @@ def rows() -> list[dict[str, Any]]:
         for case in KILLS
         if not _kill_reversed(case) and not _folds(case[0], case[1])
     ]
+    out += [_beyond(_sweep(case, False)) for case in BEYOND_PATTERNS]
+    out += [_beyond(_kill(case)) for case in BEYOND_KILLS if not _kill_reversed(case)]
     return out
 
 
@@ -285,6 +386,8 @@ def python_rows() -> list[dict[str, Any]]:
     """The reversed windows, whose answers are the release's."""
     out = [_sweep(case, True) for case in PATTERNS]
     out += [_kill(case) for case in KILLS if _kill_reversed(case)]
+    out += [_beyond(_sweep(case, True)) for case in BEYOND_PATTERNS]
+    out += [_beyond(_kill(case)) for case in BEYOND_KILLS if _kill_reversed(case)]
     return out
 
 

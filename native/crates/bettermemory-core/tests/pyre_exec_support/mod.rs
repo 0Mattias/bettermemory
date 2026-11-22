@@ -5,6 +5,8 @@
 
 use bettermemory_core::pyre::exec::{exec, ClassTest, Found, Mode, Text};
 use bettermemory_core::pyre::lower::{lower, Class, Program};
+use bettermemory_core::pyre::parse::parse;
+use bettermemory_core::pyre::tree::{BuildError, Feature};
 use bettermemory_core::pyre::tree::{Category, Member, IGNORECASE};
 use bettermemory_core::unicode::{is_re_digit, is_space, is_word};
 use serde_json::Value;
@@ -49,6 +51,52 @@ pub fn program(row: &Value) -> Program {
     let flags = row["flags"].as_u64().expect("flags") as u32;
     let bytes = row["bytes"].as_bool().expect("bytes");
     lower(&tree, flags, bytes).unwrap_or_else(|e| panic!("{e:?}: {}", row["pattern"]))
+}
+
+/// The generator's `spell`, undone: `~` is a backslash, a list is code
+/// points.
+pub fn unspell(v: &Value) -> Vec<u32> {
+    match v {
+        Value::String(s) => s
+            .chars()
+            .map(|c| if c == '~' { 0x5c } else { u32::from(c) })
+            .collect(),
+        other => codes(other),
+    }
+}
+
+/// A row's pattern built through the admitted path, `parse::parse` (which
+/// asks `parse::refusal`) and then `lower`, under the row's flags; the
+/// feature refused otherwise.
+pub fn admitted(row: &Value) -> Result<Program, Feature> {
+    let flags = row["flags"].as_u64().expect("flags") as u32;
+    let bytes = row["bytes"].as_bool().expect("bytes");
+    match parse(&unspell(&row["pattern"]), !bytes, flags) {
+        Ok((tree, state)) => {
+            Ok(lower(&tree, state.flags, bytes).unwrap_or_else(|e| panic!("{e:?}")))
+        }
+        Err(BuildError::Unsupported { what, .. }) => Err(what),
+        Err(other) => panic!("{other:?}: {}", row["pattern"]),
+    }
+}
+
+/// BEYOND THE ADMITTED SUBSET: the program of a pattern that
+/// `parse::refusal` refuses, lowered from `re._parser`'s tree as the
+/// `exec.beyond.` rows of `pyre_exec.jsonl` hold it. No call of the crate
+/// reaches the matcher with such a program; the tests that read the
+/// matcher's rules for it (a capture inside a lookaround) come this way.
+pub fn beyond(pattern: &str) -> Program {
+    let rows = crate::common::jsonl("pyre_exec.jsonl");
+    let row = rows
+        .iter()
+        .find(|row| {
+            row["part"]
+                .as_str()
+                .is_some_and(|p| p.starts_with("exec.beyond."))
+                && unspell(&row["pattern"]) == pattern.chars().map(u32::from).collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| panic!("no beyond row for {pattern}"));
+    program(row)
 }
 
 pub fn codes(v: &Value) -> Vec<u32> {

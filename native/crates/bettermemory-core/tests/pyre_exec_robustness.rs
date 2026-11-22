@@ -3,6 +3,7 @@
 //! windows. Nothing panics; the native stack does not grow with the text
 //! (the loop does not recurse); steps grow linearly on linear patterns.
 
+mod common;
 mod pyre_exec_support;
 mod pyre_lower_support;
 mod timing;
@@ -168,4 +169,48 @@ fn time_grows_linearly_on_a_failing_search() {
         timing::once(|| run(prog, t.as_slice(), 0, t.len() as isize, Mode::Search))
     };
     timing::grows_within("a*b search", 30, &mut || time(&small), &mut || time(&large));
+}
+
+#[test]
+fn nested_lookarounds_need_no_native_stack() {
+    // Thirty nested lookaheads, each body a long greedy run, run on a small
+    // stack: a body is a sub-attempt of the loop, not a recursive call.
+    // The parser recurses by nesting, so the programs are built first.
+    let pattern = format!("{}a*b{}", "(?=".repeat(30), ")".repeat(30));
+    let nested = compile(&pattern, 0, false);
+    let tempered = compile("(?:(?!b)a)*b", 0, false);
+    let handle = std::thread::Builder::new()
+        .stack_size(64 * 1024)
+        .spawn(move || {
+            let t = codes(&format!("{}b", "a".repeat(100_000)));
+            let m = run(&nested, t.as_slice(), 0, t.len() as isize, Mode::Match).expect("a match");
+            assert_eq!((m.start, m.end), (0, 0));
+            // The cut leaves only the markers of the open lookarounds.
+            assert!(m.peak <= 31, "{}", m.peak);
+            let t = codes(&format!("{}b", "a".repeat(50_000)));
+            let m = run(
+                &tempered,
+                t.as_slice(),
+                0,
+                t.len() as isize,
+                Mode::Fullmatch,
+            )
+            .expect("a match");
+            assert_eq!(m.end, 50_001);
+        })
+        .expect("a thread");
+    handle.join().expect("no overflow");
+}
+
+#[test]
+fn a_lookaround_in_a_failing_search_stays_linear() {
+    let small = codes(&"ac".repeat(2000));
+    let large = codes(&"ac".repeat(4000));
+    for pattern in ["a(?=b)", "(?<=c)a(?!c)", "(?<!c)(?=a)c"] {
+        let (s, l) = (
+            failing_steps(pattern, &small),
+            failing_steps(pattern, &large),
+        );
+        assert!(l <= s * 3, "{pattern}: {s} then {l}");
+    }
 }

@@ -2,11 +2,15 @@
 //! 3.13.13's `re` gives (checked there; the reversed windows are decision
 //! section 3, item 1).
 
+mod common;
 mod pyre_exec_support;
 mod pyre_lower_support;
 
-use bettermemory_core::pyre::exec::{exec, supports, MatchError, Mode, Unsupported};
-use pyre_exec_support::{compile, run, span, Naive};
+use bettermemory_core::pyre::exec::{exec, supports, MatchError, Mode};
+use bettermemory_core::pyre::lower::{Op, Program};
+use bettermemory_core::pyre::parse::parse;
+use bettermemory_core::pyre::tree::{BuildError, Feature};
+use pyre_exec_support::{beyond, compile, run, span, Naive};
 
 const M: u32 = 8;
 const S: u32 = 16;
@@ -192,14 +196,152 @@ fn steps_are_counted_on_every_call() {
 }
 
 #[test]
-fn a_lookaround_is_refused_by_name() {
-    assert_eq!(
-        supports(&compile("(?=a)", 0, false)),
-        Err(Unsupported::Lookaround)
-    );
-    assert_eq!(
-        supports(&compile("(?<!a)b", 0, false)),
-        Err(Unsupported::Lookaround)
-    );
-    assert_eq!(supports(&compile("a|(b)", 0, false)), Ok(()));
+fn a_lookaround_is_run_not_refused() {
+    assert_eq!(supports(&compile("(?=a)", 0, false)), Ok(()));
+    assert_eq!(supports(&compile("(?<!a)b", 0, false)), Ok(()));
+}
+
+#[test]
+fn a_lookbehind_reads_before_pos() {
+    assert_eq!(span("(?<=a)b", 0, "ab", 1, 2, Match), Some((1, 2)));
+    assert_eq!(span("(?<!a)b", 0, "ab", 1, 2, Match), None);
+    // Too wide for the string's start: ASSERT fails, ASSERT_NOT passes.
+    assert_eq!(span("(?<=ab)b", 0, "b", 0, 1, Match), None);
+    assert_eq!(span("(?<!ab)b", 0, "b", 0, 1, Match), Some((0, 1)));
+}
+
+#[test]
+fn a_lookahead_stops_at_endpos() {
+    assert_eq!(span("a(?=b)", 0, "ab", 0, 1, Match), None);
+    assert_eq!(span("a(?!b)", 0, "ab", 0, 1, Match), Some((0, 1)));
+}
+
+/// BEYOND THE ADMITTED SUBSET: a capture inside a lookaround, which
+/// `parse::refusal` refuses (`CaptureInLookaround`), is the only way to see
+/// the cut of a body's choice points in an answer. The program comes from
+/// `re._parser`'s tree in `pyre_exec.jsonl` (`beyond`), below the refusal.
+#[test]
+fn a_lookaround_body_is_atomic() {
+    // The body takes `a`; `ab` is never tried, so the group stays `a`.
+    let prog = beyond("(?=(a|ab))ab");
+    let t: Vec<u32> = "ab".chars().map(u32::from).collect();
+    let m = run(&prog, t.as_slice(), 0, 2, Match).expect("a match");
+    assert_eq!(&m.marks[..2], &[0, 1]);
+    let prog = beyond("(?=(a*))a*b");
+    let t: Vec<u32> = "aab".chars().map(u32::from).collect();
+    let m = run(&prog, t.as_slice(), 0, 3, Fullmatch).expect("a match");
+    assert_eq!((m.start, m.end), (0, 3));
+}
+
+/// Inside the admitted subset the cut shows in the stack, not the answer:
+/// each body leaves its greedy frame behind unless `LookEnd` drops every
+/// frame above its marker. The span is `re`'s, `(0, 0)`.
+#[test]
+fn a_matched_body_leaves_no_choice_point() {
+    let prog = compile("(?=a*)(?=a*)(?=a*)(?=a*)", 0, false);
+    let t: Vec<u32> = "aaa".chars().map(u32::from).collect();
+    let m = run(&prog, t.as_slice(), 0, 3, Match).expect("a match");
+    assert_eq!((m.start, m.end), (0, 0));
+    // The marker and the body's one greedy frame.
+    assert_eq!(m.peak, 2);
+}
+
+/// BEYOND THE ADMITTED SUBSET, as `a_lookaround_body_is_atomic`: the marks
+/// a negative body writes are taken back, those of a positive body stay.
+#[test]
+fn marks_of_a_negative_body_are_dropped() {
+    let prog = beyond("(?!(a)c)a");
+    let t: Vec<u32> = "ab".chars().map(u32::from).collect();
+    let m = run(&prog, t.as_slice(), 0, 2, Match).expect("a match");
+    assert_eq!(m.marks, vec![-1, -1]);
+    assert_eq!(m.lastindex, -1);
+    let prog = beyond("(?=(a))a");
+    let t: Vec<u32> = "a".chars().map(u32::from).collect();
+    let m = run(&prog, t.as_slice(), 0, 1, Match).expect("a match");
+    assert_eq!((m.marks.clone(), m.lastindex), (vec![0, 1], 1));
+}
+
+/// Whether a `Mark` is reachable from `body` before its `LookEnd`.
+fn body_marks(prog: &Program, body: usize) -> bool {
+    let mut seen = vec![false; prog.insts.len()];
+    let mut todo = vec![body];
+    while let Some(i) = todo.pop() {
+        if i >= prog.insts.len() || std::mem::replace(&mut seen[i], true) {
+            continue;
+        }
+        let inst = &prog.insts[i];
+        match inst.op {
+            Op::Mark(_) => return true,
+            Op::LookEnd => continue,
+            Op::Split(other) => todo.push(other),
+            Op::Look { body, .. } => todo.push(body),
+            _ => {}
+        }
+        todo.push(inst.next);
+    }
+    false
+}
+
+/// What `parse` admits never hands the matcher a lookaround body holding
+/// a `Mark` (for pyre-9's memo): every lookaround the fixtures and this
+/// list hold, built through `parse::parse` and `lower`, has none, and each
+/// way of writing a group inside a body is refused by name.
+#[test]
+fn a_lookaround_body_holds_no_mark_after_the_refusal() {
+    let mut patterns: Vec<String> = Vec::new();
+    for look in ["(?=", "(?!", "(?<=", "(?<!"] {
+        for body in [
+            "(a)",
+            "(?P<n>a)",
+            "(?:(a))",
+            "a|(a)",
+            "(?:a(a))?",
+            "(?=(a))",
+            "(?i:(a))",
+            "(?:(?!(a)))",
+            "(?=(?=(?=(a))))",
+        ] {
+            let pattern = format!("{look}{body})a");
+            let codes: Vec<u32> = pattern.chars().map(u32::from).collect();
+            match parse(&codes, true, 0) {
+                // A choice inside a lookbehind is met first, before its
+                // alternatives.
+                Err(BuildError::Unsupported { what, .. }) => {
+                    let want = if look.starts_with("(?<") && body.starts_with("a|") {
+                        Feature::ChoiceInLookbehind
+                    } else {
+                        Feature::CaptureInLookaround
+                    };
+                    assert_eq!(what, want, "{pattern}")
+                }
+                other => panic!("{pattern}: {:?}", other.map(|_| ())),
+            }
+        }
+        for body in ["a", "a|b", "(?:ab)*", "a(?=b)", "(?!a)b", "[ab]c", "(?:a)"] {
+            patterns.push(format!("(a){look}{body})(b)"));
+        }
+    }
+    for row in common::jsonl("pyre_exec.jsonl").iter().skip(1) {
+        if row.get("refused").is_none() {
+            let pattern = pyre_exec_support::unspell(&row["pattern"]);
+            patterns.push(pattern.iter().filter_map(|&c| char::from_u32(c)).collect());
+        }
+    }
+    let mut looks = 0;
+    for pattern in &patterns {
+        let codes: Vec<u32> = pattern.chars().map(u32::from).collect();
+        let Ok((tree, state)) = parse(&codes, true, 0) else {
+            continue;
+        };
+        let Ok(prog) = bettermemory_core::pyre::lower::lower(&tree, state.flags, false) else {
+            continue;
+        };
+        for inst in &prog.insts {
+            if let Op::Look { body, .. } = inst.op {
+                looks += 1;
+                assert!(!body_marks(&prog, body), "{pattern}");
+            }
+        }
+    }
+    assert!(looks > 60, "{looks} lookarounds checked");
 }

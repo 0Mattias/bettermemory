@@ -45,9 +45,9 @@
 //!   test of one code point against it; a parsed
 //!   tree lowered to the engine's arena, its repeats classed as
 //!   `re._compiler` classes them; a lowered program run as `_sre` answers
-//!   `match`, `fullmatch` and `search`; `re.Pattern` built from a
-//!   pattern's text and flags, with `match`, `fullmatch`, `search`,
-//!   `finditer` and `findall` and `re.Match`;
+//!   `match`, `fullmatch` and `search`, lookarounds included;
+//!   `re.Pattern` built from a pattern's text and flags, with `match`,
+//!   `fullmatch`, `search`, `finditer` and `findall` and `re.Match`;
 //! - [`models_text`]: the text helpers of `models.py`: a memory's slug
 //!   and file name, its summary line, the truncation heuristic and the
 //!   search snippets;

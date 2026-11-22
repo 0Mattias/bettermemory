@@ -12,8 +12,17 @@
 //! aborting. The step count is always kept; a budget is a declared
 //! refusal ([`MatchError::Budget`]).
 //!
-//! Lookarounds are left to unit pyre-5b: [`supports`] refuses a program
-//! that holds one, and [`exec`] answers a [`Op::Look`] as a failure.
+//! Lookarounds (unit pyre-5b) run as `_sre`'s ASSERT and ASSERT_NOT: the
+//! body is a sub-attempt on the same stack under a [`Frame::Look`] marker,
+//! never a recursive call. The body's choice points are cut when it
+//! reaches [`Op::LookEnd`]. A lookbehind of width `w` fails (ASSERT) or
+//! passes (ASSERT_NOT) when fewer than `w` characters lie between the
+//! string's beginning and the position, whatever `pos` is. Marks set in a
+//! positive lookaround stay on success; a negative one takes back every
+//! mark and `lastindex` its body wrote. `parse::refusal` refuses a capture
+//! inside a lookaround, so only a program built below the refusal (the
+//! tests' `exec.beyond.` rows) holds such a mark; the rule is `_sre`'s
+//! and is kept for it.
 
 use super::fold::Lit;
 use super::lower::{Anchor, Class, Inst, Op, Program, Unit};
@@ -85,22 +94,13 @@ pub enum MatchError {
     Budget,
 }
 
-/// What [`exec`] does not run yet.
+/// What [`exec`] does not run: since unit pyre-5b, nothing a lowered
+/// program can hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Unsupported {
-    /// ASSERT and ASSERT_NOT (unit pyre-5b).
-    Lookaround,
-}
+pub enum Unsupported {}
 
-/// Whether [`exec`] runs every node of `prog`.
-pub fn supports(prog: &Program) -> Result<(), Unsupported> {
-    for inst in &prog.insts {
-        match inst.op {
-            Op::Look { .. } | Op::LookEnd => return Err(Unsupported::Lookaround),
-            Op::Unit(_) | Op::At(_) | Op::Mark(_) | Op::Split(_) => {}
-            Op::Rep1 { .. } | Op::Fail | Op::Match => {}
-        }
-    }
+/// Whether [`exec`] runs every node of `prog`: always.
+pub fn supports(_prog: &Program) -> Result<(), Unsupported> {
     Ok(())
 }
 
@@ -126,6 +126,9 @@ enum Frame {
         count: isize,
         trail: usize,
     },
+    /// The lookaround at node `pc`, entered at `pos`: popped by its
+    /// [`Op::LookEnd`] when the body matches, by backtracking when not.
+    Look { pc: usize, pos: isize, trail: usize },
 }
 
 /// The one fallible push of every buffer.
@@ -337,8 +340,49 @@ impl<C: ClassTest + ?Sized, T: Text + ?Sized> Run<'_, C, T> {
                         return Ok(Some(pos));
                     }
                     Op::Fail => break,
-                    // Unit pyre-5b; `supports` refuses them.
-                    Op::Look { .. } | Op::LookEnd => break,
+                    Op::Look {
+                        body,
+                        behind,
+                        negate,
+                    } => {
+                        let back = behind.map_or(0, |w| w as isize);
+                        // Measured from the string's beginning, not `pos`.
+                        if pos >= back {
+                            let trail = self.trail.len();
+                            self.push(Frame::Look { pc, pos, trail })?;
+                            pc = *body;
+                            pos -= back;
+                            continue;
+                        }
+                        if !negate {
+                            break;
+                        }
+                    }
+                    Op::LookEnd => {
+                        // The body matched: cut its choice points.
+                        let (look, at, trail) = loop {
+                            match self.stack.pop() {
+                                Some(Frame::Look { pc, pos, trail }) => break (pc, pos, trail),
+                                Some(_) => {}
+                                None => {
+                                    // Unreachable: LookEnd runs only inside a
+                                    // body whose Look pushed a marker frame.
+                                    debug_assert!(false, "LookEnd without a Look frame");
+                                    return Ok(None);
+                                }
+                            }
+                        };
+                        if let Op::Look { negate: true, .. } = insts[look].op {
+                            // Redundant with the backtrack that follows, which
+                            // unwinds to a trail no longer than this one; kept
+                            // to mirror ASSERT_NOT's LASTMARK_RESTORE.
+                            self.unwind(trail);
+                            break;
+                        }
+                        pc = insts[look].next;
+                        pos = at;
+                        continue;
+                    }
                 }
                 pc = next;
             }
@@ -414,6 +458,19 @@ impl<C: ClassTest + ?Sized, T: Text + ?Sized> Run<'_, C, T> {
                         pc = insts[node].next;
                         pos = at + 1;
                         break;
+                    }
+                    Frame::Look {
+                        pc: look,
+                        pos: at,
+                        trail,
+                    } => {
+                        // The body failed: ASSERT fails, ASSERT_NOT goes on.
+                        self.unwind(trail);
+                        if let Op::Look { negate: true, .. } = insts[look].op {
+                            pc = insts[look].next;
+                            pos = at;
+                            break;
+                        }
                     }
                 }
             }
