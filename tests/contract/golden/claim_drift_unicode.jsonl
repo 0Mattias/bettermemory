@@ -1,0 +1,17 @@
+{"f":"strip_and_count","h":"60ec724d6d2d920469f33d58ee78c8014d132ec2c4865f6be88920322b631efe","hi":65536,"lo":0}
+{"f":"strip_and_count","h":"015c33f54b4b8a8da8e7240f22dec8a7dd5c0b593294d09ccdf6788f067830df","hi":131072,"lo":65536}
+{"f":"strip_and_count","h":"436d56f137919a6881a4e7c4bd3968952baed6b4f889a9f8acba3166565563dd","hi":196608,"lo":131072}
+{"f":"strip_and_count","h":"9076fc7444556d3b9e37d3a360f2edb29b12e3d9a1be9e189f3dc0b2b25d04d1","hi":262144,"lo":196608}
+{"f":"strip_and_count","h":"5fee51c33bb0a5f58cf173323199d0e86bf5aa7af05fc7a43ed657f65bcca0f8","hi":327680,"lo":262144}
+{"f":"strip_and_count","h":"64cbbef4638e3587728e3dd6e4582201d27923a552dd14890ad8d7877b917680","hi":393216,"lo":327680}
+{"f":"strip_and_count","h":"e69934ec9728d41e85f0ffdcaf31e820f90fd0553578d00ffe2d649eb3f07d5b","hi":458752,"lo":393216}
+{"f":"strip_and_count","h":"c0056272b27d48ad32d658642a7ac9426a74e151e01c6247df6b33de10a536eb","hi":524288,"lo":458752}
+{"f":"strip_and_count","h":"90266dd07dd4f5db4281e327552f34e2a65e8b1d203d99e133c077778ca00927","hi":589824,"lo":524288}
+{"f":"strip_and_count","h":"b995d9ff7f6fef2998017099ac3b2dcaaa1432c495645ce90ff91f6bc0e8c241","hi":655360,"lo":589824}
+{"f":"strip_and_count","h":"a40093bd2fd094f3df97f3f57807d521816c201bfc49f8f0b8f832b9a830077c","hi":720896,"lo":655360}
+{"f":"strip_and_count","h":"3b765d8cdb17b965daf1af4478084b5fece29cca4206f38808844f0916203baa","hi":786432,"lo":720896}
+{"f":"strip_and_count","h":"9d622a992d87e037d4c9c24cf25fef48ee41f53e230692ef0760b34b0d109847","hi":851968,"lo":786432}
+{"f":"strip_and_count","h":"409d1632396cf9baf890c60574de2a2ad40a281f085f3b7224db79c595aded36","hi":917504,"lo":851968}
+{"f":"strip_and_count","h":"1961cc5f2509ec94c5a3cd9b7011ea6fa4dc9116747141544e559dff8d0ad151","hi":983040,"lo":917504}
+{"f":"strip_and_count","h":"aeee2d5fd7b985a9593638e3c7c299113ba67a5decd7704eaf15acbefc5586bb","hi":1048576,"lo":983040}
+{"f":"strip_and_count","h":"7c1d713d2a840bbdbfc218c66f5fba4828e7a479297bad3870f106d2d663cc74","hi":1114112,"lo":1048576}

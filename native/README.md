@@ -110,7 +110,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `entry`, `cli::common` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff` | `cli_common.jsonl`, `cli_common_python.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
-| `claims` | units 1 and 2 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`) | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl` |
+| `claims`, `claim_drift` | units 1 to 3 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`); `claim_drift`: `_Headers`, `build_binding_index`, `claim_level_drift`, the trait `LiteralLines` for the literal helpers | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl`, `claim_drift.jsonl`, `claim_drift_unicode.jsonl`, `claim_drift_python.jsonl` |
 | `symbols` | unit symcheck of `symbols.py`: the bounds (`_MAX_*`, `_FILE_SUFFIXES`), `SymbolCitation`, `SymbolDriftReport` (`missing`, `__bool__`, `to_dict`), `check_symbol_citations` over citations already parsed, `_tier`, `_live_root`, `_resolve_module`, `_module_bindings`; `ast.parse` and the name walks are a trait (`ModuleNames`) | `symbols.jsonl`, `symbols_platform.jsonl` |
 | `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`) | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
@@ -6122,6 +6122,10 @@ that Unicode too.
 | `golden_claims`: `claims_python_every_case` | `claims_python.jsonl` | ii (Python) |
 | `golden_claims`: `claims_literal_every_case` | `claims_literal.jsonl` | i |
 | `claims_kills` (20), `claims_robustness` (15) | none | i |
+| `golden_claim_drift`: `claim_drift_every_case` | `claim_drift.jsonl` | i |
+| `golden_claim_drift`: `claim_drift_unicode_every_case` | `claim_drift_unicode.jsonl` | ii (Unicode) |
+| `golden_claim_drift`: `claim_drift_python_every_case` | `claim_drift_python.jsonl` | i |
+| `claim_drift_kills` (12), `claim_drift_robustness` (6) | none | i |
 | `golden_symbols`: `symbols_every_case`, `symbols_windows_flavour_declines_or_answers_empty` | `symbols.jsonl` | i |
 | `golden_symbols_platform`: `symbols_platform_every_case` (POSIX only; `symbols_not_posix` records the gap) | `symbols_platform.jsonl` | iii (and Python) |
 | `symbols_kills` (10), `symbols_robustness` (4) | none | i |
@@ -17048,10 +17052,10 @@ does not have yet, so the module is cut into units, leaves first.
 | `_binding_token` | 718-733 | Unicode tables | built (unit 1) |
 | `_rhs_repr`, `string_fragment`, `anchors_from_value` | 736-803 | `ast.literal_eval`, `repr` | built (unit 2) |
 | `_header_path` | 815-822 | nothing | built (unit 1) |
-| `_Headers` | 825-874 | nothing | unit 3 |
+| `_Headers` | 825-876 | nothing | built (unit 3, `claim_drift`) |
 | `hunk_lines` | 877-885 | Unicode tables, `int`'s digit limit | built (unit 1) |
 | `_patch_header_path` | 888-906 | Unicode tables (`str.strip`) | built (unit 1) |
-| `build_binding_index`, `claim_level_drift` | 909-1159 | units 1 to 3 | unit 3 |
+| `build_binding_index`, `claim_level_drift` | 909-1159 | units 1 and 2 (unit 2 through the trait `LiteralLines`) | built (unit 3, `claim_drift`) |
 
 Unit 2 is the literal reader: `ast.literal_eval` over the expressions a
 claim value and a changed line can hold (with the interpreter's
@@ -17258,10 +17262,106 @@ claims).
   claimed value. `string_fragment("'a',)")` is `None` and
   `string_fragment("'a'),")` is `'a'`. Pinned in `claims_literal.jsonl`.
 
+### Unit 3, built (`claim_drift`)
+
+`src/claim_drift.rs`, read at 825-1159 of `claims.py` on `v9`. No
+dependency added; nothing here reads a file, a clock or git. The module
+is new beside `claims.rs`, which it reuses (`binding_token`, `hunk_lines`,
+`is_mark_hash`, `header_path`, `patch_header_path`, `strip`, `PathSet`,
+`COMMIT_MARK`).
+
+- `LiteralLines` is the trait for the four literal helpers the index and
+  the scoring call: `string_fragment`, `rhs_repr` (`_rhs_repr`),
+  `anchors_from_value` and `claimed_str` (`ast.literal_eval(cite.value)`
+  when it is a `str`). It has no error: every reference call site catches
+  `Exception` and reads a failure as None or `()`. Unit 2 implements it
+  over the literal reader; until then a caller supplies it.
+- `Headers` is `_Headers`: the open section's path from `header_path`,
+  the paths its extended header lines touch, and `only` (`header_only`),
+  each touched path's commit recorded when the section closes. `copy
+  from` is no header line (only `copy to` names a path); `rename from`
+  and `deleted ` lines mark the path deleted.
+- `build_binding_index(diff_text, lit) -> Result<Index, IntTooLong>`:
+  `Index` has a field per key of the reference's dict. A binding's key is
+  `(path, "def" | "assign", name)`, the reference's tuple. `Err` is
+  `int()`'s ValueError on a hunk count past 4,300 digits, which the
+  reference raises out of the function; it is read only where a hunk
+  header matches and a path is set, as in the reference. A count is held
+  saturated at `u64::MAX`: no stream holds that many lines, so the loop
+  and the mismatch test answer as with the exact int.
+- `claim_level_drift(cite, index, lit) -> Drift`: the eight keys. The
+  reference's `hit` is `anchor_shas` itself (`hit = anchor_shas`, then
+  `|=`), so `anchor_shas` holds every anchor and fragment commit; the
+  port fills one set. The code points of the claimed value are gathered
+  once; a fragment longer than the value or holding a code point the
+  value lacks is not in it, and any other fragment is searched for by
+  Knuth, Morris and Pratt. So a fragment foreign to a long value costs
+  its own length, as with the skip table of `in`, and none costs more
+  than the two lengths together. `Kind` has four members, so
+  the reference's final `else` is the literal kind.
+- `Index::render` and `Drift::render` give the reference's keys in order
+  as a `PyValue`, each set a sorted list and each dict a list of `[key,
+  value]` pairs sorted by key, which the fixtures compare after
+  `json.dumps` with ASCII and compact separators.
+
+Patterns: no new one. `_HUNK_RE` is `claims::hunk_lines` (already built
+by hand, rule 3 of the `pyre` decision: a matcher built stays and gains
+the engine's cross-check); past a match the header's shape is fixed, so
+the two counts are read by a walk over it, not a second matcher.
+`_MARK_HASH_RE.fullmatch` is `claims::is_mark_hash`. Nothing is added to
+the engine's inventory.
+
+Fixtures: `tests/contract/gen_claim_drift.py`, three files.
+
+- `claim_drift.jsonl` (11 rows, not gated, class i): nine streams (each
+  binding shape, extended headers of every kind, renames, copies,
+  deletes, empty files, quoted and ` b/` paths, surrogates, content lines
+  that read `diff --git`, `@@`, `+++` or a commit mark, `\ No newline`
+  markers, short and long hunks, counts of 0, a Unicode digit and past
+  `u64`, bad marks, a hunk before any path, an empty stream) with 32
+  claims of the four kinds; a `vocab` row and a `sweep` row: 2,000 seeded
+  streams of 24 lines (a 64-bit linear congruential generator, seed
+  20261121) with five claims each, by SHA-256 of the renders. Each row
+  records the literal answers it asked for and the test replays them, so
+  the file does not follow the Python release.
+- `claim_drift_unicode.jsonl` (17 blocks, gated on Unicode, class ii):
+  every code point at both edges of a changed line (`str.strip`) and as
+  a hunk count (`\d`), in blocks of 0x10000, by SHA-256.
+- `claim_drift_python.jsonl` (8 rows, not gated, class i): counts of
+  4,300 and 4,301 digits in either place, with and without a path. The
+  generator sets `int`'s digit limit to 4,300 itself, the limit every
+  supported release (3.11 to 3.14) has, and the rows hold no message, so
+  the file is the same under every release.
+
+Tests: `golden_claim_drift` (`claim_drift_every_case`,
+`claim_drift_unicode_every_case`, `claim_drift_python_every_case`);
+`claim_drift_kills` (12: the `\ No newline` marker, content read by
+count, the backed-up short hunk, a bad mark keeping the last commit, a
+body line clearing the header touch, `copy from`, a hunk before a path,
+the digit limit read only with a path, the net removal of a symbol, a
+value put back and the fragment as a substring, an absent prefix
+sibling, a fragment measured after strip); `claim_drift_robustness` (6:
+20,000-line hunks linear in their
+length, counts at and past `u64::MAX` and at 4,300 digits, 50,000
+header-only sections, a fragment search linear in the claimed value,
+20,000 fragments foreign to a long claimed value,
+odd one-line streams).
+
+### Reference findings (unit 3)
+
+- `+++ "b/sp ace.py"` (git's quoted spelling) names the path with its
+  quotes, `"b/sp ace.py"`, since `_patch_header_path` strips only a bare
+  `b/`; a claim on `sp ace.py` misses that section. Pinned in
+  `claim_drift.jsonl` (stream `quoted`).
+- A commit mark that is not a full hash keeps the previous commit for the
+  lines after it, so its lines are credited to the commit before. Pinned
+  (stream `mismatches`).
+
 ### Left for later units
 
-Units 3 and 4 above (`_Headers`, the index and its scoring; the oracle
-`check_claim`). Nothing in units 1 and 2 reads a file, a clock or git.
+Unit 4 above (the oracle `check_claim`), and an implementation of
+`claim_drift::LiteralLines` over unit 2's literal reader. Nothing in
+units 1 to 3 reads a file, a clock or git.
 
 ## Symbol citations checked against a module (`symbols.py`)
 
@@ -19879,8 +19979,8 @@ What the reference has and this build does not, by area:
   admission is `store::caller`).
 - `project_file.py` past its vocabulary, render, walk and write: `parse`
   and its reads (unit 2).
-- Each hit's signals and drift report: `claims.py` past its leaves and
-  its literal reader (the drift index, the declare-time oracle),
+- Each hit's signals and drift report: `claims.py` past its leaves,
+  its literal reader and its drift index (the declare-time oracle),
   `verify_candidates.py` past the validation of one candidate, its
   three extraction patterns (`_BACKTICK_RE`, `_BARE_RE`,
   `_DOMAIN_ROUTE_RE`) and the candidate scan (`_normalize_for_compare`

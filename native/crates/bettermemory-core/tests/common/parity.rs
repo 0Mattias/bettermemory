@@ -244,7 +244,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "unicode_sequences.jsonl"
         | "identity_caller_unicode.jsonl"
         | "membership_lines_unicode.jsonl"
-        | "claims_unicode.jsonl" => &[Unicode],
+        | "claims_unicode.jsonl"
+        | "claim_drift_unicode.jsonl" => &[Unicode],
         // `str.isidentifier` over every code point and the `_` rule, which
         // is the same in every CPython 3 (`gen_unicode_xid`).
         "unicode_xid.jsonl" => &[Unicode],

@@ -268,6 +268,9 @@
 //! - [`claims`]: what a memory claims, its first two units (the claim
 //!   record, the path spellings and the patterns a patch is read by; the
 //!   claim parser and the literal readers over [`pysyntax`]);
+//! - [`claim_drift`]: the drift index of `claims.py` (`_Headers`,
+//!   `build_binding_index`, `claim_level_drift`), pure over a patch
+//!   stream, with the literal helpers as a trait;
 //! - [`symbols`]: `symbols.py`'s checker, its first unit: the bounds, the
 //!   citation records and `check_symbol_citations` over parsed citations,
 //!   with a module's names a trait;
@@ -293,6 +296,7 @@ pub mod audit;
 pub mod caches;
 pub mod capture;
 pub mod checkout_token;
+pub mod claim_drift;
 pub mod claims;
 pub mod cli;
 pub mod config;
