@@ -32,6 +32,7 @@ from tests.contract.payloads import LEGACY_SHAPES
 from tests.contract.generate import (
     GENERATORS,
     GOLDEN,
+    LeftStateError,
     PYDANTIC_CORE_VERSION,
     PYDANTIC_GATED,
     PYTHON_GATED,
@@ -48,6 +49,7 @@ from tests.contract.generate import (
     platform_key,
     pydantic_core_version,
     python_version,
+    run_generator,
     zlib_version,
 )
 
@@ -233,7 +235,10 @@ def _compare_with_the_reference(name: str) -> None:
         pytest.skip(f"{name}: {_NOT_POSIX}")
     drift = _drift(name)
     try:
-        produced = GENERATORS[name]()
+        produced = run_generator(name)
+    except LeftStateError:
+        # A leak fails under every interpreter, whatever the gates.
+        raise
     except Exception as exc:
         # Under the pinned versions a generator that raises is a failure.
         # Under others it has met something those versions do otherwise,
@@ -273,7 +278,9 @@ def test_every_golden_file_has_a_generator() -> None:
             unknown = True
             continue
         try:
-            made |= set(generate())
+            made |= set(run_generator(name, generate))
+        except LeftStateError:
+            raise
         except Exception:
             # A gated generator that raises under another version than its
             # files' names no files here; under the pinned ones it fails.

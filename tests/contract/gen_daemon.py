@@ -33,7 +33,7 @@ from unittest.mock import patch
 
 from starlette.testclient import TestClient
 
-from bettermemory import _daemon_client, location
+from bettermemory import _daemon_client, identity, location
 from bettermemory.config import (
     BehaviorConfig,
     CaptureConfig,
@@ -96,6 +96,11 @@ def _config(w: World, **capture: Any) -> Config:
 @contextmanager
 def _app(w: World, cfg: Config) -> Iterator[tuple[TestClient, list[int], Store]]:
     store = Store.create(w.memory_dir / "store", keys_dir=w.keys_dir)
+    # A request the app serves binds its caller (`identity.bind`,
+    # `identity.bind_transcript`) and leaves it published with no token to
+    # reset: the caller found here is restored on the way out, so no later
+    # generator reads one of these.
+    kept = identity._CURRENT.set(identity._CURRENT.get())
     try:
         _migrate_at_start(store, cfg)
         calls: list[int] = []
@@ -110,6 +115,7 @@ def _app(w: World, cfg: Config) -> Iterator[tuple[TestClient, list[int], Store]]
             yield client, calls, store
     finally:
         store.close()
+        identity._CURRENT.reset(kept)
 
 
 def _auth(token: str = TOKEN) -> dict[str, str]:

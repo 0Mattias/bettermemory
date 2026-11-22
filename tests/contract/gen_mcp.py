@@ -29,7 +29,7 @@ from typing import Any
 
 from mcp.server.mcpserver.exceptions import ToolError
 
-from bettermemory import location
+from bettermemory import identity, location
 from bettermemory import review as breview
 from bettermemory.config import Config, StorageConfig
 from bettermemory.server import build_server
@@ -67,12 +67,17 @@ def _thresholds() -> dict[str, Any]:
 
 @contextmanager
 def _server(w: World) -> Iterator[tuple[Any, Store, Config]]:
+    # `build_server` binds a caller (`identity.bind`) and leaves it
+    # published with no token to reset: the caller found here is restored
+    # on the way out, so no later generator reads this one.
     store = Store.create(w.memory_dir / "store", keys_dir=w.keys_dir)
+    kept = identity._CURRENT.set(identity._CURRENT.get())
     try:
         cfg = Config(storage=StorageConfig(directory=str(w.memory_dir)))
         yield build_server(config=cfg, store=store, state=SessionState()), store, cfg
     finally:
         store.close()
+        identity._CURRENT.reset(kept)
 
 
 def surface() -> dict[str, bytes]:

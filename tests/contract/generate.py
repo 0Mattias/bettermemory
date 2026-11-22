@@ -1242,6 +1242,75 @@ def drift(name: str) -> list[str]:
     return out
 
 
+class LeftStateError(RuntimeError):
+    """A generator left process-wide state of the reference other than it
+    found it, which a later generator in the same process would read."""
+
+
+def _process_state() -> dict[str, object]:
+    """The process-wide state of the reference a generator may set and a
+    later one reads: every ContextVar of the package (the published caller
+    first among them), the working directory and the environment.
+
+    Compared by identity for the ContextVars: a generator that restores
+    what it found (``ContextVar.reset``) gives back the same object. The
+    memo caches ``bettermemory._caches`` registers are left out: each is
+    exact by contract, so a warm one changes no answer. Module globals a
+    generator replaces without ``mock.patch`` are left out too: no
+    registry names them, and every generator here patches through
+    ``mock.patch``, which restores on exit."""
+    from bettermemory import config, events, git_read_budget, identity, store_index
+
+    state: dict[str, object] = {
+        "identity._CURRENT": identity._CURRENT.get(),
+        "config._TRIAL": config._TRIAL.get(),
+        "events._SUPPRESSED": events._SUPPRESSED.get(),
+        "events._DEADLINE": events._DEADLINE.get(),
+        "git_read_budget._OWNER": git_read_budget._OWNER.get(),
+        "git_read_budget._ACTIVE": git_read_budget._ACTIVE.get(),
+        "git_read_budget._ROOT": git_read_budget._ROOT.get(),
+        "store_index._DRIFT_SUBJECT": store_index._DRIFT_SUBJECT.get(),
+    }
+    return state
+
+
+def _cwd_and_environ() -> tuple[str, dict[str, str]]:
+    return os.getcwd(), dict(os.environ)
+
+
+def run_generator(
+    name: str, generate: Callable[[], dict[str, bytes]] | None = None
+) -> dict[str, bytes]:
+    """Run generator ``name`` (or ``generate`` under that name) and return
+    its files. Every driver runs a generator through here: the pinned
+    run, the as-found run and the golden test. Raises
+    `LeftStateError` naming the generator when it left a ContextVar of
+    the reference, the working directory or the environment other than it
+    found them: in one process, the next generator would read it."""
+    if generate is None:
+        generate = GENERATORS[name]
+    before = _process_state()
+    where = _cwd_and_environ()
+    produced = generate()
+    after = _process_state()
+    left = [key for key in before if after[key] is not before[key]]
+    now_cwd, now_env = _cwd_and_environ()
+    if now_cwd != where[0]:
+        left.append(f"the working directory ({where[0]!r} to {now_cwd!r})")
+    if now_env != where[1]:
+        changed = sorted(
+            key
+            for key in set(now_env) | set(where[1])
+            if now_env.get(key) != where[1].get(key)
+        )
+        left.append(f"the environment ({', '.join(changed)})")
+    if left:
+        raise LeftStateError(
+            f"generator {name} left process-wide state set: {'; '.join(left)}"
+        )
+    return produced
+
+
 def as_found(out: Path) -> int:
     """Every generator under whatever is present, into ``out``, with
     ``platform.json``. Exit 0 when every generator ran, 1 when one raised
@@ -1261,7 +1330,7 @@ def as_found(out: Path) -> int:
             continue
         started = time.monotonic()
         try:
-            produced = generate()
+            produced = run_generator(name, generate)
         except Exception as exc:  # recorded, and the run goes on
             failed += 1
             entry["raised"] = f"{type(exc).__name__}: {exc}"
@@ -1400,8 +1469,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     GOLDEN.mkdir(exist_ok=True)
-    for generate in GENERATORS.values():
-        for name, data in generate().items():
+    for generator in GENERATORS:
+        for name, data in run_generator(generator).items():
             (GOLDEN / name).write_bytes(data)
             print(f"{name}: {len(data)} bytes")
     return 0

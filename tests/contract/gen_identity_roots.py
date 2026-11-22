@@ -320,10 +320,14 @@ def _declaration(
             return _expanduser(flavour, self.text)
 
     environ = _Env(env)
-    token = None
+    # Every row sets the caller it depends on: a row with none publishes
+    # None, so a caller an earlier generator left in the process does not
+    # answer `workspace_declaration` ahead of the environment.
+    caller = None
     if published is not None:
         workspace = I.Workspace(path=published[0], source=published[1])
-        token = I.publish(I.Caller(workspace=workspace))
+        caller = I.Caller(workspace=workspace)
+    token = I._CURRENT.set(caller)
     try:
         with (
             mock.patch.object(I, "Path", _Path),
@@ -335,8 +339,7 @@ def _declaration(
             except RuntimeError as exc:
                 out = _raise(exc)
     finally:
-        if token is not None:
-            I.reset(token)
+        I._CURRENT.reset(token)
     return [
         "w",
         "nt" if nt else "posix",
