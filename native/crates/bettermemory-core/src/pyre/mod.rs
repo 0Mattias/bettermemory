@@ -23,6 +23,9 @@
 //! - [`exec`]: a lowered program run on a text at one start and over
 //!   starts, as `_sre` answers `match`, `fullmatch` and `search` (unit
 //!   pyre-5a).
+//! - [`regex`]: `re.Pattern` and `re.Match`: a pattern built from its text
+//!   and flags, and `match`, `fullmatch`, `search`, `finditer` and
+//!   `findall` with `pos` and `endpos` (unit pyre-6a).
 
 pub mod atom;
 pub mod charset;
@@ -30,6 +33,7 @@ pub mod exec;
 pub mod fold;
 pub mod lower;
 pub mod parse;
+pub mod regex;
 pub mod token;
 pub mod tree;
 

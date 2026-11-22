@@ -80,6 +80,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from . import (
+    gen_pyre_api,
     gen_pyre_atom,
     gen_pyre_charset,
     gen_pyre_exec,
@@ -511,6 +512,7 @@ _PYRE_3 = "pyre-3"
 _PYRE_4A = "pyre-4a"
 _PYRE_4B = "pyre-4b"
 _PYRE_5A = "pyre-5a"
+_PYRE_6A = "pyre-6a"
 
 _PARTS: dict[str, tuple[tuple[str, Callable[[], list[dict[str, Any]]]], ...]] = {
     "pyre.jsonl": (
@@ -525,6 +527,7 @@ _PARTS: dict[str, tuple[tuple[str, Callable[[], list[dict[str, Any]]]], ...]] = 
         (_PYRE_4A, gen_pyre_charset.rows_unicode),
         (_PYRE_4B, gen_pyre_lower.unicode_rows),
         (_PYRE_5A, gen_pyre_exec.unicode_rows),
+        (_PYRE_6A, gen_pyre_api.unicode_rows),
     ),
     "pyre_python.jsonl": (
         (_FOLD, fold_python_rows),
@@ -533,6 +536,7 @@ _PARTS: dict[str, tuple[tuple[str, Callable[[], list[dict[str, Any]]]], ...]] = 
         (_PYRE_3, gen_pyre_parse.rows_python),
         (_PYRE_4A, gen_pyre_charset.rows_python),
         (_PYRE_5A, gen_pyre_exec.python_rows),
+        (_PYRE_6A, gen_pyre_api.python_rows),
     ),
 }
 

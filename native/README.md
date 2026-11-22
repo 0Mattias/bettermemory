@@ -29,7 +29,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks; its second unit (`src/origin_history/located.rs`): `located_key`, `history_guard`, `cuts`, `shallow_file`, `cuts_in` | `origin_history.jsonl`, `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` |
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves | `origin_dates_reads.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
-| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth; lookarounds refused (`supports`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl` |
+| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth; lookarounds refused (`supports`). Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `records::summaries` | unit 3 of `models.py`, the result models: `MemoryHit` (`MemoryHit::new` with the model's defaults), `MemorySummary` and `TombstonedSummary` (`of` a record, as `store_records.list_summaries` and `list_tombstones` build them), and the two listings' scope filters (`summaries`, `tombstone_summaries`) | `models_hits.jsonl` |
 | `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT` until the review unit), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint` | `standing.jsonl` |
@@ -5507,6 +5507,10 @@ that Unicode too.
 | `golden_pyre_exec`: `pyre_exec_unicode_every_row` | `pyre_unicode.jsonl` (the `exec.` parts) | ii (Unicode) |
 | `golden_pyre_exec`: `pyre_exec_python_every_row` | `pyre_python.jsonl` (the `exec.` parts) | ii (Python) |
 | `pyre_exec_kills` (17), `pyre_exec_robustness` (7) | none | i |
+| `golden_pyre_api`: `pyre_api_every_row` | `pyre_api.jsonl` | i |
+| `golden_pyre_api`: `pyre_api_unicode_every_row` | `pyre_unicode.jsonl` (the `api.` parts) | ii (Unicode) |
+| `golden_pyre_api`: `pyre_api_python_every_row` | `pyre_python.jsonl` (the `api.` parts) | ii (Python) |
+| `pyre_api_kills` (9), `pyre_api_robustness` (5) | none | i |
 | `golden_models_text`: `models_text_every_case`; `models_text_kills` (16), `models_text_robustness` (4) | `models_text.jsonl` (the last two none) | i |
 | `golden_models_text`: `models_text_unicode_every_case` | `models_text_unicode.jsonl` | ii (Unicode) |
 | `golden_models_text`: `models_text_platform_every_case` | `models_text_platform.jsonl` | iii |
@@ -5698,7 +5702,7 @@ Leaves first. A unit's lines are Rust source outside tests.
 | pyre-4a | `pyre/charset.rs` | a class compiled as `_optimize_charset` compiles it, the opcode `_compile` chooses for it, the engine's refusals of a class, the test of one code point against it | `_compiler.py` 46-55, 85-97, 226-236, 241-399 | pyre-1, pyre-2a | built, 365 lines |
 | pyre-4b | `pyre/lower.rs` | nodes threaded by `next`, `_simple`, `_combine_flags`, group repeats unrolled, the arena cap, the lookbehind errors of `_compile`, the refusals that depend on flags | `_compiler.py` 31-35, 37-200, 401-408 | pyre-1, pyre-3 | built, 526 lines |
 | pyre-5 | `pyre/exec.rs` | one loop, one stack, one trail; anchors, lookarounds, the `match` and `fullmatch` acceptance rules (the must-advance attempt is pyre-6), the scan over starts, the step count | `_sre` (by differential) | pyre-4 | pyre-5a built (all but lookarounds), 489 lines; pyre-5b (lookarounds) not built |
-| pyre-6 | `pyre/regex.rs` | `Regex`, `Match`, `finditer`, `findall`, `sub`, `subn`, `split`, `pos` and `endpos`, literal and function replacement | `_sre` (by differential) | pyre-5, pyre-2 | not built |
+| pyre-6 | `pyre/regex.rs` | `Regex`, `Match`, `finditer`, `findall`, `sub`, `subn`, `split`, `pos` and `endpos`, literal and function replacement | `_sre` (by differential) | pyre-5, pyre-2 | pyre-6a built (`Regex`, `Match`, `match`, `fullmatch`, `search`, `finditer`, `findall`, the attempt that must advance), 497 lines; pyre-6b (`sub`, `subn`, `split`) not built |
 | pyre-7 | tests only | every remaining pattern of the reference built from its own text; mutants; the inventory tripwire | the reference's patterns | pyre-6 | not built |
 | pyre-8 | tests only | the 94 hand-written matchers against the engine | the built units | pyre-6 | not built |
 | pyre-9 | `pyre/memo.rs` | failure bits, the run and failed ends per repeat; megabyte pins by steps | none (changes no answer) | pyre-6, pyre-7 | not built |
@@ -7040,6 +7044,127 @@ against greedy, clamped and reversed windows.
 Left for later units: lookarounds (pyre-5b, which deletes
 `Unsupported::Lookaround`); the attempt that must advance after an empty
 match, `Regex` and its methods (pyre-6); the failure memo (pyre-9).
+
+### Unit pyre-6a, built (`pyre::regex`)
+
+`pyre/regex.rs` holds `re.Pattern` and `re.Match` for the methods that
+find matches. A `Regex` is built from the pattern's own text and flags as
+`re.compile` builds it, and its methods call `exec::exec` and nothing
+else of the matcher. It holds 497 lines of Rust source. The reference
+is `Lib/re/__init__.py` `_compile` (the flag and type checks) and
+`Modules/_sre/sre.c` of 3.13.13 (`pattern_new_match`, `scanner_search`,
+`pattern_findall`), whose C text is not on the build machine: their
+answers are compared by value with the interpreter.
+
+| function | reproduces | needs | status |
+| --- | --- | --- | --- |
+| `Regex::new`, `new_str`, `new_bytes` | `re.compile(pattern, flags)` for a `str` or a bytes pattern: `parse` (with `fix_flags` and the engine's refusals), `lower`, `exec::supports`, then each distinct class compiled once by `compile_class` | `parse`, `lower`, `charset`, `exec` | built |
+| `Regex::pattern`, `flags`, `groups`, `names` | `Pattern.pattern`, `Pattern.flags` (the state's flags: the flags given, UNICODE for a `str` pattern, the leading inline flags), `Pattern.groups`, `Pattern.groupindex` by number | nothing | built |
+| `match`, `fullmatch`, `search` and their `try_*` | the three calls with `pos` and `endpos`, answered as a `Match` | `exec` | built |
+| `finditer`, `try_finditer` | `scanner_search` in a loop: a search from `pos`, then from the end of each match, with `must_advance` after an empty one | `exec`, `advance` | built |
+| `findall`, `try_findall` | `pattern_findall`: the same scan; the whole match with no group, the group with one, the tuple of groups with more, an empty piece for a group that took no part | `exec`, `advance` | built |
+| `advance` | the attempt after an empty match (`must_advance` read at `SUCCESS` in `SRE(match)`) | `lower::Program` | built |
+| `Match` (`regs`, `span`, `group`, `pos`, `endpos`, `lastindex`, `lastgroup`) | `pattern_new_match`: unset groups as `(-1, -1)`, `pos` and `endpos` as clamped, `lastgroup` the name of `lastindex` | nothing | built |
+| `CallError` | `_sre`'s TypeError for a text of the other type, with its message; `Memory` and `Budget` of `try_*` | nothing | built |
+
+Decisions and their reasons:
+
+- **The attempt that must advance is a second copy of the program.**
+  After an empty match at `p`, `_sre` runs the next attempt at `p` with
+  `must_advance` set: its `SUCCESS` fails when the position is still `p`,
+  and backtracking goes on (`re.findall('a*?', 'aab')` is `['', 'a', '',
+  'a', '', '']`; a scan that steps to `p + 1` loses the `a`s). Only that
+  first attempt carries the flag; when it fails the search goes on from
+  `p + 1` as usual. `exec` has no such rule and its file is not changed
+  by this unit, so `advance` builds, once per pattern, a program of two
+  copies: copy B is the program as it is; copy A is the same nodes before
+  anything is consumed. In A, `MATCH` is `FAIL`, a unit leads into B, and
+  a single-unit repeat of minimum 0 is split, in its own order of trial,
+  into its counts from 1 (into B) and its count 0 (staying in A): a
+  greedy one tries the counts from 1 first, a lazy one the count 0 first.
+  A lookaround's body stays in B, since what it reads is not consumed.
+  The first path that reaches `MATCH` in B is the first path of the
+  reference's attempt that ends past `p`, with the same marks. Every
+  attempt of a scan otherwise is a plain `exec` search, so the step
+  counts of the two differ only on this attempt.
+- **A class is compiled once.** `exec` asks a `ClassTest` for membership
+  with the arena's `Class` itself; `Regex` compiles every distinct class
+  of its program when it is built and finds it again by the address of
+  its members (an `Arc` that unrolled copies share) and its flags. A
+  class the compiler refuses is a failed build (`RegexError::Class`).
+- **A failed build is a value.** `RegexError` carries what `parse`,
+  `lower` and `compile_class` answer; what `exec::supports` refuses is
+  carried by its name (`Debug`), so the unit names no variant of
+  `exec::Unsupported` and builds unchanged once lookarounds are run. A
+  pattern of the reference held as a static is a
+  `LazyLock<Result<Regex, RegexError>>` built from its text.
+- **Flags past a C `int` overflow.** `_sre.compile` takes the flags as
+  a C `int`, so flags of 2**31 or more raise OverflowError after `parse`
+  and `_code` have run; `Regex::build` answers
+  `RegexError::FlagsOverflow` at the same point, after `lower`.
+- **A refusal can come before `re.error`.** Where `parse` refuses a
+  possessive repeat or a conditional group (units pyre-3a to pyre-3c)
+  before a later position at which `re` raises `re.error`, the build
+  answers `Build(Unsupported)` where the reference raises: `'.?+?'` is
+  `Possessive` at 2 against "multiple repeat at position 3", `'(?(1)a)'`
+  is `Conditional` at 0 against "invalid group reference 1 at position
+  3". Both refuse to build; the kind and position differ. The order of
+  those checks belongs to `parse`, left for a later unit.
+- **`groups` and `groupdict` answer spans.** `Match::groups(default)`
+  answers each group's span from 1, or `default` where it took no part;
+  `Match::groupdict(names, default)` pairs each name of `Regex::names`,
+  in group order as `groupindex` holds them, with the same.
+- **The text's type is checked as `_sre` checks it.** A method takes any
+  `Subject` (`[u32]` for a `str`, `[u8]` for bytes); the other type is
+  `CallError::Type`, whose text is the TypeError's.
+- **The window.** `pos` and `endpos` are `isize` (`Py_ssize_t`), passed
+  to `exec` unchanged. `endpos` has no default: a caller passes
+  `isize::MAX` for `re`'s default of `sys.maxsize`. `Match.pos` and
+  `Match.endpos` are the clamped values
+  (`re.compile('a').search('xa', -5, 99).pos` is 0). A scan stops when
+  its start passes the clamped `endpos`, so a reversed window finds
+  nothing through `finditer` and `findall`.
+- **Plain and `try_*`.** The plain methods have no budget and end on an
+  allocation failure as the rest of the crate ends
+  (`handle_alloc_error`); `try_*` answer `Memory` and `Budget`. In a scan
+  the budget holds for each run of the matcher, not for the whole scan.
+- `findall` hands back pieces of the text (`Vec<u32>` or `Vec<u8>`),
+  never `None`: a group that took no part is an empty piece, as `''` is
+  in the reference, while `Match::group` answers `None` for it.
+
+Patterns: this unit reproduces no call site of the reference. Its sweep
+builds the first 60 of the reference's literal patterns
+(`gen_pyre_atom._literals`) that the engine builds and that hold no
+lookaround, from their own text, and pins all five methods on them; the
+engine's inventory gains nothing new.
+
+#### Fixtures and tests of pyre-6a
+
+`tests/contract/gen_pyre_api.py` writes `pyre_api.jsonl` (not gated) and
+the `api.` rows of `pyre_unicode.jsonl` and `pyre_python.jsonl` (unit
+`pyre-6a` in their headers). An answer line holds the five methods'
+answers: the spans and `lastindex` of a match, those of each match of
+`finditer`, and the code points of each piece of `findall`.
+
+| part | rows |
+| --- | --- |
+| `api.sweep` | 60 inventory patterns, each over every text of at most 10 code points over a two-symbol alphabet (7 over three symbols) taken from the pattern's own literals: every window in `[-1, n + 1]` up to 6 code points (4 over three symbols), four windows past it, by count and SHA-256. The ordered windows are in `pyre_api.jsonl` (in `pyre_unicode.jsonl` when the pattern folds case or its alphabet goes past ASCII); the reversed windows, whose `match` and `fullmatch` answers are 3.13.13's, in `pyre_python.jsonl` |
+| `api.fuzz` | the decision's fuzz: the first 300 patterns of `gen_pyre_parse._fuzz_case` the engine builds, each with a digest of its five methods over every text over `ab` of at most 4 code points and every ordered window, and the first 100 it refuses or `re` rejects, by name |
+| `api.kill` | calls written out: the attempt after an empty match, `findall`'s shape, a group that took no part, `lastgroup`, clamped and reversed windows, with `pos`, `endpos` and `lastgroup` of each match |
+
+The sweep does not take every window of every text of up to 12 code
+points, as the task planned: that is about 25 times the calls, which the
+Rust tests in debug do not finish in minutes (pyre-5a made the same cut).
+
+| test | cases | what |
+| --- | --- | --- |
+| `golden_pyre_api` | 3 | every row of the three files; each sweep and fuzz digest regenerated by the generator's rule |
+| `pyre_api_kills` | 12 | the attempt after an empty match and the order of its repeats, the doubled arena, `findall`'s shape, unset groups, `lastgroup`, clamped and reversed windows, the type check and its messages, `Pattern.flags`, failed builds as values (a static among them), flags past a C `int`, `groups` and `groupdict` with a default, the budget |
+| `pyre_api_robustness` | 5 | a scan of 200,000 empty matches, every window bound, an exponential shape under a budget, nesting and 3,000 groups, scans linear at ten times the text |
+
+Left for later units: `sub`, `subn` and `split` (pyre-6b), templates
+(pyre-10), the failure memo (pyre-9). Lookaround patterns build here once
+pyre-5b folds, with no edit to this file.
 
 ### Left for later units
 
@@ -18305,9 +18430,12 @@ What the reference has and this build does not, by area:
   lookarounds, inline flags, alternatives and `parse`, and the refusal
   predicate over the finished tree with the matcher's nesting bound),
   the class compiler, the lowering and the matcher's match, fullmatch and
-  search (pyre-5a): the matcher's lookarounds (pyre-5b), the methods
-  (pyre-6), the inventory proof, the cross-check of the hand-written
-  matchers and the memo (pyre-7 to pyre-9).
+  search (pyre-5a), and the pattern api (pyre-6a: `Regex`, `Match`,
+  `finditer`, `findall` and the attempt that must advance): the
+  matcher's lookarounds (pyre-5b), `sub`, `subn`, `split` and their
+  replacement (pyre-6b), the inventory proof, the cross-check of the
+  hand-written matchers and the memo (pyre-7 to pyre-9), and replacement
+  templates (pyre-10).
 - This machine's id past its record, clone rule, facts, file reads and
   open: `machine.py`'s `check_import_fork`.
 - The telemetry rows past their kinds, classes and id-list readers:
