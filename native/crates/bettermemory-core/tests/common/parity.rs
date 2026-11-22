@@ -196,6 +196,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "argparse_subparsers_python.jsonl"
         | "json_edges.jsonl"
         | "toml.jsonl"
+        // The TypeError's text of an unhashable set element (`gen_use_tokens`).
+        | "use_tokens_python.jsonl"
         | "settings_python.json"
         | "settings_paths_python.json"
         | "membership_lines_python.jsonl"

@@ -32,6 +32,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks; its second unit (`src/origin_history/located.rs`): `located_key`, `history_guard`, `cuts`, `shallow_file`, `cuts_in` | `origin_history.jsonl`, `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` |
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves; `origin_dates::memo`: `_instant`, `commit_author_timestamps` and `_remember_dates` over the caller's `TimestampsMemo`, `MemoLeaves` and `ShallowHold` | `origin_dates_reads.jsonl`, `origin_dates_memo.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
+| `use_tokens` | the per-turn use-token bookkeeping of `handlers/_shared.py`: `_drain_expired_use_tokens`, `_emit_expired_use_tokens`, `_advance_turn`, `_event_ts_epoch`, `_scan_settled_use_events`, `_already_recorded_pending_ids` and its alias `_hook_attributed_pending_ids`, `_attach_use_tokens`; the recorder and its log are a trait (`UseLog`) | `use_tokens.jsonl`, `use_tokens_python.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth. Unit pyre-5b: `_sre`'s ASSERT and ASSERT_NOT (`Op::Look`, `Op::LookEnd`) run in `exec` as sub-attempts on the same stack; `supports` refuses nothing. Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`) | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `records::summaries` | unit 3 of `models.py`, the result models: `MemoryHit` (`MemoryHit::new` with the model's defaults), `MemorySummary` and `TombstonedSummary` (`of` a record, as `store_records.list_summaries` and `list_tombstones` build them), and the two listings' scope filters (`summaries`, `tombstone_summaries`) | `models_hits.jsonl` |
@@ -5746,9 +5747,9 @@ reads, draws and the state after; and a digest row over 3,000 random
 sequences from a splitmix64 seed. `golden_session`, `session_kills` and
 `session_robustness` read and extend them. No regular expression is used.
 
-Left for later: the handler layer that emits `use_token_expired` and the
-auto-commit `record_use` events (`handlers/_shared`), and the
-pending-write sidecar that files rows under `client_key`.
+Left for later: the pending-write sidecar that files rows under
+`client_key`. The handler layer's use-token bookkeeping is `use_tokens`
+("The per-turn use-token bookkeeping").
 
 ## Four import-free leaves: native text, the cache registry, the hook budget, the install spellings
 
@@ -6311,6 +6312,89 @@ members, the middle dots that only continue, the NFKC exclusions, bounds),
 linear growth claim).
 
 Left for later units: the caller in `doctor` that reads it.
+
+## The per-turn use-token bookkeeping (`handlers/_shared.py` 476-887)
+
+`use_tokens.rs` reproduces the handler layer's use-token functions over
+the built `session::SessionState` in one unit (323 lines of Rust source
+outside comments and blank lines, under the bound of 600). The clock is
+`session::Effects`; the recorder and its store's log are the trait
+`UseLog`: `record(kind, fields)` with the keywords in call order,
+`session_for_request()`, and `events_backward()`, a lazy iterator of rows
+(a dict's items) newest first, so the scan's early exit also ends the
+reading, as the reference's lazy reader does.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_drain_expired_use_tokens` | 476-533 | the log | built (`drain_expired_use_tokens`, over a held guard) |
+| `_emit_expired_use_tokens` | 536-584 | the clock, the log | built (`emit_expired_use_tokens`, over a held guard) |
+| `_advance_turn` | 587-660 | the clock, the log | built (`advance_turn`, takes the lock) |
+| `_event_ts_epoch` | 663-674 | nothing | built (`event_ts_epoch`) |
+| `_scan_settled_use_events` | 677-733 | the log | built (`scan_settled_use_events`) |
+| `_already_recorded_pending_ids`, `_hook_attributed_pending_ids` | 736-860, 866 | the log | built (`already_recorded_pending_ids` takes the lock; `already_recorded_in` over a held guard; `hook_attributed_pending_ids`) |
+| `_attach_use_tokens` | 870-887 | the clock, the random source | built (`attach_use_tokens`) |
+
+Decisions:
+
+- The reference's `RLock` nests: `_advance_turn` holds it and
+  `_already_recorded_pending_ids` takes it again for its snapshot.
+  `SessionState::lock` is a plain `Mutex`, so the functions that run
+  under `_advance_turn` take the guard's `&mut Inner` and only
+  `advance_turn`, `already_recorded_pending_ids` (and its alias) and
+  `attach_use_tokens` lock. `record` and the log's reading run while the
+  guard is held, as in the reference. The public
+  `already_recorded_pending_ids` copies the state under the lock and
+  scans after releasing it, as the reference's snapshot does.
+- `_event_ts_epoch` is `parse_event_ts` and then the aware value's
+  `timestamp()`: the microseconds since the epoch divided by 10**6 as
+  Python divides two ints, rounded once to the nearest double (ties to
+  even). Dividing the double nearest the count by 1e6 rounds twice and
+  differs past 2**53 microseconds (from June 2255; `use_tokens_kills`).
+- The scan mirrors Python's truthiness for the two `or` chains
+  (`events::truthy`): a falsy `session` (an empty list among them) falls
+  back to `session_id`, a falsy `ids` to `memory_ids`. `session not in
+  allowed_sessions` hashes the value first, so a list or dict session
+  (or a tuple holding one, found in the order a tuple's hash visits its
+  items, without native recursion) raises `TypeError` with Python's text
+  (`UseTokenError::Unhashable`), before the stop-hook tag is read, and
+  the error propagates out of `_advance_turn` with the state as the
+  drain left it. Only a `str` session can match or bridge; only `str`
+  ids inside a list are looked up.
+- `min` over the pending mint times and over the expired tokens is
+  Python's: an item replaces the current one only when it is `<` it, so
+  ties keep the first and a NaN first is never replaced.
+  `pending_issued_at` keeps the dict's order of the live tokens and then
+  `extra_pending`, an update keeping a key's place and taking its value.
+- `int(now - issued_at)` truncates toward zero to an exact integer of
+  any size (`pyvalue::py_int`); NaN raises `ValueError` and an infinity
+  `OverflowError`, with CPython's messages. `turns_since_issue` is
+  computed in `i128`, as the reference's integers.
+- A hit's `use_token` is assigned in place when the dict has one, else
+  added last; a hit without `id` anywhere in the list raises
+  `KeyError: 'id'`, before any other id is looked at. A hit whose id
+  is not a `str` is declined (`UseTokenError::NotPorted`): the session's
+  maps hold `str` keys only, where the reference files any hashable id;
+  the search handler that calls it writes `str` ids.
+- No regular expression is used.
+
+Fixtures: `gen_use_tokens.py` writes `use_tokens.jsonl` (ungated): the
+reference driven over a `SessionState` with the scripted clock and draws
+of `gen_session` and a stub recorder whose `iter_events_backward` yields
+scripted rows (list and dict sessions among them), each step's return or
+exception, clock reads, draws, rows written (kind and `repr` of the
+keywords), session lookups, log reads, rows pulled and the state after;
+a digest row over 2,000 random scripts from a splitmix64 seed; and a
+digest of `_event_ts_epoch` over 20,000 random instants across the
+datetime range. A `TypeError`'s text follows the Python release (3.14
+words an unhashable set element as "cannot use 'list' as a set element
+(unhashable type: 'list')"), so `use_tokens.jsonl` writes the type alone
+and `use_tokens_python.jsonl` (gated on the Python release) writes the
+unhashable cases with CPython 3.13.13's text, which the port gives.
+`golden_use_tokens`, `use_tokens_kills` and `use_tokens_robustness` read
+and extend them.
+
+Left for later: the handlers that call these (`h_search`, `h_show`,
+`record_use`) and the recorder itself.
 
 ## Python's regular expressions (`pyre`)
 

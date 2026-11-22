@@ -9,6 +9,9 @@
 //!   leaves first (the declared-value check, the actor rule, `resolve`);
 //! - [`session`]: `session.py` whole: the per-session state (scopes, the
 //!   turn counter, use-tokens), the per-client registry and its LRU;
+//! - [`use_tokens`]: the per-turn use-token bookkeeping of
+//!   `handlers/_shared.py` (the turn bump and its auto-commit, the expiry
+//!   drain and its event, the settled-`use` scan, the hits' tokens);
 //! - [`json`]: `json.dumps` as the reference's call sites spell values
 //!   (the log payload's canonical text among them) and `json.loads`;
 //! - [`native_text`]: exact native strings at UTF-8 boundaries (the
@@ -371,6 +374,7 @@ pub mod store;
 pub mod symbols;
 pub mod toml;
 pub mod unicode;
+pub mod use_tokens;
 pub mod verdict_signals;
 pub mod verify_anchoring;
 pub mod verify_candidates;

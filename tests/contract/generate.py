@@ -179,6 +179,7 @@ from . import (
     gen_durability,
     gen_unicode,
     gen_unicode_xid,
+    gen_use_tokens,
     gen_pyre,
     gen_pyre_lower,
     gen_pyre_exec,
@@ -272,6 +273,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "origin_dates_memo": gen_origin_dates_memo.generate,
     "origin_history_located": gen_origin_history_located.generate,
     "unicode": gen_unicode.generate,
+    "use_tokens": gen_use_tokens.generate,
+    "use_tokens_python": gen_use_tokens.generate_python,
     "models_text": gen_models_text.generate,
     "models_text_unicode": gen_models_text.generate_unicode,
     "models_text_platform": gen_models_text.generate_platform,
@@ -717,6 +720,9 @@ PYTHON_GATED = frozenset(
         "models_rows",
         "models_stores",
         "toml",
+        # The TypeError's text of an unhashable set element (3.14 words it
+        # otherwise).
+        "use_tokens_python",
         "settings_python",
         "settings_paths_python",
         "membership_lines_python",
