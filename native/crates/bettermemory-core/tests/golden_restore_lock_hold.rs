@@ -1,5 +1,7 @@
 //! A restore's own hold on the restore lock against
-//! `store_restore_lock_hold.json`: `acquire`, `RestoreLock.mark` and
+//! `store_restore_lock_hold.json` and `store_restore_lock_hold_python.json`
+//! (the marker nested 70,000 lists deep, gated on the Python release):
+//! `acquire`, `RestoreLock.mark` and
 //! `release`, `held_here` from the holding thread and another,
 //! `unlock`, `state_finding` (`holds`), and `probe` (`probes`). Each hold
 //! row is a list of steps run in order on one store, with a helper
@@ -32,6 +34,7 @@ use common::stores::scratch;
 use serde_json::{json, Value};
 
 const FILE: &str = "store_restore_lock_hold.json";
+const FILE_PYTHON: &str = "store_restore_lock_hold_python.json";
 const WAIT: Duration = Duration::from_millis(200);
 
 fn marker_bytes(pieces: &Value) -> Vec<u8> {
@@ -361,13 +364,28 @@ fn a_restores_hold_answers_as_the_reference() {
         doc["holders"],
         json!([Holder::Restore.name(), Holder::Reader.name()])
     );
+    hold_rows("a_restores_hold_answers_as_the_reference", FILE, &doc);
+}
+
+fn hold_rows(test: &str, file: &str, doc: &Value) {
     let cases = doc["holds"].as_array().expect("holds");
-    let mut ledger = Ledger::new("a_restores_hold_answers_as_the_reference", FILE);
+    let mut ledger = Ledger::new(test, file);
     for case in cases {
         ledger.case(case["name"].as_str().expect("name"), || run(case));
     }
     assert!(!cases.is_empty());
     ledger.finish(cases.len());
+}
+
+#[test]
+fn a_deep_marker_meets_a_restores_hold_as_the_reference() {
+    let text = fs::read_to_string(common::golden_path(FILE_PYTHON)).expect("file");
+    let doc: Value = serde_json::from_str(&text).expect("JSON");
+    hold_rows(
+        "a_deep_marker_meets_a_restores_hold_as_the_reference",
+        FILE_PYTHON,
+        &doc,
+    );
 }
 
 /// The other connection a probe row holds open, as the generator makes it.

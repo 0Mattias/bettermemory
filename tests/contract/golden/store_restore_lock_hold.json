@@ -1082,66 +1082,6 @@
   },
   {
    "dotted": false,
-   "helper": null,
-   "lock_dir": false,
-   "marker": [
-    [
-     "5b",
-     70000
-    ]
-   ],
-   "missing_dir": false,
-   "name": "marker_deep",
-   "ops": [
-    [
-     "state_finding"
-    ],
-    [
-     "held_here"
-    ],
-    [
-     "acquire"
-    ],
-    [
-     "release",
-     false
-    ],
-    [
-     "unlock",
-     false
-    ],
-    [
-     "unlock",
-     true
-    ],
-    [
-     "names"
-    ]
-   ],
-   "record_mode": false,
-   "results": [
-    {
-     "error": "RecursionError"
-    },
-    false,
-    {
-     "error": "RecursionError"
-    },
-    null,
-    {
-     "error": "RecursionError"
-    },
-    {
-     "error": "RecursionError"
-    },
-    [
-     "memory.sqlite",
-     "memory.sqlite.restore-lock"
-    ]
-   ]
-  },
-  {
-   "dotted": false,
    "helper": "shared",
    "lock_dir": false,
    "marker": null,

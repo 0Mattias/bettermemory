@@ -718,6 +718,13 @@ def _full(*extra: str) -> list[list[Any]]:
     return ops + [["unlock", False], ["unlock", True], ["names"]]
 
 
+#: The hold row of a marker nested 70,000 lists deep. Whether `json.loads`
+#: raises RecursionError there is the interpreter's and the system's (3.14
+#: measures the C stack), so its row is in
+#: ``store_restore_lock_hold_python.json``.
+_HOLD_DEEP: list[list[Any]] = [["5b", 70000]]
+
+
 def _hold_cases(root: Path) -> list[dict[str, Any]]:
     killed = _j(_KILLED)
     bundle_list = _j(dict(_KILLED, bundle=["x"]))
@@ -742,7 +749,6 @@ def _hold_cases(root: Path) -> list[dict[str, Any]]:
         _hold_case(root, "bundle_not_text", [["state_finding"]], marker=bundle_list),
         _hold_case(root, "marker_not_json", _full(), marker=[[b"{cut".hex(), 1]]),
         _hold_case(root, "marker_blank", _full(), marker=[["200a", 1]]),
-        _hold_case(root, "marker_deep", _full(), marker=[["5b", 70000]]),
         _hold_case(
             root, "held_shared", _full("close_helper", "acquire"), helper="shared"
         ),
@@ -875,5 +881,16 @@ def generate_python() -> dict[str, bytes]:
     return {
         "store_restore_lock_python.json": (
             json.dumps({"admit": admit}, indent=1, sort_keys=True) + "\n"
+        ).encode("utf-8")
+    }
+
+
+def generate_hold_python() -> dict[str, bytes]:
+    """The hold row of the marker nested 70,000 lists deep."""
+    with world() as w:
+        holds = [_hold_case(w.root / "hold", "marker_deep", _full(), marker=_HOLD_DEEP)]
+    return {
+        "store_restore_lock_hold_python.json": (
+            json.dumps({"holds": holds}, indent=1, sort_keys=True) + "\n"
         ).encode("utf-8")
     }

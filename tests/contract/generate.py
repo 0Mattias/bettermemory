@@ -289,6 +289,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_restore_lock": gen_restore_lock.generate,
     "store_restore_lock_hold": gen_restore_lock.generate_hold,
     "store_restore_lock_python": gen_restore_lock.generate_python,
+    "store_restore_lock_hold_python": gen_restore_lock.generate_hold_python,
     "toml": gen_toml.generate,
     "events_kinds": gen_events_kinds.generate,
     "audit_fields": gen_audit.generate,
@@ -633,6 +634,10 @@ PYTHON_VERSION = "3.13.13"
 #: on the release (`gen_log_keyfiles`, `gen_machine`, `gen_fold`).
 #: ``store_restore_lock_python`` holds the `admit` row of a marker nested
 #: 70,000 lists deep, for the same reason (`gen_restore_lock`).
+#: ``store_restore_lock_hold_python`` holds the hold row of a marker nested
+#: 70,000 lists deep: whether `json.loads` raises RecursionError there is
+#: the interpreter's and the system's, as 3.14 on Linux reads it
+#: (`gen_restore_lock`).
 PYTHON_GATED = frozenset(
     {
         "argparse_python",
@@ -691,6 +696,7 @@ PYTHON_GATED = frozenset(
         "machine_facts_python",
         "fold_python",
         "store_restore_lock_python",
+        "store_restore_lock_hold_python",
     }
 )
 
@@ -782,6 +788,7 @@ PLATFORM_GATED = frozenset(
         "store_restore_lock",
         "store_restore_lock_hold",
         "store_restore_lock_python",
+        "store_restore_lock_hold_python",
         "mcp",
         "origin_gitfiles_darwin",
         "hooks",
@@ -795,7 +802,8 @@ PLATFORM_GATED = frozenset(
 
 #: Generators with no case on Windows: ``store_restore_lock`` and
 #: ``store_restore_lock_python`` drive a
-#: POSIX directory ``flock`` (the lock there is a record file and a handle
+#: POSIX directory ``flock``, as do ``store_restore_lock_hold`` and
+#: ``store_restore_lock_hold_python`` (the lock there is a record file and a handle
 #: on the store, ENG-321). Under ``--as-found`` on Windows they are named in
 #: the manifest (``not_here``) and write no file; that is no raise, and the
 #: golden test skips them there.
@@ -904,6 +912,7 @@ POSIX_ONLY = frozenset(
         "store_restore_lock",
         "store_restore_lock_hold",
         "store_restore_lock_python",
+        "store_restore_lock_hold_python",
         "store_schema_posix",
         "settings_paths",
         "settings_paths_python",
