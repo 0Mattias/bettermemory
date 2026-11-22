@@ -632,6 +632,18 @@ fn equals_index(k: &PyValue, i: usize) -> bool {
     }
 }
 
+/// `location_git._key(value)` as a caller outside a token reads it: a
+/// value of the wrong shape is ValueError, as is an int past
+/// [`INT_STR_DIGITS`]; RecursionError from `str()` of a deeply nested item
+/// is the other raise.
+pub fn object_key_of(v: Option<&PyValue>) -> Result<Option<Key>, PyError> {
+    match key(v, STR_DEPTH_TOP) {
+        Ok(k) => Ok(k),
+        Err(Fail::Refused) => Err(PyError::ValueError),
+        Err(Fail::Raised(e)) => Err(e),
+    }
+}
+
 /// `_key`: None, or a three-item list or tuple as `str()` of each item
 /// (the birth None kept). `depth` is the deepest object `str()` spells
 /// there before RecursionError ([`STR_DEPTH_TOP`]).

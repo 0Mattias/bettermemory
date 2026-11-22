@@ -90,6 +90,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`, POSIX only; the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl` |
 | `location_caller` | a caller's resolution (`location.py` 1420-1997), unit locstate: the per-process state around a resolution: `process_machine`, `_recorded`, `_clear_machine` (`ProcessMachine`), `_Held`, `_LOCKS`, `_location_lock` (`Locks`, `lock_name`), `_cwd_of`, `_Stand`, `_STANDS`, `_keep_stand`, `_stand_of`, `forget_session`, `_clear_stands` (`Stands`), `_with_file_errors`, `_same_namespace`; every read of the machine a closure | `location_caller_state.jsonl` |
 | `location_resolve` | a caller's resolution (`location.py` 1420-1997), unit loccaller: `capture_location`, `_model`, `Caller` (`home`, `add_head_witness`), `resolve_caller`, `_caller`, `_resolved`, `resolve_here`, `_hooked`; the model, capture cache, re-mint, `_earlier_tree` and `_machineless` arguments | `location_resolve.jsonl` |
+| `location_hook` | a caller's resolution (`location.py` 1420-1997), unit lochook: `resolve_hook`; `_hooked`, `os.getcwd`, `object_key`, `_hostname`, `open_machine` and the model's two constructors as arguments | `location_hook.jsonl` |
 | `hook_stop`, `hook_stop_side` | the Stop audit's front half (`hook.py` 319-725, unit hook-2a): `run_audit` with `@hook_body("stop")`, `_audit_turn`, `_stop_window`, `_stop_pool`, `_stop_probe`, `_stop_recorder`, `_is_repeat_audit`, as a sequence over the trait `StopSide` (one method per call `hook.py` 319-946 makes outside itself, no implementation yet) with the settlement steps behind `StopSettle` | `hook_stop.jsonl` |
 | `fsutil` | units 1 and 2 of `_fsutil.py`: `unlink_retrying` with `_REPLACE_ATTEMPTS` and `_REPLACE_BACKOFF_S` (the Windows retry over a `Remover` trait, the platform an argument; `winerror_is_eacces`, CPython's `winerror_to_errno` for EACCES), `bounded_stream_read` as `BufferedReader.read` reads; `flock_excl` (`lock_path`, a guard held until dropped) and its Windows branch `_flock_windows` over an `Msvcrt` trait, with `FLOCK_TIMEOUT_SECONDS` and the process-wide `_FLOCK_WARNED` | `fsutil.jsonl`, `fsutil_python.jsonl`, `fsutil_flock.jsonl`, `fsutil_flock_python.jsonl`, `fsutil_flock_platform.jsonl` |
 | `gitobjects` | unit 1 of `gitobjects.py`, the byte parsers: `_loose_header`, `_varint`, `_entry_header`, `_delta_sizes`, `_apply_delta`, `_hex_name`, `_hex_at`, `_parse_commit`, `_parse_tree`, `committed_at`, `parent_lines`, `commit_fingerprint`, `_unquote_c`, `_alternate_entries`, `_parse_index` and `_PackIndex`'s `find`, `starting`, `offset`; integers of any width (`Wide`); unit 2, `gitobjects::stream`: `_Stream.read`, `_Stream.read_to_end`, `_chain`, `_inflate_at`, `_listed_in`, `_take` over a file handle that is a trait (`Handle`: `seek`, `read`), inflating through `zlib-rs` driven as CPython's `zlib.decompressobj` drives zlib; unit 3, `gitobjects::files`: `ObjectReader`'s loaded state (`__init__`, `_load`, `_object_format`, `_object_dirs`, `_link_alternates`, `_list_new`, `_rescan`, `_open`, `_read_whole`, `object_dirs`, `complete`, `evicted`), `_is_evicted`, `_dir_key`, over `fsdata`'s `Fs` (with `seek`), an open file behind `Handle` (`FsHandle`); unit 4, `gitobjects::files::reader`: `ObjectReader`'s `has`, `has_many`, `name_length`, `resolve`, `header`, `read`, `commit`, `tree`, `fingerprint`, `_raw`, `_places`, `_object`, `_take_loose`, `_loose`, `_packed` | `gitobjects.jsonl`, `gitobjects_python.jsonl`, `gitobjects_streams.jsonl`, `gitobjects_files.jsonl`, `gitobjects_files_posix.jsonl`, `gitobjects_reader.jsonl`, `gitobjects_reader_zlib.jsonl`, `gitobjects_reader_posix.jsonl` |
@@ -6389,6 +6390,8 @@ that Unicode too.
 | `location_caller_kills` (15), `location_caller_robustness` (4) | none | i |
 | `golden_location_resolve`: `location_resolve_every_case` | `location_resolve.jsonl` | i |
 | `location_resolve_kills` (14), `location_resolve_robustness` (3) | none | i |
+| `golden_location_hook`: `location_hook_every_case` | `location_hook.jsonl` | i |
+| `location_hook_kills` (6), `location_hook_robustness` (3) | none | i |
 | `golden_gitobjects`: `gitobjects_every_case` | `gitobjects.jsonl` | i |
 | `golden_gitobjects`: `gitobjects_python_every_case` | `gitobjects_python.jsonl` | ii (Python) |
 | `gitobjects_kills` (13), `gitobjects_robustness` (5) | none | i |
@@ -15742,7 +15745,7 @@ built (`src/location_caller.rs`).
 | `_with_file_errors` | 1803-1815 | nothing (`printable`) | built (locstate) |
 | `_same_namespace` | 1879-1890 | `object_key` and `_hostname` (closures) | built (locstate) |
 | `capture_location`, `_model`, `Caller` (`home`, `add_head_witness`), `resolve_caller`, `_caller`, `_resolved`, `resolve_here`, `_hooked` | 1420-1431, 1531-1595, 1657-1767, 1818-1828, 1862-1876, 1982-1997 | the model, the capture cache, `checkout_token.remint` (all arguments) | built (loccaller) |
-| `resolve_hook` | 1893-1979 | the store, the client's answers | unit lochook |
+| `resolve_hook` | 1893-1979 | the store, the client's answers, the kept exchanges, a clock and sixteen random bytes (all arguments) | built (lochook) |
 | `_earlier_tree`, `_machineless` | 1770-1800, 1831-1859 | the store, the file system | unit locearly |
 
 What locstate reproduces:
@@ -15870,6 +15873,75 @@ arm64): 5,000 file errors 1.6 ms against 3.9 ms, 5,000 re-mints 3.9 ms
 against 3.7 ms, a 100,000-code-point cwd 0.7 ms against 0.1 ms (the
 port's share is turning the JSON into code points). No ratio reaches
 10; the tests themselves check only that the port grows linearly.
+
+What lochook reproduces (`src/location_hook.rs`, `resolve_hook`, read
+at 1893-1979 as `location.py` is now):
+
+- No location mapping in what was posted (an rc3 client, or a
+  `location` that is no dict) is `_hooked` at the cwd, the process's
+  cwd (`_cwd_of`) where none was given.
+- An indeterminate probe (`state` exactly `indeterminate`, `probe` true
+  by Python's truth: the string `"0"` is true, `0` and `[]` are not) is
+  the unreadable location resolved by `_model` of the process's machine.
+  An `OSError` from `open_machine`, from the model's constructor or from
+  `record_machine` makes the model at `NO_MACHINE` instead, with no
+  record; any other error leaves. The location's cwd is `str()` of the
+  posted cwd where it is true, else the cwd given, else empty, written
+  after the model is made, so an int past `str()`'s 4,300 digits raises
+  ValueError after the record. A detail that is no `str` is
+  `cwd unreadable`. The resolution is kept as the session's stand.
+- Else `_key(cwd_object)` is read; a ValueError (a wrong shape, or an int
+  past the digit limit) is no key, and RecursionError from `str()` of a
+  deeply nested item leaves. Where the posted cwd is a non-empty `str`
+  and `_same_namespace` holds, it is `_hooked` at the posted cwd. A
+  `hostname` that is no `str` is no host; host names are compared code
+  point by code point.
+- Else `Capture.from_token` (skipped for a probe) and `_identity_from`
+  of `machine` are read, in that order, each raise leaving; where either
+  is None the exchange asks `location`, `machine` and `write_token`. With
+  both, the answers (a dict, else `{}` and not posted) give
+  `AnsweredToken` and `AnsweredLiveness`, `_model` is made with them,
+  `ExchangeReads` is built, the location is `AnsweredToken.located`
+  (the model's `checkouts` asked only past its early returns), and the
+  model resolves it under the location's lock with the reads declared.
+  `NeedWitnesses` is the exchange `{**question, **carried,
+  "write_token": policy}`: a key already in the question keeps its
+  place and takes the new value. A resolution takes the token's file
+  errors (`_with_file_errors`) and is kept as the session's stand.
+
+Decisions. `_hooked` is a closure the caller fills with
+`location_resolve::hooked` and its hands, so this unit's fixtures pin
+`resolve_hook`'s own choices, and loccaller's fixtures pin `_hooked`.
+The model is a `HookModel`: loccaller's `CallerModel` with `machine`,
+`checkouts_of`, `resolve_declared` (`resolve(loc, strict=...,
+declared=reads)`, its inner `Err` the `NeedWitnesses` it raises) and
+`is_os_error`, which stands for the reference's `except OSError`. The
+model's constructor is given the `Answered` readers (liveness and token
+writer) on the token path and none on the probe path; `Membership(store,
+NO_MACHINE, session=...)` is a second closure. `ExchangeReads` and
+`carried` read the monotonic clock and `secrets.token_hex(16)` in the
+reference; here the kept exchanges, `now` and the sixteen bytes are
+arguments, and `INDEPENDENT_MAX` is the history bound. A raise is
+`HookError::Model` (the model's or a closure's) or `HookError::Raised`
+(Python's own: `str()`, `int()`, a question that is no dict).
+`location_git._key` is `capture::object_key_of`, the token reader's own
+`key` with a refusal read as ValueError. `NO_MACHINE` is a constant here
+until the lane that builds `location_git`'s constants folds. No pattern
+of `re` is read.
+
+The fixtures (`gen_location_hook.py`, `location_hook.jsonl`, ungated,
+71 KB) post mappings to the reference's `resolve_hook` with recording
+doubles for `_hooked`, `os.getcwd`, `object_key`, `_hostname`,
+`open_machine` and `Membership`, the nonce fixed and the kept exchanges
+cleared per case: no location, every branch of the probe, the namespace
+test by key, birth and host, the token asked for, the token resolved
+with file errors, a re-mint located, `NeedWitnesses` with and without
+reads, and two rounds where the second takes up the first's reads (or,
+in another session, does not). A posted value is written in `neutral`
+form, so the code points of a host name with a lone surrogate are read
+whole. Inputs whose `neutral` form `str()` cannot write (an int past
+4,300 digits) and nesting 12,000 deep are in the kills tests, each
+answer read from the reference by hand and checked once against it.
 
 ## The checkout token (`checkout_token.py`)
 
@@ -20673,8 +20745,8 @@ What the reference has and this build does not, by area:
   locanswer are built; the `AnswerHistory` impl for `RepositoryHistory`
   (location-4) is not; of the caller's resolution the per-process state
   is built in `location_caller` and the resolution itself in
-  `location_resolve`, and `resolve_hook` (lochook), `_earlier_tree` and
-  `_machineless` (locearly) are not), and of
+  `location_resolve` and `resolve_hook` in `location_hook`, and
+  `_earlier_tree` and `_machineless` (locearly) are not), and of
   `location_git.py` the binding of `probed` to githead's discovery,
   `_sources_once`, `_SYMBOLIC_HEAD`, `_ABOVE` and `_clear_above`.
 - `membership_records.py` past its path helpers and legacy ask rule
