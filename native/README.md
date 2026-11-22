@@ -74,7 +74,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `location_git` | the readers of `location_git.py` that need neither discovery nor the object reader: `_Git`, `_resolve_head` (the peel a callback), `_ref_tips`, `_manifest`, `Reach`, `reachable_among`, `walk` | `location_git_readers.jsonl`, `location_git_readers_posix.jsonl` |
 | `location_cache` | `location.py`'s capture signature and capture cache: `_evicted`, `_stamp`, `signature`, `_masked`, `_Entry`, the cache, `forget`, `_fresh`, `capture`, `_capture_cached`, `capture_token` (unit loccache) | `location_cache.jsonl`, `location_cache_posix.jsonl` |
 | `location_witness` | the history half of `location_witness.py` (unit location_witness-1): `NeedWitnesses` with `joined`, `AnsweredHistory`, `AnsweredGit`, `answered_history`, `_independent_answers`, `independent_answer`, and the exchange keeping (`_NONCE`, `EXCHANGE_SECONDS`, `_EXCHANGES_CAP`, `_Kept`, `_EXCHANGES` as `Exchanges`, `_drop`, `ExchangeReads` with `carried`) | `location_witness.jsonl` |
-| `location` | `location.py`, unit 1: the capture's filesystem leaves: `_statx_birth`, `_birth`, `object_key`, `_evicted`, `_read_one`, `_fetch`, `_stamp`, `_local`, `_url_path` (3.13.13's `nturl2path`), `_file_url_path`, `kept_apart`, `record_working_tree`, `_real_git` | `location_leaves.jsonl`, `location_leaves_python.jsonl`, `location_leaves_posix.jsonl` |
+| `location` | `location.py`, unit 1: the capture's filesystem leaves: `_statx_birth`, `_birth`, `object_key`, `_evicted`, `_read_one`, `_fetch`, `_stamp`, `_local`, `_url_path` (3.13.13's `nturl2path`), `_file_url_path`, `kept_apart`, `record_working_tree`, `_real_git`; unit 1b, the uncached capture: `_fresh`, `_walk_files` (`_ABOVE`), `_file_tracked`, `_token_fields`, `_indeterminate`, `_capture_uncached` | `location_leaves.jsonl`, `location_leaves_python.jsonl`, `location_leaves_posix.jsonl`, `location_capture.jsonl`, `location_capture_platform.jsonl` |
 | `location_reads` | `location_reads.py` whole as a timed runtime: `READ_HANDOFF`, `READ_LANES`, `READ_SLOTS`, `_Flight`, `_Slots`, the board (`_FLIGHTS`, `_LANDED`, `_SLOTS`, `UNANSWERED`, `NOT_READ`) as a `Board` the caller holds, `_stalled`, `_board`, `_give_up`, `_fly`, `bounded_read`, `bounded_reads`, `_Lanes` | `location_reads.jsonl` |
 | `witness_questions` | `location_witness.py`'s question half: `AnsweredToken` (`__call__`, `located`), `remint_answer`, `remint_refused`, `AnsweredLiveness`, `asked_views`, `_asked_head`, `_asked_stamps` (and `location_git._key` reimplemented); the re-mint and the model's `checkouts` are closures | `witness_questions.jsonl` |
 | `location_discovery` | `location_git.py`'s repository discovery: `_DISCOVERY_ENV`, `GitDies` and `DiscoveryDies` (`Dies`), `_from_env`, `_discover` (`githead.across_filesystems()` and `githead.probed` as arguments), `_at_dotgit` | `location_discovery.jsonl` |
@@ -11535,6 +11535,10 @@ units.
 | `_stamp` | 355-359 | `os.stat` | built over `githead::discovery::stamp` |
 | `_local`, `_url_path`, `_file_url_path` | 408-460 | `realpath`, `os.path.sep` | built: `local`, `local_key`, `url2pathname_nt`, `file_url_path`, `unquote` |
 | `kept_apart`, `record_working_tree`, `_real_git` | 694-750 | `lstat`, the record store, `realpath` | built |
+| `_walk_files`, `_ABOVE`, `_fresh` | 463-496, 898-902 | the clocks, `project_file.find` | built (unit 1b) |
+| `_file_tracked` | 499-510 | the object reader, `stat.S_ISDIR` | built (unit 1b) |
+| `_token_fields`, `_indeterminate` | 513-539 | the token's read and write, the host name | built (unit 1b) |
+| `_capture_uncached` | 542-691 | every reader above | built over `Steps` (unit 1b) |
 
 ### Unit location-1a, built
 
@@ -11630,6 +11634,92 @@ Left for later units of `location.py`: `remote_key` as a whole (its
 `_PATH` swap included) is `capture::remote::remote_key` plus
 `local_key`; the capture (`capture`, `_walk_files`, the token slot), the
 signature and its cache, the resolution and the witness exchange.
+
+### Unit location-1b, built: the uncached capture
+
+`src/location/capture.rs` reproduces `location.py` 463-691 and `_fresh`
+(898-902).
+
+- `walk_files` is `_walk_files`: `project_file.above_start` (only inside
+  a repository), then the two clocks, then a cached walk above the root
+  where one is fresh on both clocks (`fresh`: `0 <= now - then < 600`,
+  half open, so a clock gone backwards or a NaN misses), then
+  `project_file.find`. A walk read anew is put in the cache under its
+  start. The cache (`AboveCache`, the reference's `_ABOVE` dict and its
+  lock) is a `Mutex` over a list in insertion order: a start set again
+  keeps its place, as a dict key does, and past `CACHE_CAP` (256) the
+  oldest insertion goes, not the least recently used. The process holds
+  one and passes it in. A linear list stands for the dict because the
+  cap is small; no crate is added. `project_file.find` and `above_start`
+  are `trait ProjectFiles` (its `Walk` carries the files, the malformed
+  files' lines, the part above, the folder's and the root's file), ported
+  by the project-file unit later. Each file's directory is keyed after
+  the walk, in order.
+- `file_tracked` is `_file_tracked` over `trait ObjectReads` (the
+  commit's tree and the tree's entries of `gitobjects.ObjectReader`,
+  implemented over gitobjects later). `stat.S_ISDIR` converts its
+  argument to the C `mode_t`, 16 bits on macOS and Windows, 32 on Linux,
+  and raises OverflowError past it; a tree mode is up to six octal
+  digits (`_MODE`), so a project file entry with a mode of `0o200000` or
+  more raises out of the capture on macOS and Windows and is read on
+  Linux. `s_isdir(mode, bits)` takes the width, `MODE_T_BITS` is the
+  host's; both branches are tested (`location_capture_kills`), and the
+  rows are in the platform-gated file. `any()` stops at the first match,
+  so only the entries up to it are converted.
+- `token_fields` is `_token_fields` given what `checkout_token.read`
+  found and a closure that is `checkout_token.write(git_dir,
+  policy=True, bare=...)` (lane ctwrite's `write`), called only where
+  the token is absent and the policy allows. A read state other than
+  present or absent is `failed:<state>`; `exists` is `present` with the
+  token found; any other write status passes through.
+- `indeterminate` is `_indeterminate`, the host name given.
+- `capture_uncached` is `_capture_uncached` over `trait Steps`, one
+  method per call the reference makes outside the unit (`_path_state`,
+  `view_path`, `os.path.realpath`, `object_key`, `_hostname`,
+  `_discover` with its three raised classes, `kept_apart`, `_real_git`,
+  `stat_each`, `os.stat`, `_evicted`, `_fetch`, the token's path, read
+  and write, `_resolve_head`, `_ref_tips`, `read_remotes`, `_manifest`,
+  `_init_stamps`, `capture_ticks`, `os.path.isfile`, the clocks). They
+  are called in the reference's order, which the fixtures pin through a
+  log: the host name is read again by each indeterminate capture, an
+  evicted HEAD or config ends the capture with the token read only where
+  its file stats as not evicted (an empty token is kept with the status
+  `not_read:evicted`), and `shallow` is read before `capture_ticks`
+  because the reference's keyword arguments are evaluated in that order.
+  `git.root or git.git_dir` treats an empty root as none, while the
+  manifest's `git.root is not None` does not. A reference exception that
+  rises out (`S_ISDIR`'s OverflowError, a step that declines) is
+  `Declined`.
+- `capture_uncached` leaves out the reference's
+  `config_files=remotes.files` (`location.py` 677): the port's `Remotes`
+  and `Capture` carry no stamped config files, which belong to the
+  file-reading unit. `location_git.config_unchanged` reads that field to
+  decide whether a kept capture's remotes still hold, so until it is
+  carried a cached capture cannot see that a config file changed. This
+  is a stated gap, not a different answer on any fixture row.
+
+What is left for location-2: carrying `config_files` into `Capture`,
+the live implementation of `Steps` over the
+ported readers (`location_probe::path_state`, `fsdata::realpath`,
+`leaves::object_key`, `location_discovery::discover`, `leaves`'
+`kept_apart` and `real_git`, `location_stamps`, `checkout_token`,
+`location_git`, `gitconfig::spellings::read_remotes`), `ObjectReads`
+over gitobjects, `ProjectFiles` over the project-file port, `signature`
+and the capture cache.
+
+Fixtures (`tests/contract/gen_location_capture.py`): every call outside
+the unit is served by a scripted world in both languages (a stat is a
+label), and each row records the calls in order with the capture's
+fields. `location_capture.jsonl` (not gated) holds the captures (each
+early return, each token outcome, eviction, the manifest's conditions,
+the tracked file), `_walk_files` called in turn on one cache (hits,
+stale entries on either clock, clocks gone backwards, eviction past a
+cap of 1 and 2, a start set again) and `_token_fields` over every read
+state and write status. `location_capture_platform.jsonl`
+(platform-gated) holds the tree modes wider than 16 bits. No row comes
+from a repository on disk: the readers are pinned by their own units'
+fixtures. Tests: `golden_location_capture`, `location_capture_kills`,
+`location_capture_robustness`. No regular expression is used.
 
 ## The readers of a repository's head, refs, tree and history (`location_git.py`)
 
@@ -19403,7 +19493,10 @@ What the reference has and this build does not, by area:
   capture's filesystem leaves and its capture signature and cache
   (`continuity`, `view_state`, their helpers and unit 1's leaves in
   `location::leaves`, and `_evicted`, `_stamp`, `signature` to
-  `capture_token` from unit loccache, and the client answer and its
+  `capture_token` from unit loccache, the uncached capture
+  (`_walk_files`, the token slot and `_capture_uncached` in
+  `location::capture`, whose live `Steps`, `ObjectReads` and
+  `ProjectFiles` wiring is location-2's), and the client answer and its
   liveness reads (`PROBE_BUDGET`, `path_liveness`, `path_liveness_many`,
   `_liveness_read`, `answer`, `Exchange`, `_history_of`) from unit
   locanswer are built; the `AnswerHistory` impl for `RepositoryHistory`

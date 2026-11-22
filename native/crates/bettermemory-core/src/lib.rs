@@ -176,10 +176,12 @@
 //! - [`location_git`]: a repository's head, ref tips, content manifest
 //!   and bounded history walks, the readers of `location_git.py` that need
 //!   neither discovery nor the object reader;
-//! - [`location`]: the caller's location (`location.py`), its first
-//!   unit: the capture's filesystem leaves (birth time, the object key,
+//! - [`location`]: the caller's location (`location.py`), units 1a and
+//!   1b: the capture's filesystem leaves (birth time, the object key,
 //!   eviction and fetch, the HEAD stamp, the local remote key, the
-//!   kept-apart rule, the working-tree record, the resolved git paths);
+//!   kept-apart rule, the working-tree record, the resolved git paths)
+//!   and the uncached capture (the project-file walk and its cache above
+//!   a root, the tracked-file read, the token fields);
 //! - [`location_reads`]: the bounded reads of recorded paths as a timed
 //!   runtime on worker threads (the whole module);
 //! - [`location_discovery`]: the repository git finds from a directory

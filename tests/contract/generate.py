@@ -84,6 +84,7 @@ from . import (
     gen_location_discovery,
     gen_location_leaves,
     gen_location_cache,
+    gen_location_capture,
     gen_gitsystem_answers,
     gen_gitsystem_ask,
     gen_gitsystem_sources,
@@ -434,6 +435,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "location_leaves_posix": gen_location_leaves.generate_posix,
     "location_cache": gen_location_cache.generate,
     "location_cache_posix": gen_location_cache.generate_posix,
+    "location_capture": gen_location_capture.generate,
+    "location_capture_platform": gen_location_capture.generate_platform,
     "gitsystem_record": gen_gitsystem_record.generate,
     "gitsystem_record_python": gen_gitsystem_record.generate_python,
     "gitsystem_answers": gen_gitsystem_answers.generate,
@@ -829,6 +832,9 @@ def pydantic_core_version() -> str:
 #: ``symbols_platform`` resolves cited modules through links and names
 #: that differ only in case, which macOS folds and Linux does not
 #: (`gen_symbols`).
+#: ``location_capture_platform`` holds `_file_tracked` over tree modes wider
+#: than 16 bits, which `stat.S_ISDIR` refuses where the C ``mode_t`` is 16
+#: bits wide (macOS, Windows) and reads on Linux (`gen_location_capture`).
 PLATFORM = "darwin-arm64"
 PLATFORM_GATED = frozenset(
     {
@@ -848,6 +854,7 @@ PLATFORM_GATED = frozenset(
         "origin_gitfiles_darwin",
         "hooks",
         "location_probe_errno",
+        "location_capture_platform",
         "membership_records_paths_platform",
         "machine_facts_platform",
         "fsutil_flock_platform",

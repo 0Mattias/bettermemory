@@ -387,6 +387,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `nturl2path.url2pathname`, whose text changed within 3.13 and
         // again in 3.14 (`gen_location_leaves`).
         "location_leaves_python.jsonl" => &[Python],
+        // `stat.S_ISDIR` refuses a mode wider than the C `mode_t`, 16 bits
+        // on macOS and Windows (`gen_location_capture`).
+        "location_capture_platform.jsonl" => &[Platform],
         "models_stores.jsonl" => &[Python, Sqlite, Pydantic],
         // `re`'s `\d` and `int` of a hunk count past ASCII or past 4,300
         // digits (`gen_origin_gitfiles`).
