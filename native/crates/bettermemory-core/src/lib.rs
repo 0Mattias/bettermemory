@@ -138,7 +138,9 @@
 //! - [`membership_shared`]: one git directory several machines see, its
 //!   first unit (the stamp and tick comparisons, the re-mint read from
 //!   another machine's view over carriers given, and the predicates over
-//!   a checkout's question rows and log rows);
+//!   a checkout's question rows and log rows), and its heal half in
+//!   `membership::shared_heal` (`_carriers`, `_restamped`, `_healed`,
+//!   `_chosen`, `retired_into`, `_folded` over the `MembershipLog` trait);
 //! - [`membership_rows`]: the membership table rows read into records and
 //!   written back, the object-key and stamp codecs, `_jsonable`,
 //!   `_signature`, `_unwritten` and `_Tally`;
