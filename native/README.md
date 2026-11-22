@@ -113,7 +113,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
 | `claims`, `claim_drift` | units 1 to 3 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`); `claim_drift`: `_Headers`, `build_binding_index`, `claim_level_drift`, the trait `LiteralLines` for the literal helpers | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl`, `claim_drift.jsonl`, `claim_drift_unicode.jsonl`, `claim_drift_python.jsonl` |
 | `symbols` | unit symcheck of `symbols.py`: the bounds (`_MAX_*`, `_FILE_SUFFIXES`), `SymbolCitation`, `SymbolDriftReport` (`missing`, `__bool__`, `to_dict`), `check_symbol_citations` over citations already parsed, `_tier`, `_live_root`, `_resolve_module`, `_module_bindings`; `ast.parse` and the name walks are a trait (`ModuleNames`) | `symbols.jsonl`, `symbols_platform.jsonl` |
-| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`) | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl` |
+| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL; f-strings with a field deferred | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json`, `store_restore_lock_hold_python.json`, `store_restore_lock_python.json` (POSIX only) |
 | `durability` | unit 1 of `durability.py`: `canonical_marker`, `quoted_spans`, `in_quoted_span`, `TransientMatch`, `_snippet_around`, `_at_sentence_start`, `_is_titlecase_name` with `str.istitle`, `sentence_around` | `durability.jsonl`, `durability_unicode.jsonl` |
@@ -6294,6 +6294,8 @@ that Unicode too.
 | `golden_pysyntax_literal`: `pysyntax_literal_every_case` | `pysyntax_literal.jsonl` | i |
 | `golden_pysyntax_literal`: `pysyntax_literal_python_every_case` | `pysyntax_literal_python.jsonl` | ii (Python) |
 | `pysyntax_literal_kills` (14), `pysyntax_literal_robustness` (6) | none | i |
+| `golden_pysyntax_module`: `pysyntax_module_every_case` | `pysyntax_module.jsonl` | ii (Python) |
+| `pysyntax_module_kills` (10), `pysyntax_module_robustness` (3) | none | i |
 | `golden_ulid`: `ulid_every_case`, `ulid_order_and_round_trip` | `ulid.jsonl` (the second none) | i |
 | `golden_githead`: `githead_every_case` (both flavours) | `githead.jsonl` | i |
 | `golden_githead`: `githead_posix_every_case` (unix) | `githead_posix.jsonl` | i; os elsewhere (`githead_not_posix`) |
@@ -17860,7 +17862,7 @@ none edits another's.
 | --- | --- | --- | --- |
 | `lex` | the eval-mode tokenizer (`Parser/lexer/lexer.c`'s `tok_get_normal_mode`), the newline translation of `_PyTokenizer_FromString`, the string decoders (`_PyUnicode_DecodeUnicodeEscapeInternal`, `_PyBytes_DecodeEscape`) and the number readers (`parsenumber`, `int`'s 4,300-digit limit) | nothing | built (unit pylex) |
 | `literal` | the eval-mode parser over `lex`'s tokens, `literal_eval`'s evaluation and `claims._canonical_repr` | nothing | built (unit pylit) |
-| `module_lex` | the module-mode reader for `ast.parse` at 672 | nothing | lane pymodlex |
+| `module_lex` | the module-mode tokenizer for `ast.parse` at 672 (unit 5a); f-string fields and the expression grammar (5b) and the statement grammar with the top-level binding read (5c) follow | nothing | 5a built (unit pymodlex) |
 | the XID tables | whether a name past ASCII is an identifier | Unicode tables | lane pyident |
 | `\N{...}` | the Unicode name table | Unicode tables | unit pysyntax-names |
 
@@ -18035,12 +18037,108 @@ the 24 without `1j` in the other.
 element list and a 50,000 member set within ten times the time of a
 tenth of the input) hold the rest.
 
+### The module tokenizer (`module_lex`)
+
+`check_claim` (`claims.py` 607-715) reads the target with
+`read_text(encoding='utf-8', errors='replace')` and calls
+`ast.parse(source)` at 672, catching SyntaxError, ValueError and
+RecursionError alike as "does not parse". It then reads only the
+top-level `FunctionDef`, `AsyncFunctionDef` and `ClassDef` names and the
+value of the first single-target `Name` assignment, but whether the whole
+file parses decides the answer. The cut, leaves first: 5a (unit
+pymodlex) the module-mode tokenizer; 5b f-string tokenizing (PEP 701's
+FSTRING_START, FSTRING_MIDDLE and FSTRING_END, nested fields and format
+specifications) and acceptance by the expression grammar; 5c the
+statement grammar and the top-level binding read.
+
+`module_tokens(text) -> Result<Module, ModuleError>` reproduces
+CPython 3.13.13's tokenizer in module mode (`Parser/lexer/lexer.c`'s
+`tok_get_normal_mode` over `_PyTokenizer_FromUTF8`) and returns every
+token with its span in the translated source, as `tokenize` names them:
+NAME, NUMBER, STRING, OP (read by `lex`'s reader, which `lex` now
+exposes to its sibling), FSTRING, COMMENT, NEWLINE, NL, INDENT, DEDENT
+and ENDMARKER. It holds no recursion: the indentation stack and the
+bracket stack are vectors.
+
+- Source: a NUL anywhere is refused (`source code string cannot contain
+  null bytes`), and a lone surrogate (UnicodeEncodeError, a ValueError,
+  when `compile` encodes the text). `\r\n` and `\r` become `\n`, and a
+  newline is added when the text does not end with one, as
+  `_PyTokenizer_translate_newlines` does for exec input. A byte order
+  mark is not skipped in a str source: U+FEFF is refused as an invalid
+  non-printable character wherever it stands.
+- Indentation: at the start of each line, a space adds one column, a
+  tab moves to the next multiple of 8, and a form feed resets the
+  column; a second column counts tabs as one (`altcol`). A backslash in
+  the indentation continues the line, and the column at the first such
+  backslash is the line's indentation. Blank and comment-only lines, and
+  every line inside brackets, leave the stack alone and end in NL. Else
+  a deeper column pushes one INDENT (refused past 99 levels, CPython's
+  `MAXINDENT` of 100, "too many levels of indentation"), a shallower one
+  pops a DEDENT per level and must land on a level ("unindent does not
+  match any outer indentation level"), and in each case the tab-size-1
+  column must agree (equal for an equal column, greater for a deeper
+  one), or the line is a TabError. An unexpected indent is the parser's
+  error, not the tokenizer's: the tokens are read.
+- Lines: a line end at bracket depth 0 after tokens is NEWLINE, any
+  other NL; a backslash must be followed by a line end and a line
+  (`unexpected EOF while parsing` at the end of the text); at the end
+  every level is popped and ENDMARKER follows, or an open bracket is
+  refused.
+- Names: a run of ASCII letters, digits, `_` and every code point past
+  ASCII; a run past ASCII must be an identifier by
+  `unicode::xid::is_identifier` (CPython's `verify_identifier` scans the
+  raw run with `_PyUnicode_ScanIdentifier`; NFKC comes later, in the
+  parser), else it is refused. `Module::name` gives a NAME's NFKC text
+  for unit 5c.
+- f-strings: a prefix with `f` is read to its closing quote as one
+  FSTRING token while no `{`, `}` or backslash comes first. One that
+  holds any of them answers `NeedsFString`: its fields, its `{{` and its
+  escapes are read by unit 5b, and in 3.12+ a field may hold the same
+  quote and, in a single-quoted f-string, a line end, so the end the
+  plain scan finds may be wrong. A line end before the closing quote of a
+  single-quoted f-string, or the end of the text, is refused.
+- Strings and numbers decode as `lex` decodes them, which is how the
+  parser decodes them: a bad escape, a byte past ASCII in bytes, an
+  integer past 4,300 digits and every malformed number are refused;
+  `\N{...}` answers `NeedsNameTable`.
+
+`ModuleError::Syntax` carries a short kind; `check_claim` catches every
+class alike, so only whether a source is refused matters.
+
+No regular expression is involved: the reference is C code.
+
+Fixtures: `tests/contract/gen_pysyntax_module.py` writes
+`pysyntax_module.jsonl`, gated on the Python release (the tokenizer's
+rules are 3.13.13's; under another interpreter the generator writes the
+header alone). A row holds the source, whether the tokenizer refuses
+it, the class `ast.parse` raises, and the tokens `tokenize` reads with
+their offsets (by count and SHA-256 past 400 code points). Refusal is
+read from the C tokenizer in the parser's mode
+(`tokenize._generate_tokens_from_c_tokenizer` with `extra_tokens` false:
+the `tokenize` module's own mode matches no brackets) plus the parse of
+each STRING and NUMBER token alone, since `ast.parse` stops at the
+first grammar error and never reaches a later tokenizer error; a
+SyntaxError of `ast.parse` with a tokenizer's message is asserted to be
+a refusal. The cases cover lines, line ends, indentation by spaces,
+tabs and form feeds, continuations in and after the indentation,
+brackets, every literal kind and its errors, names past ASCII, NUL,
+surrogates, the bracket limit and the indentation limit at 98 to 101
+levels. A sweep row pins 20,000 sources of one to twelve pieces drawn
+by a fixed LCG by count and SHA-256. `golden_pysyntax_module` checks
+every row and allows a decline only for a source holding an f-string or
+`\N` (at most five); `pysyntax_module_kills` and
+`pysyntax_module_robustness` (100,000 lines and 200 descents to 99
+levels within ten times the time of a tenth, hostile shapes without a
+panic) hold the rest.
+
 ### Left for later units
 
-`module_lex` (lane pymodlex), the XID tables
-(lane pyident) and the name table of `\N{...}` (unit pysyntax-names),
-which `lex` answers with `NeedsIdentTable` and `NeedsNameTable` until
-they are built.
+The XID tables (lane pyident) and the name table of `\N{...}` (unit
+pysyntax-names), which `lex` answers with `NeedsIdentTable` and
+`NeedsNameTable` until they are built. For `module_lex`: f-string
+tokenizing and the expression grammar (unit 5b), then the statement
+grammar and the top-level binding read of `check_claim` (unit 5c).
 
 ## The store's row writers
 
@@ -20345,7 +20443,8 @@ What the reference has and this build does not, by area:
 - `project_file.py` past its vocabulary, render, walk and write: `parse`
   and its reads (unit 2).
 - Each hit's signals and drift report: `claims.py` past its leaves,
-  its literal reader and its drift index (the declare-time oracle),
+  its literal reader, its drift index and its module tokenizer (unit
+  5a) (the declare-time oracle),
   `verify_candidates.py` past the validation of one candidate, its
   three extraction patterns (`_BACKTICK_RE`, `_BARE_RE`,
   `_DOMAIN_ROUTE_RE`) and the candidate scan (`_normalize_for_compare`

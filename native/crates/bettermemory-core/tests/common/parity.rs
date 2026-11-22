@@ -211,6 +211,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // and complex arithmetic (`gen_pysyntax_literal`);
         // `pysyntax_literal.jsonl`, every other text, is not gated.
         | "pysyntax_literal_python.jsonl"
+        // The module-mode tokenizer of 3.13.13 (`gen_pysyntax_module`).
+        | "pysyntax_module.jsonl"
         | "machine_identity_python.jsonl"
         | "store_rotation_python.jsonl"
         | "membership_shared_python.jsonl"

@@ -132,6 +132,7 @@ from . import (
     gen_symbols,
     gen_pysyntax,
     gen_pysyntax_literal,
+    gen_pysyntax_module,
     gen_models,
     gen_origin_history,
     gen_origin_dates_reads,
@@ -497,6 +498,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "pysyntax_python": gen_pysyntax.generate,
     "pysyntax_literal": gen_pysyntax_literal.generate_stable,
     "pysyntax_literal_python": gen_pysyntax_literal.generate,
+    "pysyntax_module": gen_pysyntax_module.generate,
     "gitfile_leaves": gen_gitfile_leaves.generate,
     "gitfile_leaves_posix": gen_gitfile_leaves.generate_posix,
     "store_provenance": gen_store_provenance.generate,
@@ -673,6 +675,10 @@ PYTHON_VERSION = "3.13.13"
 #: header alone. Its sibling ``pysyntax_literal`` holds every other text,
 #: which 3.11 to 3.14 answer alike, and is not gated
 #: (`gen_pysyntax_literal`).
+#: ``pysyntax_module`` holds the module-mode tokenizer's answers as
+#: 3.13.13 gives them, classed by the release's messages; under another
+#: interpreter the generator writes its header alone
+#: (`gen_pysyntax_module`).
 #: ``location_stamps_platform`` holds `os.major` and `os.minor` of NODEV
 #: (-1) and of numbers past ``dev_t``. 3.11 truncates a number macOS's
 #: 32-bit ``dev_t`` cannot hold, where 3.12.13 and 3.13 raise; 3.11 and
@@ -762,6 +768,7 @@ PYTHON_GATED = frozenset(
         "claims_python",
         "pysyntax_python",
         "pysyntax_literal_python",
+        "pysyntax_module",
         "capture_vocabulary_python",
         "fs_realpath_python",
         "fs_realpath_strict_python",

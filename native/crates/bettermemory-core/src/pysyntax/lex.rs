@@ -110,10 +110,10 @@ pub fn lex(text: &[u32]) -> Result<Lexed, LexError> {
     Ok(Lexed { source: s, tokens })
 }
 
-struct Lexer<'a> {
-    s: &'a [u32],
-    i: usize,
-    out: Vec<Token>,
+pub(super) struct Lexer<'a> {
+    pub(super) s: &'a [u32],
+    pub(super) i: usize,
+    pub(super) out: Vec<Token>,
 }
 
 fn is_ident_start(c: u32) -> bool {
@@ -240,7 +240,7 @@ impl Lexer<'_> {
     }
 
     /// A backslash: it must end the line, and a line must follow.
-    fn continuation(&mut self) -> Result<(), LexError> {
+    pub(super) fn continuation(&mut self) -> Result<(), LexError> {
         if self.at(self.i + 1) != Some(NL) {
             return err("character after line continuation");
         }
@@ -251,7 +251,12 @@ impl Lexer<'_> {
         Ok(())
     }
 
-    fn op(&mut self, c: u32, start: usize, stack: &mut Vec<u32>) -> Result<(), LexError> {
+    pub(super) fn op(
+        &mut self,
+        c: u32,
+        start: usize,
+        stack: &mut Vec<u32>,
+    ) -> Result<(), LexError> {
         if c < 0x20 || c == 0x7F {
             return err("non-printable character");
         }
@@ -330,7 +335,13 @@ impl Lexer<'_> {
     }
 
     /// A string literal from its opening quote at `self.i`.
-    fn string(&mut self, start: usize, b: bool, r: bool, f: bool) -> Result<(), LexError> {
+    pub(super) fn string(
+        &mut self,
+        start: usize,
+        b: bool,
+        r: bool,
+        f: bool,
+    ) -> Result<(), LexError> {
         let quote = self.s[self.i];
         let size = if self.at(self.i + 1) == Some(quote) && self.at(self.i + 2) == Some(quote) {
             3
@@ -423,7 +434,7 @@ impl Lexer<'_> {
         Ok(())
     }
 
-    fn number(&mut self, start: usize) -> Result<(), LexError> {
+    pub(super) fn number(&mut self, start: usize) -> Result<(), LexError> {
         let c = self.s[self.i];
         let radix = match (c, self.at(self.i + 1).map(|x| x | 0x20)) {
             (0x30, Some(0x78)) => 16,
