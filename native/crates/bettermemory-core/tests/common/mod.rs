@@ -7,6 +7,7 @@
 pub mod argparse;
 pub mod attestation_paths;
 pub mod bulk;
+pub mod choose;
 pub mod cli_root;
 pub mod created;
 pub mod dedup;

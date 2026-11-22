@@ -1,9 +1,11 @@
 //! `recall.py`, its first unit: the constants of the prompt recall, the
 //! table of the user's words (`WordsSeen`, `_fold`, `_bounded`) and the
 //! recall block's renderer (`RecallPointer`, `render_recall_block` and its
-//! helpers), with `recall_admission.summarize` and `disputed_marks`.
+//! helpers), with `recall_admission.summarize` and `disputed_marks`; and
+//! the hit choice and delivery (`choose`).
 //! Texts are code points, so every length is a Python `str` length.
 
+pub mod choose;
 pub mod render;
 pub mod words;
 

@@ -67,7 +67,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields` | `audit_fields.jsonl` |
 | `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`) | `recall_settle.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
-| `recall` | `recall.py`'s first unit: the constants, `WordsSeen` (`remember`, `seen`, `holds`, `clear`), `_fold`, `_bounded`, `RecallPointer`, `_annotation`, `_core`, `_one_excerpt`, `_recall_line`, `render_recall_block`; `recall_admission.summarize` and `disputed_marks` | `recall_render.jsonl`, `recall_render_unicode.jsonl` |
+| `recall` | `recall.py`'s first unit: the constants, `WordsSeen` (`remember`, `seen`, `holds`, `clear`), `_fold`, `_bounded`, `RecallPointer`, `_annotation`, `_core`, `_one_excerpt`, `_recall_line`, `render_recall_block`; `recall_admission.summarize` and `disputed_marks`; `recall::choose`: `_seen_in_log`, `_seen_in_segment`, `_choose_hits`, `_deliver_recall`, `_unless_standing`, `_contradiction_open`, `HookResult` | `recall_render.jsonl`, `recall_render_unicode.jsonl`, `recall_choose.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `git_read_budget`, `git_calls` | `git_read_budget.py` whole (`ReadBudget`, the scopes as a `Scope` value, `_progress` as `Progresses`, `call_scope`, `call`, `health_call`, `async_call`, `reading`, `expired`, `wait_for`, `unread`, `hit`, `allowance`, `exhausted`, `for_resume`); `_git.py`'s tallies, `run_git`'s counts around one call, `printed_path`, `subcommand`, the `log_nonzero_exit` message | `git_read_budget.jsonl` |
 | `git_run` | `_git.py`'s `run_git` whole over a `GitProcess` (the command, `_environment`, stdin, the timeout given, both streams as text or bytes, the counts through `git_calls::run_git`, the logged lines as values) and `log_nonzero_exit` | `git_run.jsonl` |
@@ -5740,7 +5740,9 @@ a character like any other.
 | `recall_admission.summarize`, `disputed_marks` | recall_admission.py 126-160 | Unicode data (`isspace`) | built (`render::summarize`, `render::disputed_marks`) |
 | `_select_brief`, `session_brief` and the brief's segment and log helpers | 388-1252 | the store, the log, the clock | not built |
 | `clean_prompt` | 1254-1265 | nothing | not built (it is `owner_prompt.probe_text`, a later unit) |
-| `_seen_in_log`, `prompt_recall`, `_caller_resolution`, `_prompt_turn`, `_seen_in_segment`, `_choose_hits`, `_deliver_recall` | 1375-1902 | the store, the log, the caller's resolution | not built |
+| `_seen_in_log` | 1375-1448 | the log (its events as data) | built (`choose::seen_in_log`) |
+| `prompt_recall`, `_caller_resolution`, `_prompt_turn` | 1449-1713 | the store, the log, the caller's resolution | not built |
+| `_seen_in_segment`, `_choose_hits`, `_deliver_recall` | 1714-1902 | the store, the recall state, the membership model, the clock, `generate_ulid` | built (`choose`) |
 
 No pattern of `re` is used by the built functions.
 
@@ -5788,9 +5790,79 @@ misses and on a match at every index, megabyte prompts of surrogates,
 to linear growth.
 
 What is left: the brief (`_select_brief`, `session_brief` and its
-helpers), `clean_prompt` with `owner_prompt`, and the prompt recall
-(`prompt_recall`, `_choose_hits` and their helpers), each over the store
-reads the crate holds.
+helpers), `clean_prompt` with `owner_prompt`, and the prompt recall's
+entry (`prompt_recall`, `_caller_resolution`, `_prompt_turn`), each over
+the store reads the crate holds.
+
+### Unit recall-choose, as built (`recall::choose`)
+
+Reference lines at origin/v9: `_seen_in_log` 1375-1448,
+`_seen_in_segment` 1714-1732, `_choose_hits` 1735-1831,
+`_deliver_recall` 1834-1902, with `recall_admission._unless_standing`
+(162-172) and `_contradiction_open` (174-188). `recall_result.HookResult`
+is not otherwise in the crate, so `choose::HookResult` is a plain struct
+naming `recall_result.py`; its constructor is `__post_init__` (the text's
+control tokens named by `defang_control_tokens`, `chars` following when
+it was the text's length).
+
+- `seen_in_log` is `_seen_in_log` over events as `PyValue` dicts. A
+  `kind`, or a session tested against the sessions set, that Python
+  cannot hash raises TypeError (`ChooseError::TypeError`): `kind` is
+  tested against a frozenset, so a list kind raises before the stamp is
+  read. A harness stamp that names `harness_session` never tests the
+  session (`or` short-circuits), so an unhashable session there answers.
+  `event.get("status", "committed")` keeps a present `None`, so a write
+  with a null status is not committed and one with no status is. The id
+  lists are `returned or memory_ids or hit_ids` with Python truthiness
+  through `events::str_ids`.
+- `seen_in_segment` joins `{key[1]} | joined_sessions(...)` (the
+  `recall_settle::Sessions` trait) and reads the log from
+  `min(own_since, started_at)`, the first on a tie, as `min` keeps it.
+  The kinds passed are `SEEN_KINDS`; the reference passes a frozenset,
+  whose order no caller may read.
+- `choose_hits` takes the turn as the trait `PromptTurnView` (its store,
+  its admission, surface, key, clock, worktree root and remint), the
+  segment's `shown` and `started_at` with the own cut and the recent
+  events (`Window`), and `model.admit_recall(resolution, hits,
+  admission=)` as a closure answering `(delivered, suppressed)`. The
+  store's reads are the trait `ChooseStore`, over `in_force`'s
+  `LinkReader`; `standing.standing_ids` is a store method taking the
+  admission. `in_force` is the crate's; ids cross into it as Rust
+  strings, so an admitted hit id holding a lone surrogate cannot reach it
+  unchanged, and `choose_hits` declines (`ChooseError::NotUnicode`)
+  where the reference reads that id's in-force entry (store ids are
+  ASCII). `dict(admitted.suppressed)` keeps the last relation of an id.
+  The hashability test of a `kind` or a session walks a tuple without
+  recursion.
+- `deliver_recall` takes the recall state as `ClaimState`,
+  `generate_ulid` as `mint`, `_record_delivery` as `record` (answering
+  `str(fields["event_id"])`) and the hold as a closure. Until
+  `recall_prompt` is ported its `_PromptTurn` implements nothing here;
+  that unit implements `PromptTurnView`.
+
+Regular expressions: none.
+
+Findings about the reference (reproduced, pinned): a hit the probe ranks
+twice is chosen twice and rendered as two pointers with one id, since the
+already-chosen test runs only on a head that took a history hit's slot
+(`gen_recall_choose.py`'s case with hits `a, a, b`;
+`recall_choose_kills::a_hit_ranked_twice_is_chosen_twice`). A hit whose
+record does not load is dropped before the admission is consulted, so it
+leaves no held entry even when the admission withheld it.
+
+Tests: `recall_choose.jsonl` (not gated, 72 KB) holds 15 `_seen_in_log`
+cases (kinds, stamps, the harness stamp, the two halves and each cut met
+exactly, statuses, the id lists) and 35 `_choose_hits` cases over scripted fakes, 21 of them
+through `_deliver_recall` (admission, provenance, contradiction and its
+standing exemption in the store's order, seen in the view and the log, the cap, history heads
+and their own gates, held records, an extender, disputed marks, a control
+token, partial and empty claims, a block that renders nothing), each with
+every call the fakes saw, and the remint mapping compared whole.
+`contra` is written as `[id, stamp]` pairs so that the Rust fake keeps
+the dict's order. `golden_recall_choose`, `recall_choose_kills`
+(15) and `recall_choose_robustness` (50,000 events to linear growth,
+100,000-deep values and the year bounds, 3,000 hits) read them; the fakes
+are `tests/common/choose.rs`.
 
 ## A request's caller (`identity.py`)
 

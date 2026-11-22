@@ -165,8 +165,9 @@
 //!   `review_unanswered`, over traits for the store, recorder and state;
 //! - [`control_tokens`]: the chat-template delimiters a stored text may
 //!   not carry, found, counted, refused and written by their bare names;
-//! - [`recall`]: the prompt recall, its first unit: the table of the
-//!   user's words (`WordsSeen`) and the recall block's renderer;
+//! - [`recall`]: the prompt recall: the table of the user's words
+//!   (`WordsSeen`), the recall block's renderer, and the hit choice and
+//!   delivery (`recall::choose`);
 //! - [`durability`]: the write gate's transient markers, its first unit
 //!   (the marker's canonical form, quoted spans, the snippet and sentence
 //!   helpers);
