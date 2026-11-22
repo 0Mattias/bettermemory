@@ -54,6 +54,7 @@ pub mod transcript;
 pub mod txs;
 pub mod use_tokens;
 pub mod verify_anchoring_attest;
+pub mod verify_anchoring_passes;
 pub mod verify_anchoring_skip;
 pub mod written;
 

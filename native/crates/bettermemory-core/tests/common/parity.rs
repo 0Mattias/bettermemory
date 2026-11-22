@@ -245,6 +245,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "verify_candidates_unicode.jsonl"
         // `str.isalpha` of the drive test over every code point.
         | "verify_anchoring_attest_unicode.jsonl"
+        // `str.lower` of the extension over every code point.
+        | "verify_anchoring_passes_unicode.jsonl"
         | "lexicon_spelling_tables.json"
         | "unicode.jsonl"
         | "unicode_sequences.jsonl"

@@ -52,7 +52,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
 | `response_rows` | `_response.py` unit resphit: `SIMILAR_HITS_SHOWN`, `ResponseBuilder.__init__`, `hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict` | `response_hits.jsonl` |
 | `handlers::verify` | unit h_verify-1 of `handlers/verify.py`: the caps, `_check_verify_args`, `_refuse_stale_stored_claims`, `_refuse_unverifiable_stored_attestations`, `_relative_to_root`, `_refuse_evidence_free_stamp`, `_record_root`, `_within`, `_is_callers_tree` | `handlers_verify_args.jsonl`, `handlers_verify_args_unicode.jsonl`, `handlers_verify_gates.jsonl`, `handlers_verify_gates_python.jsonl` |
-| `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl` |
+| `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations`; unit passes: `_relative_attestation_keys`, `_read_attestations`, `_AttestationRead`, `_attestation_read`, `_read_citations`, `_check_anchored_attestations`, `_is_checkable_citation`, `_check_anchored_citations` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl`, `verify_anchoring_passes.jsonl`, `verify_anchoring_passes_unicode.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
 | `response_render` | `_response.py`'s `ResponseBuilder.render_hit`, `render_show`, `_SHOW_DEFAULTS`, `_NATIVE_SEP`, `_slashed`, `_path_states`, `_compact_origin`, `_grouped_links` | `response_render.jsonl` |
@@ -1139,6 +1139,9 @@ predicates; the drift readers are verify_anchoring-2.
 | `holds_commit` | 574-595 | discovery and the object reader | 2 |
 | `_join_under`, `_resolves_under`, `_worktree_root_is_live` | 1510-1584 | `expanduser`, `isabs`, `realpath`, `isdir` (the host and the file system) | built (attest) |
 | `_is_absolute_attestation`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations` | 1721-1926 | the host of `attestation_paths`; `_normalize_for_compare`, `_path_exists`, `_absent_by_sparsity`, `_claim_key` (closures) | built (attest) |
+| `_relative_attestation_keys`, `_read_attestations`, `_AttestationRead`, `_attestation_read`, `_read_citations` | 1237-1384 | the host of `attestation_paths`; `_claim_key`, `_path_exists`, `_absent_by_sparsity`, `_resolves_under`, `os.path.isdir` (the trait `ClaimReads`); `_RELATIVE_CITATION_RE` (a closure) | built (passes) |
+| `_check_anchored_attestations` | 1387-1507 | as above | built (passes) |
+| `_is_checkable_citation`, `_check_anchored_citations` | 1587-1718 | as above | built (passes) |
 | `detect_path_drift`, `_detect_unanchored` and the rest | 893 on | | 2 |
 
 The cut: the whole of 598-890 with its fixture world (a MemFs `Rule`
@@ -1378,6 +1381,95 @@ Tests: `golden_verify_anchoring_attest`,
 `verify_anchoring_attest_kills`, `verify_anchoring_attest_robustness`
 (megabyte spellings, 100,000 climbing segments; linear time in the number
 of entries).
+
+### What the read passes reproduce
+
+Unit verify_anchoring-passes (`verify_anchoring/passes.rs`), reference
+lines confirmed at 1e9a5ba4: `_relative_attestation_keys` 1237-1259,
+`_read_attestations` 1262-1311, `_AttestationRead` 1314-1322,
+`_attestation_read` 1325-1357, `_read_citations` 1360-1384,
+`_check_anchored_attestations` 1387-1507, `_is_checkable_citation`
+1587-1632, `_check_anchored_citations` 1635-1718.
+
+- `AnchoredRead` is the buckets and the seen set of `_AnchoredRead`, with
+  `first` (the claim key inserted, False when it was there), `unconfirm`
+  and `miss`. The miss rule keeps its order: a read that does not convict
+  is unconfirmed under the read's rule without asking the sparse
+  checkout; a convicting one asks `_absent_by_sparsity` and is unconfirmed
+  as `sparse_checkout` where it answers True; a miss otherwise. `report`
+  and the `_ClaimKeys` memo are left to the unit that wires
+  `_detect_anchored`. The recorded-root passes take the buckets they write
+  from the same struct, so the seen set is one set whichever pass runs.
+- `relative_attestation_keys` reads the root as given (`str(root)`),
+  where the other passes read `str(Path(root))` (`attest::pure_text`
+  under the host's flavour), as the reference does; the empty key is
+  dropped.
+- `attestation_read` answers `AttestationRead` or None in the
+  reference's order: the empty and refused spellings first, then the
+  absolute split (`anchor.absolute`; an unanchored target readable False
+  under its own spelling; the rule `absolute` read only when it resolves
+  under the root), then `_escapes_root`, then the rootless read
+  (unconfirmed under the anchor's rule) and the literal join.
+- `read_attestations` reads every attestation first, builds the absent
+  set from the readable reads listed absent (by claim key, so an absence
+  under one spelling is the absence under any), then walks the reads:
+  present and not absent verified; present and absent convicting into
+  `present_absent`, else unconfirmed; absent and listed absent into
+  `expected_absent`; else the miss rule, claim-anchored.
+- `read_citations` and `check_anchored_citations` take the citations of
+  the bounded body (`_bounded_scan_text`) from a closure, filter them with
+  `is_checkable_citation`, join with `attest::join_under`, dedupe by claim
+  key, and count the budget (`MAX_ANCHORED_CITATION_STATS`, 8) at the
+  stat, so filtered or already-seen matches spend none. A missing file
+  whose parent (`os.path.dirname`, `expanduser` of the host, then
+  `isdir`) is not a directory is dropped, though its key stays seen.
+  `read_citations` reads nothing for an anchor without a root (the
+  reference asserts one).
+- `check_anchored_attestations` is inert without a root; an absolute
+  attestation counts only where `_resolves_under` answers True, and is
+  kept as spelled; every miss is claim-anchored.
+- `is_checkable_citation`: a slash, no dot in the first segment past its
+  first code point, the last dot's tail through `unicode::lower` in
+  `CHECKABLE_CITATION_EXTENSIONS` (so `a/b.loc` with U+212A KELVIN SIGN is
+  checkable), and no placeholder once a slash is put in front.
+- Effects: `ClaimReads` (`key`, `path_exists`, `absent_by_sparsity`,
+  `resolves_under`, `isdir`) stands for the module functions, bound to
+  `attest::resolves_under`, the skip reader and `_claim_key` where
+  `_detect_anchored` is wired. The anchor is the trait `ReadAnchor`
+  (`root`, `rule`, `convicting`, `absolute`); `ClaimAnchor` implements it
+  in that unit. Every raise of the host (`expanduser`, the path
+  interpretation) is passed up, leaving the buckets as far as they got.
+
+Patterns: `_RELATIVE_CITATION_RE` (verify_candidates.py 238-243) is never
+matched by hand here. Its `finditer` over the bounded text is the closure
+`CitationMatches`, answering the span of group 1 of each match; the
+fixtures feed the spans Python's `re` found. It moves onto
+`pyre::Regex` with its first reader in `verify_candidates`, and is in
+the engine's inventory already (a literal pattern of the reference). A
+span outside the text is passed over, which no match of the pattern
+gives.
+
+Fixtures: `tests/contract/gen_verify_anchoring_passes.py` writes
+`verify_anchoring_passes.jsonl` (not gated: the host of
+`gen_attestation_paths` is scripted for both flavours, `Path` is the
+flavour's pure class, `os.path` of the module is the flavour's
+`dirname` with the scripted `expanduser`, the closures answer by rule
+with each effect logged in order, and the bodies are ASCII) and
+`verify_anchoring_passes_unicode.jsonl` (gated on the Unicode release:
+`is_checkable_citation` around every code point, by count and SHA-256).
+Rows record every bucket and what the call raised, over seven stub
+anchors, six roots, the three path kinds, a seeded seen set, and a body
+past the budget.
+
+Tests: `golden_verify_anchoring_passes`, `verify_anchoring_passes_kills`
+(the budget at the stat, the dedup by key, the miss rule's order, the
+parent rule, the filter, an unreadable absence that shares a key with a
+readable target), `verify_anchoring_passes_robustness` (megabyte
+spellings, 200,000 matches, spans past the text and reversed spans;
+linear time in the number of attestations). The refused-spelling and
+escapes-root guards of `attestation_read` are copied from the reference
+and reached by no input: `interpret_path` already answers `None` for
+every such spelling.
 
 ## The response layer's leaves (`_response_links.py`, the drift memo, the verdict ladder)
 
