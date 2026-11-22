@@ -223,3 +223,18 @@ impl Create for SystemCreate {
             .map_err(|e| raised(&e, Path::new(path)))
     }
 }
+
+#[cfg(test)]
+mod embedded_text_tests {
+    use super::DEFAULT_CONFIG;
+
+    /// The compiled-in text has LF line ends only. `.gitattributes` marks
+    /// `default_config.toml` -text, but a checkout made with CRLF before
+    /// that rule keeps CRLF until the file is checked out again, and
+    /// `include_str!` embeds the bytes as they are on disk.
+    #[test]
+    fn the_default_config_holds_no_carriage_return() {
+        assert!(!DEFAULT_CONFIG.contains('\r'));
+        assert!(DEFAULT_CONFIG.starts_with("# bettermemory config\n"));
+    }
+}

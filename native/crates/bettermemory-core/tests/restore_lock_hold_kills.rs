@@ -128,7 +128,9 @@ fn a_shorter_mark_replaces_a_longer_one_whole() {
         .expect("mark");
     let text = fs::read_to_string(lock_path(&store)).expect("marker");
     assert!(text.ends_with("}\n"), "{text}");
-    assert!(!text.contains('x'), "{text}");
+    // The old bundle's run of x, not a lone x: the store path the marker
+    // names may hold one.
+    assert!(!text.contains("xx"), "{text}");
     held.release(false);
     let marker = read_marker(&store).expect("read").expect("marker");
     let bundle = marker

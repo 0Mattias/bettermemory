@@ -2424,6 +2424,49 @@ as the fixture, with `restore_lock_hold_not_posix.rs` recording the gap
 (class os). Under `fsdata`'s Windows flavour nothing here resolves a path
 (ENG-124).
 
+## Windows fixes to the settings write and the restore lock (winfix3)
+
+A fix unit; it ports nothing. Its Windows behaviour is not run locally:
+CI's native parity job on windows-latest is its test.
+
+- The default configuration text. `config/default_config.toml` is embedded
+  with `include_str!`, which keeps the bytes as they are on disk. Without a
+  `-text` rule, a Windows checkout rewrote its line ends to CRLF, and the
+  build there would write a first-run config file 218 bytes longer than the
+  reference's. `.gitattributes` now marks the file `-text`.
+  `tests/test_native_embedded_files.py` finds every literal `include_str!`
+  and `include_bytes!` path under `native/crates`, resolved against the
+  including file, and asserts with `git check-attr text` that each is
+  unset; the two reference JSON copies already pass. A unit test in
+  `config/create.rs` asserts the embedded text holds no carriage return,
+  for a checkout made before the rule.
+- `an_open_record_file_is_not_removed` asserted `ErrorKind::PermissionDenied`.
+  A file opened without FILE_SHARE_DELETE refuses deletion with
+  ERROR_SHARING_VIOLATION (32), which std maps to no named kind; the test
+  now asserts raw error 32 and keeps its other assertions.
+- `restore_lock_hold_kills::a_shorter_mark_replaces_a_longer_one_whole`
+  asserted the marker held no `x` at all, but the marker names the store
+  path, and a checkout path holding an `x` failed it on every platform. It
+  now looks for the old bundle's run (`xx`).
+
+Windows paths of `restore_lock.rs` and `bettermemory-sys` judged for the
+same fault (an ErrorKind expected where Windows gives raw error 5, 32 or 33):
+
+| Path | Verdict |
+|---|---|
+| `try_lock` (Windows): `lock_byte` at `WINDOWS_LOCK_OFFSET` | sound: any error is Held, no kind read (a held byte gives 33) |
+| `unlock_file` (Windows): `unlock_byte` | sound: errors ignored |
+| `record_options` share mode | sound: no error inspected |
+| `record_running`, `store_handle`, `windows_reading` | sound: a failed open is `None`, any kind |
+| `read_marker`, `open_record` | sound: any open error is no marker |
+| `open_lock_file` NotFound when not creating | sound: a missing file is ERROR_FILE_NOT_FOUND (2), mapped to NotFound |
+| `behind_handle`, `record_admission`, `Admission::confirm` | sound: no error kind read |
+| `RestoreLock` release's `remove_file` | sound: result ignored |
+| `os_error_text` | sound: formats the raw code on every platform |
+| `bettermemory_sys::file_index`, `lock_byte`, `unlock_byte` | sound: return `last_os_error` unchanged |
+| test `an_unlock_frees_the_lock_while_the_handle_stays_open` | sound: compares `Try` values only |
+| test `an_open_record_file_is_not_removed` | fixed (above) |
+
 ## The additive schema steps (`store_schema.py`, unit store_schema-1)
 
 `store::schema` holds the schema steps a writing open runs on a store an

@@ -1431,16 +1431,20 @@ mod lock_tests {
 
     /// On Windows the record file opens without FILE_SHARE_DELETE, as the
     /// reference's `os.open` does, so an unlink meeting an open handle
-    /// fails and leaves the file in place.
+    /// fails and leaves the file in place. The failure is
+    /// ERROR_SHARING_VIOLATION (32), which std maps to no named ErrorKind;
+    /// ERROR_ACCESS_DENIED (5) would mean another cause, such as a
+    /// read-only file or a delete-pending one.
     #[cfg(windows)]
     #[test]
     fn an_open_record_file_is_not_removed() {
+        const ERROR_SHARING_VIOLATION: i32 = 32;
         let lock = scratch("share");
         let open = open_lock_file(&lock, true).expect("open");
         let removed = std::fs::remove_file(&lock);
         assert_eq!(
-            removed.map_err(|e| e.kind()),
-            Err(std::io::ErrorKind::PermissionDenied)
+            removed.map_err(|e| e.raw_os_error()),
+            Err(Some(ERROR_SHARING_VIOLATION))
         );
         let marker = super::read_marker(&lock.with_file_name("memory.sqlite"));
         assert!(matches!(marker, Ok(None)), "{marker:?}");

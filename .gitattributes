@@ -77,3 +77,12 @@ tests/contract/golden/** -text
 # normalize line endings as the Rust lexer does for `.rs` files, so a CRLF
 # checkout (Windows runners set core.autocrlf) would change the bytes.
 native/crates/bettermemory-core/src/**/reference_*.json -text
+
+# The default configuration text the native build compiles in
+# (`include_str!` in config/create.rs), byte for byte. The binary writes it
+# as the first-run config file, and `golden_settings_create` compares its
+# length and sha256 with the reference's `DEFAULT_CONFIG`. A CRLF checkout
+# on a Windows runner added a carriage return to every line, so the build
+# there would write a file the reference never writes.
+# tests/test_native_embedded_files.py holds every embedded file to this rule.
+native/crates/bettermemory-core/src/config/default_config.toml -text
