@@ -5,7 +5,9 @@
 //! session bucket (`registry_key`), `Workspace.declared`, `resolve` over a
 //! request given as data, and the published caller (`publish`, `reset`,
 //! `current`, `bind`, `bind_transcript`, `current_actor`,
-//! `current_harness_session`) as a value the caller owns.
+//! `current_harness_session`) as a value the caller owns; the first
+//! usable `file://` root (`_first_file_root`, over `urlparse` and
+//! `unquote(errors="surrogateescape")`) and `workspace_declaration`.
 //!
 //! Effects are arguments: the environment is a lookup the caller passes
 //! (read only off HTTP, as the reference reads it), the working directory
@@ -14,7 +16,9 @@
 //! value that table holds for the request's session. Texts are code points
 //! (a `str` may hold a lone surrogate, as `os.environ` gives one).
 
+use crate::config::{self, Flavour, Fs, Raised};
 use crate::json;
+use crate::origin_remote::{self, UrlError};
 use crate::pyvalue::{PyStr, PyValue};
 use crate::unicode;
 
@@ -506,4 +510,214 @@ impl Published {
     pub fn current_harness_session(&self) -> Option<&[u32]> {
         self.current.as_ref()?.harness_session.as_deref()
     }
+}
+
+/// `urllib.parse.unquote(text, errors="surrogateescape")`: each maximal
+/// run of ASCII code points has its `%XX` escapes decoded to bytes (a `%`
+/// not followed by two hex digits is kept) and is decoded as UTF-8, each
+/// byte of an invalid sequence becoming U+DC00 plus the byte
+/// (`surrogateescape`); a code point past
+/// ASCII passes through as it is, a lone surrogate included.
+pub fn unquote(text: &[u32]) -> PyStr {
+    // The reference returns text holding no `%` as it is.
+    if !text.contains(&u32::from('%')) {
+        return text.to_vec();
+    }
+    let mut out = Vec::with_capacity(text.len());
+    let mut i = 0;
+    while i < text.len() {
+        if text[i] >= 0x80 {
+            out.push(text[i]);
+            i += 1;
+            continue;
+        }
+        let end = i + text[i..].iter().take_while(|&&c| c < 0x80).count();
+        decode_surrogateescape(&unquote_to_bytes(&text[i..end]), &mut out);
+        i = end;
+    }
+    out
+}
+
+/// `unquote_to_bytes` of a run of ASCII code points.
+fn unquote_to_bytes(run: &[u32]) -> Vec<u8> {
+    let hex = |c: Option<&u32>| c.and_then(|&c| char::from_u32(c)?.to_digit(16));
+    let mut out = Vec::with_capacity(run.len());
+    let mut i = 0;
+    while i < run.len() {
+        if run[i] == u32::from('%') {
+            if let (Some(h), Some(l)) = (hex(run.get(i + 1)), hex(run.get(i + 2))) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(run[i] as u8);
+        i += 1;
+    }
+    out
+}
+
+/// `bytes.decode("utf-8", "surrogateescape")`: Python's decoder reports
+/// the maximal invalid subpart, as `from_utf8` does, and every byte of it
+/// is escaped.
+fn decode_surrogateescape(mut bytes: &[u8], out: &mut Vec<u32>) {
+    loop {
+        match std::str::from_utf8(bytes) {
+            Ok(text) => {
+                out.extend(text.chars().map(u32::from));
+                return;
+            }
+            Err(e) => {
+                let (good, rest) = bytes.split_at(e.valid_up_to());
+                out.extend(
+                    std::str::from_utf8(good)
+                        .unwrap_or_default()
+                        .chars()
+                        .map(u32::from),
+                );
+                let bad = e.error_len().unwrap_or(rest.len());
+                out.extend(rest[..bad].iter().map(|&b| 0xDC00 + u32::from(b)));
+                bytes = &rest[bad..];
+            }
+        }
+    }
+}
+
+/// The netloc `urlsplit` reads from `url`, before any check: the leading
+/// C0 controls and spaces stripped, tab, CR and LF removed, a valid
+/// scheme taken off, then what follows `//` up to `/`, `?` or `#`.
+fn netloc_of(url: &[u32]) -> PyStr {
+    let lead = url.iter().take_while(|&&c| c <= 0x20).count();
+    let url: PyStr = url[lead..]
+        .iter()
+        .copied()
+        .filter(|&c| !matches!(c, 0x09 | 0x0A | 0x0D))
+        .collect();
+    let ascii = |c: u32, more: &str| {
+        c < 0x80 && ((c as u8).is_ascii_alphanumeric() || more.contains(c as u8 as char))
+    };
+    let mut rest = url.as_slice();
+    if let Some(i) = url.iter().position(|&c| c == u32::from(':')) {
+        if i > 0
+            && url[0] < 0x80
+            && (url[0] as u8).is_ascii_alphabetic()
+            && url[..i].iter().all(|&c| ascii(c, "+-."))
+        {
+            rest = &url[i + 1..];
+        }
+    }
+    match rest.strip_prefix(&[0x2F, 0x2F][..]) {
+        Some(after) => after
+            .iter()
+            .take_while(|&&c| !matches!(c, 0x2F | 0x3F | 0x23))
+            .copied()
+            .collect(),
+        None => PyStr::new(),
+    }
+}
+
+/// Lone surrogates written as `\udcXX` (`backslashreplace`), since a
+/// `Raised` message is Rust text.
+fn message_text(text: &[u32]) -> String {
+    text.iter()
+        .map(|&c| char::from_u32(c).map_or_else(|| format!("\\u{c:04x}"), String::from))
+        .collect()
+}
+
+/// The ValueError `urlparse(url)` raised, with CPython 3.13's message.
+fn url_raised(error: UrlError, url: &[u32]) -> Raised {
+    let netloc = netloc_of(url);
+    let message = match error {
+        UrlError::Ipv6 => "Invalid IPv6 URL".to_owned(),
+        UrlError::Future => "IPvFuture address is invalid".to_owned(),
+        UrlError::Ipv4 => "An IPv4 address cannot be in brackets".to_owned(),
+        UrlError::Address => {
+            // `_check_bracketed_netloc`'s split: after the last `@`, then
+            // between `[` and `]`, or before the first `:` with no `[`.
+            let at = netloc.iter().rposition(|&c| c == u32::from('@'));
+            let host_port = &netloc[at.map_or(0, |i| i + 1)..];
+            let upto = |text: &'_ [u32], end: char| {
+                let stop = text.iter().position(|&c| c == u32::from(end));
+                text[..stop.unwrap_or(text.len())].to_vec()
+            };
+            let host = match host_port.iter().position(|&c| c == u32::from('[')) {
+                Some(i) => upto(&host_port[i + 1..], ']'),
+                None => upto(host_port, ':'),
+            };
+            format!(
+                "{} does not appear to be an IPv4 or IPv6 address",
+                message_text(&crate::pyvalue::repr_str(&host))
+            )
+        }
+        UrlError::Nfkc => format!(
+            "netloc '{}' contains invalid characters under NFKC normalization",
+            message_text(&netloc)
+        ),
+    };
+    Raised::value(message)
+}
+
+/// `_first_file_root(roots)`: each root is `str(getattr(root, "uri", "")
+/// or "")`, None standing for the empty text. The ValueError `urlparse`
+/// raises is not caught, so a malformed URI ahead of a usable one raises.
+pub fn first_file_root(roots: &[Option<PyStr>]) -> Result<Option<PyStr>, Raised> {
+    let file = cps("file");
+    let localhost = cps("localhost");
+    for root in roots {
+        let uri = root.as_deref().unwrap_or(&[]);
+        let parsed = origin_remote::urlparse(uri).map_err(|e| url_raised(e, uri))?;
+        if parsed.scheme != file {
+            continue;
+        }
+        let mut path = unquote(&parsed.path);
+        if path.len() >= 3 && path[0] == u32::from('/') && path[2] == u32::from(':') {
+            path.remove(0);
+        }
+        if !parsed.netloc.is_empty() && parsed.netloc != localhost {
+            let mut unc = cps("//");
+            unc.extend_from_slice(&parsed.netloc);
+            unc.extend_from_slice(&path);
+            path = unc;
+        }
+        if let Some(cleaned) = clean(Some(&path), false) {
+            return Ok(Some(cleaned));
+        }
+    }
+    Ok(None)
+}
+
+/// `workspace_declaration()`: `(str(Path(path).expanduser()), source)`
+/// when the published caller's workspace (or, with none published,
+/// `resolve(None)`'s) is declared. `flavour` is the `Path` of the host,
+/// and `fs.expanduser` its `expanduser`, which raises
+/// [`config::no_home`] where the reference raises RuntimeError. A
+/// declared path holding a lone surrogate cannot be spelled as Rust text:
+/// it is declined with a `NotPorted` raise.
+pub fn workspace_declaration(
+    published: &Published,
+    env: &mut dyn FnMut(&str) -> Option<PyStr>,
+    cwd: &mut dyn FnMut() -> Option<PyStr>,
+    fs: &dyn Fs,
+    flavour: Flavour,
+) -> Result<Option<(PyStr, PyStr)>, Raised> {
+    let resolved;
+    let workspace = match published.current() {
+        Some(caller) => &caller.workspace,
+        None => {
+            resolved = resolve(None, env, cwd).workspace;
+            &resolved
+        }
+    };
+    let Some(path) = workspace.path.as_deref().filter(|_| workspace.declared()) else {
+        return Ok(None);
+    };
+    let text: Option<String> = path.iter().map(|&c| char::from_u32(c)).collect();
+    let Some(text) = text else {
+        return Err(Raised {
+            class: "NotPorted",
+            message: "a declared workspace holding a lone surrogate".to_owned(),
+        });
+    };
+    let expanded = fs.expanduser(&config::pure_path(&text, flavour))?;
+    Ok(Some((cps(&expanded), workspace.source.clone())))
 }

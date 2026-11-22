@@ -384,6 +384,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "gitdir_read_python.jsonl" => &[Python],
         // A link loop, by the standing rule (`gen_identity.gated`).
         "gitfile_identity_python.jsonl" => &[Python],
+        // URIs with a bracket: `urlsplit`'s bracketed-host checks
+        // (`gen_identity_roots`).
+        "identity_roots_python.jsonl" => &[Python],
         // The strict walk of `_git_common` by input shape (`gen_trust.gated`).
         "gitfile_trust_python.jsonl" => &[Python],
         // `_git_common`'s strict walk, a loop, a record past the JSON

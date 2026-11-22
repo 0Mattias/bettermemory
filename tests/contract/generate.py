@@ -48,6 +48,7 @@ from . import (
     gen_credentials_prefixed,
     gen_credentials_gate,
     gen_identity_caller,
+    gen_identity_roots,
     gen_session,
     gen_standing_guard,
     gen_daemon,
@@ -344,6 +345,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "settings_create_posix": gen_config.generate_create_posix,
     "identity_caller": gen_identity_caller.generate,
     "identity_caller_unicode": gen_identity_caller.generate_unicode,
+    "identity_roots": gen_identity_roots.generate,
+    "identity_roots_python": gen_identity_roots.generate_python,
     "session": gen_session.generate,
     "standing_guard": gen_standing_guard.generate,
     "cli_surface": gen_cli.generate,
@@ -830,6 +833,9 @@ PYTHON_GATED = frozenset(
         "gitconfig_legacy_python",
         "gitdir_read_python",
         "gitfile_identity_python",
+        # URIs with a bracket: the bracketed-host checks of `urlsplit` and
+        # `ipaddress` are the release's (`gen_identity_roots`).
+        "identity_roots_python",
         "gitfile_trust_python",
         "gitfile_follow_python",
         "gitfile_pin_text_python",

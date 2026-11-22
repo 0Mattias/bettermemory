@@ -104,7 +104,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `checkout_token` | the checkout token's text: `random_crockford` and `mint` from given bytes, `valid`, `Lineage.read`, `lineage`, `_link` (BLAKE2b written out), `successor`, `succeeds`, `token_path`, `render`, `parse`, `_cut_short`, `_malformed_detail`; its reads (`checkout_token::read`): `read`, `_read_at`, `_read_text`, `_open_plain`, `_read_all`, `_clear_nonblock`, with `_os_text`; its write (`checkout_token::write`): `write`, `_guard`, `_existing`, `_info_dir`, `_create`, `_write_temp`, `_fs_now`, `_sweep`, `_place`, `_after_race`, `_failed`, `_unlink_quietly`, `TokenWrite`; its re-mint (`checkout_token::remint`): `remint`, `_replace_named`, `_claim`, `_wait_for`, `_take`, `_blocked`, `_holder`, `_claim_read`, `_break`, `_break_marks`, `_release`, `_remove_holding`, `replace_atomic`'s retry | `checkout_token.jsonl`, `checkout_token_read.jsonl`, `checkout_token_read_posix.jsonl` (POSIX only), `checkout_token_write.jsonl`, `checkout_token_write_posix.jsonl` (POSIX only), `checkout_token_remint.jsonl`, `checkout_token_remint_posix.jsonl` (POSIX only) |
 | `config` | `config._config_from_data`, `load_config(create=False)`, `load_config(create=True)`'s first-run write (`config::create`: `DEFAULT_CONFIG`, the parents made, the atomic write, the notice), the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json`, `settings_create.jsonl`, `settings_create_posix.jsonl` |
 | `difflib` | `history._body_diff` (`body_diff`), `str.splitlines`, and CPython 3.13.13's `difflib.unified_diff` as it calls it: `SequenceMatcher` with autojunk (`__chain_b`, `find_longest_match`, `get_matching_blocks`, `get_opcodes`, `get_grouped_opcodes`), `_format_range_unified`, `unified_diff` with `lineterm=""` and no dates (`unified_diff_lines` joined with newlines) | `difflib.jsonl` |
-| `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns | `identity_caller.jsonl`, `identity_caller_unicode.jsonl` |
+| `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns; unit 2: `_first_file_root` (with `unquote(errors="surrogateescape")`), `workspace_declaration` | `identity_caller.jsonl`, `identity_caller_unicode.jsonl`, `identity_roots.jsonl`, `identity_roots_python.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `standing_guard` | `handlers/_guard.py` whole: `read_words`, `record`, `Held`, `check`, `guard` and the hints, over `GuardDeps` | `standing_guard.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
@@ -6368,13 +6368,13 @@ the request.
 | `_client_info_of`, `_request_id_of` | 356-365, 385-387 | the request (data) | unit 1, built (as `Request` fields) |
 | `_principal_of` | 368-382 | the SDK's `authenticated_principal` | unit 1, built (its answer is `Request::principal`) |
 | `_json_workspace` | 390-405 | `json.loads` (the crate's `json`) | unit 1, built |
-| `_first_file_root` | 408-426 | `urllib.parse.urlparse`, `unquote` | unit 2 |
+| `_first_file_root` | 408-429 | `urllib.parse.urlparse`, `unquote` | unit 2, built |
 | `_ROOTS`, `_roots_of` | 433-445 | a weak table keyed by the SDK session | unit 1, built (the table's entry is `Request::root`; the table is the caller's) |
 | `resolve` | 448-550 | `os.environ`, `Path.cwd()` | unit 1, built (both are arguments) |
 | `_CURRENT`, `current`, `publish`, `reset` | 557-571 | a context variable | unit 1, built (`Published`, owned by the caller) |
 | `bind`, `bind_transcript` | 574-625 | as `resolve` | unit 1, built |
 | `current_actor`, `current_harness_session` | 628-642 | the published caller | unit 1, built |
-| `workspace_declaration` | 645-657 | `Path.expanduser` (`HOME`, the password database) | unit 2 |
+| `workspace_declaration` | 645-657 | `Path.expanduser` (`HOME`, the password database) | unit 2, built (`expanduser` is `config::Fs`'s) |
 | `registry_key` | 660-683 | nothing | unit 1, built |
 | `prime_roots`, `middleware` | 691-754 | the SDK's session, `roots/list`, `anyio` | not ported: the MCP server's wire path, built with the server |
 
@@ -6449,6 +6449,76 @@ Regular expressions: none in this unit.
   stripped, so 1,024 zero-width spaces and one letter are refused though
   they read as one letter, while 1,023 and a letter give the letter.
 
+### Unit 2, as built (`identity`)
+
+- `first_file_root` is `_first_file_root`. Each root is the text
+  `str(getattr(root, "uri", "") or "")`, None standing for the empty
+  text (the SDK's root objects are the server's). Each is parsed by
+  `origin_remote::urlparse` (CPython 3.13's `urlsplit` and
+  `_splitparams`); a scheme other than `file` (folded to lower case by
+  `urlsplit`) is skipped. The path is unquoted, the drive rule drops the
+  first slash where the path has at least three code points, a `/` first
+  and a `:` third (any code point second), and a netloc other than
+  exactly `localhost` (case-sensitive) is prefixed as `//netloc`. The
+  first path `clean(path, strip_format=False)` keeps is the answer.
+- `urlparse` raises five ValueErrors, not two: besides "Invalid IPv6 URL"
+  (`UrlError::Ipv6`) and the NFKC check (`UrlError::Nfkc`),
+  `_check_bracketed_host` raises "IPvFuture address is invalid", "An IPv4
+  address cannot be in brackets" and `ipaddress.ip_address`'s "'host'
+  does not appear to be an IPv4 or IPv6 address" for a bracketed netloc.
+  `_first_file_root` catches none of them, so each is a `Raised`
+  ValueError with CPython's message; the netloc and the host the messages
+  name are taken again from the URI by `urlsplit`'s own split, since
+  `UrlError` carries no text. A message is Rust text: a lone surrogate in
+  a netloc NFKC refuses is written `\udcXX` there (stated difference; the
+  reference's message holds the surrogate itself).
+- `unquote` is `unquote(errors="surrogateescape")`: each maximal run of
+  ASCII code points has its `%XX` escapes turned into bytes (a `%` not
+  followed by two hex digits is kept) and is decoded as UTF-8, each byte
+  of an invalid maximal subpart becoming U+DC00 plus the byte; a code
+  point past ASCII, a lone surrogate included, passes through. Escapes on
+  either side of such a code point decode apart, as the reference's
+  `_asciire` split makes them.
+- `workspace_declaration` takes the `Published` caller, `resolve`'s
+  environment and working directory (read only when nothing is
+  published), the `config::Fs` whose `expanduser` is `Path.expanduser`,
+  and the `Flavour` of the host's `Path`. The declared path is spelled by
+  `config::pure_path` before `expanduser`, as `Path(p)` spells it, so
+  `./~/x` expands as the reference's does. `RuntimeError("Could not
+  determine home directory.")` is `config::no_home`. The expansion is
+  only as faithful as the `Fs` passed: `config`'s `SystemFs` looks up no
+  `~name` (it raises `no_home`) and does not normalise `HOME` as
+  `Path(home)` does, so the CLI's wiring needs an `Fs` that does both.
+- `unquote` returns text holding no `%` unchanged, as the reference's
+  fast path does, without walking its ASCII runs.
+
+| decline | reason |
+| --- | --- |
+| a declared workspace path holding a lone surrogate (`NotPorted`) | `Fs::expanduser` takes Rust text; the reference answers `Path(p).expanduser()` of it. The golden row `BETTERMEMORY_WORKSPACE=/p\udc80` is checked as this decline. |
+
+Regular expressions: none in the reference's code here. `unquote`'s
+`_asciire` (`([\x00-\x7f]+)` with `split`) is the standard library's,
+not a reference pattern, and is the ASCII-run walk above, as
+`origin_remote` writes `urlsplit`'s own checks by hand; nothing is added
+to the engine's inventory.
+
+Findings about the reference, unit 2 (reproduced, pinned):
+
+- A UNC host with a drive-lettered path loses its separator:
+  `file://server/C:/x` gives `//serverC:/x`, since the drive rule drops
+  the slash before the netloc is prefixed. Reproduction:
+  `_first_file_root([SimpleNamespace(uri="file://server/C:/x")]) ==
+  "//serverC:/x"`. Pinned in `identity_roots.jsonl` and
+  `identity_roots_kills.rs`.
+- `_first_file_root` does not catch `urlparse`'s ValueError, so one
+  malformed root of any scheme ahead of a usable one (`http://[x`, then
+  `file:///a`) makes the whole call raise. Pinned in both.
+- `localhost` is compared case-sensitively: `file://LOCALHOST/x` is the
+  UNC path `//LOCALHOST/x`, though host names fold case.
+
+Left for later: `prime_roots` and `middleware` (the MCP server's wire
+path, which fills the roots entry `first_file_root` answers).
+
 ### Tests
 
 | test (file: function) | golden file | class |
@@ -6457,6 +6527,10 @@ Regular expressions: none in this unit.
 | `golden_identity_caller`: `identity_caller_unicode_every_code_point` | `identity_caller_unicode.jsonl` (what `_clean` does with every code point inside and at the end of a value, both ways, as runs) | ii (Unicode) |
 | `identity_caller_kills` (14) | none | i |
 | `identity_caller_robustness` (5): 4 MB values, 200,000 headers, deep JSON, every code point boundary, a registry key of 4 MB | none | i |
+| `golden_identity_roots`: `identity_roots_every_case` | `identity_roots.jsonl` (143 root lists: 132 single URIs, 11 lists of several; 41 `workspace_declaration` cases over a fixed home, 12 of them Windows; a digest row over 3,000 URIs drawn by splitmix64) | i |
+| `golden_identity_roots`: `identity_roots_python_every_case` | `identity_roots_python.jsonl` (17 root lists with a bracketed netloc) | ii (Python) |
+| `identity_roots_kills` (13) | none | i |
+| `identity_roots_robustness` (5): 1 MB of escapes, every code point as one URI, 200,000 roots, growth of `unquote` and `_first_file_root` | none | i |
 
 The class (i) file's texts use only code points whose category and
 spacing are the same from Unicode 14.0 to 16.0. Nothing in either file
@@ -21775,9 +21849,9 @@ What the reference has and this build does not, by area:
 - `membership_records.py` past its path helpers and legacy ask rule
   (the portable identity and the remaining frozen records: unit 4).
   Membership's native (surrogate) writes, the membership log and the
-  store id reissue (store_membership-2), and of the caller's resolution its file roots
-  and workspace declaration (`identity` resolves the rest; its
-  admission is `store::caller`).
+  store id reissue (store_membership-2), and of the caller's resolution
+  `prime_roots` and `middleware`, the MCP server's wire path (`identity`
+  resolves the rest; its admission is `store::caller`).
 - Each hit's signals and drift report: `claims.py` past its leaves,
   its literal reader, its drift index and its module tokenizer (unit
   5a) (the declare-time oracle),

@@ -6,7 +6,8 @@
 //! - [`difflib`]: `difflib.unified_diff` as `history._body_diff` calls it
 //!   (the matcher with autojunk, the grouped opcodes) and `str.splitlines`;
 //! - [`identity`]: a request's caller as the reference resolves it, its
-//!   leaves first (the declared-value check, the actor rule, `resolve`);
+//!   leaves first (the declared-value check, the actor rule, `resolve`),
+//!   the first usable `file://` root and `workspace_declaration`;
 //! - [`session`]: `session.py` whole: the per-session state (scopes, the
 //!   turn counter, use-tokens), the per-client registry and its LRU;
 //! - [`use_tokens`]: the per-turn use-token bookkeeping of
