@@ -226,6 +226,8 @@
 //!   write gate);
 //! - [`verify_status`] and [`attribution`]: a memory's verification
 //!   staleness, and phrase-match attribution of memories to a reply;
+//! - [`response_rows`]: `ResponseBuilder`'s search and list serializers
+//!   (`hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict`);
 //! - [`response_links`], [`response_memo`] and [`verdict_signals`]: the
 //!   response layer's leaves (`candidate_link_rows`, the per-hit drift
 //!   memo as a generic bounded LRU, and the verdict ladder);
@@ -350,6 +352,7 @@ pub mod response_links;
 pub mod response_memo;
 pub mod response_reason;
 pub mod response_render;
+pub mod response_rows;
 pub mod response_trust;
 pub mod search;
 pub mod search_dedup;

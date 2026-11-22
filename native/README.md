@@ -47,6 +47,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record`; unit 3 (`machine::open`): `_write_record`, `open_machine`, `StdMachine` (`gethostuuid`, the `ioreg` spawn) | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_python.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl`, `machine_open.jsonl`, `machine_open_platform.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
+| `response_rows` | `_response.py` unit resphit: `SIMILAR_HITS_SHOWN`, `ResponseBuilder.__init__`, `hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict` | `response_hits.jsonl` |
 | `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
@@ -789,6 +790,59 @@ and pinned to the reference's set by the golden header.
 Nothing of either module is left for a later unit. The callers
 (`verify.py`'s re-export, `_response.ResponseBuilder.apply_trust`, the
 Stop hook) are not ported here.
+
+## ResponseBuilder's search and list serializers (`_response.py`)
+
+`src/bettermemory/_response.py`, read at 7be0e20e, holds `ResponseBuilder`.
+This unit (`response_rows.rs`, 189 lines of source) ports the three
+methods that turn a search hit, a list row and a tombstone row into the
+dict the tools return, and the constant `SIMILAR_HITS_SHOWN`. The
+remaining methods (the attach passes and the write responses; `render_hit`
+is in `response_render`)
+are a later unit that adds a second `impl ResponseBuilder` block in its
+own file.
+
+| Function | Reference lines | Needs from the machine | Status |
+|---|---|---|---|
+| `SIMILAR_HITS_SHOWN` | 113 | nothing | built |
+| `ResponseBuilder.__init__` | 746-749 | nothing | built (`ResponseBuilder::new`, the field `stale_after_days`) |
+| `hit_to_dict` | 751-886 | the clock, as the argument `now` | built |
+| `summary_to_dict` | 1025-1079 | the clock, as the argument `now` | built |
+| `tombstone_summary_to_dict` | 1081-1104 | nothing | built |
+
+Each method answers a `PyValue::Dict` whose keys are in the reference's
+insertion order, so `json::dumps` with the defaults writes the
+reference's text byte for byte; the golden file compares that text.
+
+- `hit_to_dict` takes the verdict from `compute_staleness_verdict` with
+  the claim-anchored count as the missing count, the full missing list's
+  length as `cited_missing` and no commit leg, as the reference does. The
+  `path_drift` block opens on the missing, verified, expected-absent and
+  present-but-attested-absent buckets only; the route and claim-anchored
+  buckets ride in it but never open it. So a hit whose only bucket is the
+  claim-anchored one carries a raised verdict and no block, which the
+  golden file pins (the reference never builds such a hit, since the
+  anchored set is a subset of the missing one).
+- The counts `path_drift_checked` and `path_drift_missing` ship as
+  given; nothing checks them against the lists.
+- A naive `now` against an aware stamp is the reference's `TypeError`
+  from `compute_verification_status`; the two clocked methods answer it
+  as `Err(NaiveAwareMix)`. A naive stamp is rendered without an offset,
+  and every `+00:00` in a stamp becomes `Z` (`DateTime::isoformat_utc`).
+- `summary_to_dict` adds `actor` with the declared `client` and `model`
+  that are not None, in that order, and omits it when neither is set; an
+  empty string counts as declared.
+- No regular expression is involved.
+
+Fixtures: `tests/contract/gen_response_hits.py` builds the three models
+with `model_construct` and writes `response_hits.jsonl` (not gated, 46
+cases): every gate of the `path_drift` block and its additive keys, the
+verdict tiers, the threshold edges, offsets and naive stamps, the
+`TypeError`, the floats `json` spells its own way (NaN, the infinities,
+negative zero) and texts with a lone surrogate (through `text_field`).
+Tests: `golden_response_hits`, `response_hits_kills` and
+`response_hits_robustness` (integer and calendar bounds, 200,000 paths
+per bucket, linear growth).
 
 ## The Stop and UserPromptSubmit hooks (`hook.py`)
 
@@ -19155,8 +19209,10 @@ What the reference has and this build does not, by area:
   on POSIX, `_scan_candidates`, `_extract_candidates` without its body
   parse memo), and `verify.py` past its verdict ladder (`verdict_signals`).
   Of the response layer, `_response_links.py`, the drift memo,
-  `check_reason`, `verdict_and_reason`, the trust appliers and
-  `verdict.with_objection` are built; the memo's key and value types, its
+  `check_reason`, `verdict_and_reason`, the trust appliers,
+  `verdict.with_objection`, `render_hit`, `render_show` and the search
+  and list serializers (`SIMILAR_HITS_SHOWN`, `ResponseBuilder.__init__`,
+  `hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict`) are built; the memo's key and value types, its
   one instance and its `_caches` registration (the drift pass) are not.
 - The write gates past the control tokens and the dedup: `credentials.py`
   after its vendor-prefixed detectors and its value gate (the generic and
