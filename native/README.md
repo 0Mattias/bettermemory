@@ -70,6 +70,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `tool_handlers` | `_handlers.py`, unit handlers-2a: `RefusedError`, `_in_the_way`, `RetryableRefusal`, `KeptWriteRefusal`, `store_refusal`, `_ABSENT`, `_kept_or_retryable`, `_refusals_as_tool_errors`, `_read_only`, and `ToolHandlers`' `__init__`, `for_request`, `with_store` and `_run` (the nine forwarders are handlers-2b) | `tool_handlers.jsonl` |
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
 | `event_redact` | `events.py`'s second unit: `_SECRET_PATTERNS`, `_strip_known_secrets` and `redact_query` (`credentials.secret_spans` passed in), `NAMED_EVENT_FIELDS`, `named_event_fields`, `_named_inside`, `_named_entries`, `_redact_event_fields`; with `store_rows.event_import_payload`, `IMPORTED_FROM_V8` and `_ROW_COLUMNS` (`store::rows`) and `time_utils.isoformat_utc_optional` and `ensure_utc` (`time_utils`) | `event_redact.jsonl` |
+| `event_hook` | `events.py`'s suppression switch and a hook's deadline: `suppressed`, `deadline`, `_NOT_DONE`, `StoreBusy`'s text, `_store_busy`, `within_hook_budget`, `hook_body` (one owned `HookScope`, the clock an argument, the store's busy timeout the trait `BusyTimeout`), with the shared SQLite busy test `primary_code` and `is_busy` | `event_hook.jsonl` |
 | `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields`; audit-2/3: `is_duplicate_audit`, `probe_for_miss` with its helpers, `_count_recent_retrievals`, `_retrieved_ids` (the ranker and admission as traits), with `search_lane._relevance_label_v2` | `audit_fields.jsonl`, `audit_probe.jsonl` |
 | `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`); unit 2 (`recall_settle::interrupted`): `_probe_message` and `settle_interrupted`, the probe, the pool and the transcript read as closures | `recall_settle.jsonl`, `recall_settle_interrupted.jsonl` |
 | `recall_prompt` | `recall_prompt.py` whole: `_PromptTurn` (`PromptTurn`, `PromptTurnView`), `_prompt_window`, `_settle_before_probe`, `_prompt_probe`, `_record_hold`, `_record_delivery`; the session joins and `recall_admission`'s gate are traits, `Admission.on`, `settle_interrupted` and `_probe_message` closures | `recall_prompt.jsonl` |
@@ -6347,7 +6348,7 @@ of `src/bettermemory/events.py` by function:
 | `state_fields`, `_keys_of` | 497-535 | nothing (`redact_query` passed in) | built (unit 1) |
 | `_SECRET_PATTERNS`, `_strip_known_secrets`, `redact_query` | 98-104, 659-722 | nothing; `credentials.secret_spans` (passed in) | built (unit 2, `event_redact`) |
 | `NAMED_EVENT_FIELDS`, `named_event_fields`, `_named_inside`, `_named_entries`, `_redact_event_fields` | 758-821 | nothing | built (unit 2, `event_redact`) |
-| `suppressed`, `deadline`, `StoreBusy`, `_store_busy`, `within_hook_budget`, `hook_body`, `_NOT_DONE` | 538-656 | the clock, the calling context, the store's busy timeout | unit 3 |
+| `suppressed`, `deadline`, `StoreBusy`, `_store_busy`, `within_hook_budget`, `hook_body`, `_NOT_DONE` | 538-656 | the clock, the calling context, the store's busy timeout | built (`event_hook`; see the next section) |
 | `Recorder` (`session_for_request`, `worktree_for_request`, `records`, `record`) | 824-951 | the store's writer, the clock | unit 4 |
 | `_event_id_items`, `_event_id_list` | 954-990 | nothing | built (`event_id_items`, `event_id_list`, with `recall_settle` unit 1; see that section) |
 
@@ -6466,7 +6467,81 @@ byte preview, spans read before the first pass, an absent field added);
 shape at 20,000 and 200,000 code points, 100,000 spans, values nested
 200,000 deep in each named field shape, a 100,000-field event and a
 million code points. Left for later units: the detectors of
-`credentials` (`secret_spans`), and units 3 and 4 above.
+`credentials` (`secret_spans`), and unit 4 above (unit 3 is `event_hook`, in the next section).
+## A hook's deadline and the suppression switch (`event_hook`, `events.py` 538-653)
+
+`event_hook` is `events.py`'s unit 3: `suppressed`, `deadline`,
+`_NOT_DONE`, `StoreBusy`, `_store_busy`, `within_hook_budget` and
+`hook_body`, with the SQLite busy test the store's writers share. Lines
+checked against the source as it is now: the two `ContextVar`s at 541 and
+565, `_NOT_DONE` 571-577, `_store_busy` 594-600, `within_hook_budget`
+603-636, `hook_body` 639-653.
+
+What it reproduces.
+
+- The two `ContextVar`s (`_SUPPRESSED`, `_DEADLINE`) are one owned value,
+  `HookScope`, as `identity::Published` owns `_CURRENT`. There is no
+  global: whoever reads either value receives the scope by reference.
+  `HookScope::suppressed(body)` sets the flag for the body and gives back
+  the flag it found; `within_hook_budget(event, store, monotonic, body)`
+  sets the deadline to one clock reading plus
+  `daemon_client::hook_budget_seconds(event)`, or keeps the deadline
+  already set when the new one is not less (Python's `min(held, at)`, so
+  a held NaN stays), and gives back the deadline it found on every return,
+  error or not. `deadline()` and `is_suppressed()` read them.
+- The store is `Option<&mut dyn BusyTimeout<E>>` (`busy_timeout`, and
+  `set_busy_timeout`, which fails with the body's error type as the
+  reference's raises). A busy timeout above the budget is lowered to the
+  budget for the body and set back to the value read after it; one equal
+  to the budget or below, or NaN, is not touched. The store is lent to the
+  body. A lowering call that fails is raised as it is and leaves the new
+  deadline set, since the reference sets it before its `try`; a restoring
+  call that fails replaces the body's outcome and leaves the timeout at
+  the budget. Both follow the reference's leak rather than repair it.
+- A body's error is any type with `Raised` (its class name and its
+  `sqlite_errorcode`). `is_busy` (`_store_busy`) holds for the class
+  `OperationalError` with a primary code (`primary_code`, `code & 0xFF`
+  with Python's sign: `-251` is BUSY) of BUSY 5 or LOCKED 6; such an
+  error becomes `HookFailure::StoreBusy` with `store_busy_message(event)`,
+  the reference's f-string with `_NOT_DONE`'s three entries and
+  `nothing was shown` for any other event, and the error kept as its
+  cause. Any other error, a nested hook's `StoreBusy` included, is
+  `HookFailure::Raised` unchanged. `primary_code` and `is_busy` are
+  public for `store_events._primary_code` and `_busy` (lane storeev1);
+  `store::reads::retryable_code` answers a name, not a masked code.
+- `hook_body(event)` reads `store=` only where it has `set_busy_timeout`;
+  in Rust the caller settles that by passing the store or None, and
+  `HookScope::hook_body` is then `within_hook_budget`.
+
+Decisions. A `sqlite_errorcode` that is not an `int` is None; a `bool` is
+its `int`; codes are `i64` (a Python `int` past that range is not a code
+SQLite gives). The reference restores in `finally`, which a Python
+`BaseException` also crosses; a Rust panic is not caught, so a scope a
+panic crossed is not reused. No regular expression is involved.
+
+Every reader of the two values in the reference, and how it receives them:
+
+| Reader | Reads | Receives |
+|---|---|---|
+| `store_events._time_left`, `_waiting_until`, `record_event` (`store_events.py` 87-173) | the deadline, as its `deadline` argument | `deadline: Option<f64>`, from `HookScope::deadline()` at the call |
+| `events.Recorder.records`, `Recorder.record` (`events.py` 870-923) | `_SUPPRESSED`, `_DEADLINE` | the scope by reference, when unit 4 ports the recorder |
+| `hook.run_audit` (`hook.py` 319-447, `hook_body("stop")`, `events.suppressed` at 411) | both, through the seams | `hook_stop_side::StopSide::within_hook_budget` and `suppressed` (`hook_stop_side.rs` 79, 88): a later wiring implements them by holding a `HookScope` and the clock in the `StopSide` value and calling `HookScope::within_hook_budget` and `suppressed` from them, mapping `HookFailure` into its `Error`; the seams' shape (event, optional store, a body handed the store back) is this one's |
+| `recall.py`'s `hook_body("session-start")` (713) and `hook_body("prompt")` (1451) | both | `HookScope::hook_body` when those hooks are ported |
+| `_daemon_client` (1698) | `StoreBusy`'s text, as an exception's message | `HookFailure::StoreBusy`'s `message` |
+| `tests/contract/generate.py`'s state guard | both, to see a generator restore them | not ported (a Python check) |
+
+`event_hook.jsonl` (not gated, 23 KB) holds `_store_busy` of four classes
+over BUSY, LOCKED, their extended codes, other codes, negative and
+64-bit codes, a `bool` and a text; `StoreBusy`'s text for the three events,
+an unknown one and the empty one; and run trees driven through
+`within_hook_budget` and `hook_body` with a fake store and the clock
+stubbed per block: budgets per event and per busy timeout, nested
+deadlines (earlier, equal, later), busy and other errors in each event,
+a nested hook's `StoreBusy`, and suppressed nesting. The Rust test runs
+each tree over `HookScope` and compares the whole trace.
+`tests/event_hook_kills.rs` holds the cases a plausible wrong port fails;
+`tests/event_hook_robustness.rs` holds the code boundaries, clocks at the
+float edges and scopes nested 1,000 deep (time at ten times the depth).
 
 ## The silent-miss audit's reports and event fields (`audit.py`)
 

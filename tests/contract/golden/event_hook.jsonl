@@ -1,0 +1,196 @@
+{"count":195,"k":"header"}
+{"c":"OperationalError","code":null,"k":"busy","r":false}
+{"c":"OperationalError","code":0,"k":"busy","r":false}
+{"c":"OperationalError","code":1,"k":"busy","r":false}
+{"c":"OperationalError","code":5,"k":"busy","r":true}
+{"c":"OperationalError","code":6,"k":"busy","r":true}
+{"c":"OperationalError","code":8,"k":"busy","r":false}
+{"c":"OperationalError","code":261,"k":"busy","r":true}
+{"c":"OperationalError","code":262,"k":"busy","r":true}
+{"c":"OperationalError","code":517,"k":"busy","r":true}
+{"c":"OperationalError","code":65285,"k":"busy","r":true}
+{"c":"OperationalError","code":65797,"k":"busy","r":true}
+{"c":"OperationalError","code":-1,"k":"busy","r":false}
+{"c":"OperationalError","code":-251,"k":"busy","r":true}
+{"c":"OperationalError","code":-250,"k":"busy","r":true}
+{"c":"OperationalError","code":4611686018427387909,"k":"busy","r":true}
+{"c":"OperationalError","code":-9223372036854775802,"k":"busy","r":true}
+{"c":"OperationalError","code":1,"k":"busy","r":false}
+{"c":"OperationalError","code":"5","k":"busy","r":false}
+{"c":"IntegrityError","code":null,"k":"busy","r":false}
+{"c":"IntegrityError","code":0,"k":"busy","r":false}
+{"c":"IntegrityError","code":1,"k":"busy","r":false}
+{"c":"IntegrityError","code":5,"k":"busy","r":false}
+{"c":"IntegrityError","code":6,"k":"busy","r":false}
+{"c":"IntegrityError","code":8,"k":"busy","r":false}
+{"c":"IntegrityError","code":261,"k":"busy","r":false}
+{"c":"IntegrityError","code":262,"k":"busy","r":false}
+{"c":"IntegrityError","code":517,"k":"busy","r":false}
+{"c":"IntegrityError","code":65285,"k":"busy","r":false}
+{"c":"IntegrityError","code":65797,"k":"busy","r":false}
+{"c":"IntegrityError","code":-1,"k":"busy","r":false}
+{"c":"IntegrityError","code":-251,"k":"busy","r":false}
+{"c":"IntegrityError","code":-250,"k":"busy","r":false}
+{"c":"IntegrityError","code":4611686018427387909,"k":"busy","r":false}
+{"c":"IntegrityError","code":-9223372036854775802,"k":"busy","r":false}
+{"c":"IntegrityError","code":1,"k":"busy","r":false}
+{"c":"IntegrityError","code":"5","k":"busy","r":false}
+{"c":"DatabaseError","code":null,"k":"busy","r":false}
+{"c":"DatabaseError","code":0,"k":"busy","r":false}
+{"c":"DatabaseError","code":1,"k":"busy","r":false}
+{"c":"DatabaseError","code":5,"k":"busy","r":false}
+{"c":"DatabaseError","code":6,"k":"busy","r":false}
+{"c":"DatabaseError","code":8,"k":"busy","r":false}
+{"c":"DatabaseError","code":261,"k":"busy","r":false}
+{"c":"DatabaseError","code":262,"k":"busy","r":false}
+{"c":"DatabaseError","code":517,"k":"busy","r":false}
+{"c":"DatabaseError","code":65285,"k":"busy","r":false}
+{"c":"DatabaseError","code":65797,"k":"busy","r":false}
+{"c":"DatabaseError","code":-1,"k":"busy","r":false}
+{"c":"DatabaseError","code":-251,"k":"busy","r":false}
+{"c":"DatabaseError","code":-250,"k":"busy","r":false}
+{"c":"DatabaseError","code":4611686018427387909,"k":"busy","r":false}
+{"c":"DatabaseError","code":-9223372036854775802,"k":"busy","r":false}
+{"c":"DatabaseError","code":1,"k":"busy","r":false}
+{"c":"DatabaseError","code":"5","k":"busy","r":false}
+{"c":"ValueError","code":null,"k":"busy","r":false}
+{"c":"ValueError","code":0,"k":"busy","r":false}
+{"c":"ValueError","code":1,"k":"busy","r":false}
+{"c":"ValueError","code":5,"k":"busy","r":false}
+{"c":"ValueError","code":6,"k":"busy","r":false}
+{"c":"ValueError","code":8,"k":"busy","r":false}
+{"c":"ValueError","code":261,"k":"busy","r":false}
+{"c":"ValueError","code":262,"k":"busy","r":false}
+{"c":"ValueError","code":517,"k":"busy","r":false}
+{"c":"ValueError","code":65285,"k":"busy","r":false}
+{"c":"ValueError","code":65797,"k":"busy","r":false}
+{"c":"ValueError","code":-1,"k":"busy","r":false}
+{"c":"ValueError","code":-251,"k":"busy","r":false}
+{"c":"ValueError","code":-250,"k":"busy","r":false}
+{"c":"ValueError","code":4611686018427387909,"k":"busy","r":false}
+{"c":"ValueError","code":-9223372036854775802,"k":"busy","r":false}
+{"c":"ValueError","code":1,"k":"busy","r":false}
+{"c":"ValueError","code":"5","k":"busy","r":false}
+{"e":"session-start","k":"msg","r":"the store was busy, so the brief was not shown: another writer held it past this hook's time; run `bettermemory doctor`"}
+{"e":"prompt","k":"msg","r":"the store was busy, so the recall was not shown: another writer held it past this hook's time; run `bettermemory doctor`"}
+{"e":"stop","k":"msg","r":"the store was busy, so the turn was not audited: another writer held it past this hook's time; run `bettermemory doctor`"}
+{"e":"other","k":"msg","r":"the store was busy, so nothing was shown: another writer held it past this hook's time; run `bettermemory doctor`"}
+{"e":"","k":"msg","r":"the store was busy, so nothing was shown: another writer held it past this hook's time; run `bettermemory doctor`"}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","session-start",100.0,true,[]],"w":null}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","session-start",100.0,true,[]],"w":5.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","session-start",100.0,true,[]],"w":8.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","session-start",100.0,true,[]],"w":13.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","113.0",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","session-start",100.0,true,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","session-start",100.0,true,[]],"w":0.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","session-start",100.0,false,[]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","13.5",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["h","session-start",0.5,true,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","13.5",false],["out",null,false],["ok"],["end",null,false]],"t":["h","session-start",0.5,false,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","108.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt",100.0,true,[]],"w":null}
+{"f":null,"k":"run","r":[["in","108.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt",100.0,true,[]],"w":5.0}
+{"f":null,"k":"run","r":[["in","108.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt",100.0,true,[]],"w":8.0}
+{"f":null,"k":"run","r":[["set","8.0"],["in","108.0",false],["set","13.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt",100.0,true,[]],"w":13.0}
+{"f":null,"k":"run","r":[["set","8.0"],["in","108.0",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt",100.0,true,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","108.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt",100.0,true,[]],"w":0.0}
+{"f":null,"k":"run","r":[["in","108.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt",100.0,false,[]],"w":30.0}
+{"f":null,"k":"run","r":[["set","8.0"],["in","8.5",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["h","prompt",0.5,true,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","8.5",false],["out",null,false],["ok"],["end",null,false]],"t":["h","prompt",0.5,false,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",100.0,true,[]],"w":null}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",100.0,true,[]],"w":5.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",100.0,true,[]],"w":8.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",100.0,true,[]],"w":13.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","113.0",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",100.0,true,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",100.0,true,[]],"w":0.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",100.0,false,[]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","13.5",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["h","stop",0.5,true,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","13.5",false],["out",null,false],["ok"],["end",null,false]],"t":["h","stop",0.5,false,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","other",100.0,true,[]],"w":null}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","other",100.0,true,[]],"w":5.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","other",100.0,true,[]],"w":8.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","other",100.0,true,[]],"w":13.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","113.0",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","other",100.0,true,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","other",100.0,true,[]],"w":0.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","other",100.0,false,[]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","13.5",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["h","other",0.5,true,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","13.5",false],["out",null,false],["ok"],["end",null,false]],"t":["h","other",0.5,false,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","",100.0,true,[]],"w":null}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","",100.0,true,[]],"w":5.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","",100.0,true,[]],"w":8.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","",100.0,true,[]],"w":13.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","113.0",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","",100.0,true,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","",100.0,true,[]],"w":0.0}
+{"f":null,"k":"run","r":[["in","113.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","",100.0,false,[]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","13.5",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["h","",0.5,true,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","13.5",false],["out",null,false],["ok"],["end",null,false]],"t":["h","",0.5,false,[]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","113.0",false],["set","8.0"],["in","98.0",false],["set","13.0"],["out","113.0",false],["in","113.0",true],["out","113.0",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",100.0,true,[["b","prompt",90.0,true,[]],["s",[]]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","113.0",false],["set","8.0"],["in","108.0",false],["set","13.0"],["out","113.0",false],["in","113.0",true],["out","113.0",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",100.0,true,[["b","prompt",100.0,true,[]],["s",[]]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","113.0",false],["set","8.0"],["in","113.0",false],["set","13.0"],["out","113.0",false],["in","113.0",true],["out","113.0",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",100.0,true,[["b","prompt",105.0,true,[]],["s",[]]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","113.0",false],["set","8.0"],["in","113.0",false],["set","13.0"],["out","113.0",false],["in","113.0",true],["out","113.0",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",100.0,true,[["b","prompt",200.0,true,[]],["s",[]]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","113.0",false],["set","8.0"],["in","8.1",false],["set","13.0"],["out","113.0",false],["in","113.0",true],["out","113.0",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",100.0,true,[["b","prompt",0.1,true,[]],["s",[]]]],"w":30.0}
+{"f":null,"k":"run","r":[["in","108.0",false],["in","108.0",false],["out","108.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt",100.0,true,[["b","stop",95.0,true,[]]]],"w":null}
+{"f":null,"k":"run","r":[["set","8.0"],["in","9.0",false],["in","9.0",false],["out","9.0",false],["set","9.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt",1.0,true,[["b","session-start",1.0,true,[]]]],"w":9.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the brief was not shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","session-start",7.0,true,[["x","OperationalError",5]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the brief was not shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","session-start",7.0,true,[["x","OperationalError",6]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the brief was not shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","session-start",7.0,true,[["x","OperationalError",517]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the brief was not shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","session-start",7.0,true,[["x","OperationalError",262]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","OperationalError",8],["end",null,false]],"t":["b","session-start",7.0,true,[["x","OperationalError",8]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","OperationalError",null],["end",null,false]],"t":["b","session-start",7.0,true,[["x","OperationalError",null]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","IntegrityError",5],["end",null,false]],"t":["b","session-start",7.0,true,[["x","IntegrityError",5]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","ValueError",null],["end",null,false]],"t":["b","session-start",7.0,true,[["x","ValueError",null]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","8.0"],["in","15.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the recall was not shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","prompt",7.0,true,[["x","OperationalError",5]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","8.0"],["in","15.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the recall was not shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","prompt",7.0,true,[["x","OperationalError",6]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","8.0"],["in","15.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the recall was not shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","prompt",7.0,true,[["x","OperationalError",517]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","8.0"],["in","15.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the recall was not shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","prompt",7.0,true,[["x","OperationalError",262]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","8.0"],["in","15.0",false],["set","30.0"],["out",null,false],["raised","OperationalError",8],["end",null,false]],"t":["b","prompt",7.0,true,[["x","OperationalError",8]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","8.0"],["in","15.0",false],["set","30.0"],["out",null,false],["raised","OperationalError",null],["end",null,false]],"t":["b","prompt",7.0,true,[["x","OperationalError",null]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","8.0"],["in","15.0",false],["set","30.0"],["out",null,false],["raised","IntegrityError",5],["end",null,false]],"t":["b","prompt",7.0,true,[["x","IntegrityError",5]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","8.0"],["in","15.0",false],["set","30.0"],["out",null,false],["raised","ValueError",null],["end",null,false]],"t":["b","prompt",7.0,true,[["x","ValueError",null]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the turn was not audited: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","stop",7.0,true,[["x","OperationalError",5]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the turn was not audited: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","stop",7.0,true,[["x","OperationalError",6]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the turn was not audited: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","stop",7.0,true,[["x","OperationalError",517]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the turn was not audited: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","stop",7.0,true,[["x","OperationalError",262]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","OperationalError",8],["end",null,false]],"t":["b","stop",7.0,true,[["x","OperationalError",8]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","OperationalError",null],["end",null,false]],"t":["b","stop",7.0,true,[["x","OperationalError",null]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","IntegrityError",5],["end",null,false]],"t":["b","stop",7.0,true,[["x","IntegrityError",5]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","ValueError",null],["end",null,false]],"t":["b","stop",7.0,true,[["x","ValueError",null]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so nothing was shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","other",7.0,true,[["x","OperationalError",5]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so nothing was shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","other",7.0,true,[["x","OperationalError",6]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so nothing was shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","other",7.0,true,[["x","OperationalError",517]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so nothing was shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","other",7.0,true,[["x","OperationalError",262]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","OperationalError",8],["end",null,false]],"t":["b","other",7.0,true,[["x","OperationalError",8]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","OperationalError",null],["end",null,false]],"t":["b","other",7.0,true,[["x","OperationalError",null]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","IntegrityError",5],["end",null,false]],"t":["b","other",7.0,true,[["x","IntegrityError",5]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","ValueError",null],["end",null,false]],"t":["b","other",7.0,true,[["x","ValueError",null]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so nothing was shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","",7.0,true,[["x","OperationalError",5]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so nothing was shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","",7.0,true,[["x","OperationalError",6]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so nothing was shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","",7.0,true,[["x","OperationalError",517]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so nothing was shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","",7.0,true,[["x","OperationalError",262]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","OperationalError",8],["end",null,false]],"t":["b","",7.0,true,[["x","OperationalError",8]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","OperationalError",null],["end",null,false]],"t":["b","",7.0,true,[["x","OperationalError",null]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","IntegrityError",5],["end",null,false]],"t":["b","",7.0,true,[["x","IntegrityError",5]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","ValueError",null],["end",null,false]],"t":["b","",7.0,true,[["x","ValueError",null]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the turn was not audited: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["h","stop",7.0,true,[["x","OperationalError",5]]],"w":30.0}
+{"f":null,"k":"run","r":[["set","13.0"],["in","20.0",false],["set","8.0"],["in","16.0",false],["set","13.0"],["out","20.0",false],["set","30.0"],["out",null,false],["raised","StoreBusy","the store was busy, so the recall was not shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["b","stop",7.0,true,[["b","prompt",8.0,true,[["x","OperationalError",6]]]]],"w":30.0}
+{"f":null,"k":"run","r":[["in",null,true],["set","8.0"],["in","11.0",true],["set","30.0"],["out",null,true],["out",null,false],["raised","StoreBusy","the store was busy, so the recall was not shown: another writer held it past this hook's time; run `bettermemory doctor`","OperationalError"],["end",null,false]],"t":["s",[["b","prompt",3.0,true,[["x","OperationalError",261]]]]],"w":30.0}
+{"f":null,"k":"run","r":[["in",null,true],["in",null,true],["out",null,true],["in","9.0",true],["in","9.0",true],["out","9.0",true],["out",null,true],["out",null,false],["ok"],["end",null,false]],"t":["s",[["s",[]],["b","prompt",1.0,false,[["s",[]]]]]],"w":null}
+{"f":null,"k":"run","r":[["in","9.0",false],["in","9.0",true],["in","9.0",true],["out","9.0",true],["out","9.0",false],["out",null,false],["raised","ValueError",null],["end",null,false]],"t":["b","prompt",1.0,false,[["s",[["s",[["x","ValueError",null]]]]]]],"w":null}
+{"f":0,"k":"run","r":[["out","10.0",false],["raised","ProgrammingError",null],["end","10.0",false]],"t":["b","prompt",2.0,true,[]],"w":30.0}
+{"f":0,"k":"run","r":[["out","15.0",false],["raised","ProgrammingError",null],["end","15.0",false]],"t":["h","stop",2.0,true,[]],"w":30.0}
+{"f":0,"k":"run","r":[["out","10.0",false],["raised","ProgrammingError",null],["end","10.0",false]],"t":["b","prompt",2.0,true,[["x","OperationalError",5]]],"w":30.0}
+{"f":0,"k":"run","r":[["out","15.0",false],["raised","ProgrammingError",null],["end","15.0",false]],"t":["h","stop",2.0,true,[["x","OperationalError",5]]],"w":30.0}
+{"f":0,"k":"run","r":[["out","10.0",false],["raised","ProgrammingError",null],["end","10.0",false]],"t":["b","prompt",2.0,true,[["x","ValueError",null]]],"w":30.0}
+{"f":0,"k":"run","r":[["out","15.0",false],["raised","ProgrammingError",null],["end","15.0",false]],"t":["h","stop",2.0,true,[["x","ValueError",null]]],"w":30.0}
+{"f":0,"k":"run","r":[["in","14.0",false],["out","10.0",false],["out",null,false],["raised","ProgrammingError",null],["end",null,false]],"t":["b","stop",1.0,false,[["b","prompt",2.0,true,[]]]],"w":30.0}
+{"f":1,"k":"run","r":[["set","8.0"],["in","10.0",false],["out",null,false],["raised","ProgrammingError",null],["end",null,false]],"t":["b","prompt",2.0,true,[]],"w":30.0}
+{"f":1,"k":"run","r":[["set","13.0"],["in","15.0",false],["out",null,false],["raised","ProgrammingError",null],["end",null,false]],"t":["h","stop",2.0,true,[]],"w":30.0}
+{"f":1,"k":"run","r":[["set","8.0"],["in","10.0",false],["out",null,false],["raised","ProgrammingError",null],["end",null,false]],"t":["b","prompt",2.0,true,[["x","OperationalError",5]]],"w":30.0}
+{"f":1,"k":"run","r":[["set","13.0"],["in","15.0",false],["out",null,false],["raised","ProgrammingError",null],["end",null,false]],"t":["h","stop",2.0,true,[["x","OperationalError",5]]],"w":30.0}
+{"f":1,"k":"run","r":[["set","8.0"],["in","10.0",false],["out",null,false],["raised","ProgrammingError",null],["end",null,false]],"t":["b","prompt",2.0,true,[["x","ValueError",null]]],"w":30.0}
+{"f":1,"k":"run","r":[["set","13.0"],["in","15.0",false],["out",null,false],["raised","ProgrammingError",null],["end",null,false]],"t":["h","stop",2.0,true,[["x","ValueError",null]]],"w":30.0}
+{"f":1,"k":"run","r":[["in","14.0",false],["set","8.0"],["in","10.0",false],["out","14.0",false],["out",null,false],["raised","ProgrammingError",null],["end",null,false]],"t":["b","stop",1.0,false,[["b","prompt",2.0,true,[]]]],"w":30.0}
+{"f":0,"k":"run","r":[["in","10.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt",2.0,true,[]],"w":5.0}
+{"f":null,"k":"run","r":[["in","10.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt",2.0,true,[]],"w":"nan"}
+{"f":null,"k":"run","r":[["set","8.0"],["in","10.0",false],["set","inf"],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt",2.0,true,[]],"w":"inf"}
+{"f":null,"k":"run","r":[["set","8.0"],["in","nan",false],["set","30.0"],["out",null,false],["ok"],["end",null,false]],"t":["b","prompt","nan",true,[]],"w":30.0}
+{"f":null,"k":"run","r":[["in","nan",false],["in","nan",false],["out","nan",false],["out",null,false],["ok"],["end",null,false]],"t":["b","stop","nan",false,[["b","prompt",1.0,false,[]]]],"w":null}
+{"f":null,"k":"run","r":[["in","14.0",false],["in","14.0",false],["out","14.0",false],["out",null,false],["ok"],["end",null,false]],"t":["b","stop",1.0,false,[["b","prompt","nan",false,[]]]],"w":null}
+{"f":null,"k":"run","r":[["in","inf",false],["in","-inf",false],["out","inf",false],["out",null,false],["ok"],["end",null,false]],"t":["b","stop","inf",false,[["b","prompt","-inf",false,[]]]],"w":null}

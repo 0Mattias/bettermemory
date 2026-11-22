@@ -201,6 +201,9 @@
 //!   in) and the named event fields (`named_event_fields`,
 //!   `_redact_event_fields`);
 //! - [`time_utils`]: `isoformat_utc_optional` and `ensure_utc`;
+//! - [`event_hook`]: `events.py`'s suppression switch, a hook's deadline
+//!   and busy timeout (`HookScope`), `StoreBusy`'s text and the SQLite
+//!   busy test (`primary_code`, `is_busy`);
 //! - [`audit`]: the silent-miss audit (the constants, `MissHit`,
 //!   `MissReport`, the `turn_audited`, `search_miss`, `recall_held` and
 //!   `prompt_recall` field builders, the re-audit dedup, the miss probe
@@ -393,6 +396,7 @@ pub mod declare;
 pub mod difflib;
 pub mod durability;
 pub mod entry;
+pub mod event_hook;
 pub mod event_redact;
 pub mod events;
 pub mod float_repr;
