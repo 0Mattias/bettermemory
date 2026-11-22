@@ -108,7 +108,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks` | `membership_shared.jsonl`, `membership_shared_python.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
-| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal`; unit mqueries of `membership_queries.py` in `queries`: `home`, `homes`, `_home_from`, `admit_recall`, `restated`, `_written_afresh`, `_restatement`, `filed_elsewhere`, the trait `ScopeReader`; unit membership-4a: `_touch_view`, `_checkout_name`, `_give_token`, `token_written`, `_foreign` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl`, `membership_queries.jsonl`, `membership_touch.jsonl` |
+| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal`; unit mqueries of `membership_queries.py` in `queries`: `home`, `homes`, `_home_from`, `admit_recall`, `restated`, `_written_afresh`, `_restatement`, `filed_elsewhere`, the trait `ScopeReader`; unit membership-4a: `_touch_view`, `_checkout_name`, `_give_token`, `token_written`, `_foreign`; unit mlegacy in `legacy`: `pending`, `settle_legacy_questions`, `below_root`, `_declared_below`, `_record_counts`, `_records_by_project`, and `first_output` of `membership_queries.py` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl`, `membership_queries.jsonl`, `membership_touch.jsonl`, `membership_legacy.jsonl` |
 | `location_continuity` | `location.continuity` (`location.py` 1040-1094) | `location_continuity.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `entry`, `cli::common`, `cli::root` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`; `cli/__init__.py`'s `_build_parser`, `_add_hook_subparser`, `main` (`cli::root`) | `cli_common.jsonl`, `cli_common_python.jsonl`, `cli_root.jsonl`, `cli_root_python.jsonl` |
@@ -3978,11 +3978,13 @@ further `impl<S: MembershipStore> Membership<S>` blocks over the
 | `_touch_view` | 1029-1078 | the store (`_put_view`) | built (membership-4a, mtoken) |
 | `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent` | 1208-1315 | the history reader | built (membership-3, membview) |
 | `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal` | 1349-1365, 1371-1487 | the store | built (membership-2b) |
-| `pending` | 1366-1370 | `membership_queries.restated` | membership-4 |
-| `settle_legacy_questions` and the rest to 1558 | 1488-1558 | the store, `membership_queries` | membership-4 |
-| `below_root`, `_declared_below` | 1559-1597 | the store | membership-3 |
+| `pending` | 1366-1370 | `membership_queries.restated` | built (mlegacy) |
+| `settle_legacy_questions` | 1488-1526 | the store | built (mlegacy) |
+| the `membership_declare` bindings | 1527-1558 | `membership_declare` | membership-4 |
+| `below_root`, `_declared_below` | 1559-1597 | `location.view_path` (a closure) | built (mlegacy) |
 | `_checkout_name`, `_give_token`, `token_written` | 1598-1674 | the token writer | built (membership-4a, mtoken) |
-| `_record_counts`, `_records_by_project`, `why` | 1675-1699, 1730-1826 | `Store.membership_log` | membership-4 (deferred) |
+| `_record_counts`, `_records_by_project` | 1675-1697 | the store | built (mlegacy) |
+| `why` | 1730-1826 | `Store.membership_log` | membership-4 (deferred) |
 | `_home_from` | 1700-1729 | nothing beyond the above | built (mqueries) |
 | `portable_export`, `_decides`, `__all__` | 1827-1834, 1845-1996 | nothing beyond the above | membership-4 (deferred) |
 | `_foreign` | 1835-1844 | nothing (`checkout_token.succeeds`) | built (membership-4a, mtoken) |
@@ -4398,6 +4400,78 @@ digest after each sequence. The re-mint tokens are made with
 `golden_membership_touch`, `membership_touch_kills`,
 `membership_touch_robustness`. Left for later units: `below_root` and
 `_declared_below` (membership-3's row), and the rest of membership-4.
+
+### Unit mlegacy (the legacy questions, the shown questions, the counts)
+
+`src/membership/legacy.rs`, one more `impl<S: MembershipStore>
+Membership<S>` block. The line ranges were confirmed against the source
+as it is now: `pending` 1366-1370, `settle_legacy_questions` 1488-1526
+(1527-1557 bind `membership_declare` and are not in it), `below_root`
+1559-1583, `_declared_below` 1584-1597, `_record_counts` 1675-1680 and
+`_records_by_project` 1681-1697 of `membership.py`; `first_output`
+280-292 of `membership_queries.py`.
+
+- `pending` and `first_output` show each open question through
+  `restated` (unit mqueries), so they take its `ProjectFileId` reader.
+  `first_output` keeps the resolution's own lines as given, repeats
+  included, and adds a shown line only when the list does not hold it
+  yet. A checkout of `""` is not None, so its questions are read.
+  Neither runs in a call (`_call`), as in the reference.
+- `settle_legacy_questions` runs in one call and walks the open
+  questions in the order the store answers them. A question is passed
+  over unless it is a `legacy` one with reason `legacy_no_live_checkout`,
+  an `unresolved_project` that is a str and at least one candidate. The
+  first candidate is read canonical before the projects are looked up;
+  a KeyError from either lookup (or from the canonical read of the legacy
+  project) passes the question over, any other error ends the call. The
+  legacy project's remotes are its own (merges followed) and those of its
+  checkouts flagged legacy; the candidate's are its own. `rule` is
+  `str(evidence.get("rule") or "")`, so a false value reads as `""` and
+  `True` as `"True"`. A question `legacy_asks` does not keep is closed as
+  `new` by `rule:legacy_separate` (`LEGACY_SEPARATE`) and returned as it
+  was read, still open. Evidence that is not a dict raises
+  AttributeError, as `.get` on it does.
+- `below_root` takes the view the reference reads a directory as
+  (`location.view_path`) as an optional closure: None stands for
+  `canonical=True`, and a closure that declines answers NotPorted. It is
+  called only after the checkout is seen to have a view on this machine,
+  as in the reference. `_DIR_PATHS` is a `Flavour`: `below_root` and
+  `declared_below` take the host's, `below_root_in` and
+  `declared_below_in` any; the root is the last view of `views_on` (a
+  stable sort by order, so the last of equal orders).
+- `_declared_below` takes the declaration's `action` and `directory`
+  (the `Declaration` record is not ported yet). Its ValueError names the
+  directory, the checkout and the newest view's path (or the checkout id)
+  in the reference's f-string's words. A stated difference: the message is
+  a Rust `String`, so a lone surrogate in any of the three is spelled
+  U+FFFD where the reference keeps it; the class is the same, and no
+  golden row compares this text.
+- `_records_by_project` walks a set of str, whose order follows the hash
+  seed. The port walks the wanted projects sorted (an order the reference
+  can produce), asks the homes of their members in that order, and
+  answers the wanted projects first, then any project a home row names
+  that was not wanted, in the order read. A home's `kind` counts as a
+  memory only when it is the str `memory`; a missing `project` or `kind`
+  column raises KeyError. The tally is kept by a hash index, so the time
+  is linear in the rows. `_record_counts` reads the canonical id after
+  the counts, as the reference does.
+
+No regular expression is used.
+
+Fixtures: `tests/contract/gen_membership_legacy.py` drives the reference
+model over the recording store of `gen_membership_queries` (with the
+`proposal` kind added) and writes `membership_legacy.jsonl` (not
+gated): a header with the named tables, then sequences of steps, each
+with its answer, the store calls and the collected rows. Root project
+files are scripted as `gen_membership_queries` scripts them,
+`location.view_path` is replaced by a table, and `_DIR_PATHS` is set to
+`posixpath` or `ntpath` per step, so no row follows the host; every path
+is ASCII, so the system's case fold on a Windows host answers as
+Python's. A step of `_records_by_project` spells its answer sorted by
+project. Tests: `golden_membership_legacy`, `membership_legacy_kills`,
+`membership_legacy_robustness`. Left for later units: `why` (1730-1826),
+`portable_export` and `_decides`, the `membership_declare` bindings, and
+the callers that give `below_root` the location's `view_path`.
 
 ## The fold check
 

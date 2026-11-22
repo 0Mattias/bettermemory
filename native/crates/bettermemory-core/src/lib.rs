@@ -152,7 +152,10 @@
 //!   `_touch_view`, and the token re-mints: `_checkout_name`,
 //!   `_give_token`, `token_written`, `_foreign`), and the read side of
 //!   `membership_queries.py` in `membership::queries` (homes, the prompt
-//!   recall's admission, a question as it is shown);
+//!   recall's admission, a question as it is shown), and unit mlegacy in
+//!   `membership::legacy` (the legacy questions settled, the open
+//!   questions shown, a directory against a checkout's root, the record
+//!   counts by project);
 //! - [`location_continuity`]: `location.continuity`, witness O where birth
 //!   time cannot decide;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
