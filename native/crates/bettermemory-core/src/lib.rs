@@ -192,6 +192,11 @@
 //! - [`events`]: the telemetry recorder's rows, its first unit (the
 //!   event kinds, their row classes and the fields a state row keeps)
 //!   and the id-list readers (`event_id_items`, `event_id_list`);
+//! - [`event_redact`]: `events.py`'s second unit: the query redaction
+//!   (`redact_query`, the five secret patterns, the detector spans passed
+//!   in) and the named event fields (`named_event_fields`,
+//!   `_redact_event_fields`);
+//! - [`time_utils`]: `isoformat_utc_optional` and `ensure_utc`;
 //! - [`audit`]: the silent-miss audit (the constants, `MissHit`,
 //!   `MissReport`, the `turn_audited`, `search_miss`, `recall_held` and
 //!   `prompt_recall` field builders, the re-audit dedup, the miss probe
@@ -379,6 +384,7 @@ pub mod declare;
 pub mod difflib;
 pub mod durability;
 pub mod entry;
+pub mod event_redact;
 pub mod events;
 pub mod float_repr;
 pub mod fsdata;
@@ -465,6 +471,7 @@ pub mod standing_guard;
 pub mod store;
 pub mod store_refusal;
 pub mod symbols;
+pub mod time_utils;
 pub mod toml;
 pub mod tool_handlers;
 pub mod transcript;

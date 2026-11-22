@@ -1387,6 +1387,65 @@ pub fn event_from_columns(
     Ok(Some(PyValue::Dict(event)))
 }
 
+/// `store_schema.IMPORTED_FROM_V8`.
+pub const IMPORTED_FROM_V8: &str = "v8";
+
+/// `store_rows._ROW_COLUMNS`: the fields an event keeps in the row's own
+/// columns.
+pub const ROW_COLUMNS: [&str; 3] = ["ts", "session", "kind"];
+
+/// What `event_import_payload` answers: `(ts, session, kind, payload)`.
+pub type ImportedEvent = (Option<PyStr>, Option<PyStr>, PyStr, Vec<(PyValue, PyValue)>);
+
+/// `event_import_payload(event, imported_from=...)`, with
+/// `credentials.secret_spans` passed as `spans`: the row a v8 event
+/// becomes. `Err` is the `ValueError`'s text: a kind that is not a
+/// non-empty `str`, or one in `_NOT_TELEMETRY` (by its `repr`). A `ts` or
+/// `session` that is not a non-empty `str` is None; every field but the
+/// three columns goes through `_redact_event_fields`, then
+/// `imported_from` is set (in place when the event held that key).
+pub fn event_import_payload(
+    event: &[(PyValue, PyValue)],
+    imported_from: &[u32],
+    spans: crate::event_redact::Spans,
+) -> Result<ImportedEvent, PyStr> {
+    let get = |name: &str| {
+        let name = unicode::cps(name);
+        event.iter().find_map(|(k, v)| match k {
+            PyValue::Str(s) if *s == name => Some(v),
+            _ => None,
+        })
+    };
+    let kind = match get("kind") {
+        Some(PyValue::Str(k)) if !k.is_empty() => k.clone(),
+        _ => return Err(unicode::cps("an event needs a string kind")),
+    };
+    if unicode::to_string(&kind).is_some_and(|k| not_telemetry(&k)) {
+        let mut text = repr_str(&kind);
+        text.extend(unicode::cps(" is a mutation or control kind, not an event"));
+        return Err(text);
+    }
+    let text_of = |v: Option<&PyValue>| match v {
+        Some(PyValue::Str(s)) if !s.is_empty() => Some(s.clone()),
+        _ => None,
+    };
+    let rest: Vec<(PyValue, PyValue)> = event
+        .iter()
+        .filter(|(k, _)| !matches!(k, PyValue::Str(s) if ROW_COLUMNS.iter().any(|c| unicode::cps(c) == *s)))
+        .cloned()
+        .collect();
+    let mut payload = crate::event_redact::redact_event_fields(&rest, spans);
+    let from = PyValue::Str(imported_from.to_vec());
+    match payload
+        .iter_mut()
+        .find(|(k, _)| matches!(k, PyValue::Str(s) if *s == unicode::cps("imported_from")))
+    {
+        Some(slot) => slot.1 = from,
+        None => payload.push((PyValue::str("imported_from"), from)),
+    }
+    Ok((text_of(get("ts")), text_of(get("session")), kind, payload))
+}
+
 /// `Store._event_from_raw`: `str()` of the row's `ts` and `kind`, of
 /// `session` when not null, and the payload as read.
 pub fn event_from_raw(raw: &Row) -> Result<Option<PyValue>, RecordError> {

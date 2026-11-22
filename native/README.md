@@ -67,6 +67,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `tool_handlers` | `_handlers.py`, unit handlers-2a: `RefusedError`, `_in_the_way`, `RetryableRefusal`, `KeptWriteRefusal`, `store_refusal`, `_ABSENT`, `_kept_or_retryable`, `_refusals_as_tool_errors`, `_read_only`, and `ToolHandlers`' `__init__`, `for_request`, `with_store` and `_run` (the nine forwarders are handlers-2b) | `tool_handlers.jsonl` |
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
+| `event_redact` | `events.py`'s second unit: `_SECRET_PATTERNS`, `_strip_known_secrets` and `redact_query` (`credentials.secret_spans` passed in), `NAMED_EVENT_FIELDS`, `named_event_fields`, `_named_inside`, `_named_entries`, `_redact_event_fields`; with `store_rows.event_import_payload`, `IMPORTED_FROM_V8` and `_ROW_COLUMNS` (`store::rows`) and `time_utils.isoformat_utc_optional` and `ensure_utc` (`time_utils`) | `event_redact.jsonl` |
 | `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields`; audit-2/3: `is_duplicate_audit`, `probe_for_miss` with its helpers, `_count_recent_retrievals`, `_retrieved_ids` (the ranker and admission as traits), with `search_lane._relevance_label_v2` | `audit_fields.jsonl`, `audit_probe.jsonl` |
 | `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`); unit 2 (`recall_settle::interrupted`): `_probe_message` and `settle_interrupted`, the probe, the pool and the transcript read as closures | `recall_settle.jsonl`, `recall_settle_interrupted.jsonl` |
 | `recall_prompt` | `recall_prompt.py` whole: `_PromptTurn` (`PromptTurn`, `PromptTurnView`), `_prompt_window`, `_settle_before_probe`, `_prompt_probe`, `_record_hold`, `_record_delivery`; the session joins and `recall_admission`'s gate are traits, `Admission.on`, `settle_interrupted` and `_probe_message` closures | `recall_prompt.jsonl` |
@@ -6269,8 +6270,8 @@ of `src/bettermemory/events.py` by function:
 | `is_audit_row` | 187-212 | nothing | built (unit 1) |
 | `row_class`, `prunable` | 483-494 | nothing | built (unit 1) |
 | `state_fields`, `_keys_of` | 497-535 | nothing (`redact_query` passed in) | built (unit 1) |
-| `_SECRET_PATTERNS`, `_strip_known_secrets`, `redact_query` | 98-104, 659-722 | nothing; `credentials.secret_spans` | unit 2 |
-| `NAMED_EVENT_FIELDS`, `named_event_fields`, `_named_inside`, `_named_entries`, `_redact_event_fields` | 758-821 | nothing | unit 2 |
+| `_SECRET_PATTERNS`, `_strip_known_secrets`, `redact_query` | 98-104, 659-722 | nothing; `credentials.secret_spans` (passed in) | built (unit 2, `event_redact`) |
+| `NAMED_EVENT_FIELDS`, `named_event_fields`, `_named_inside`, `_named_entries`, `_redact_event_fields` | 758-821 | nothing | built (unit 2, `event_redact`) |
 | `suppressed`, `deadline`, `StoreBusy`, `_store_busy`, `within_hook_budget`, `hook_body`, `_NOT_DONE` | 538-656 | the clock, the calling context, the store's busy timeout | unit 3 |
 | `Recorder` (`session_for_request`, `worktree_for_request`, `records`, `record`) | 824-951 | the store's writer, the clock | unit 4 |
 | `_event_id_items`, `_event_id_list` | 954-990 | nothing | built (`event_id_items`, `event_id_list`, with `recall_settle` unit 1; see that section) |
@@ -6327,6 +6328,70 @@ True})` and `state_fields("write", {1: "x"})` raise `AttributeError`
 (`int` has no `endswith`). A row read from JSON always has `str` keys, so
 no log row reaches it; a handler passing a non-`str` keyword cannot
 either.
+
+### Unit 2: the query redaction and the named event fields (`event_redact`)
+
+Unit 2 lives in its own module, `src/event_redact.rs`, beside `events`,
+with `store_rows.event_import_payload` in `store::rows` and the two
+remaining helpers of `time_utils.py` in `src/time_utils.rs`. The lines
+above were confirmed against the source as it is now (patterns 98-104,
+the redaction 659-722, the named fields 758-821).
+
+- `_SECRET_PATTERNS` (`SECRET_PATTERNS`): the five patterns' own texts,
+  no flags, built once with the engine's `Regex::new_str` and applied
+  with `Regex::sub` in the reference's order (the `sk-ant-` pattern before the
+  generic `sk-`). Each is a bounded T0-T2 site of the decision
+  (sections 5 and 6), so none is matched by hand and none waits for
+  pyre-9; all five are in the engine's inventory already (the `ast`
+  scan of `gen_pyre_atom`). `\b` is Unicode, as `re` reads a `str`
+  pattern: `é` after a key's body is a word character, so the key is
+  kept.
+- `_strip_known_secrets` (`strip_known_secrets`): the five subs, then
+  `credentials.secret_spans` on what they left. The detectors are not
+  built; they are the `spans` argument (`Spans`), answering `(start,
+  end, kind)` in code points. The pieces are joined once, each span
+  sliced as Python slices (bounds clamped, an inverted span empty).
+- `redact_query`: `{"hash", "preview", "len"}`. The hash is the first
+  sixteen hex digits of SHA-256 over the stripped text's UTF-8 with
+  `errors="replace"` (a lone surrogate is `?`, one per code point), the
+  preview the first 32 code points of the stripped text, `len` the
+  original's length in code points. `events::state_fields` takes it as
+  `&mut |t| redact_query(t, &mut spans)`.
+- `named_event_fields`, `_named_inside`, `_named_entries`
+  (`named_event_fields`, `named_inside`, `named_entries`): over
+  `control_tokens::named_tokens`. The reference's `named is not value`
+  becomes a value rewrite in place: a field the dict lacks is never
+  added, every other field keeps its value and position, so the result
+  is the reference's by value. `NAMED_EVENT_FIELDS` is its own sorted
+  table here and needs neither `Kept` nor `kept_of`.
+- `_redact_event_fields` (`redact_event_fields`): `query` and
+  `probe_query` that are a `str` redacted, then the named fields (the
+  preview of a redacted query is named too).
+- `store_rows.event_import_payload` (`store::rows::event_import_payload`,
+  with the constants `IMPORTED_FROM_V8` and `ROW_COLUMNS`, both owned
+  here): `Err` holds the `ValueError` text, the kind by its `repr`; a
+  `ts` or `session` that is not a non-empty `str` is None;
+  `imported_from` replaces a field of that name in its place.
+- `time_utils.isoformat_utc_optional` and `ensure_utc`: `Option::map`
+  over `DateTime::isoformat_utc` and `DateTime::assume_utc`.
+
+`event_redact.jsonl` (not gated, 41 KB; a text a credential detector reads as a key is written as code points) holds each pattern at its bound,
+one under and at its word boundaries, the detectors' own shapes, legacy
+markers beside detector spans, surrogates, texts of 0, 31, 32 and 33
+code points, every shape of every named field, `_redact_event_fields`,
+`event_import_payload` on good and bad kinds, `ts` and `session`, the
+two time helpers, and a sweep of 3,000 seeded texts as a digest row.
+Each redacting row records the reference's calls to `secret_spans`
+(made with the module's own patterns and the real detectors; nothing is
+patched), which the test answers through the argument.
+`tests/event_redact_kills.rs` holds the cases a plausible wrong port
+fails (U+FFFD for a surrogate, ASCII `\b`, the patterns reordered, a
+byte preview, spans read before the first pass, an absent field added);
+`tests/event_redact_robustness.rs` holds every pattern's backtracking
+shape at 20,000 and 200,000 code points, 100,000 spans, values nested
+200,000 deep in each named field shape, a 100,000-field event and a
+million code points. Left for later units: the detectors of
+`credentials` (`secret_spans`), and units 3 and 4 above.
 
 ## The silent-miss audit's reports and event fields (`audit.py`)
 
@@ -22996,10 +23061,9 @@ What the reference has and this build does not, by area:
   templates (pyre-10).
 - This machine's id past its record, clone rule, facts, file reads and
   open: `machine.py`'s `check_import_fork`.
-- The telemetry rows past their kinds, classes and id-list readers:
-  `events.py`'s query redaction and named event fields (unit 2, which
-  reads `credentials.secret_spans`), the suppression and the hook
-  deadline (unit 3), and the `Recorder` (unit 4).
+- The telemetry rows past their kinds, classes, id-list readers, query
+  redaction and named event fields: `events.py`'s suppression and the
+  hook deadline (unit 3), and the `Recorder` (unit 4).
 - The daemon, the MCP tools (of `_handlers.py` the refusal classes and
   the bundle are built, `tool_handlers`; the nine forwarders and the
   `DESC_*` re-exports are handlers-2b's), the hooks past the pure leaves of `hook.py`
