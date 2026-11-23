@@ -31,6 +31,7 @@ fn value(v: &PyValue) -> Value {
         PyValue::None => Value::Null,
         PyValue::Bool(b) => json!(b),
         PyValue::Str(s) => spell(s),
+        PyValue::List(items) => items.iter().map(value).collect(),
         other => panic!("no such value: {other:?}"),
     }
 }

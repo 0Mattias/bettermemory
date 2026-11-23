@@ -31,7 +31,7 @@ enum Nargs {
 
 fn nargs(kind: &Kind) -> Nargs {
     match kind {
-        Kind::Store => Nargs::One,
+        k if k.takes_value() => Nargs::One,
         Kind::Parsers => Nargs::Parser,
         _ => Nargs::Zero,
     }
@@ -220,7 +220,7 @@ impl Run<'_> {
         self.seen[i] = true;
         let a = &self.p.actions[i];
         match &a.kind {
-            Kind::Store | Kind::Parsers => {
+            Kind::Store | Kind::Append | Kind::Parsers => {
                 if let Some(choices) = &a.choices {
                     let value = args.first().cloned().unwrap_or_default();
                     if !choices.contains(&value) {
@@ -235,9 +235,21 @@ impl Run<'_> {
                     let (w, h) = (self.width, self.hook);
                     return subparsers::call(self.p, &args, self.ns, self.unrecognized, w, h);
                 }
-                let value = args.into_iter().next().unwrap_or_default();
-                let dest = a.dest.clone().unwrap_or_default();
-                self.set(&dest, PyValue::Str(value));
+                let value = PyValue::Str(args.into_iter().next().unwrap_or_default());
+                let dest = a.dest.as_deref().unwrap_or_default();
+                if a.kind == Kind::Append {
+                    // parse_known_args cloned each default into this namespace.
+                    // An earlier action can have populated the same destination.
+                    match self.ns.iter_mut().find(|(key, _)| key == dest) {
+                        Some((_, PyValue::List(items))) => items.push(value),
+                        Some((_, PyValue::None)) | None => {
+                            self.set(dest, PyValue::List(vec![value]));
+                        }
+                        Some(_) => return Err(Stop::NotPorted),
+                    }
+                } else {
+                    self.set(dest, value);
+                }
             }
             Kind::StoreTrue => {
                 let dest = a.dest.clone().unwrap_or_default();

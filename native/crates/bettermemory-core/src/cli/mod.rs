@@ -5,6 +5,7 @@
 use crate::pyvalue::PyStr;
 
 pub mod common;
+pub mod log_args;
 pub mod log_report;
 pub mod membership_health;
 pub mod root;

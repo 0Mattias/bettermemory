@@ -4,6 +4,8 @@
 //! `version`) and positionals of one argument, `parse_args` without a
 //! process exit, and the usage line its errors print.
 //!
+//! Single-value `append` also serves repeated CLI options such as `--anchor`.
+//!
 //! Effects are arguments: the help formatter's width is passed in (the
 //! reference reads it from `shutil.get_terminal_size`), and the help text
 //! and the filling of a long version text come through [`HelpText`], which
@@ -23,6 +25,8 @@ use crate::unicode;
 pub enum Kind {
     /// `_StoreAction`, `nargs` None.
     Store,
+    /// `_AppendAction` with one string value.
+    Append,
     /// `_StoreTrueAction`.
     StoreTrue,
     /// `_HelpAction`: prints `format_help` and exits 0.
@@ -31,6 +35,13 @@ pub enum Kind {
     Version(PyStr),
     /// `_SubParsersAction` (`nargs` PARSER): argparse-1b.
     Parsers,
+}
+
+impl Kind {
+    /// Whether the action consumes a single value and displays its metavar.
+    pub(crate) fn takes_value(&self) -> bool {
+        matches!(self, Self::Store | Self::Append)
+    }
 }
 
 /// One action as `add_argument` made it.

@@ -120,7 +120,7 @@ pub fn format_usage_with(
             continue;
         }
         let mut part = a.option_strings[0].clone();
-        if a.kind == Kind::Store {
+        if a.kind.takes_value() {
             part.push(0x20);
             part.extend(metavar(a, upper(&a.dest.clone().unwrap_or_default())));
         }
