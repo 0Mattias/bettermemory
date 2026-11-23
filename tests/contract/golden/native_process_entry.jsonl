@@ -1,0 +1,20 @@
+{"cases":19,"fixture":"native_process_entry"}
+{"argv":["--version"],"code":0,"columns":null,"err":"","out":"bettermemory 9.0.0rc19\n"}
+{"argv":["--version"],"code":0,"columns":"1","err":"","out":"bettermemor\ny 9.0.0rc19\n"}
+{"argv":["--version"],"code":0,"columns":"13","err":"","out":"bettermemor\ny 9.0.0rc19\n"}
+{"argv":["--version"],"code":0,"columns":"14","err":"","out":"bettermemory\n9.0.0rc19\n"}
+{"argv":["--version"],"code":0,"columns":"23","err":"","out":"bettermemory\n9.0.0rc19\n"}
+{"argv":["--version"],"code":0,"columns":"24","err":"","out":"bettermemory 9.0.0rc19\n"}
+{"argv":["--version"],"code":0,"columns":"80","err":"","out":"bettermemory 9.0.0rc19\n"}
+{"argv":["--version"],"code":0,"columns":"0","err":"","out":"bettermemory 9.0.0rc19\n"}
+{"argv":["--version"],"code":0,"columns":"-9","err":"","out":"bettermemory 9.0.0rc19\n"}
+{"argv":["--version"],"code":0,"columns":"bad","err":"","out":"bettermemory 9.0.0rc19\n"}
+{"argv":["--version"],"code":0,"columns":"+013","err":"","out":"bettermemor\ny 9.0.0rc19\n"}
+{"argv":["--version"],"code":0,"columns":"1_3","err":"","out":"bettermemor\ny 9.0.0rc19\n"}
+{"argv":["--version"],"code":0,"columns":"\uff113","err":"","out":"bettermemor\ny 9.0.0rc19\n"}
+{"argv":["--v"],"code":0,"columns":"80","err":"","out":"bettermemory 9.0.0rc19\n"}
+{"argv":["--vers"],"code":0,"columns":"80","err":"","out":"bettermemory 9.0.0rc19\n"}
+{"argv":["--version","extra"],"code":0,"columns":"80","err":"","out":"bettermemory 9.0.0rc19\n"}
+{"argv":["--version","--help"],"code":0,"columns":"80","err":"","out":"bettermemory 9.0.0rc19\n"}
+{"argv":["--unknown-option","--version"],"code":0,"columns":"80","err":"","out":"bettermemory 9.0.0rc19\n"}
+{"argv":["--version","hook"],"code":0,"columns":"80","err":"","out":"bettermemory 9.0.0rc19\n"}

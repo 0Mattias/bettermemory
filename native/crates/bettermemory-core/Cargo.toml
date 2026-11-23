@@ -16,5 +16,8 @@ getrandom = { version = "=0.4.3", default-features = false }
 zlib-rs = { version = "=0.6.8", default-features = false, features = ["rust-allocator"] }
 bettermemory-sys = { path = "../bettermemory-sys" }
 
+[build-dependencies]
+toml = { version = "=1.2.1", default-features = false, features = ["parse", "serde", "std"] }
+
 [dev-dependencies]
 serde_json = { version = "=1.0.151" }

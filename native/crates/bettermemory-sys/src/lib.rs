@@ -10,6 +10,9 @@
 use std::fs::File;
 use std::io;
 
+mod terminal;
+pub use terminal::stdout_columns;
+
 /// The platform's `O_NONBLOCK` open flag, as its C library defines it
 /// (it differs between Linux architectures and between the BSDs).
 #[cfg(unix)]

@@ -20207,6 +20207,22 @@ loader, the store's opens and the recorder.
 
 ## The CLI root (`cli/__init__.py`)
 
+The native workspace builds a `bettermemory` executable. From `native/`,
+run `cargo build --locked --release --bin bettermemory`, then
+`target/release/bettermemory --version`. For a private install, use
+`cargo install --locked --path crates/bettermemory-core --root PREFIX --bin bettermemory`.
+The build reads `[project].version` from the source tree's root
+`pyproject.toml`. The executable carries that value and runs without Python.
+
+The process supplies the CLI root with decoded OS arguments and the
+formatter width from `COLUMNS`, the stdout terminal, or the 80-column
+fallback. `native_process_entry.jsonl` compares the version action on
+the real executable with the shipped Python entry point, including
+abbreviations, narrow widths and option order. The native registry currently
+contains the hook parser. The help formatter, command handlers, hook client
+and stdio shim still await their process bindings. Use the shipped Python
+console script for those operations.
+
 Read at origin/v9 (7be0e20e); the file is the same in the tree.
 `cli/__init__.py` is 298 lines: imports and the module text (1-70), and
 three functions. Unit cli___init__-1a builds the root parser and `main`'s
@@ -24182,8 +24198,9 @@ What the reference has and this build does not, by area:
   (hook-2b, in `hook_settle.rs`), and the command line. Of
   the hook mains' argument parsing, the flat parser (argparse-1a) and
   the subparsers (argparse-1b) are built; the help formatter
-  (argparse-2) is not. Of the command line, the process entry's
-  hook-word routing (`entry`) and `cli/_common.py`'s parser-free leaves
+  (argparse-2) is not. The native `bettermemory --version` executable
+  is built. Of the command line, the process entry's hook-word routing
+  (`entry`) and `cli/_common.py`'s parser-free leaves
   (`_refuse`, `exit_if_bundle_file`, `key_unreadable_line`,
   `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`) and
   `cli/__init__.py`'s root parser and dispatch (`_build_parser`,

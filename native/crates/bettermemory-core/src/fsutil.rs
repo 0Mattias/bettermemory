@@ -471,7 +471,7 @@ pub fn lock_path(path: &Path, lock_suffix: &str, windows: bool) -> Result<PathBu
             if shown.as_os_str().is_empty() {
                 shown = PathBuf::from(".");
             }
-            let mut text = py_text(shown.as_os_str());
+            let mut text = fsdecode(shown.as_os_str());
             for cp in &mut text {
                 if *cp == u32::from(b'\\') {
                     *cp = u32::from(b'/');
@@ -500,7 +500,7 @@ pub fn lock_path(path: &Path, lock_suffix: &str, windows: bool) -> Result<PathBu
     if lock_suffix.contains('/') || (windows && lock_suffix.contains('\\')) {
         return Err(LockPathError(format!(
             "Invalid name {}",
-            py_repr_text(&py_text(&new))
+            py_repr_text(&fsdecode(&new))
         )));
     }
     comps.pop();
@@ -512,7 +512,7 @@ pub fn lock_path(path: &Path, lock_suffix: &str, windows: bool) -> Result<PathBu
 /// The `str` Python holds for a path's text: `os.fsdecode` on POSIX
 /// (`surrogateescape`, a byte outside UTF-8 as U+DC80 + byte), the UTF-16
 /// units on Windows (a lone surrogate kept as itself).
-fn py_text(text: &std::ffi::OsStr) -> crate::pyvalue::PyStr {
+pub fn fsdecode(text: &std::ffi::OsStr) -> crate::pyvalue::PyStr {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
