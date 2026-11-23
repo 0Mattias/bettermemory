@@ -847,15 +847,10 @@ def test_the_errno_generator_names_the_errno_its_numbers_must_run_past(
 
 def test_golden_files_stay_small() -> None:
     total = sum(p.stat().st_size for p in GOLDEN.iterdir() if p.is_file())
-    # 5.6 MB at N2b: the stores search_store.jsonl rebuilds joined the set.
-    # 7.8 MB once the write side and the first caller-resolution units had
-    # their fixtures (2026-11-16); each new file is still held to a budget
-    # of its own (a quarter of a megabyte at most) when its unit is cut.
-    # 12.4 MB once seven more units landed together (2026-11-19): the
-    # bound moves with the units built, the budget per file does not.
-    # 16.1 MB once the next wave of units landed (2026-11-21).
-    # 21.0 MB once the store refusal fixtures joined (2026-11-22).
-    assert total < 24 * 1024 * 1024
+    # The 382 fixtures totalled 20.9 MiB in November 2026. Leave room for
+    # the remaining port units and catch accidental bulk output. Each new
+    # fixture still has its own size budget when its unit is reviewed.
+    assert total < 64 * 1024 * 1024
 
 
 def test_no_fixture_line_is_shaped_like_a_key() -> None:
