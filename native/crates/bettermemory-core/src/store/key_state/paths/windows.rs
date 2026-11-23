@@ -125,25 +125,32 @@ mod tests {
     use super::*;
     use crate::unicode::cps;
 
-    /// Deny or allow again the Users group SYNCHRONIZE on `path`, as
-    /// CPython's `test_realpath_permission` does. `CreateFileW` asks for
-    /// that right even when no access is requested, so a denied file makes
-    /// `_getfinalpathname` fail with ERROR_ACCESS_DENIED, one of the codes
-    /// that send the non-strict `realpath` to the directory-entry lookup.
-    /// An exclusive open does not: with no access requested the share mode
-    /// is never checked and the call succeeds (CI run 45260976205).
-    fn synchronize(path: &std::path::Path, denied: bool) {
-        let rule: &[&str] = if denied {
-            &["/deny", "*S-1-5-32-545:(S)"]
-        } else {
-            &["/remove:d", "*S-1-5-32-545"]
-        };
-        let done = std::process::Command::new("icacls")
-            .arg(path)
-            .args(rule)
-            .output()
+    /// Leave `path` pending deletion and return the handle that keeps its
+    /// directory entry. A handle opened to delete on close marks the file when
+    /// it closes, and the file stays, marked, while another handle is open.
+    /// Every open of a marked file fails with ERROR_ACCESS_DENIED, whatever the
+    /// caller's rights: one of the codes that send the non-strict `realpath` to
+    /// the directory-entry lookup. An exclusive open does not fail the call
+    /// (with no access requested the share mode is never checked, CI run
+    /// 45260976205), and neither did denying SYNCHRONIZE on the hosted runner
+    /// (CI run 45284088119). Dropping the returned handle removes the file.
+    fn pending_delete(path: &std::path::Path) -> std::fs::File {
+        use std::os::windows::fs::OpenOptionsExt;
+        const DELETE: u32 = 0x0001_0000;
+        const DELETE_ON_CLOSE: u32 = 0x0400_0000;
+        let keep = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(7)
+            .open(path)
             .unwrap();
-        assert!(done.status.success(), "{done:?}");
+        let marker = std::fs::OpenOptions::new()
+            .access_mode(DELETE)
+            .share_mode(7)
+            .custom_flags(DELETE_ON_CLOSE)
+            .open(path)
+            .unwrap();
+        drop(marker);
+        keep
     }
 
     #[test]
@@ -158,7 +165,7 @@ mod tests {
         } else {
             &file
         };
-        synchronize(&file, true);
+        let keep = pending_delete(&file);
         assert_eq!(
             bettermemory_sys::final_path_name(
                 &lookup.as_os_str().encode_wide().collect::<Vec<_>>()
@@ -171,8 +178,8 @@ mod tests {
         let basename =
             crate::gitfile_rule::hostpath::text::basename(crate::fsdata::Flavour::Windows, &result);
         assert_eq!(basename, fsdecode(name));
-        synchronize(&file, false);
-        std::fs::remove_file(file).unwrap();
+        drop(keep);
+        assert!(std::fs::symlink_metadata(&file).is_err());
     }
 
     #[test]

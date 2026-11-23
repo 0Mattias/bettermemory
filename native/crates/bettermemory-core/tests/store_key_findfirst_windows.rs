@@ -8,7 +8,7 @@ use bettermemory_core::store::key_state::{warn_bound_elsewhere, Level};
 use bettermemory_core::unicode::cps;
 use common::{created, parity, stores::scratch};
 use serde_json::Value;
-use std::{fs, os::windows::ffi::OsStrExt, path::Path, process::Command};
+use std::{fs, os::windows::ffi::OsStrExt, path::Path};
 
 const NAME: &str = "denied_key_state_path_matches_windows_python";
 const REFERENCE: &str = r#"
@@ -22,7 +22,7 @@ try:
 except OSError as exc:
     denied = exc.winerror
 else:
-    raise AssertionError('the file must deny SYNCHRONIZE')
+    raise AssertionError('the file must be pending deletion')
 try:
     nt._getfinalpathname(missing)
 except OSError as exc:
@@ -52,27 +52,32 @@ if resolved != _resolved_for_guard(path.parent / 'child' / '..' / path.name):
 print(json.dumps([denied, absent, words(resolved.name), count.value]))
 "#;
 
-/// Deny or allow again the Users group SYNCHRONIZE on `path`, as CPython's
-/// `test_realpath_permission` does. `CreateFileW` asks for that right even
-/// when no access is requested, so a denied file makes `_getfinalpathname`
-/// fail with ERROR_ACCESS_DENIED, one of the codes that send the non-strict
-/// `realpath` to the directory-entry lookup. An exclusive open does not:
-/// with no access requested the share mode is never checked and the call
-/// succeeds (CI run 45260976205). The scratch root is canonical; `icacls`
-/// is given the path without its verbatim prefix.
-fn synchronize(path: &Path, denied: bool) {
-    let rule: &[&str] = if denied {
-        &["/deny", "*S-1-5-32-545:(S)"]
-    } else {
-        &["/remove:d", "*S-1-5-32-545"]
-    };
-    let spelled = path.to_str().unwrap();
-    let done = Command::new("icacls")
-        .arg(spelled.strip_prefix(r"\\?\").unwrap_or(spelled))
-        .args(rule)
-        .output()
+/// Leave `path` pending deletion and return the handle that keeps its
+/// directory entry. A handle opened to delete on close marks the file when
+/// it closes, and the file stays, marked, while another handle is open.
+/// Every open of a marked file fails with ERROR_ACCESS_DENIED, whatever the
+/// caller's rights: one of the codes that send the non-strict `realpath` to
+/// the directory-entry lookup. An exclusive open does not fail the call
+/// (with no access requested the share mode is never checked, CI run
+/// 45260976205), and neither did denying SYNCHRONIZE on the hosted runner
+/// (CI run 45284088119). Dropping the returned handle removes the file.
+fn pending_delete(path: &Path) -> fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    const DELETE: u32 = 0x0001_0000;
+    const DELETE_ON_CLOSE: u32 = 0x0400_0000;
+    let keep = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(7)
+        .open(path)
         .unwrap();
-    assert!(done.status.success(), "{done:?}");
+    let marker = fs::OpenOptions::new()
+        .access_mode(DELETE)
+        .share_mode(7)
+        .custom_flags(DELETE_ON_CLOSE)
+        .open(path)
+        .unwrap();
+    drop(marker);
+    keep
 }
 
 #[test]
@@ -83,7 +88,7 @@ fn denied_key_state_path_matches_windows_python() {
     let stored = work.join("Mixed-É.name");
     let absent = work.join("absent");
     fs::write(&stored, b"data").unwrap();
-    synchronize(&stored, true);
+    let keep = pending_delete(&stored);
     let wide = |p: &Path| p.as_os_str().encode_wide().collect::<Vec<_>>();
     let observed = bettermemory_sys::final_path_name(&wide(&stored))
         .unwrap_err()
@@ -147,8 +152,8 @@ fn denied_key_state_path_matches_windows_python() {
             "search handles grew: {before}, {after}"
         );
     }
-    synchronize(&stored, false);
-    fs::remove_file(stored).unwrap();
+    drop(keep);
+    assert!(fs::symlink_metadata(&stored).is_err());
     fs::remove_dir(work).unwrap();
     match python {
         Ok(_) => parity::record(NAME, "reference Python", "i", 4, &[], &[]),
