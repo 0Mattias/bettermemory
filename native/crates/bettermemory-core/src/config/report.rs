@@ -997,32 +997,28 @@ fn resolved_directory(
     notices: &mut Vec<String>,
 ) -> Result<String, Raised> {
     let fs = world.fs;
-    let mut chosen = |source: &str, named: &str| {
-        let resolved = fs.resolve(&expanded(world, named)?)?;
-        if let Some(warning) = system_dir_warning(world, source, &resolved) {
-            notices.push(warning);
-        }
-        Ok(resolved)
-    };
-    if let Some(named) = world.env_set(ENV_DIR_OVERRIDE) {
-        return chosen(ENV_DIR_OVERRIDE, named);
-    }
-    if let Setting::Str(directory) = config.get("storage", "directory") {
-        if !directory.is_empty() {
-            return chosen("[storage] directory", directory);
-        }
-    }
-    let home_default = || fs.resolve(&fs.join(&fs.home().unwrap_or_default(), GLOBAL_DIR_NAME));
-    if !config.get("storage", "cwd_store").as_bool() {
-        return home_default();
-    }
-    if let Some(cwd) = fs.cwd() {
-        let project = fs.join(&fs.resolve(&cwd)?, PROJECT_DIR_NAME);
-        if fs.is_dir(&project) {
-            return fs.resolve(&project);
-        }
-    }
-    home_default()
+    super::directory::select(
+        config,
+        world.env_set(ENV_DIR_OVERRIDE).map(str::to_owned),
+        str::to_owned,
+        |source, named| {
+            let resolved = fs.resolve(&expanded(world, &named)?)?;
+            if let Some(warning) = system_dir_warning(world, source, &resolved) {
+                notices.push(warning);
+            }
+            Ok(resolved)
+        },
+        || {
+            let Some(cwd) = fs.cwd() else { return Ok(None) };
+            let project = fs.join(&fs.resolve(&cwd)?, PROJECT_DIR_NAME);
+            if fs.is_dir(&project) {
+                fs.resolve(&project).map(Some)
+            } else {
+                Ok(None)
+            }
+        },
+        || fs.resolve(&fs.join(&fs.home().unwrap_or_default(), GLOBAL_DIR_NAME)),
+    )
 }
 
 /// `sandbox_settings.store_rule`.

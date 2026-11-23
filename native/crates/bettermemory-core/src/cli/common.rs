@@ -1,12 +1,17 @@
-//! `cli/_common.py`, its supplied-path read-only opener and parser-free leaves: `_refuse`,
-//! `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`,
-//! `migration_line` and `parse_iso_cutoff`. The configured store path and the
-//! command context are a later unit.
+//! `cli/_common.py`, its POSIX read-only store selection, supplied-path opener,
+//! and parser-free leaves: `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`,
+//! `exit_if_key_unreadable`, `migration_line` and `parse_iso_cutoff`.
+//! The owner-store command context follows separately.
 
 mod read_only;
 pub use read_only::{
     open_read_only, open_read_only_with, Diagnostic, ReadOnlyError, ReaderFailure, StatFailure,
 };
+
+#[cfg(unix)]
+pub mod read_only_path;
+#[cfg(unix)]
+pub use read_only_path::read_only_store_path;
 
 use std::path::Path;
 
@@ -64,23 +69,7 @@ pub fn exit_if_bundle_file(
 /// `str(path)` as Python holds it: `os.fsdecode` of the bytes on POSIX,
 /// the UTF-16 units (a lone surrogate kept) on Windows.
 fn path_text(path: &Path) -> PyStr {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        crate::gitsystem::record::surrogateescape(path.as_os_str().as_bytes())
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        let units: Vec<u16> = path.as_os_str().encode_wide().collect();
-        char::decode_utf16(units)
-            .map(|r| r.map_or_else(|e| u32::from(e.unpaired_surrogate()), u32::from))
-            .collect()
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        s(&path.to_string_lossy())
-    }
+    crate::fsutil::fsdecode(path.as_os_str())
 }
 
 /// `key_unreadable_line(exc, prefix=)` (`_common.py` 148-158): `str(exc)`

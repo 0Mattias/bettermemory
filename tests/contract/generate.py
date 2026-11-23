@@ -51,6 +51,7 @@ from . import (
     gen_cli_log_report,
     gen_cli_membership_health,
     gen_cli_open_policy,
+    gen_cli_read_only_path,
     gen_cli_root,
     gen_native_process_entry,
     gen_config,
@@ -409,6 +410,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "cli_surface": gen_cli.generate,
     "cli_common": gen_cli_common.generate,
     "cli_open_policy": gen_cli_open_policy.generate,
+    "cli_read_only_path": gen_cli_read_only_path.generate,
+    "cli_read_only_path_posix": gen_cli_read_only_path.generate_posix,
     "cli_common_python": gen_cli_common.generate_python,
     "cli_log_report": gen_cli_log_report.generate,
     "cli_membership_health": gen_cli_membership_health.generate,
@@ -1220,6 +1223,8 @@ PLATFORM_GATED = frozenset(
 POSIX_ONLY = frozenset(
     {
         "external_anchor_files_posix",
+        # Real project symlinks and surrogateescaped environment bytes.
+        "cli_read_only_path_posix",
         "store_event_reads_naive",
         # `os.fsencode` encodes a surrogate with `surrogatepass` on Windows.
         "response_write_posix",

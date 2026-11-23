@@ -1,0 +1,3 @@
+{"code":1,"out":{"exit":1,"stderr":"bettermemory log: error: the config does not load: shared reason\n"}}
+{"code":2,"out":{"exit":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: the config does not load: shared reason\n"}}
+{"code":7,"out":{"exit":7,"stderr":"bettermemory log: error: the config does not load: shared reason\n"}}

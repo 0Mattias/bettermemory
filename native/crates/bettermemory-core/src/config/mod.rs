@@ -32,7 +32,13 @@
 pub mod create;
 pub mod decode;
 pub mod difflib;
+pub(crate) mod directory;
+mod labels;
 pub mod report;
+use crate::pyvalue::PyStr;
+use crate::unicode::cps;
+pub use labels::ConfigError;
+pub(crate) use labels::{Labels, Notices};
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -103,20 +109,26 @@ impl Raised {
 
     /// Caught by `except (ValueError, OSError)`.
     pub fn is_value_or_os(&self) -> bool {
-        self.class == "ValueError"
-            || self.class == "UnicodeDecodeError"
-            || self.class == "TOMLDecodeError"
-            || OS_CLASSES.contains(&self.class)
+        value_or_os(self.class)
     }
 }
 
-const OS_CLASSES: [&str; 6] = [
+pub(crate) fn value_or_os(class: &str) -> bool {
+    matches!(
+        class,
+        "ValueError" | "UnicodeEncodeError" | "UnicodeDecodeError" | "TOMLDecodeError"
+    ) || OS_CLASSES.contains(&class)
+}
+const OS_CLASSES: [&str; 9] = [
     "OSError",
     "PermissionError",
     "IsADirectoryError",
     "NotADirectoryError",
     "FileNotFoundError",
     "BlockingIOError",
+    "FileExistsError",
+    "InterruptedError",
+    "TimeoutError",
 ];
 
 /// An `OSError` a read raised: its class, errno and strerror.
@@ -352,8 +364,6 @@ impl World<'_> {
 pub struct Ctx<'g> {
     /// Warnings logged on `bettermemory.config`, in order.
     pub log: Vec<String>,
-    /// `_TRIAL`'s notes while `_read_alone` reads a line; None otherwise.
-    trial: Option<Vec<String>>,
     pub guards: &'g mut Guards,
 }
 
@@ -361,27 +371,8 @@ impl<'g> Ctx<'g> {
     pub fn new(guards: &'g mut Guards) -> Ctx<'g> {
         Ctx {
             log: Vec::new(),
-            trial: None,
             guards,
         }
-    }
-
-    fn warn(&mut self, message: String) {
-        match &mut self.trial {
-            Some(notes) => notes.push(message),
-            None => self.log.push(message),
-        }
-    }
-
-    fn note(&mut self, message: String) {
-        if let Some(notes) = &mut self.trial {
-            notes.push(message);
-        }
-    }
-
-    /// Adds a one-shot guard: true when it was new.
-    fn guard(&mut self, source: &str, key: String) -> bool {
-        self.guards.insert((source.to_owned(), key))
     }
 }
 
@@ -690,12 +681,12 @@ fn token(s: &str) -> String {
 /// A loaded config: every setting in catalogue order, and where it came
 /// from.
 #[derive(Clone, Debug)]
-pub struct Config {
+pub struct Config<P = String> {
     values: Vec<Setting>,
     /// `config_path`: the user's file (None for a registry source).
-    pub config_path: Option<String>,
+    pub config_path: Option<P>,
     /// `managed_path`, as text.
-    pub managed_path: Option<String>,
+    pub managed_path: Option<P>,
     /// `managed_keys`, as "section.key".
     pub managed_keys: Vec<String>,
     /// `managed_fixed`: "section.key" -> the managed line's value, in
@@ -703,7 +694,7 @@ pub struct Config {
     pub managed_fixed: Vec<(String, Value)>,
 }
 
-impl Config {
+impl<P> Config<P> {
     fn index(section: &str, key: &str) -> usize {
         CATALOGUE
             .iter()
@@ -712,11 +703,11 @@ impl Config {
     }
 
     pub fn get(&self, section: &str, key: &str) -> &Setting {
-        &self.values[Config::index(section, key)]
+        &self.values[Self::index(section, key)]
     }
 
     fn set(&mut self, section: &str, key: &str, value: Setting) {
-        self.values[Config::index(section, key)] = value;
+        self.values[Self::index(section, key)] = value;
     }
 
     pub fn is_managed(&self, name: &str) -> bool {
@@ -783,22 +774,36 @@ fn repr(value: &Value) -> Result<String, Raised> {
 fn malformed(
     label: &str,
     value: &Value,
-    path: Option<&str>,
+    path: Option<&[u32]>,
     expected: &str,
-) -> Result<Raised, Raised> {
-    let place = path.map(|p| format!(" in {p}")).unwrap_or_default();
-    Ok(Raised::value(format!(
-        "malformed config{place}: {label} = {} must be {expected}",
-        toml_spelling(value)?
-    )))
+) -> Result<ConfigError, ConfigError> {
+    let prefix = if path.is_some() {
+        "malformed config in "
+    } else {
+        "malformed config"
+    };
+    Ok(ConfigError::located(
+        prefix,
+        path.unwrap_or_default(),
+        &format!(": {label} = {} must be {expected}", toml_spelling(value)?),
+    ))
 }
 
-fn refuse<T>(label: &str, value: &Value, path: Option<&str>, expected: &str) -> Result<T, Raised> {
+fn refuse<T>(
+    label: &str,
+    value: &Value,
+    path: Option<&[u32]>,
+    expected: &str,
+) -> Result<T, ConfigError> {
     Err(malformed(label, value, path, expected)?)
 }
 
 /// `_coerce_bool`.
-pub fn coerce_bool(value: Option<&Value>, default: bool, ctx: &mut Ctx) -> Result<bool, Raised> {
+fn read_bool(
+    value: Option<&Value>,
+    default: bool,
+    ctx: &mut dyn Notices,
+) -> Result<bool, ConfigError> {
     match value {
         Some(Value::Boolean(b)) => return Ok(*b),
         Some(Value::String(s)) => {
@@ -832,13 +837,13 @@ fn float_to_int(f: f64) -> Result<Int, Raised> {
 }
 
 /// `_coerce_int`.
-pub fn coerce_int(
+fn read_int(
     value: Option<&Value>,
     default: i128,
     label: &str,
-    path: Option<&str>,
-    ctx: &mut Ctx,
-) -> Result<Int, Raised> {
+    path: Option<&[u32]>,
+    ctx: &mut dyn Notices,
+) -> Result<Int, ConfigError> {
     let Some(value) = value else {
         return Ok(Int::from_i128(default));
     };
@@ -865,17 +870,29 @@ pub fn coerce_int(
     }
 }
 
-fn clamp_checkpoint_tokens(value: Int, path: Option<&str>, ctx: &mut Ctx) -> Result<Int, Raised> {
+fn clamp_checkpoint_tokens(
+    value: Int,
+    path: Option<&[u32]>,
+    ctx: &mut dyn Notices,
+) -> Result<Int, ConfigError> {
     if value.cmp_i128(MIN_CHECKPOINT_TOKENS) != std::cmp::Ordering::Less {
         return Ok(value);
     }
     let text = value.to_decimal().map_err(Raised::value)?;
     ctx.note(format!("checkpoint_tokens {text} clamped"));
-    let place = path.map(|p| format!(" (in {p})")).unwrap_or_default();
-    ctx.warn(format!(
-        "[capture] checkpoint_tokens = {text}{place} is below {MIN_CHECKPOINT_TOKENS}; \
-         using {MIN_CHECKPOINT_TOKENS}."
-    ));
+    let place = path
+        .map(|p| [cps(" (in "), p.to_vec(), cps(")")].concat())
+        .unwrap_or_default();
+    ctx.warn(
+        [
+            cps(&format!("[capture] checkpoint_tokens = {text}")),
+            place,
+            cps(&format!(
+                " is below {MIN_CHECKPOINT_TOKENS}; using {MIN_CHECKPOINT_TOKENS}."
+            )),
+        ]
+        .concat(),
+    )?;
     Ok(Int::from_i128(MIN_CHECKPOINT_TOKENS))
 }
 
@@ -902,9 +919,9 @@ pub fn prompt_recall_spelling(value: &Value) -> Option<String> {
 
 fn coerce_prompt_recall(
     value: Option<&Value>,
-    path: Option<&str>,
-    ctx: &mut Ctx,
-) -> Result<String, Raised> {
+    path: Option<&[u32]>,
+    ctx: &mut dyn Notices,
+) -> Result<String, ConfigError> {
     let Some(value) = value else {
         return Ok("project".into());
     };
@@ -912,20 +929,29 @@ fn coerce_prompt_recall(
         return Ok(mode);
     }
     ctx.note(format!("prompt_recall {} fell back", repr(value)?));
-    let place = path.map(|p| format!(" (in {p})")).unwrap_or_default();
-    ctx.warn(format!(
-        "[behavior] prompt_recall = {} is not one of {}{place}; falling back to \"project\".",
-        toml_spelling(value)?,
-        PROMPT_RECALL_MODES.join(", ")
-    ));
+    let place = path
+        .map(|p| [cps(" (in "), p.to_vec(), cps(")")].concat())
+        .unwrap_or_default();
+    ctx.warn(
+        [
+            cps(&format!(
+                "[behavior] prompt_recall = {} is not one of {}",
+                toml_spelling(value)?,
+                PROMPT_RECALL_MODES.join(", ")
+            )),
+            place,
+            cps("; falling back to \"project\"."),
+        ]
+        .concat(),
+    )?;
     Ok("project".into())
 }
 
 fn coerce_str_list(
     value: Option<&Value>,
     label: &str,
-    path: Option<&str>,
-) -> Result<Vec<String>, Raised> {
+    path: Option<&[u32]>,
+) -> Result<Vec<String>, ConfigError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
@@ -933,7 +959,7 @@ fn coerce_str_list(
         let mut raised = malformed(label, value, path, "a list of strings")?;
         raised
             .message
-            .push_str(" — did you forget the [ ] brackets?");
+            .extend(cps(" — did you forget the [ ] brackets?"));
         return Err(raised);
     };
     let mut out = Vec::new();
@@ -949,8 +975,8 @@ fn coerce_str_list(
 fn coerce_optional_str(
     value: Option<&Value>,
     label: &str,
-    path: Option<&str>,
-) -> Result<Option<String>, Raised> {
+    path: Option<&[u32]>,
+) -> Result<Option<String>, ConfigError> {
     match value {
         None => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
@@ -962,8 +988,8 @@ fn coerce_switch(
     value: Option<&Value>,
     default: bool,
     label: &str,
-    path: Option<&str>,
-) -> Result<bool, Raised> {
+    path: Option<&[u32]>,
+) -> Result<bool, ConfigError> {
     match value {
         None => Ok(default),
         Some(Value::Boolean(b)) => Ok(*b),
@@ -984,8 +1010,8 @@ fn coerce_switch(
 fn coerce_acknowledge_names(
     value: Option<&Value>,
     label: &str,
-    path: Option<&str>,
-) -> Result<Vec<String>, Raised> {
+    path: Option<&[u32]>,
+) -> Result<Vec<String>, ConfigError> {
     let names = coerce_str_list(value, label, path)?;
     for name in &names {
         if ACKNOWLEDGE_NAMES.contains(&name.as_str()) {
@@ -1008,22 +1034,44 @@ fn warn_removed_key(
     key: &str,
     removed_in: &str,
     why: &str,
-    resolved: &str,
-    ctx: &mut Ctx,
-) {
+    resolved: &[u32],
+    ctx: &mut dyn Notices,
+) -> Result<(), ConfigError> {
     let guard = if section == "behavior" {
         format!("{key}+removed")
     } else {
         format!("{section}.{key}+removed")
     };
-    if !ctx.guard(resolved, guard) {
-        return;
+    if !ctx.guard(resolved, cps(&guard)) {
+        return Ok(());
     }
-    ctx.warn(format!(
-        "bettermemory: TOML config at {resolved} sets [{section}] `{key}`, which was removed \
-         in bettermemory {removed_in} — {why}. The line is ignored; delete it to silence \
-         this warning."
-    ));
+    let reason = format!(
+        " sets [{section}] `{key}`, which was removed in bettermemory {removed_in} — {why}. \
+         The line is ignored; delete it to silence this warning."
+    );
+    ctx.warn(
+        [
+            cps("bettermemory: TOML config at "),
+            resolved.to_vec(),
+            cps(&reason),
+        ]
+        .concat(),
+    )
+}
+
+/// Python’s `_coerce_bool` with the report’s UTF-8 diagnostic context.
+pub fn coerce_bool(value: Option<&Value>, default: bool, ctx: &mut Ctx) -> Result<bool, Raised> {
+    read_bool(value, default, ctx).map_err(ConfigError::narrow)
+}
+/// Python’s `_coerce_int` for a UTF-8 source label.
+pub fn coerce_int(
+    value: Option<&Value>,
+    default: i128,
+    label: &str,
+    path: Option<&str>,
+    ctx: &mut Ctx,
+) -> Result<Int, Raised> {
+    read_int(value, default, label, path.map(cps).as_deref(), ctx).map_err(ConfigError::narrow)
 }
 
 /// Where a parsed file came from, as the loader names it.
@@ -1064,7 +1112,17 @@ pub fn config_from_data(
     source: &Source,
     ctx: &mut Ctx,
 ) -> Result<Config, Raised> {
-    let path = Some(source.text);
+    evaluate(data, &source.into(), ctx)
+        .map(Config::scalar_paths)
+        .map_err(ConfigError::narrow)
+}
+
+pub(crate) fn evaluate(
+    data: &mut Table,
+    source: &Labels,
+    ctx: &mut dyn Notices,
+) -> Result<Config<PyStr>, ConfigError> {
+    let path = Some(source.text.as_slice());
     // `_section_table`, in order: a scalar where a section belongs is
     // refused, or (three sections) read as the defaults with a notice.
     let mut tables: Vec<bool> = Vec::new();
@@ -1076,14 +1134,21 @@ pub fn config_from_data(
                 if !SCALAR_TOLERATED_SECTIONS.contains(&name) {
                     return refuse(&format!("[{name}]"), raw, path, "a table");
                 }
-                if ctx.guard(&source.resolved, format!("[{name}] scalar")) {
+                if ctx.guard(&source.resolved, cps(&format!("[{name}] scalar"))) {
                     let spelled = toml_spelling(raw)?;
-                    ctx.warn(format!(
-                        "bettermemory: TOML config at {} writes `{name} = {spelled}` where a \
-                         [{name}] section belongs. The line is ignored and the section's \
-                         defaults are in force; write its settings under a [{name}] header.",
-                        source.resolved
-                    ));
+                    let reason = format!(
+                        " writes `{name} = {spelled}` where a [{name}] section belongs. \
+                         The line is ignored and the section's defaults are in force; \
+                         write its settings under a [{name}] header."
+                    );
+                    ctx.warn(
+                        [
+                            cps("bettermemory: TOML config at "),
+                            source.resolved.clone(),
+                            cps(&reason),
+                        ]
+                        .concat(),
+                    )?;
                 }
                 tables.push(false);
             }
@@ -1106,7 +1171,7 @@ pub fn config_from_data(
         };
         for (key, removed_in, why) in registry {
             if table.remove(key).is_some() {
-                warn_removed_key(section, key, removed_in, why, &source.resolved, ctx);
+                warn_removed_key(section, key, removed_in, why, &source.resolved, ctx)?;
             }
         }
     }
@@ -1119,7 +1184,7 @@ pub fn config_from_data(
             _ => vec![String::new()],
         };
         for key in keys {
-            warn_removed_key(name, &key, removed_in, why, &source.resolved, ctx);
+            warn_removed_key(name, &key, removed_in, why, &source.resolved, ctx)?;
         }
     }
     if tables[1] {
@@ -1152,7 +1217,7 @@ pub fn config_from_data(
         path,
     )?));
     let behavior = section("behavior");
-    values.push(Setting::Bool(coerce_bool(
+    values.push(Setting::Bool(read_bool(
         behavior.get("write_supersession"),
         true,
         ctx,
@@ -1162,12 +1227,12 @@ pub fn config_from_data(
         path,
         ctx,
     )?));
-    values.push(Setting::Bool(coerce_bool(
+    values.push(Setting::Bool(read_bool(
         behavior.get("session_brief"),
         true,
         ctx,
     )?));
-    values.push(Setting::Int(coerce_int(
+    values.push(Setting::Int(read_int(
         behavior.get("tombstone_retention_days"),
         0,
         "[behavior] tombstone_retention_days",
@@ -1197,12 +1262,12 @@ pub fn config_from_data(
         "[policy] forbid_acknowledge",
         path,
     )?));
-    values.push(Setting::Bool(coerce_bool(
+    values.push(Setting::Bool(read_bool(
         section("telemetry").get("enabled"),
         true,
         ctx,
     )?));
-    values.push(Setting::Int(coerce_int(
+    values.push(Setting::Int(read_int(
         section("daemon").get("port"),
         7397,
         "[daemon] port",
@@ -1210,12 +1275,12 @@ pub fn config_from_data(
         ctx,
     )?));
     let capture = section("capture");
-    values.push(Setting::Bool(coerce_bool(
+    values.push(Setting::Bool(read_bool(
         capture.get("stop_checkpoint"),
         false,
         ctx,
     )?));
-    let tokens = coerce_int(
+    let tokens = read_int(
         capture.get("checkpoint_tokens"),
         12_000,
         "[capture] checkpoint_tokens",
@@ -1223,7 +1288,7 @@ pub fn config_from_data(
         ctx,
     )?;
     values.push(Setting::Int(clamp_checkpoint_tokens(tokens, path, ctx)?));
-    values.push(Setting::Int(coerce_int(
+    values.push(Setting::Int(read_int(
         capture.get("daily_cap"),
         12,
         "[capture] daily_cap",
@@ -1231,17 +1296,17 @@ pub fn config_from_data(
         ctx,
     )?));
     let membership = section("membership");
-    values.push(Setting::Bool(coerce_bool(
+    values.push(Setting::Bool(read_bool(
         membership.get("write_token"),
         true,
         ctx,
     )?));
-    values.push(Setting::Bool(coerce_bool(
+    values.push(Setting::Bool(read_bool(
         membership.get("strict"),
         false,
         ctx,
     )?));
-    values.push(Setting::Bool(coerce_bool(
+    values.push(Setting::Bool(read_bool(
         section("security").get("strict_provenance"),
         false,
         ctx,
@@ -1264,26 +1329,35 @@ pub fn read_alone(
     source: &Source,
     guards: &mut Guards,
 ) -> Result<(Setting, bool), Raised> {
+    trial_value(section, key, raw, &source.into(), &mut Ctx::new(guards))
+        .map_err(ConfigError::narrow)
+}
+
+fn trial_value(
+    section: &str,
+    key: &str,
+    raw: &Value,
+    source: &Labels,
+    outer: &mut dyn Notices,
+) -> Result<(Setting, bool), ConfigError> {
     let mut inner = Table::new();
     inner.insert(key.to_owned(), raw.clone());
     let mut data = Table::new();
     data.insert(section.to_owned(), Value::Table(inner));
-    let mut ctx = Ctx::new(guards);
-    ctx.trial = Some(Vec::new());
-    let config = config_from_data(&mut data, source, &mut ctx)?;
-    let clean = ctx.trial.as_ref().is_some_and(Vec::is_empty);
-    Ok((config.get(section, key).clone(), clean))
+    let mut trial = labels::Trial { outer, clean: true };
+    let config = evaluate(&mut data, source, &mut trial)?;
+    Ok((config.get(section, key).clone(), trial.clean))
 }
 
 fn reads_as_pin(
     section: &str,
     key: &str,
     raw: &Value,
-    source: &Source,
+    source: &Labels,
     pinned: &Setting,
-    guards: &mut Guards,
+    outer: &mut dyn Notices,
 ) -> bool {
-    match read_alone(section, key, raw, source, guards) {
+    match trial_value(section, key, raw, source, outer) {
         Ok((read, clean)) => clean && read == *pinned,
         Err(_) => false,
     }
@@ -1300,7 +1374,14 @@ pub fn line_reads_as_pin(
     guards: &mut Guards,
 ) -> bool {
     match read_alone(section, key, managed_raw, managed, guards) {
-        Ok((pinned, _)) => reads_as_pin(section, key, user_raw, user, &pinned, guards),
+        Ok((pinned, _)) => reads_as_pin(
+            section,
+            key,
+            user_raw,
+            &user.into(),
+            &pinned,
+            &mut Ctx::new(guards),
+        ),
         Err(_) => same_type_and_equal(user_raw, managed_raw),
     }
 }
@@ -1352,9 +1433,9 @@ fn restates_pin_or_default(
     section: &str,
     key: &str,
     raw: &Value,
-    source: &Source,
+    source: &Labels,
     pinned: &Setting,
-    guards: &mut Guards,
+    guards: &mut dyn Notices,
 ) -> bool {
     if reads_as_pin(section, key, raw, source, pinned, guards) {
         return true;
@@ -1373,66 +1454,82 @@ fn restates_pin_or_default(
 /// `managed.read_managed` and `read_managed_registry`: the managed
 /// config's sections, or None when there is none.
 pub fn read_managed(world: &World) -> Result<Option<Table>, Raised> {
-    let (text, source) = match &world.locations.managed {
-        ManagedSource::File(path) => {
-            let raw = match world.fs.read(path) {
-                Ok(raw) => raw,
-                Err(None) => {
-                    if world.fs.is_symlink(path) {
-                        return Err(Raised::value(format!(
-                            "managed config {path} is a symlink to a file that does not exist; \
-                             bettermemory will not start without the settings it pins. Restore \
-                             its target, or remove the link."
-                        )));
-                    }
-                    return Ok(None);
-                }
-                Err(Some(failure)) => {
-                    return Err(Raised::value(format!(
-                        "managed config {path} exists but could not be read ({}); bettermemory \
-                         will not start without the settings it pins. Make the file readable \
-                         by every account that runs bettermemory, or remove it.",
-                        failure.strerror
-                    )))
-                }
-            };
-            match decode::decode_utf8_sig(&raw) {
-                Ok(text) => (text, path.clone()),
-                Err(e) => {
-                    return Err(Raised::value(format!(
-                        "malformed managed config in {path}: {e}"
-                    )))
-                }
-            }
-        }
+    match &world.locations.managed {
+        ManagedSource::File(path) => managed_bytes(
+            world.fs.read(path),
+            || world.fs.is_symlink(path),
+            &cps(path),
+        ),
         ManagedSource::Registry(read) => match read {
             Err(message) => return Err(Raised::value(message.clone())),
-            Ok(None) => return Ok(None),
-            Ok(Some(text)) => (
-                text.strip_prefix('\u{feff}').unwrap_or(text).to_owned(),
-                MANAGED_REGISTRY.to_owned(),
-            ),
+            Ok(None) => Ok(None),
+            Ok(Some(text)) => managed_sections(
+                text.strip_prefix('\u{feff}').unwrap_or(text),
+                &cps(MANAGED_REGISTRY),
+            )
+            .map(Some),
         },
-    };
-    let data = parse_managed_text(&text, &source)?;
+    }
+    .map_err(ConfigError::narrow)
+}
+
+pub(crate) fn managed_bytes(
+    raw: Result<Vec<u8>, Option<OsFailure>>,
+    is_link: impl FnOnce() -> bool,
+    path: &[u32],
+) -> Result<Option<Table>, ConfigError> {
+    let raw =
+        match raw {
+            Ok(raw) => raw,
+            Err(None) if is_link() => return Err(ConfigError::located(
+                "managed config ",
+                path,
+                " is a symlink to a file that does not exist; bettermemory will not start without \
+             the settings it pins. Restore its target, or remove the link.",
+            )),
+            Err(None) => return Ok(None),
+            Err(Some(failure)) => {
+                let reason = format!(
+                    " exists but could not be read ({}); bettermemory will not start without \
+                 the settings it pins. Make the file readable by every account that runs \
+                 bettermemory, or remove it.",
+                    failure.strerror
+                );
+                return Err(ConfigError::located("managed config ", path, &reason));
+            }
+        };
+    let text = decode::decode_utf8_sig(&raw).map_err(|e| {
+        ConfigError::located("malformed managed config in ", path, &format!(": {e}"))
+    })?;
+    managed_sections(&text, path).map(Some)
+}
+
+fn managed_sections(text: &str, path: &[u32]) -> Result<Table, ConfigError> {
+    let data = parsed(text, path, "malformed managed config in ")?;
     for (name, value) in data.iter() {
         if !matches!(value, Value::Table(_)) {
-            return Err(Raised::value(format!(
-                "malformed managed config in {source}: `{name}` = {} must be a [{name}] section table",
-                repr(value)?
-            )));
+            return Err(ConfigError::located(
+                "malformed managed config in ",
+                path,
+                &format!(
+                    ": `{name}` = {} must be a [{name}] section table",
+                    repr(value)?
+                ),
+            ));
         }
     }
-    Ok(Some(data))
+    Ok(data)
 }
 
 /// `managed.parse_managed_text`.
 pub fn parse_managed_text(text: &str, source: &str) -> Result<Table, Raised> {
+    parsed(text, &cps(source), "malformed managed config in ").map_err(ConfigError::narrow)
+}
+
+fn parsed(text: &str, path: &[u32], prefix: &str) -> Result<Table, ConfigError> {
     toml::loads(text).map_err(|e| match e {
-        toml::Error::Decode(m) => {
-            Raised::value(format!("malformed managed config in {source}: {m}"))
-        }
-        other => raised_of_toml(other),
+        toml::Error::Decode(m) => ConfigError::located(prefix, path, &format!(": {m}")),
+        other => raised_of_toml(other).into(),
     })
 }
 
@@ -1468,15 +1565,13 @@ pub fn read_config_file(fs: &dyn Fs, path: &str) -> Result<Table, FileError> {
         Err(None) => return Err(FileError::NotFound),
         Err(Some(failure)) => return Err(FileError::Os(failure)),
     };
-    let text = decode::decode_utf8_sig(&raw).map_err(|e| {
-        FileError::Raised(Raised::value(format!("malformed config in {path}: {e}")))
-    })?;
-    toml::loads(&text).map_err(|e| {
-        FileError::Raised(match e {
-            toml::Error::Decode(m) => Raised::value(format!("malformed config in {path}: {m}")),
-            other => raised_of_toml(other),
-        })
-    })
+    user_bytes(&raw, &cps(path)).map_err(|e| FileError::Raised(e.narrow()))
+}
+
+pub(crate) fn user_bytes(raw: &[u8], path: &[u32]) -> Result<Table, ConfigError> {
+    let text = decode::decode_utf8_sig(raw)
+        .map_err(|e| ConfigError::located("malformed config in ", path, &format!(": {e}")))?;
+    parsed(&text, path, "malformed config in ")
 }
 
 /// `config.load_config(path, create=False)`.
@@ -1498,25 +1593,43 @@ fn overlay_managed(
     path: &str,
     ctx: &mut Ctx,
 ) -> Result<Config, Raised> {
-    let user = Source::file(world.fs, path);
-    let Some(mut managed_data) = read_managed(world)? else {
-        return config_from_data(&mut data, &user, ctx);
+    let managed = read_managed(world)?;
+    let source = || match &world.locations.managed {
+        ManagedSource::File(p) => Labels::from(&Source::file(world.fs, p)),
+        ManagedSource::Registry(_) => Labels::from(&Source::registry()),
     };
-    let managed = match &world.locations.managed {
-        ManagedSource::File(p) => Source::file(world.fs, p),
-        ManagedSource::Registry(_) => Source::registry(),
-    };
-    apply_managed(&mut data, &user, &mut managed_data, &managed, ctx)
+    overlay(
+        &mut data,
+        &Labels::from(&Source::file(world.fs, path)),
+        managed,
+        source,
+        ctx,
+    )
+    .map(Config::scalar_paths)
+    .map_err(ConfigError::narrow)
+}
+
+pub(crate) fn overlay(
+    data: &mut Table,
+    user: &Labels,
+    managed: Option<Table>,
+    source: impl FnOnce() -> Labels,
+    ctx: &mut dyn Notices,
+) -> Result<Config<PyStr>, ConfigError> {
+    match managed {
+        Some(mut pins) => apply_managed(data, user, &mut pins, &source(), ctx),
+        None => evaluate(data, user, ctx),
+    }
 }
 
 /// `config._apply_managed`.
-fn apply_managed(
+pub(crate) fn apply_managed(
     data: &mut Table,
-    user: &Source,
+    user: &Labels,
     managed_data: &mut Table,
-    managed: &Source,
-    ctx: &mut Ctx,
-) -> Result<Config, Raised> {
+    managed: &Labels,
+    ctx: &mut dyn Notices,
+) -> Result<Config<PyStr>, ConfigError> {
     let mut lapsed = Vec::new();
     for (section, key, _) in FIXED_SETTINGS {
         if let Some(Value::Table(t)) = managed_data.get(section) {
@@ -1525,7 +1638,7 @@ fn apply_managed(
             }
         }
     }
-    let pinned = config_from_data(managed_data, managed, ctx)?;
+    let pinned = evaluate(managed_data, managed, ctx)?;
     let mut keys: Vec<(String, String)> = Vec::new();
     for (section, raw) in managed_data.iter() {
         let Value::Table(table) = raw else {
@@ -1549,19 +1662,31 @@ fn apply_managed(
             continue;
         };
         let pin = pinned.get(section, key).clone();
-        if !restates_pin_or_default(section, key, &user_value, user, &pin, ctx.guards) {
-            let guard = format!("{section}.{key}+managed:{}", managed.text);
+        if !restates_pin_or_default(section, key, &user_value, user, &pin, ctx) {
+            let guard = [
+                cps(&format!("{section}.{key}+managed:")),
+                managed.text.clone(),
+            ]
+            .concat();
             if ctx.guard(&user.resolved, guard) {
-                ctx.warn(format!(
-                    "bettermemory: TOML config at {} sets [{section}] `{key}`, which the \
-                     managed config at {} pins. The managed value is in force and this line \
-                     is ignored; delete it to silence this warning.",
-                    user.resolved, managed.text
-                ));
+                let notice = [
+                    cps("bettermemory: TOML config at "),
+                    user.resolved.clone(),
+                    cps(&format!(
+                        " sets [{section}] `{key}`, which the managed config at "
+                    )),
+                    managed.text.clone(),
+                    cps(
+                        " pins. The managed value is in force and this line is ignored; \
+                         delete it to silence this warning.",
+                    ),
+                ]
+                .concat();
+                ctx.warn(notice)?;
             }
         }
     }
-    let mut config = config_from_data(data, user, ctx)?;
+    let mut config = evaluate(data, user, ctx)?;
     for (section, key) in &keys {
         config.set(section, key, pinned.get(section, key).clone());
     }

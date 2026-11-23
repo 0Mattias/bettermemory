@@ -986,3 +986,8 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("remove");
     }
 }
+
+#[cfg(unix)]
+mod passwd;
+#[cfg(unix)]
+pub use passwd::account_home;

@@ -129,6 +129,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
 | `membership_migrate` | `membership_migrate.py`, unit 1: the constants (`LIVE`, `GONE`, `REPLACED`, `UNREACHABLE`, `RULE_PREFIX`, `LEGACY_REASON`, `MIGRATED`, `_RECORD_TABLES`, `_RECORD_KINDS`, `_SHA`, `_PROBE_BUDGET`, `_PROBE_WORKERS`), `RootDecision`, `RootlessHome`, `LegacyQuestion`, `MigrationTotals` (`to_dict`), `MigrationReport` (`homed`, `to_dict`, `lines`), `_basename`, `_origin`, `_text`, `_id_order`, `_repository_name`, `_shas`, `_json_list` | `membership_migrate_report.jsonl`, `membership_migrate_report_python.jsonl` |
 | `store_refusal` | `_store_refusal.py` whole: `bundle_refusal`, `_may_be_bundle_manifest`, `restore_state`, `_record_lock_held`, `_restore_marker`, `_restore_marker_at`, `_describe_restore`, `restore_refusal`, `store_refusal` and the constants; `json::loads_bytes` (`json.loads` of bytes) | `store_refusal.jsonl`, `store_refusal_posix.jsonl` |
+| `cli::common::read_only_path` (POSIX) | `cli._common.read_only_store_path`, `Config.resolved_directory` with the physical filesystem | `cli_read_only_path.jsonl`, `cli_read_only_path_posix.jsonl` |
 | `entry`, `cli::common`, `cli::root` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`; `cli/__init__.py`'s `_build_parser`, `_add_hook_subparser`, `main` (`cli::root`) | `cli_common.jsonl`, `cli_common_python.jsonl`, `cli_root.jsonl`, `cli_root_python.jsonl` |
 | `cli::log_report` | Ordered signed-log verification report, plain text, pretty JSON and exit status from `cli/log_cmd.py` | `cli_log_report.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
@@ -20274,8 +20275,38 @@ Read at 6cf944e5. `_entry.py` (38 lines) whole, and the leaves of
 | `exit_if_key_unreadable` | 161-180 | the block's outcome (an argument) | built |
 | `migration_line` | 320-328 | nothing | built |
 | `parse_iso_cutoff` | 376-477 | the clock (`now`, an argument) | built |
+| `read_only_store_path` | 54–73 | POSIX config, cwd, environment, passwd and filesystem | built (`cli::common::read_only_path`) |
 | `open_read_only` | 75–127 | path stat, bundle check, supplied read-only opener | built (`cli::common`) |
-| `read_only_store_path`, `open_owner_store`, `CliContext`, `cli_context`, `migrate_at_open`, `run_migration_at_open`, `cli_recorder` | the rest | the config, the store, the recorder | cli__common-1b, not built |
+| `open_owner_store`, `CliContext`, `cli_context`, `migrate_at_open`, `run_migration_at_open`, `cli_recorder` | the rest | the config, the store, the recorder | cli__common-1b, not built |
+
+### Physical read-only store selection on POSIX
+
+`cli::common::read_only_store_path` takes a parser, optional exit code
+(default 2), process warning guards and a synchronous logger. It reads
+the platform user config and managed TOML in order, then returns the
+selected directory joined to `memory.sqlite`. The supplied-location
+entry exercises organisation policy in disposable directories. Both use
+the config loader's TOML decoder, complete settings evaluation and
+managed-pin overlay. Source labels and warning guards preserve OS bytes.
+
+The config path report and the command share the environment, configured
+directory, enabled project directory and home precedence. The command
+resolves POSIX symlinks component by component and consults passwd for
+named homes or an absent HOME. Path expansion with an empty HOME yields
+`/`. Platformdirs uses the account home in that case. System-directory
+warnings expose the source, selected path and original prefix to the
+logger. ValueError from that handler continues the prefix search.
+During config loading, ValueError and OSError become the parser's
+refusal. Directory resolution preserves its own exceptions.
+
+The POSIX fixture preserves 1,440 actual Python calls and checks the
+filesystem snapshot around each one. There are 580 returned paths, 720
+CLI exits and 140 propagated errors.
+The host tests cover invalid-byte names, symlinks after missing components,
+deleted cwd, passwd and selection between two physical signed stores.
+Resolution of symlink loops follows CPython 3.13/3.14. CPython 3.11/3.12
+raise RuntimeError for the three loop cases. Windows default locations and
+managed registry acquisition belong to the Windows host binding.
 
 ### As built
 
@@ -20381,8 +20412,7 @@ Python 3.11 raises `embedded null byte`. OS argument vectors exclude NUL.
 
 ### Left for later
 
-cli__common-1b: `read_only_store_path`,
-`open_owner_store`, `CliContext`, `cli_context`, `migrate_at_open`,
+cli__common-1b: `open_owner_store`, `CliContext`, `cli_context`, `migrate_at_open`,
 `run_migration_at_open` and `cli_recorder`, which need the config's
 loader, the store's opens and the recorder.
 
@@ -24398,7 +24428,9 @@ What the reference has and this build does not, by area:
   is built. Of the command line, the process entry's hook-word routing
   (`entry`) and `cli/_common.py`'s parser-free leaves
   (`_refuse`, `exit_if_bundle_file`, `key_unreadable_line`,
-  `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`) and
+  `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`),
+  POSIX read-only store selection (`read_only_store_path`), the supplied-path
+  opener (`open_read_only`), and
   `cli/__init__.py`'s root parser and dispatch (`_build_parser`,
   `_add_hook_subparser`, `main` in `cli::root`), the membership health
   display (`cli::membership_health`) and signed-log verification output
