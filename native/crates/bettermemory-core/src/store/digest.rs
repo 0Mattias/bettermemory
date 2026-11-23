@@ -287,6 +287,8 @@ pub const OVERFLOW_TEXT: &str = "Python int too large to convert to SQLite INTEG
 
 #[derive(Debug)]
 pub enum DigestError {
+    /// A transaction refused its writer before the digest body ran.
+    Writer(super::write::WriteError),
     Sqlite(rusqlite::Error),
     /// A payload, record or value the reference would raise on.
     Unreadable(&'static str),
@@ -305,6 +307,7 @@ impl From<rusqlite::Error> for DigestError {
 impl std::fmt::Display for DigestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            DigestError::Writer(e) => write!(f, "{e}"),
             DigestError::Sqlite(e) => write!(f, "{e}"),
             DigestError::Unreadable(what) => write!(f, "{what} does not read"),
             DigestError::Overflow => write!(f, "{OVERFLOW_TEXT}"),

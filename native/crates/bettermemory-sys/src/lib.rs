@@ -376,6 +376,39 @@ pub fn errno_name(_code: i32) -> Option<&'static str> {
     None
 }
 
+/// CPython's OSError subclasses for a raw POSIX errno. The filename
+/// and strerror belong to the operation that raised it.
+#[cfg(unix)]
+pub fn python_os_error_class(code: i32) -> &'static str {
+    // EAGAIN and EWOULDBLOCK commonly name the same number.
+    if [
+        libc::EAGAIN,
+        libc::EWOULDBLOCK,
+        libc::EALREADY,
+        libc::EINPROGRESS,
+    ]
+    .contains(&code)
+    {
+        return "BlockingIOError";
+    }
+    match code {
+        libc::ECHILD => "ChildProcessError",
+        libc::EPIPE | libc::ESHUTDOWN => "BrokenPipeError",
+        libc::ECONNABORTED => "ConnectionAbortedError",
+        libc::ECONNREFUSED => "ConnectionRefusedError",
+        libc::ECONNRESET => "ConnectionResetError",
+        libc::EEXIST => "FileExistsError",
+        libc::ENOENT => "FileNotFoundError",
+        libc::EINTR => "InterruptedError",
+        libc::EISDIR => "IsADirectoryError",
+        libc::ENOTDIR => "NotADirectoryError",
+        libc::EACCES | libc::EPERM => "PermissionError",
+        libc::ESRCH => "ProcessLookupError",
+        libc::ETIMEDOUT => "TimeoutError",
+        _ => "OSError",
+    }
+}
+
 /// The processor time the calling thread has used so far, in user and
 /// kernel mode alike: `clock_gettime(CLOCK_THREAD_CPUTIME_ID)`. Only
 /// differences between two readings on the same thread mean anything.

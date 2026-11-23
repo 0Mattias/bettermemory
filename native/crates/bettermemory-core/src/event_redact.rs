@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 
 use sha2::{Digest, Sha256};
 
-use crate::control_tokens::named_tokens;
+use crate::control_tokens::changed_named_tokens;
 use crate::events::{QUERY_HASH_PREFIX, QUERY_PREVIEW_CHARS, REDACTED_TEXT_FIELDS};
 use crate::pyre::regex::Regex;
 use crate::pyvalue::{PyStr, PyValue};
@@ -125,49 +125,70 @@ fn among(value: &PyValue, words: &[&str]) -> bool {
 /// `_named_entries`: a dict with its entries under `keys` named, anything
 /// else as it is.
 pub fn named_entries(value: &PyValue, keys: &[&str]) -> PyValue {
-    let PyValue::Dict(items) = value else {
-        return value.clone();
-    };
-    PyValue::Dict(
-        items
-            .iter()
-            .map(|(k, v)| {
-                let v = if among(k, keys) {
-                    named_tokens(v)
-                } else {
-                    v.clone()
-                };
-                (k.clone(), v)
-            })
-            .collect(),
-    )
+    let mut named = value.clone();
+    name_entries(&mut named, keys);
+    named
 }
 
-/// `_named_inside`: `_named_entries` of a dict, or of each item of a list.
-pub fn named_inside(value: &PyValue, keys: &[&str]) -> PyValue {
-    match value {
-        PyValue::List(items) => {
-            PyValue::List(items.iter().map(|i| named_entries(i, keys)).collect())
-        }
-        other => named_entries(other, keys),
+fn name_value(value: &mut PyValue) -> bool {
+    if let Some(named) = changed_named_tokens(value) {
+        *value = named;
+        true
+    } else {
+        false
     }
 }
 
-/// `named_event_fields(fields)`: each field of `NAMED_EVENT_FIELDS` the
-/// dict holds, named in place; every other field as it is, in order. A
-/// field the dict lacks is not added (`named_tokens(None)` is None).
+fn name_entries(value: &mut PyValue, keys: &[&str]) -> bool {
+    let mut changed = false;
+    if let PyValue::Dict(items) = value {
+        for (k, v) in items {
+            if among(k, keys) {
+                changed |= name_value(v);
+            }
+        }
+    }
+    changed
+}
+
+fn name_inside(value: &mut PyValue, keys: &[&str]) -> bool {
+    if let PyValue::List(items) = value {
+        let mut changed = false;
+        for item in items {
+            changed |= name_entries(item, keys);
+        }
+        changed
+    } else {
+        name_entries(value, keys)
+    }
+}
+
+/// `_named_inside`: name the entries of a dict or of every dict in a list.
+pub fn named_inside(value: &PyValue, keys: &[&str]) -> PyValue {
+    let mut named = value.clone();
+    name_inside(&mut named, keys);
+    named
+}
+
+/// Whether naming the fields replaced anything. The importer keeps the
+/// original stored text when the reference returns the same object.
+pub(crate) fn name_fields(fields: &mut [(PyValue, PyValue)]) -> bool {
+    let mut changed = false;
+    for (name, inside) in NAMED_EVENT_FIELDS {
+        if let Some((_, value)) = fields.iter_mut().find(|(k, _)| is(k, name)) {
+            changed |= match inside {
+                None => name_value(value),
+                Some(keys) => name_inside(value, keys),
+            };
+        }
+    }
+    changed
+}
+
+/// `named_event_fields(fields)`: name the configured fields in their original order.
 pub fn named_event_fields(fields: &[(PyValue, PyValue)]) -> Vec<(PyValue, PyValue)> {
     let mut out = fields.to_vec();
-    for (name, inside) in NAMED_EVENT_FIELDS {
-        // `dict.get`: a key equal to the name; a dict holds it once.
-        let Some(slot) = out.iter_mut().find(|(k, _)| is(k, name)) else {
-            continue;
-        };
-        slot.1 = match inside {
-            None => named_tokens(&slot.1),
-            Some(keys) => named_inside(&slot.1, keys),
-        };
-    }
+    name_fields(&mut out);
     out
 }
 
@@ -182,5 +203,6 @@ pub fn redact_event_fields(fields: &[(PyValue, PyValue)], spans: Spans) -> Vec<(
             }
         }
     }
-    named_event_fields(&out)
+    name_fields(&mut out);
+    out
 }

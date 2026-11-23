@@ -772,6 +772,25 @@ pub fn loads_detailed(text: &[u32]) -> Result<PyValue, LoadError> {
     Ok(value)
 }
 
+/// A keyring read can exceed the limit in the JSON decoder or later,
+/// while rendering a decoded field. Recover which operation raised only
+/// on this error path; normal reads decode once.
+pub(crate) fn reading_recursion_message(text: &[u32]) -> &'static str {
+    let mut decoder = Decoder {
+        text,
+        pos: 0,
+        digits_limit: false,
+    };
+    decoder.skip_ws();
+    if matches!(decoder.value(), Err(PyError::RecursionError)) {
+        return match decoder.peek() {
+            Some(0x7B) => "maximum recursion depth exceeded while decoding a JSON object from a unicode string",
+            _ => "maximum recursion depth exceeded while decoding a JSON array from a unicode string",
+        };
+    }
+    "maximum recursion depth exceeded while getting the repr of an object"
+}
+
 /// Where and why `json.loads` refuses a text, as CPython 3.13's C scanner
 /// (`Modules/_json.c`) finds it, in document order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

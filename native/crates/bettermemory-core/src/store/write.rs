@@ -93,7 +93,7 @@ impl WriteNotPorted {
     }
 }
 
-/// Why a write wrote nothing.
+/// A writer refusal, including an exception raised after its SQLite commit.
 #[derive(Debug)]
 pub enum WriteError {
     /// [`WriteNotPorted`]: the reference would have written; this build
@@ -112,11 +112,18 @@ pub enum WriteError {
     NotAnObject,
     /// meta's minimum writer revision is above this build's
     /// (`require_current_writer`): the connection is held to reading.
-    LaterWriter,
+    LaterWriter {
+        path: std::path::PathBuf,
+        needed: i64,
+    },
+    /// An invalid min_writer_revision, with the store_versions error fields.
+    Version(super::StoreVersionError),
     /// SQLite refused (busy past the timeout, a full disk, a schema that
     /// no longer fits the statements); rolled back.
     Sqlite(rusqlite::Error),
-    /// The clock could not be read; rolled back.
+    /// A synchronous clock or logging callback raised.
+    Callback(super::exception::StoreException),
+    /// The clock could not be read.
     Clock(io::Error),
     /// `_require_open`: SQLite ended the transaction after an error inside
     /// it (sqlite3.OperationalError in the reference); nothing it wrote was
@@ -130,9 +137,11 @@ impl WriteError {
             WriteError::NotPorted(_) => "not_ported",
             WriteError::Refused { .. } => "refused",
             WriteError::NotAnObject => "not_an_object",
-            WriteError::LaterWriter => "later_writer",
+            WriteError::LaterWriter { .. } => "later_writer",
+            WriteError::Version(_) => "StoreVersionError",
             WriteError::Sqlite(_) => "sqlite",
             WriteError::Clock(_) => "clock",
+            WriteError::Callback(_) => "callback",
             WriteError::RolledBack(_) => "rolled_back",
         }
     }
@@ -160,15 +169,25 @@ impl std::fmt::Display for WriteError {
                 )
             }
             WriteError::Refused {
+                class: "OperationalError",
+                text: Some(text),
+            } => f.write_str(text),
+            WriteError::Refused {
                 class,
                 text: Some(text),
             } => write!(f, "{class}: {text}"),
             WriteError::Refused { class, text: None } => f.write_str(class),
             WriteError::NotAnObject => f.write_str("a mutation's payload is an object"),
-            WriteError::LaterWriter => {
-                f.write_str("the store now needs a later writer; it is held to reading")
+            WriteError::Version(error) => f.write_str(&error.message),
+            WriteError::LaterWriter { path, needed } => {
+                let quoted = crate::printable::quoted(&super::restore_lock::path_text(path));
+                write!(f, "attempt to write a readonly database: {} now needs a writer at schema \
+                    revision {needed}; this build writes {}. Upgrade bettermemory and reopen the store.",
+                    crate::json::utf8_text(&quoted), super::SCHEMA_REVISION)
             }
+            WriteError::Sqlite(rusqlite::Error::SqlInputError { msg, .. }) => f.write_str(msg),
             WriteError::Sqlite(e) => write!(f, "{e}"),
+            WriteError::Callback(e) => f.write_str(&crate::json::utf8_text(&e.exception.message)),
             WriteError::Clock(e) => write!(f, "the clock could not be read: {e}"),
             WriteError::RolledBack(path) => write!(
                 f,
@@ -196,7 +215,7 @@ pub enum HeadMove {
     Ahead,
     /// Not written; the commit stands (`_move_head` logs the OSError and
     /// the call succeeds). The head is behind, which verifies ok.
-    Failed(io::Error),
+    Failed(super::exception::StoreException),
 }
 
 /// A committed mutation.
@@ -463,13 +482,25 @@ pub(super) fn move_head(
     row: &LogRow,
     provider: &mut dyn Provider,
     hook: &mut dyn FnMut(WriteBoundary),
-) -> HeadMove {
-    let lock = match open_lock(&with_suffix(path, ".lock")) {
+) -> Result<HeadMove, WriteError> {
+    use super::exception::{ExceptionFamily, StoreException};
+    let dir = super::create::parent_of(path);
+    if let Err(e) = super::create::owner_only_dir(&dir) {
+        return Ok(HeadMove::Failed(StoreException::os(&e, Some(&dir), None)));
+    }
+    let lock_path = with_suffix(path, ".lock");
+    let lock = match open_lock(&lock_path) {
         Ok(lock) => lock,
-        Err(e) => return HeadMove::Failed(e),
+        Err(e) => {
+            return Ok(HeadMove::Failed(StoreException::os(
+                &e,
+                Some(&lock_path),
+                None,
+            )))
+        }
     };
     if let Err(e) = lock.lock() {
-        return HeadMove::Failed(e);
+        return Ok(HeadMove::Failed(StoreException::os(&e, None, None)));
     }
     hook(WriteBoundary::HeadLocked);
     let ring = KeyRing {
@@ -489,28 +520,48 @@ pub(super) fn move_head(
                 _ => false,
             };
             if ahead {
-                return HeadMove::Ahead;
+                return Ok(HeadMove::Ahead);
             }
         }
         Ok(None) => {}
         Err(e) => {
-            return HeadMove::Failed(io::Error::other(format!(
-                "the head did not read ({})",
-                e.name()
-            )))
+            let message = match e {
+                PyError::OverflowError => "cannot convert float infinity to integer",
+                PyError::RecursionError => {
+                    let text = ring
+                        .head_file
+                        .as_deref()
+                        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                        .unwrap_or_default();
+                    crate::json::reading_recursion_message(&unicode::cps(text))
+                }
+                _ => return Err(py_error(e)),
+            };
+            return Err(WriteError::Refused {
+                class: e.name(),
+                text: Some(message.to_string()),
+            });
         }
     }
-    let ts = match provider.now() {
+    let ts = match provider.log_now() {
         Ok(now) => now.isoformat_utc(),
-        Err(e) => return HeadMove::Failed(e),
+        Err(WriteError::Clock(e)) => {
+            return Ok(HeadMove::Failed(StoreException::os(&e, None, None)))
+        }
+        Err(WriteError::Callback(e)) if e.family == ExceptionFamily::Os => {
+            return Ok(HeadMove::Failed(e))
+        }
+        Err(e) => return Err(e),
     };
     let text = head_file_text(row.seq, &row.mac, &ts);
-    let out = replace_retrying(path, text.as_bytes());
+    let out = super::open::replace_atomic_with(path, text.as_bytes(), |error, from, to| {
+        StoreException::os(&error, from, to)
+    });
     drop(lock);
-    match out {
+    Ok(match out {
         Ok(()) => HeadMove::Moved,
         Err(e) => HeadMove::Failed(e),
-    }
+    })
 }
 
 /// `_fsutil.flock_excl`'s lock file: created 0600 or opened, kept.

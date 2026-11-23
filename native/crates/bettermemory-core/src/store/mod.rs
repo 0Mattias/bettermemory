@@ -44,6 +44,7 @@ pub mod digest;
 pub mod digest_query;
 pub mod docfreq;
 pub mod event_reads;
+pub mod exception;
 pub mod fold;
 pub mod home;
 pub mod index_reads;
@@ -55,6 +56,7 @@ pub mod open;
 pub mod pool;
 pub mod provenance;
 pub mod reads;
+pub mod record_event;
 pub mod record_reads;
 pub mod restore_lock;
 pub mod returned;
@@ -1018,11 +1020,11 @@ fn shown(text: &str) -> String {
 
 /// `store_versions._stored_revision`.
 fn stored_revision(
-    meta: &[(String, String)],
+    raw: Option<&str>,
     key: &'static str,
-    path: &str,
+    path: impl std::fmt::Display,
 ) -> Result<i64, StoreVersionError> {
-    let Some(raw) = meta_get(meta, key) else {
+    let Some(raw) = raw else {
         return Ok(0);
     };
     let whole = (1..=9).contains(&raw.len()) && raw.bytes().all(|b| b.is_ascii_digit());
@@ -1049,9 +1051,17 @@ pub fn check_versions(
     path: &str,
     version: &str,
 ) -> Result<Verdict, StoreVersionError> {
-    let revision = stored_revision(meta, "schema_revision", path)?;
-    let min_reader = stored_revision(meta, "min_reader_revision", path)?;
-    let min_writer = stored_revision(meta, "min_writer_revision", path)?;
+    let revision = stored_revision(meta_get(meta, "schema_revision"), "schema_revision", path)?;
+    let min_reader = stored_revision(
+        meta_get(meta, "min_reader_revision"),
+        "min_reader_revision",
+        path,
+    )?;
+    let min_writer = stored_revision(
+        meta_get(meta, "min_writer_revision"),
+        "min_writer_revision",
+        path,
+    )?;
     let newest = match meta_get(meta, "engine_version") {
         Some(engine) if !engine.is_empty() => {
             format!(" (its newest writer was bettermemory {})", shown(engine))

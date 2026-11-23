@@ -108,6 +108,20 @@ pub trait Provider {
             std::thread::sleep(d);
         }
     }
+    /// The log timestamp for a transactional row or its post-commit head.
+    /// Adapters may return a Python exception outside the OS error family.
+    fn log_now(&mut self) -> Result<DateTime, super::write::WriteError> {
+        self.now().map_err(super::write::WriteError::Clock)
+    }
+    /// Deliver a checkpoint warning for this store after SQLite commits.
+    /// Ordinary native callers can inspect the same error in the commit.
+    fn checkpoint_warning(
+        &mut self,
+        _store: &Path,
+        _error: &super::exception::StoreException,
+    ) -> Result<(), super::exception::StoreException> {
+        Ok(())
+    }
 }
 
 /// A monotonic clock in seconds since its first reading in this process.
@@ -204,6 +218,16 @@ impl<P: Provider> Provider for Clocks<P> {
     }
     fn now(&mut self) -> io::Result<DateTime> {
         self.inner.now()
+    }
+    fn log_now(&mut self) -> Result<DateTime, super::write::WriteError> {
+        self.inner.log_now()
+    }
+    fn checkpoint_warning(
+        &mut self,
+        store: &Path,
+        error: &super::exception::StoreException,
+    ) -> Result<(), super::exception::StoreException> {
+        self.inner.checkpoint_warning(store, error)
     }
     fn wall_now(&mut self) -> io::Result<DateTime> {
         match self.wall.len() {

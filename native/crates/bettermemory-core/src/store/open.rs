@@ -37,6 +37,7 @@ use super::create::{
 use super::digest::{self, DigestError};
 use super::restore_lock;
 use super::schema;
+use super::write::WriteError;
 use super::{keys, log_row, meta_get, open_checks, sql_value, SqlValue, StoreError};
 use super::{StoreVersionError, BUSY_TIMEOUT, LOG_SELECT, SCHEMA_REVISION};
 use crate::json::{self, DumpOptions};
@@ -401,6 +402,7 @@ pub enum DigestOutcome {
 /// leaves it out.
 pub struct WritableStore {
     pub(super) conn: Connection,
+    pub(super) busy_timeout_seconds: f64,
     path: PathBuf,
     keys_dir: PathBuf,
     store_id: String,
@@ -536,7 +538,7 @@ pub fn open_for_writing_with(
         None => false,
     };
     hook(Boundary::Bound);
-    let outcome = digest_mark(&conn, hook)?;
+    let outcome = digest_mark(&conn, &file, hook)?;
     let head = conn
         .query_row(
             "SELECT seq, mac FROM log ORDER BY seq DESC LIMIT 1",
@@ -547,6 +549,7 @@ pub fn open_for_writing_with(
         .unwrap_or(None);
     Ok(WritableStore {
         conn,
+        busy_timeout_seconds: BUSY_TIMEOUT.as_secs_f64(),
         path: file,
         keys_dir: keys_dir.to_path_buf(),
         store_id: plan.store_id,
@@ -1349,16 +1352,28 @@ fn binding_text(resolved: &Path) -> io::Result<String> {
 /// private temporary file beside it, synced, renamed over the name, the
 /// directory synced.
 pub(super) fn replace_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
+    replace_atomic_with(path, data, |e, _, _| e)
+}
+
+/// Keep failing syscall arguments for callers that report the Python OSError.
+pub(super) fn replace_atomic_with<E>(
+    path: &Path,
+    data: &[u8],
+    failure: impl Fn(io::Error, Option<&Path>, Option<&Path>) -> E,
+) -> Result<(), E> {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let tmp = with_suffix(path, &format!(".{}x{n}.tmp", std::process::id()));
-    let staged = (|| {
-        let mut f = new_private_file(&tmp)?;
-        f.write_all(data)?;
-        bettermemory_sys::fsync(&f)
-    })();
-    if let Err(e) = staged.and_then(|()| rename_retrying(&tmp, path)) {
+    let mut file = new_private_file(&tmp).map_err(|e| failure(e, Some(&tmp), None))?;
+    let staged = file
+        .write_all(data)
+        .and_then(|()| bettermemory_sys::fsync(&file));
+    drop(file);
+    let written = staged
+        .map_err(|e| failure(e, None, None))
+        .and_then(|()| rename_retrying(&tmp, path).map_err(|e| failure(e, Some(&tmp), Some(path))));
+    if let Err(error) = written {
         let _ = fs::remove_file(&tmp);
-        return Err(e);
+        return Err(error);
     }
     sync_dir(&parent_of(path));
     Ok(())
@@ -1389,25 +1404,46 @@ pub(crate) const REPLACE_ATTEMPTS: u32 = 5;
 /// `require_current_writer` inside a transaction: meta's minimum writer
 /// read again under the lock; above this build's, the connection is held
 /// to reading (`query_only`) and the transaction refused.
-pub(super) fn require_current_writer(conn: &Connection) -> Result<(), DigestError> {
-    let needed: Option<SqlValue> = conn
-        .query_row(
-            "SELECT value FROM meta WHERE key = 'min_writer_revision'",
-            [],
-            |r| Ok(sql_value(r.get_ref(0)?).ok()),
-        )
-        .optional()?
-        .flatten();
-    let needed = needed.map(|v| v.py_str()).unwrap_or_default();
-    let whole = (1..=9).contains(&needed.len()) && needed.bytes().all(|b| b.is_ascii_digit());
-    if whole && needed.parse::<i64>().unwrap_or(0) > SCHEMA_REVISION {
+pub(super) fn require_current_writer(conn: &Connection, path: &Path) -> Result<(), WriteError> {
+    const KEY: &str = "min_writer_revision";
+    let mut stmt = conn.prepare("SELECT value FROM meta WHERE key = ?")?;
+    let mut rows = stmt.query([KEY])?;
+    let Some(row) = rows.next()? else {
+        return Ok(());
+    };
+    let value = row.get_ref(0)?;
+    let raw = sql_value(value)
+        .map_err(|_| {
+            // pysqlite's 198-byte diagnostic treats each non-ASCII byte
+            // as a replacement and the first NUL as the end of the value.
+            let bytes = value.as_bytes().expect("only invalid TEXT fails sql_value");
+            let message = b"Could not decode to UTF-8 column 'value' with text '"
+                .iter()
+                .chain(bytes.iter().take_while(|&&b| b != 0))
+                .chain(b"'")
+                .take(198)
+                .map(|&b| {
+                    if b.is_ascii() {
+                        char::from(b)
+                    } else {
+                        '\u{fffd}'
+                    }
+                })
+                .collect();
+            WriteError::Refused {
+                class: "OperationalError",
+                text: Some(message),
+            }
+        })?
+        .py_str();
+    let needed =
+        super::stored_revision(Some(&raw), KEY, path.display()).map_err(WriteError::Version)?;
+    if needed > SCHEMA_REVISION {
         conn.execute_batch("PRAGMA query_only = ON")?;
-        return Err(DigestError::Unreadable(
-            "a store that now needs a later writer",
-        ));
-    }
-    if !needed.is_empty() && !whole {
-        return Err(DigestError::Unreadable("meta's min_writer_revision"));
+        return Err(WriteError::LaterWriter {
+            path: path.to_owned(),
+            needed,
+        });
     }
     Ok(())
 }
@@ -1416,10 +1452,12 @@ pub(super) fn require_current_writer(conn: &Connection) -> Result<(), DigestErro
 /// check, the body, `COMMIT`; any failure rolled back.
 fn transaction<T>(
     conn: &Connection,
+    path: &Path,
     body: impl FnOnce(&Connection) -> Result<T, DigestError>,
 ) -> Result<T, DigestError> {
     conn.execute_batch("BEGIN IMMEDIATE")?;
-    let out = require_current_writer(conn)
+    let out = require_current_writer(conn, path)
+        .map_err(DigestError::Writer)
         .and_then(|()| body(conn))
         .and_then(|v| conn.execute_batch("COMMIT").map(|()| v).map_err(Into::into));
     if out.is_err() && !conn.is_autocommit() {
@@ -1436,6 +1474,7 @@ fn transaction<T>(
 /// is left as its last committed transaction left it.
 fn digest_mark(
     conn: &Connection,
+    path: &Path,
     hook: &mut dyn FnMut(Boundary),
 ) -> Result<DigestOutcome, OpenError> {
     // An overflow is not among what `digest_mark` catches: it leaves the
@@ -1449,7 +1488,7 @@ fn digest_mark(
         Ok(false) => {}
         Err(e) => return left(e),
     }
-    let ingested = transaction(conn, |conn| {
+    let ingested = transaction(conn, path, |conn| {
         let state = digest::state(conn)?;
         match digest::built(conn, state.as_deref())? {
             Some(seen) => digest::ingest(conn, seen).map(|()| true),
@@ -1471,7 +1510,7 @@ fn digest_mark(
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::Relaxed)
     );
-    let start = match transaction(conn, |conn| digest::build_begin(conn, &token)) {
+    let start = match transaction(conn, path, |conn| digest::build_begin(conn, &token)) {
         Ok(start) => start,
         Err(e) => return left(e),
     };
@@ -1479,7 +1518,7 @@ fn digest_mark(
     for removed in [false, true] {
         let mut after = 0;
         loop {
-            let batch = transaction(conn, |conn| {
+            let batch = transaction(conn, path, |conn| {
                 if !digest::build_owns(conn, &token)? {
                     return Ok(None);
                 }
@@ -1500,7 +1539,7 @@ fn digest_mark(
             }
         }
     }
-    let ended = transaction(conn, |conn| {
+    let ended = transaction(conn, path, |conn| {
         if !digest::build_owns(conn, &token)? {
             return Ok(false);
         }
@@ -1511,7 +1550,7 @@ fn digest_mark(
         Ok(false) => return Ok(DigestOutcome::Left("another build took it over".to_owned())),
         Err(e) => return left(e),
     }
-    let caught = transaction(conn, |conn| {
+    let caught = transaction(conn, path, |conn| {
         let state = digest::state(conn)?;
         match digest::built(conn, state.as_deref())? {
             Some(seen) => digest::ingest(conn, seen).map(|()| true),

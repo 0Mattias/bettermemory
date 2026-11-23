@@ -115,7 +115,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns; unit 2: `_first_file_root` (with `unquote(errors="surrogateescape")`), `workspace_declaration` | `identity_caller.jsonl`, `identity_caller_unicode.jsonl`, `identity_roots.jsonl`, `identity_roots_python.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `standing_guard` | `handlers/_guard.py` whole: `read_words`, `record`, `Held`, `check`, `guard` and the hints, over `GuardDeps` | `standing_guard.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); the event reads (`store::event_reads`: `iter_events`, `iter_events_backward`, `capture_rows`, `events_of_kinds`, `session_events_of_kinds`, `events_since`, `_window_floor`, `NAMING_BOUND`, `log.CAPTURE_KINDS`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_event_reads.jsonl`, `store_event_reads_naive.jsonl`, `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); the event reads (`store::event_reads`: `iter_events`, `iter_events_backward`, `capture_rows`, `events_of_kinds`, `session_events_of_kinds`, `events_since`, `_window_floor`, `NAMING_BOUND`, `log.CAPTURE_KINDS`); the event writes (`store::record_event`: `record_event` with `_primary_code`, `_busy`, `_time_left`, `_waiting_until` and `EVENT_RETRY_PAUSE_SECONDS`, `import_event`, `imported_event_keys`, `_named_payload`, `record_migration`, `record_capture`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_event_reads.jsonl`, `store_event_reads_naive.jsonl`, `store_record_event_posix.jsonl` (POSIX only), `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
 | `store::docfreq` | the document frequency memo of `store_index.py`: `_memoised_document_frequencies`, `_current_inputs`, `_patched_masks`, `_admitted_mask`, `_keep_doc_freqs`, `_row_mask`, `_DocFreqInputs` and the grouping of `Store._read_doc_freq_inputs`, the memoised half of `Store.ranking_statistics`; the store's side is the trait `DocFreqSource` | `store_docfreq.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token`; unit 4 in `identity`: `_strings`, `_flag`, `_FULL_SHA`, `PortableIdentity` (`to_json`, `from_json`, `digest`), `ImportedProject` and the bounds and import words, and in `outcomes`: `Declaration`, `Declared`, `Why`, `UnresolvedProject`, `Health`, `EpisodeRef`, `Handoff`, `RecallAdmission` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl`, `membership_records_identity.jsonl`, `membership_records_identity_python.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks`; unit 2a in `membership::shared_heal`: `_carriers`, `_restamped`, `_healed`, `_chosen`, `retired_into`, `_folded`, and the `MembershipLog` trait; unit 2b in `membership::shared_ask`: `_ask_which`, `_retire_into`, `_asked_at`, `_asked_here`, `_unseen`, `_asked_plan` | `membership_shared.jsonl`, `membership_shared_python.jsonl`, `membership_shared_heal.jsonl`, `membership_shared_ask.jsonl` |
@@ -5792,11 +5792,11 @@ By function, with the reference's lines and status:
 
 | function | lines | needs from the machine | status |
 | --- | --- | --- | --- |
-| `record_event`, `_primary_code`, `_busy`, `_time_left`, `_waiting_until` | 69-177 | the monotonic clock, a sleep | a later unit |
-| `import_event`, `imported_event_keys` | 178-226 | none | a later unit |
-| `_named_payload` | 228-239 | none | lane evredact |
+| `record_event`, `_primary_code`, `_busy`, `_time_left`, `_waiting_until` | 69-175 | the monotonic clock, a sleep | `store::record_event` (storeev1) |
+| `import_event`, `imported_event_keys` | 178-225 | none | `store::record_event` (storeev1) |
+| `_named_payload` | 228-239 | none | `store::record_event` (storeev1) |
 | `iter_events` | 242-263 | none | built here |
-| `record_migration`, `record_capture` | 266-309 | the clock | lane storeev1 |
+| `record_migration`, `record_capture` | 266-309 | the clock | `store::record_event` (storeev1) |
 | `capture_rows` | 312-336 | none | built here |
 | `NAMING_BOUND`, `events_of_kinds` | 339-392 | local time for a naive `since` | built here |
 | `session_events_of_kinds` | 395-424 | none | built here |
@@ -5869,9 +5869,105 @@ with `log_by_session` dropped, read session `s1`, then session
 the cache is connection state outside the function's arguments. The
 fixture reads surrogate sessions on a fresh connection.
 
-Left for later units: `record_event` and its retry, `import_event` and
-`imported_event_keys`, `_named_payload` (lane evredact, with the pub
-`ROW_COLUMNS`), `record_migration` and `record_capture` (lane storeev1).
+### The event writes (`store::record_event`, unit storeev1)
+
+`store::record_event` reproduces lines 69-309 on the writable store
+(`WritableStore`), with the row stamped through a crate entry of the
+transaction, `Transaction::append_at`, which takes the reference's
+`ts=` (`ts or _utcnow_iso()`: an empty text is stamped now) without
+changing `append`'s callers.
+
+- `record_event` refuses a kind of `_NOT_TELEMETRY` with the reference's
+  ValueError. Its payload is `event_payload`: the fields through
+  `event_redact::redact_event_fields` (with `secret_spans` as that lane's
+  `spans` argument), then the actor's record set when it is not empty and
+  the fields hold no `actor`. Tries are `max(1, attempts)`; a try is
+  retried only when its error is busy (`busy`: the OperationalError's
+  primary code 5 or 6, through `event_hook::is_busy` and `primary_code`),
+  tries remain, and `_time_left` holds (`deadline - monotonic() > 0.05`,
+  the clock read only then). The pause is `Provider::pause`
+  (`EVENT_RETRY_PAUSE_SECONDS`). A failure the reference's `except
+  (sqlite3.Error, OSError, RuntimeError)` catches (`caught`: SQLite, the
+  clock, a rolled-back transaction, a later writer, a RecursionError) is
+  swallowed with one warning when `best_effort` is on or its primary code
+  is SQLITE_READONLY, and raised otherwise; any other error is raised.
+- Once SQLite commits, the log row is durable. If updating the keyring
+  checkpoint raises an OS error, the event logger receives the SQLite
+  file path and the typed error in a warning. A handler exception then
+  follows the same catch and retry rules as the rest of that try. A busy
+  handler can therefore cause a second signed row when a retry succeeds.
+  A joined event leaves this warning to its outer transaction's provider.
+- Each outer write rereads `min_writer_revision` under the write lock.
+  A missing value means zero. A malformed value raises `StoreVersionError`
+  with its key and the store path. A higher revision sets `query_only`
+  and raises an uncoded `OperationalError` naming both revisions. A failed
+  SQLite query keeps its SQLite error code. The writing open's digest
+  catches the same refusals and leaves the digest as it stood.
+- `_waiting_until` reads the store's busy timeout and the monotonic clock
+  once per try when a deadline is given, lowers the timeout to what is
+  left (through `store::reads::set_busy_timeout`) only when less than the
+  timeout is left, and gives the timeout back after the try.
+  Inside an open transaction (`EventTransaction::Joined`), the writer
+  makes one try under a savepoint (`Transaction::scope`).
+- The clocks and the sleep are the crate's `Provider` (`now`,
+  `monotonic`, `pause`), which every writer already takes: no second
+  clock trait. The deadline is an argument (`EventCall::deadline`), which
+  a caller reads from its `HookScope`.
+- `WritableStore` implements the hook's `BusyTimeout`. It keeps the
+  seconds from the last successful setter, including fractional
+  milliseconds. SQLite receives its integer milliseconds. A deadline
+  gives the connection back its original setting even when a write fails.
+- A keyless connection supplies its `key_state.refusal` text to
+  `record_event`. The writer checks the kind first, logs one warning for
+  a valid event and returns before redaction, the clock or a transaction.
+  Event and capture columns keep their Python code points until the MAC
+  needs UTF-8. A lone surrogate raises after the timestamp and payload
+  are ready. A capture checks its kind before the lock and its guard
+  before encoding the columns. A guard refusal retains its exception class
+  and the code points of its message.
+  If a clock or guard unwinds, the writer restores the held timeout,
+  rolls back the interrupted scope, and propagates the interruption.
+- `import_event` takes the row from `rows::event_import_payload` under the
+  event's own `ts` and `session`. `imported_event_keys` matches `payload
+  LIKE '%<needle>%'` with the needle `canonical_payload({"imported_from":
+  x})[1:-1]`, so `%` and `_` in `x` match as wildcards, as in the
+  reference; each column is `str()` of the fetched value, and the payload
+  goes through `_named_payload` (`named_payload`: the stored text unless
+  the naming changes a field of a JSON object).
+- `record_migration` takes `engine_version` from
+  `Provider::engine_version`, as `store::create` does. `record_capture`
+  checks `CAPTURE_KINDS` (`store::event_reads`) and runs its guard inside
+  the transaction, under the lock, before the row. Each writer can join
+  an open transaction. The v8 migration calls both `record_migration`
+  and `import_event` inside one batch. Its rollback takes back both rows.
+- `EventLogger` receives the event kind and each `Logged` entry when it
+  occurs. A handler error propagates before the next retry pause or write.
+  The fixture compares log levels, retry numbers and handler failures.
+- No regular expression is used.
+
+Fixtures (`gen_store_record_event`, `store_record_event_posix.jsonl`):
+stores opened as `store_tx.jsonl`'s are; a second connection holding
+`BEGIN IMMEDIATE` makes a real SQLITE_BUSY, `PRAGMA query_only` a
+SQLITE_READONLY; `store_events.time` is a stub for each step whose
+monotonic readings are scripted (the Rust test replays exactly the
+readings taken) and whose sleep commits the blocker at a named pause;
+`bettermemory.__version__` is fixed for the migration rows. Cases: the
+plain write, the actor, `attempts` of 0 and below, the refused kinds,
+busy with and without retries and `best_effort`, a blocker freed after one
+and two pauses, deadlines with time for one more try, exactly the pause
+left, a lowered wait given back, read-only stores, calls inside a
+transaction, failing log handlers, a real keyless reader, signed columns with surrogates, a
+submillisecond timeout and the timeout sampled at insertion, the v8
+import with a control token in a note, the keys under
+`v8`, under a needle with wildcards, after a row is rewritten to hold the
+token as an earlier build kept it, the importer's re-run, migration rows
+and capture rows with a guard that refuses, and a batch containing all
+three writers that is rolled back or committed. POSIX only, as
+`store_tx.jsonl`; `store_record_event_not_posix.rs` records the gap, and
+the kills and robustness tests run everywhere.
+
+The remaining store integration is the recorder's `EventSink` adapter
+for `WritableStore`.
 
 ## The store_rows leaves (`store::rows`)
 
@@ -6844,8 +6940,8 @@ Lines checked against the source as it is now: the class 825-951.
 What it reproduces.
 
 - The store is the trait `EventSink` (`record_event(kind, session,
-  actor, best_effort, attempts, deadline, fields)`), so the recorder
-  does not wait for the store's writer (lane storeev1). `best_effort` and
+  actor, best_effort, attempts, deadline, fields)`). The writable store's
+  event writer is `store::record_event`. `best_effort` and
   `attempts` are `Some` only on a state row (`false` and
   `STATE_WRITE_ATTEMPTS`), `deadline` only inside a hook body. The two
   context variables are the `HookScope` passed to `records` and `record`;

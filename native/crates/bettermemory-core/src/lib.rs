@@ -149,7 +149,9 @@
 //!   (`store::docfreq`); the event and capture readers and the window
 //!   floor (`store::event_reads`); the plain reads of the index and the
 //!   records over a connection (`store::index_reads`,
-//!   `store::record_reads`); and the returned marks' backfill on the
+//!   `store::record_reads`); the event writes with their retry and
+//!   deadline, the v8 import, the migration and capture rows
+//!   (`store::record_event`); and the returned marks' backfill on the
 //!   writable store (`store::returned`: `missing_links`,
 //!   `returned_rows`, `backfill`, `ensure_backfilled`);
 //! - [`store_refusal`]: the stores a hook refuses before it starts a

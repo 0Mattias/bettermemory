@@ -25,7 +25,9 @@
 //! a [`Transaction::scope`], so a typed error it returns rolls back what it
 //! wrote and nothing else.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
 use rusqlite::{Connection, OptionalExtension};
 
@@ -39,6 +41,37 @@ use super::write::{
 use crate::datetime::DateTime;
 use crate::log::{fingerprint, next_row, Key, LogRow};
 use crate::pyvalue::PyValue;
+
+/// A row column from a native writer or a Python string. Keep the latter
+/// until the signed row needs UTF-8, after the lock, timestamp and payload.
+#[derive(Clone, Copy)]
+enum RowText<'a> {
+    Utf8(&'a str),
+    Points(&'a [u32]),
+}
+
+impl<'a> RowText<'a> {
+    fn is_empty(self) -> bool {
+        match self {
+            Self::Utf8(s) => s.is_empty(),
+            Self::Points(s) => s.is_empty(),
+        }
+    }
+
+    fn utf8(self) -> Result<Cow<'a, str>, WriteError> {
+        match self {
+            Self::Utf8(s) => Ok(Cow::Borrowed(s)),
+            Self::Points(s) => {
+                crate::unicode::to_string(s)
+                    .map(Cow::Owned)
+                    .ok_or_else(|| WriteError::Refused {
+                        class: "UnicodeEncodeError",
+                        text: super::fold::encode_error(s),
+                    })
+            }
+        }
+    }
+}
 
 /// `CHUNK_HOLD_SECONDS` (`store.py:298`): how long a chunk of a long run
 /// holds the write lock before it commits.
@@ -220,10 +253,7 @@ impl WritableStore {
             open: true,
         };
         tx.passed(WriteBoundary::Begun);
-        if require_current_writer(&tx.store.conn).is_err() {
-            // Dropped: rolled back.
-            return Err(WriteError::LaterWriter);
-        }
+        require_current_writer(&tx.store.conn, tx.store.path())?;
         Ok(tx)
     }
 
@@ -362,6 +392,43 @@ impl Transaction<'_> {
         payload: &PyValue,
         session: Option<&str>,
     ) -> Result<LogRow, WriteError> {
+        self.append_fields(
+            RowText::Utf8(kind),
+            payload,
+            session.map(RowText::Utf8),
+            None,
+        )
+    }
+
+    pub(super) fn engine_version(&self) -> String {
+        self.provider.engine_version()
+    }
+
+    /// `_append(tx, kind, payload, session=, ts=)`: [`Transaction::append`]
+    /// under `ts` when it is a non-empty text (`ts or _utcnow_iso()`), the
+    /// log clock's reading otherwise.
+    pub(crate) fn append_at(
+        &mut self,
+        kind: &[u32],
+        payload: &PyValue,
+        session: Option<&[u32]>,
+        ts: Option<&[u32]>,
+    ) -> Result<LogRow, WriteError> {
+        self.append_fields(
+            RowText::Points(kind),
+            payload,
+            session.map(RowText::Points),
+            ts.map(RowText::Points),
+        )
+    }
+
+    fn append_fields(
+        &mut self,
+        kind: RowText<'_>,
+        payload: &PyValue,
+        session: Option<RowText<'_>>,
+        ts: Option<RowText<'_>>,
+    ) -> Result<LogRow, WriteError> {
         let conn = &self.store.conn;
         // `str(row[0])`: any stored type, NULL read as "None".
         let recorded: Option<String> = conn
@@ -397,17 +464,37 @@ impl Transaction<'_> {
         }
         let conn = &self.store.conn;
         let previous = last_row(conn)?;
-        let ts = self
-            .provider
-            .now()
-            .map_err(WriteError::Clock)?
-            .isoformat_utc();
+        let stamp;
+        let ts = match ts.filter(|t| !t.is_empty()) {
+            Some(t) => t,
+            None => {
+                stamp = self.provider.log_now()?.isoformat_utc();
+                RowText::Utf8(&stamp)
+            }
+        };
+        // compute_mac encodes ts, session and kind in that order. If a
+        // column fails, canonical_payload is still the first operation
+        // after the timestamp and can raise an earlier error of its own.
+        let columns = || {
+            Ok((
+                ts.utf8()?,
+                session.map(RowText::utf8).transpose()?,
+                kind.utf8()?,
+            ))
+        };
+        let (ts, session, kind) = match columns() {
+            Ok(columns) => columns,
+            Err(e) => {
+                crate::json::canonical_payload(payload).map_err(py_error)?;
+                return Err(e);
+            }
+        };
         let row = next_row(
             previous.as_ref(),
             self.store.key.bytes(),
-            kind,
+            &kind,
             payload,
-            session,
+            session.as_deref(),
             &ts,
         )
         .map_err(py_error)?;
@@ -588,15 +675,16 @@ impl Transaction<'_> {
             .execute_batch(&format!("SAVEPOINT {name}"))
             .map_err(WriteError::from)?;
         self.depth += 1;
-        let out = body(self).and_then(|v| {
+        let out = catch_unwind(AssertUnwindSafe(|| {
+            let v = body(self)?;
             self.store
                 .conn
                 .execute_batch(&format!("RELEASE {name}"))
                 .map_err(|e| E::from(WriteError::from(e)))?;
             Ok(v)
-        });
+        }));
         self.depth -= 1;
-        if out.is_err() {
+        if !matches!(out, Ok(Ok(_))) {
             self.last = last;
             self.returns = returns;
             self.rows.truncate(kept);
@@ -615,7 +703,7 @@ impl Transaction<'_> {
                 }
             }
         }
-        out
+        out.unwrap_or_else(|interrupt| resume_unwind(interrupt))
     }
 
     /// A nested entry of `_transaction` (`_joined`): `body` under the
@@ -674,7 +762,20 @@ impl Transaction<'_> {
     /// (`settle`; the `returned_put` rows, then the `returned_delete`
     /// rows), `COMMIT`, then the head moved once to the last row. Any
     /// failure before the commit returns rolls everything back.
-    pub fn commit(mut self) -> Result<Committed, WriteError> {
+    pub fn commit(self) -> Result<Committed, WriteError> {
+        self.commit_with_checkpoint(|provider, path, error| {
+            provider.checkpoint_warning(path, error)
+        })
+    }
+
+    pub(super) fn commit_with_checkpoint(
+        mut self,
+        warn: impl FnOnce(
+            &mut dyn Provider,
+            &std::path::Path,
+            &super::exception::StoreException,
+        ) -> Result<(), super::exception::StoreException>,
+    ) -> Result<Committed, WriteError> {
         if let Some(why) = self.refused.clone() {
             return Err(WriteError::NotPorted(why));
         }
@@ -697,14 +798,19 @@ impl Transaction<'_> {
                     .store
                     .keys_dir()
                     .join(format!("{}.head", self.store.store_id()));
+                // The in-memory log tip tracks the durable SQLite row even if
+                // either the subsequent checkpoint or its warning raises.
+                self.store.head = Some((row.seq, row.mac.clone()));
                 let hook = &mut self.hook;
                 let moved = move_head(&path, &row, self.provider, &mut |b| {
                     if let Some(h) = hook.as_mut() {
                         h(b);
                     }
-                });
+                })?;
                 self.passed(WriteBoundary::HeadMoved);
-                self.store.head = Some((row.seq, row.mac.clone()));
+                if let HeadMove::Failed(error) = &moved {
+                    warn(self.provider, self.store.path(), error).map_err(WriteError::Callback)?;
+                }
                 Some(moved)
             }
         };

@@ -423,7 +423,7 @@ fn truthy(v: &PyValue) -> bool {
 
 /// The message of the UnicodeEncodeError binding `s` raises, if it holds a
 /// surrogate.
-fn encode_error(s: &[u32]) -> Option<String> {
+pub(super) fn encode_error(s: &[u32]) -> Option<String> {
     let surrogate = |c: &u32| (0xD800..=0xDFFF).contains(c);
     let start = s.iter().position(surrogate)?;
     let end = start + s[start..].iter().take_while(|c| surrogate(c)).count();

@@ -495,9 +495,13 @@ fn rebuilt(visit: Visit<'_>) -> Option<PyValue> {
 /// any depth, written by `defang_control_tokens`; a container rebuilt only
 /// where a string in it changed. The walk keeps its own stack.
 pub fn named_tokens(value: &PyValue) -> PyValue {
+    changed_named_tokens(value).unwrap_or_else(|| value.clone())
+}
+
+pub(crate) fn changed_named_tokens(value: &PyValue) -> Option<PyValue> {
     match value {
-        PyValue::Str(s) => return PyValue::Str(defang_control_tokens(s)),
-        v if !is_container(v) => return v.clone(),
+        PyValue::Str(s) => return defanged(s).map(PyValue::Str),
+        v if !is_container(v) => return None,
         _ => {}
     }
     let mut stack = vec![Visit {
@@ -512,7 +516,7 @@ pub fn named_tokens(value: &PyValue) -> PyValue {
             let made = rebuilt(visit);
             match stack.last_mut() {
                 Some(parent) => parent.done.push(made),
-                None => return made.unwrap_or_else(|| value.clone()),
+                None => return made,
             }
             continue;
         };

@@ -194,6 +194,7 @@ from . import (
     gen_store_records_d,
     gen_store_records_e,
     gen_store_returned,
+    gen_store_record_event,
     gen_store_membership,
     gen_store_rotation,
     gen_history_rows,
@@ -449,6 +450,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_records_e": gen_store_records_e.generate,
     "store_returned": gen_store_returned.generate,
     "store_returned_posix": gen_store_returned.generate_posix,
+    "store_record_event_posix": gen_store_record_event.generate_posix,
     "store_membership": gen_store_membership.generate,
     "store_rotation": gen_store_rotation.generate,
     "store_rotation_python": gen_store_rotation.generate_python,
@@ -1068,7 +1070,8 @@ PLATFORM_GATED = frozenset(
 #: resolved POSIX path under a POSIX ``flock``; ``store_write`` records the
 #: same state after each write, ``store_tx`` after each transaction,
 #: ``store_records`` after each writer call, ``store_returned_posix`` after
-#: each backfill step.
+#: each backfill step; ``store_record_event_posix`` opens such stores to
+#: write events into them.
 #: ``githead_posix`` reads links, FIFOs and ENOTDIR, which Windows answers
 #: otherwise (`gen_githead`); ``githead_discovery`` walks trees with links,
 #: FIFOs and modes and reads owners and devices through ``os.lstat`` and
@@ -1223,6 +1226,7 @@ POSIX_ONLY = frozenset(
         "store_records_d",
         "store_records_e",
         "store_returned_posix",
+        "store_record_event_posix",
         "store_membership",
         "store_rotation",
         "store_rotation_python",

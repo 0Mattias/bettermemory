@@ -466,7 +466,7 @@ fn marker_of(file: &mut File) -> Result<Option<Marker>, AdmitError> {
 }
 
 /// `str(OSError)`: `[Errno n] text`.
-fn os_error_text(e: &io::Error) -> String {
+pub(super) fn os_error_text(e: &io::Error) -> String {
     let text = e.to_string();
     match e.raw_os_error() {
         Some(n) => {
@@ -882,7 +882,7 @@ fn held_anywhere(key: FileKey) -> bool {
 /// On POSIX a byte that is no UTF-8 is the lone surrogate `os.fsdecode`
 /// gives it (`surrogateescape`): `pure_path` reads only `/` and `.`, so
 /// it runs over the bytes spelled one character each and back.
-fn path_text(path: &Path) -> PyStr {
+pub(super) fn path_text(path: &Path) -> PyStr {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
