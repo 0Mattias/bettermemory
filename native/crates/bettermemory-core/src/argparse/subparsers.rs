@@ -94,24 +94,44 @@ impl ArgumentParser {
         help: Option<&str>,
         description: Option<&str>,
     ) -> Result<&mut ArgumentParser, SpecError> {
-        let sub = self.subparsers.as_mut().ok_or(SpecError::NoSubparsers)?;
         let name = cps(name);
-        if sub.parsers.iter().any(|(n, _)| *n == name) {
-            return Err(SpecError::ConflictingSubparser);
-        }
-        let mut prog = sub.prog_prefix.clone();
-        prog.push(0x20);
-        prog.extend(&name);
-        if let Some(h) = help {
-            sub.choices_help.push((name.clone(), cps(h)));
-        }
+        let sub = self.register_choice(&name, help)?;
         let mut child = ArgumentParser::new("", description, true);
-        child.prog = prog;
-        if let Some(c) = self.actions[sub.action].choices.as_mut() {
-            c.push(name.clone());
-        }
+        child.prog = sub.prog_prefix.clone();
+        child.prog.push(0x20);
+        child.prog.extend_from_slice(&name);
         sub.parsers.push((name, child));
         Ok(&mut sub.parsers.last_mut().expect("just pushed").1)
+    }
+
+    /// Advertise a subcommand whose parser has yet to be ported.
+    /// Selecting this choice returns the parser's existing unavailable outcome.
+    pub fn add_deferred_parser(&mut self, name: &str, help: Option<&str>) -> Result<(), SpecError> {
+        self.register_choice(&cps(name), help)?;
+        Ok(())
+    }
+
+    fn register_choice(
+        &mut self,
+        name: &[u32],
+        help: Option<&str>,
+    ) -> Result<&mut Subparsers, SpecError> {
+        let sub = self.subparsers.as_mut().ok_or(SpecError::NoSubparsers)?;
+        let choices = &mut self.actions[sub.action].choices;
+        if choices
+            .as_ref()
+            .is_some_and(|names| names.iter().any(|n| n == name))
+            || sub.parsers.iter().any(|(n, _)| n == name)
+        {
+            return Err(SpecError::ConflictingSubparser);
+        }
+        if let Some(choices) = choices {
+            choices.push(name.to_vec());
+        }
+        if let Some(text) = help {
+            sub.choices_help.push((name.to_vec(), cps(text)));
+        }
+        Ok(sub)
     }
 }
 

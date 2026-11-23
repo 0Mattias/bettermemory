@@ -130,7 +130,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership_migrate` | `membership_migrate.py`, unit 1: the constants (`LIVE`, `GONE`, `REPLACED`, `UNREACHABLE`, `RULE_PREFIX`, `LEGACY_REASON`, `MIGRATED`, `_RECORD_TABLES`, `_RECORD_KINDS`, `_SHA`, `_PROBE_BUDGET`, `_PROBE_WORKERS`), `RootDecision`, `RootlessHome`, `LegacyQuestion`, `MigrationTotals` (`to_dict`), `MigrationReport` (`homed`, `to_dict`, `lines`), `_basename`, `_origin`, `_text`, `_id_order`, `_repository_name`, `_shas`, `_json_list` | `membership_migrate_report.jsonl`, `membership_migrate_report_python.jsonl` |
 | `store_refusal` | `_store_refusal.py` whole: `bundle_refusal`, `_may_be_bundle_manifest`, `restore_state`, `_record_lock_held`, `_restore_marker`, `_restore_marker_at`, `_describe_restore`, `restore_refusal`, `store_refusal` and the constants; `json::loads_bytes` (`json.loads` of bytes) | `store_refusal.jsonl`, `store_refusal_posix.jsonl` |
 | `cli::common::read_only_path` (POSIX) | `cli._common.read_only_store_path`, `Config.resolved_directory` with the physical filesystem | `cli_read_only_path.jsonl`, `cli_read_only_path_posix.jsonl` |
-| `entry`, `cli::common`, `cli::root` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`; `cli/__init__.py`'s `_build_parser`, `_add_hook_subparser`, `main` (`cli::root`) | `cli_common.jsonl`, `cli_common_python.jsonl`, `cli_root.jsonl`, `cli_root_python.jsonl` |
+| `entry`, `cli::common`, `cli::root` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`; `cli/__init__.py`'s `_build_parser`, `_add_hook_subparser`, `main` (`cli::root`) | `cli_common.jsonl`, `cli_common_python.jsonl`, `cli_root.jsonl`, `cli_root_python.jsonl`, `cli_registry.jsonl` |
 | `cli::log_report` | Ordered signed-log verification report, plain text, pretty JSON and exit status from `cli/log_cmd.py` | `cli_log_report.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
@@ -20519,8 +20519,8 @@ Read at origin/v9 (7be0e20e); the file is the same in the tree.
 three functions. Unit cli___init__-1a builds the root parser and `main`'s
 routing and dispatch. `cli::membership_health` builds the membership
 section shared by CLI health and `memory_admin`, plus its CLI text lines.
-Command registration, handlers, the shim and the help listing remain
-separate units.
+The product registry supplies the root and log help declarations.
+The process wiring, command handlers and stdio shim have their own units.
 
 ### The map
 
@@ -20529,7 +20529,7 @@ separate units.
 | `_build_parser` | 73-150 | `__version__` and the formatter's width (arguments); each command's `add_subparser` (a `Command`) | built (`cli::root::build_parser`) |
 | `_add_hook_subparser` | 152-177 | nothing | built (`cli::root::add_hook_subparser`) |
 | `main` | 178-298 | `sys.argv[1:]`, `hook_main`, the shim, the commands (arguments) | built (`cli::root::main`) |
-| the help listing and its order | 119-150 | `argparse::help::DefaultHelp` | cli___init__-1b still needs the complete process command catalog |
+| the root and log command listings | 119-150 and `cli/log_cmd.py` | `argparse::help::DefaultHelp` and the formatter width | registered by `cli::root::build_product_parser` |
 
 ### As built
 
@@ -20554,6 +20554,13 @@ separate units.
   is used. `hook` is always `add_hook_subparser`'s, whatever is
   registered under that name. The subparsers dict of the reference is
   `subparser(root, name)`, read from the root's subparsers action.
+- `build_product_parser(version, width)` registers all 31 root commands
+  and four log commands in their Python order. It builds the hook and
+  log verify parsers with their real arguments. Each remaining command
+  carries its parent help row and returns `NotPorted` on selection.
+  `cli_registry.jsonl` checks the production declarations and portable
+  parse results. The parser follows CPython 3.13.13 for error wording
+  and for a leading `--` before a subcommand, which 3.11 rejects.
 - `arm_parsers(cmd)` is `main`'s arm table: `(root, sub)` per name,
   both for `migrate` and `tombstones`, the root alone for
   `rename-scope` and `completion`, the subparser alone for the 17 others
@@ -20604,9 +20611,9 @@ tests are `golden_cli_root` (the same stand-ins in
 
 ### Left for later
 
-cli___init__-1b still needs the ordered root and log declarations at
-the process entry point for the full help listing. The command modules themselves (`cli/*_cmd.py`, `migrate`,
-`export` and the rest) and the shim are their own units.
+The process entry still needs to use the product parser and formatter
+for normal command help. Individual command handlers and the stdio shim
+have their own units.
 
 ## The credential detectors
 
@@ -24514,7 +24521,8 @@ What the reference has and this build does not, by area:
   `cli/__init__.py`'s root parser and dispatch (`_build_parser`,
   `_add_hook_subparser`, `main` in `cli::root`), the membership health
   display (`cli::membership_health`) and signed-log verification output
-  (`cli::log_report`) are implemented. The help listing, remaining shared
+  (`cli::log_report`) are implemented. The product registry supplies the
+  root and log command listings. Process help wiring, the remaining shared
   openers and command handlers are still outstanding.
 - Of the Windows flavour of `location_probe` (unit ntreal built
   `nt_realpath`, `nt_abspath`, `view_path_windows` and `probe_windows`

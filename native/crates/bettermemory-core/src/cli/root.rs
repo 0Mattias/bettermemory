@@ -19,40 +19,8 @@ git history on every read. Run with no arguments to start the MCP server over st
 pub const HOOK_HELP: &str = "Run a harness hook through the daemon: session-start, stop or \
 prompt. Reads the hook's stdin JSON, prints the daemon's answer, always exits 0.";
 
-/// The subcommands in the order `_build_parser` adds them (119-150).
-pub const COMMANDS: [&str; 31] = [
-    "health",
-    "init",
-    "migrate",
-    "export",
-    "tombstones",
-    "rollback",
-    "episodes",
-    "log",
-    "index",
-    "key",
-    "project",
-    "memory",
-    "membership",
-    "eval",
-    "review",
-    "capture",
-    "recall",
-    "rename-scope",
-    "try",
-    "backup",
-    "service",
-    "doctor",
-    "security",
-    "stats",
-    "completion",
-    "config",
-    "up",
-    "down",
-    "status",
-    "serve",
-    "hook",
-];
+mod registry;
+pub use registry::{build_product_parser, COMMANDS};
 
 /// The formatter's width when `COLUMNS` is unset and stdout is no
 /// terminal: `shutil.get_terminal_size`'s fallback of 80, less 2.
@@ -129,14 +97,7 @@ fn registered<'a>(commands: &[&'a dyn Command], name: &str) -> Option<&'a dyn Co
     commands.iter().copied().find(|c| c.name() == name)
 }
 
-/// `_build_parser()` (73-150) with `__version__` given. A name of
-/// [`COMMANDS`] with no [`Command`] registered is skipped; `hook` is
-/// always `_add_hook_subparser`'s.
-pub fn build_parser(
-    version: &str,
-    commands: &[&dyn Command],
-    width: i64,
-) -> Result<ArgumentParser, SpecError> {
+fn base_parser(version: &str, width: i64) -> Result<ArgumentParser, SpecError> {
     let mut parser = ArgumentParser::new("bettermemory", Some(DESCRIPTION), true);
     let version = Kind::Version(cps(&format!("bettermemory {version}")));
     parser.add_argument(
@@ -147,6 +108,18 @@ pub fn build_parser(
         },
     )?;
     parser.add_subparsers(Some("cmd"), width)?;
+    Ok(parser)
+}
+
+/// `_build_parser()` (73-150) with `__version__` given. A name of
+/// [`COMMANDS`] with no [`Command`] registered is skipped; `hook` is
+/// always `_add_hook_subparser`'s.
+pub fn build_parser(
+    version: &str,
+    commands: &[&dyn Command],
+    width: i64,
+) -> Result<ArgumentParser, SpecError> {
+    let mut parser = base_parser(version, width)?;
     for name in COMMANDS {
         if name == "hook" {
             add_hook_subparser(&mut parser)?;
