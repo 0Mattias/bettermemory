@@ -479,6 +479,7 @@ pub mod origin_dates;
 pub mod origin_git;
 pub mod origin_gitfiles;
 pub mod origin_history;
+pub mod origin_match;
 pub mod origin_model;
 pub mod origin_remote;
 pub mod owner_prompt;

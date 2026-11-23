@@ -96,6 +96,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `repository_history` | `location_git.py`'s `RepositoryHistory` (`_batch_check`, `_askable`, `_expand`, `expand`, `holds`, `holds_objects`, `_commit_body`, `fingerprint`, `parents`, `committed`, `reachable_among`, `independent`, `blobs`) and its git fallback `_git`; the object reader is the `Objects` trait, git the `GitRun` trait | `repository_history.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `origin_remote` | `origin_remote.py` whole: `_parse_remote` (the scp-like pattern by hand), `_canonicalize`, `_canonicalize_azure`, and `urllib.parse.urlparse` with `hostname` and `ipaddress`'s grammar for a bracketed host as CPython 3.13.13 has them | `origin_remote.jsonl`, `origin_remote_unicode.jsonl`, `origin_remote_python.jsonl` |
+| `origin_match` | Caller-side repository alternatives and the primary checkout comparison used by the rc3 shadow field in `origin.py` | `origin_match.jsonl`, `origin_match_posix.jsonl` |
 | `owner_prompt` | `owner_prompt.py` but `_ENVELOPES` and `probe_text`: the constants, `owner_text`, `text_blocks`, `is_submitted`, `submitted_text`, `_subagents`, `queued_text`, `owner_prompt`, with `probe_text` an argument; `Reference` implements `transcript::OwnerPrompt` | `owner_prompt.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `origin_gitfiles` | units 1 to 3 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`), the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) and the config facts (`facts`: `_facts_of`, `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies`, `_config_entries`, `_config_variable_names`, `_hold_directory`, `directories_held`, `_global_attributes_path`) and unit 4 (`root`: `_CONFIG_LIMIT`, `_config_facts` and its memo, `_worktree_config_facts`, `_config_moves_worktree`, `refused_worktree_root`, `first_not_a_directory`) and unit 6 (`attrs`: `attribute_files_signature`, `gitattributes_signature`, `_index_gitmodules` and its memo, `_gitdir_at_root`) and unit 7 (`walk`: `capture_files`, `walk_files_signature`, `located_head`, `files_held`), so the whole module | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl`, `origin_gitfiles_facts.jsonl`, `origin_gitfiles_facts_posix.jsonl`, `origin_gitfiles_root_posix.jsonl`, `origin_gitfiles_attrs_posix.jsonl`, `origin_gitfiles_walk_posix.jsonl` |
@@ -13114,8 +13115,27 @@ address grammar's bounds, and 50,000 random texts over the delimiters and
 surrogates without a panic. Outside the fixture, random remotes
 (200,000) were compared with the reference, none differing.
 
-Nothing of the module is left for later units; `origin.repos_match`, its
-caller, is not ported.
+`origin_match::OriginMatcher::repos_match` uses these triples to compare a
+memory's repository with the caller's current remote and alternate spellings.
+
+## Caller repository and worktree matching
+
+`origin_match::process_matcher()` gives capture, health and recall a shared
+owner for remote spellings. Registering a URL updates its ordered alternate
+list, including an empty list. The registry evicts the oldest inserted URL
+after 32 distinct entries. A supplied list takes precedence over the stored
+one. The memory's URL and a caller spelling compare by their lowercased
+parsed triples, or by the original text when a triple cannot be parsed.
+
+`should_include_for_caller` computes the legacy rc3 shadow field recorded
+alongside the current membership result. After the repository matches,
+`worktrees_match` checks the caller's linked primary checkout before asking
+whether the memory's worktree has disappeared. The primary checkout comes
+from its Git marker, with a 64-entry least-recently-used cache that also
+holds missing answers. POSIX `NativeWorktrees` performs the actual file
+reads and path resolution. A configured DEBUG callback receives the
+unmodified path and OS error when existence is indeterminate. Other hosts
+can supply those operations through `WorktreeReads`.
 
 ## The remote rules
 
@@ -24418,8 +24438,10 @@ What the reference has and this build does not, by area:
   (`_changed`, `_body_diff`, `_event_detail`, `_record_row`,
   `_link_change_rows`, `HistoryRow` and `_RecordWalk` are built):
   `history.py`'s `record_history` and the renderers.
-- Checkout capture still requires the orchestration and caller wiring in
-  `origin.py`. `origin_git` supplies its Git probes and `origin_cache` its signature and cache.
+- Checkout capture still requires the orchestration in `origin.py`;
+  `origin_match` holds its caller matching, `origin_git` its Git probes and
+  `origin_cache` its signature and cache, while registration and lookup
+  wiring stay with the capture's consumers.
   Other work remains in `location.py` past its view continuity, the
   capture's filesystem leaves and its capture signature and cache
   (`continuity`, `view_state`, their helpers and unit 1's leaves in
