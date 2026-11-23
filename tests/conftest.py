@@ -522,7 +522,51 @@ def managed_config_path(storage_dir: Path, monkeypatch: pytest.MonkeyPatch) -> P
     return path
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--check-test-files",
+        action="store_true",
+        help="Check the full test file collection",
+    )
+
+
+class _FullSuiteFiles:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.skipped: set[Path] = set()
+        self.deselected: list[str] = []
+
+    def pytest_collectreport(self, report: pytest.CollectReport) -> None:
+        if report.skipped:
+            self.skipped.add(self.root / report.nodeid)
+
+    def pytest_deselected(self, items: Sequence[pytest.Item]) -> None:
+        self.deselected.extend(item.nodeid for item in items)
+
+    def pytest_collection_finish(self, session: pytest.Session) -> None:
+        # Every xdist worker collects the entire suite before dispatch.
+        # A module-level platform skip is a real collection outcome.
+        expected = {
+            path
+            for pattern in ("test_*.py", "*_test.py")
+            for path in Path(__file__).parent.rglob(pattern)
+        }
+        missing = expected.difference(
+            self.skipped, (item.path for item in session.items)
+        )
+        problems = [f"uncollected file: {path}" for path in sorted(missing)]
+        problems.extend(f"deselected test: {nodeid}" for nodeid in self.deselected)
+        if problems:
+            session.config.hook.pytest_collectreport(
+                report=pytest.CollectReport(
+                    "full suite", "failed", "\n".join(problems), []
+                )
+            )
+
+
 def pytest_configure(config: pytest.Config) -> None:
+    if config.getoption("--check-test-files"):
+        config.pluginmanager.register(_FullSuiteFiles(config.rootpath))
     config.addinivalue_line(
         "markers", "shipped_tau: the test reads the review thresholds the package ships"
     )

@@ -60,6 +60,24 @@ def test_the_test_job_keeps_a_windows_leg() -> None:
     assert any(str(leg["os"]).startswith("windows") for leg in include), include
 
 
+def test_windows_workers_distribute_the_whole_suite_before_the_coverage_gate() -> None:
+    # With no paths, filters or shard allowlist, pytest discovers new test
+    # files too. xdist distributes that collection and pytest-cov merges
+    # its data on the controller before it applies the floor.
+    job = _test_job()
+    (suite,) = [step for step in job["steps"] if step.get("name") == "Test"]
+    assert "if" not in suite
+    assert _pytest_args(suite["run"]) == [
+        "--cov=bettermemory",
+        "--cov-report=term-missing",
+        "--cov-fail-under=80",
+        "--check-test-files",
+        "-q",
+        "-n",
+        "2",
+    ]
+
+
 def test_a_windows_step_runs_the_path_tests_with_their_skip_reasons() -> None:
     _, step = _windows_path_step(_test_job()["steps"])
     args = _pytest_args(step["run"])
