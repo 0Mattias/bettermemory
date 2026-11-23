@@ -186,6 +186,13 @@ def _scenarios() -> list[list[list[Any]]]:
             sign(),
         ],
         [*_repo(), sign(), ["link", "r/.git/refs/tags", "tags"], sign(), sign()],
+        [
+            *_repo(),
+            ["write", "machine", "[include]\n path = ~/home-config\n"],
+            sign(),
+            ["write", "home-config", '[remote "origin"]\n url = from-home\n'],
+            sign(),
+        ],
     ]
 
 
@@ -276,10 +283,10 @@ def generate_posix() -> dict[str, bytes]:
                     "_machine_configs",
                     return_value=(str(root / "machine"),),
                 ),
-                mock.patch.object(location_git, "_home", return_value=str(root)),
-                mock.patch.object(
-                    location_git, "time", SimpleNamespace(monotonic=lambda: 0.0)
-                ),
+                mock.patch.dict(os.environ, {"HOME": str(root)}),
+                # The primed read stays fresh across the edit regardless of
+                # scheduling. Other readers keep their real timeout clock.
+                mock.patch.object(location_git, "FRESH_SECONDS", float("inf")),
                 mock.patch.object(location_git, "_STAMPED_READS", {}),
                 mock.patch.object(location_git, "_FRESH_READS", {}),
             ):
