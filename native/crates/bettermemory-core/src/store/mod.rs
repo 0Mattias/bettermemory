@@ -721,6 +721,9 @@ impl std::fmt::Debug for StoreFile {
 /// writer's lock.
 pub const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+// sqlite3.connect's default prepared-statement LRU for an owned Store.
+const STATEMENT_CACHE_CAPACITY: usize = 128;
+
 impl StoreFile {
     /// `connect_read_only`: open the store file at `path` writing nothing
     /// to it or beside it (the module's notes), and admit it
@@ -796,6 +799,7 @@ impl StoreFile {
                 copied,
             };
             let mut conn = Connection::open_with_flags(&uri, flags)?;
+            conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE_CAPACITY);
             conn.busy_timeout(BUSY_TIMEOUT)?;
             store.deadline = admission::install(&mut conn)?;
             store.conn = Some(conn);

@@ -584,6 +584,7 @@ fn open_writer(
         &file,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
+    conn.set_prepared_statement_cache_capacity(super::STATEMENT_CACHE_CAPACITY);
     conn.busy_timeout(BUSY_TIMEOUT)?;
     if had_wal {
         conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;

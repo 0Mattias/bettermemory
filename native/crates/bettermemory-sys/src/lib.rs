@@ -10,6 +10,7 @@
 use std::fs::File;
 use std::io;
 
+pub mod sqlite_status;
 mod terminal;
 pub use terminal::stdout_columns;
 

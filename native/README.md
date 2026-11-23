@@ -55,6 +55,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
 | `response_rows` | `_response.py` unit resphit: `SIMILAR_HITS_SHOWN`, `ResponseBuilder.__init__`, `hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict` | `response_hits.jsonl` |
 | `response_write` | `_response.py` unit respwrite: `ResponseBuilder.committed`, `review`, `roster`, `similar_to_dict`, `add_similar`, `transient_to_dict`, `credential_to_dict`, `origin_to_dict`, `actor_to_dict` (free functions) | `response_write.jsonl`, `response_write_posix.jsonl` |
+| `handlers::search_request` | `handlers/search.py` request width and mode, `Hydrator` and `_TopExpansion` | `handler_search_request.jsonl` |
 | `handlers::verify` | unit h_verify-1 of `handlers/verify.py`: the caps, `_check_verify_args`, `_refuse_stale_stored_claims`, `_refuse_unverifiable_stored_attestations`, `_relative_to_root`, `_refuse_evidence_free_stamp`, `_record_root`, `_within`, `_is_callers_tree` | `handlers_verify_args.jsonl`, `handlers_verify_args_unicode.jsonl`, `handlers_verify_gates.jsonl`, `handlers_verify_gates_python.jsonl` |
 | `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations`; unit passes: `_relative_attestation_keys`, `_read_attestations`, `_AttestationRead`, `_attestation_read`, `_read_citations`, `_check_anchored_attestations`, `_is_checkable_citation`, `_check_anchored_citations`; unit detect: `holds_commit`, `detect_path_drift`, `_detect_unanchored`, `_AnchoredRead` (`report`), `_detect_anchored` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl`, `verify_anchoring_passes.jsonl`, `verify_anchoring_passes_unicode.jsonl`, `verify_anchoring_detect.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
@@ -1122,6 +1123,32 @@ stamp's transaction. It is cut in two units.
 | `_within`, `_is_callers_tree` | 299-307, 310-320 | `realpath`, the working directory | built (h_verify-1) |
 | `_ATTESTATION_REMEDY`, `_check_verify_args` | 389, 392-436 | nothing (`refuse_control_tokens`) | built (h_verify-1) |
 | `_stamp`, `_load_verify_snapshot` and the handler | 323-386, 438-885 | the store, the caller, git | unit h_verify-2 |
+
+### Search request arguments and full records
+
+`handlers::search_request::width` converts and clamps the width before reading
+the mode. It consults each default only when the corresponding request value
+requires it. The argument protocol keeps the selected mode object and propagates
+errors from integer conversion, truth testing, equality and representation.
+
+Each `Hydrator` owns one request's cache. It sends missing IDs to the loader
+in input order, including duplicates. A returned record replaces every hit
+with that ID. An omitted ID keeps its original candidate and can be retried.
+A streaming loader can fail after yielding records. Those records stay cached.
+If an ID getter raises, hydration returns that error at the failing read.
+The loader stops at that record and earlier cache entries remain available.
+With a SQLite connection, the loader reads the entire batch before exposing
+its records. It looks up the shared single-record statement before encoding
+each ID. A cached statement first observes schema changes when SQLite steps it.
+On a failed ID conversion, the reader checks the connection's current SQLite
+error. When one is present, it retains the conversion error as context.
+Light and full record reads share the store connection's 128 cached statements.
+If SQLite recompiles a query after a schema change, the reader uses the column
+names from the returned row to locate its signed payload.
+
+Ranking candidates retain the full signed `Memory` when one is available.
+The `TopExpansion` event fields preserve Python code points and both integer
+counts at their original precision.
 
 ### What h_verify-1 reproduces (`handlers::verify`)
 

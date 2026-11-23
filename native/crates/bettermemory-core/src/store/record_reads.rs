@@ -6,7 +6,7 @@
 //! (`_active_or_raise`). The rule, with the reference's lines, is the
 //! README's "The plain reads of the index and the records".
 
-use rusqlite::{Connection, ToSql};
+use rusqlite::{Connection, Statement, ToSql};
 
 use super::provenance::BATCH;
 use super::{sql_value, SqlValue, StoreError};
@@ -35,6 +35,12 @@ pub enum ReadError {
     NotPorted(&'static str),
     /// SQLite failed.
     Sqlite(rusqlite::Error),
+    /// SQLite still held a connection error when a bound value failed to
+    /// convert. CPython raises that database error with the conversion as context.
+    Bind {
+        error: rusqlite::Error,
+        context: Box<ReadError>,
+    },
 }
 
 impl ReadError {
@@ -52,6 +58,9 @@ impl ReadError {
             ReadError::Record(e) => e.class().to_owned(),
             ReadError::NotPorted(_) => "native:not_ported".to_owned(),
             ReadError::Sqlite(_) => "native:sqlite".to_owned(),
+            ReadError::Bind { error, .. } => super::reads::failure_of(error)
+                .map_or("DatabaseError", |(class, _)| class)
+                .to_owned(),
         }
     }
 
@@ -69,6 +78,7 @@ impl ReadError {
                     message.clone()
                 },
             ),
+            ReadError::Bind { error, .. } => Some(unicode::cps(&error.to_string())),
             _ => None,
         }
     }
@@ -82,12 +92,19 @@ impl std::fmt::Display for ReadError {
             }
             ReadError::Record(e) => write!(f, "the stored record raised {}", e.class()),
             ReadError::NotPorted(what) => write!(f, "not ported: {what}"),
-            ReadError::Sqlite(e) => write!(f, "{e}"),
+            ReadError::Sqlite(e) | ReadError::Bind { error: e, .. } => write!(f, "{e}"),
         }
     }
 }
 
-impl std::error::Error for ReadError {}
+impl std::error::Error for ReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ReadError::Bind { context, .. } => Some(context.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 impl From<rusqlite::Error> for ReadError {
     fn from(e: rusqlite::Error) -> Self {
@@ -111,11 +128,26 @@ pub(crate) fn rows_of(
     sql: &str,
     params: &[&dyn ToSql],
 ) -> Result<Vec<Row>, ReadError> {
-    let mut statement = conn.prepare(sql)?;
-    let names: Vec<String> = statement.column_names().map(str::to_owned).collect();
+    let mut statement = conn.prepare_cached(sql)?;
+    prepared_rows(&mut statement, params)
+}
+
+fn prepared_rows(
+    statement: &mut Statement<'_>,
+    params: &[&dyn ToSql],
+) -> Result<Vec<Row>, ReadError> {
     let mut rows = statement.query(params)?;
+    let mut names = None;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
+        // sqlite3_step may have recompiled a cached SELECT * after a schema
+        // change. Take the names from the statement that produced this row.
+        let names = names.get_or_insert_with(|| {
+            row.as_ref()
+                .column_names()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        });
         let mut columns = Vec::with_capacity(names.len());
         for (i, name) in names.iter().enumerate() {
             columns.push((name.clone(), sql_value(row.get_ref(i)?)?));
@@ -170,10 +202,7 @@ pub fn body_of(conn: &Connection, record_id: &str) -> Result<Option<String>, Rea
 
 /// `get_memory` (313-317): NotFoundError for an id with no active row.
 pub fn get_memory(conn: &Connection, memory_id: &str) -> Result<Memory, ReadError> {
-    match first_row(conn, MEMORY_ONE, memory_id)? {
-        None => Err(not_found(memory_id)),
-        Some(row) => to_memory(&row),
-    }
+    lookup_memory(conn, || Ok(memory_id))?.ok_or_else(|| not_found(memory_id))
 }
 
 /// `has_memory` (320-326).
@@ -184,13 +213,54 @@ pub fn has_memory(conn: &Connection, memory_id: &str) -> Result<bool, ReadError>
 /// `get_many` (329-338): the records found, in the order asked, an id
 /// asked twice read twice; unknown ids skipped.
 pub fn get_many(conn: &Connection, ids: &[String]) -> Result<Vec<Memory>, ReadError> {
+    get_many_with(conn, ids, Ok)
+}
+
+/// `Store.load_many` for Python strings, including strings that SQLite
+/// cannot bind as UTF-8. The connection looks up or prepares its statement
+/// before encoding the ID, then steps it after all parameters are bound.
+pub fn get_many_python_ids(conn: &Connection, ids: &[PyStr]) -> Result<Vec<Memory>, ReadError> {
+    get_many_with(conn, ids, |id| {
+        unicode::to_string(id).ok_or_else(|| match super::fold::encode_error(id) {
+            Some(message) => ReadError::raised("UnicodeEncodeError", &message),
+            None => ReadError::NotPorted("a codepoint outside Python's range"),
+        })
+    })
+}
+
+fn get_many_with<Id, Text: AsRef<str>>(
+    conn: &Connection,
+    ids: impl IntoIterator<Item = Id>,
+    bind: impl Fn(Id) -> Result<Text, ReadError>,
+) -> Result<Vec<Memory>, ReadError> {
     let mut out = Vec::new();
     for id in ids {
-        if let Some(row) = first_row(conn, MEMORY_ONE, id)? {
-            out.push(to_memory(&row)?);
+        if let Some(memory) = lookup_memory(conn, || bind(id))? {
+            out.push(memory);
         }
     }
     Ok(out)
+}
+
+fn lookup_memory<Text: AsRef<str>>(
+    conn: &Connection,
+    bind: impl FnOnce() -> Result<Text, ReadError>,
+) -> Result<Option<Memory>, ReadError> {
+    let mut statement = conn.prepare_cached(MEMORY_ONE)?;
+    let id =
+        bind().map_err(
+            |context| match bettermemory_sys::sqlite_status::current_error(conn) {
+                Some(error) => ReadError::Bind {
+                    error,
+                    context: Box::new(context),
+                },
+                None => context,
+            },
+        )?;
+    prepared_rows(&mut statement, &[&id.as_ref()])?
+        .first()
+        .map(to_memory)
+        .transpose()
 }
 
 fn dedup<T: Clone + Eq + std::hash::Hash>(items: &[T]) -> Vec<T> {
