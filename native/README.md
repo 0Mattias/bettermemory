@@ -97,6 +97,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `owner_prompt` | `owner_prompt.py` but `_ENVELOPES` and `probe_text`: the constants, `owner_text`, `text_blocks`, `is_submitted`, `submitted_text`, `_subagents`, `queued_text`, `owner_prompt`, with `probe_text` an argument; `Reference` implements `transcript::OwnerPrompt` | `owner_prompt.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `origin_gitfiles` | units 1 to 3 of `origin_gitfiles.py`: the pure decoders (`_unquote_c_path`, `_quoted_header_path`, `_dequote_named_header`, `_dequote_patch_headers` with `claims.hunk_lines`, `_decode_varint`, `_gitmodules_entries`, `_shortening_refs`), the leaves that read the machine (`machine`: `_read_prefix`, `relative_to_root`, `_spelled_as_git`) and the config facts (`facts`: `_facts_of`, `_rev_parse_dies` and its tables, `_merge_word_dies`, `_git_is_at_least`, `_machine_config_dies`, `_machine_value_dies`, `_config_entries`, `_config_variable_names`, `_hold_directory`, `directories_held`, `_global_attributes_path`) and unit 4 (`root`: `_CONFIG_LIMIT`, `_config_facts` and its memo, `_worktree_config_facts`, `_config_moves_worktree`, `refused_worktree_root`, `first_not_a_directory`) and unit 6 (`attrs`: `attribute_files_signature`, `gitattributes_signature`, `_index_gitmodules` and its memo, `_gitdir_at_root`) and unit 7 (`walk`: `capture_files`, `walk_files_signature`, `located_head`, `files_held`), so the whole module | `origin_gitfiles_leaves.jsonl`, `origin_gitfiles_leaves_python.jsonl`, `origin_gitfiles_machine.jsonl`, `origin_gitfiles_machine_python.jsonl`, `origin_gitfiles_darwin.jsonl`, `origin_gitfiles_facts.jsonl`, `origin_gitfiles_facts_posix.jsonl`, `origin_gitfiles_root_posix.jsonl`, `origin_gitfiles_attrs_posix.jsonl`, `origin_gitfiles_walk_posix.jsonl` |
+| `origin_cache` | the directory signature and bounded capture cache from `origin.py`, with the two clock readings and filesystem inputs supplied by the caller | `origin_cache.jsonl`, `origin_cache_posix.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs`; unit githead-1, `githead::discovery`: `stamp`, `find_gitdir`, `gitdir_at`, `locate`, `probed`, `across_filesystems`, `discovery_moved`, `_entry_above`, `_located` and their helpers over `fsdata::Fs`, membership's `Rule`, an `Env` and the owners (`Owners`); unit githead-2, `githead::signature`: `entry_above`, `_stops_at`, `_would_be_git_directory`, `_Undetermined`, `_ref_stamps`, `signature`, and `CtxRefs`, a `RefFs` over a `gitdir::Ctx` | `githead.jsonl`, `githead_posix.jsonl`, `githead_discovery.jsonl`, `githead_signature.jsonl` |
 | `location_probe` | the hook client's namespace probe (`_location_probe.py` 109-187): `_path_state`, `view_path`, `_hostname`, `probe`; unit ntreal, the Windows flavour (`view_path_windows`, `view_path_text`, `probe_windows`) over `fsdata::realpath`'s `FinalPath`, `nt_realpath` and `nt_abspath` (`ntpath.realpath` non-strict with `_readlink_deep` and `_getfinalpathname_nonstrict`, `ntpath.abspath`); the file system is `fsdata`'s `Fs`, the working directory an argument, the host a trait (`Host`: `gethostname`, `strerror` by an errno's name or number) with `StdHost`; `path_gone` and `path_missing` are `gitfile_rule::probe` | `location_probe.jsonl`, `location_probe_python.jsonl`, `location_probe_errno.jsonl`, `ntrealpath_python.jsonl` |
 | `location_caller` | a caller's resolution (`location.py` 1420-1997), unit locstate: the per-process state around a resolution: `process_machine`, `_recorded`, `_clear_machine` (`ProcessMachine`), `_Held`, `_LOCKS`, `_location_lock` (`Locks`, `lock_name`), `_cwd_of`, `_Stand`, `_STANDS`, `_keep_stand`, `_stand_of`, `forget_session`, `_clear_stands` (`Stands`), `_with_file_errors`, `_same_namespace`; every read of the machine a closure | `location_caller_state.jsonl` |
@@ -8035,6 +8036,8 @@ that Unicode too.
 | `origin_gitfiles_attrs_kills` (7), `origin_gitfiles_attrs_robustness` (4) | none | i |
 | `golden_origin_gitfiles_walk_posix`: `origin_gitfiles_walk_posix_every_case` (POSIX only; `origin_gitfiles_walk_not_posix` records the gap as os) | `origin_gitfiles_walk_posix.jsonl` | i |
 | `origin_gitfiles_walk_kills` (5), `origin_gitfiles_walk_robustness` (3) | none | i |
+| `golden_origin_cache`, `golden_origin_cache_posix` | `origin_cache.jsonl`, `origin_cache_posix.jsonl` | i (repository scenarios on POSIX) |
+| `origin_cache_kills`, `origin_cache_robustness` | none | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_every_case` | `capture_vocabulary.jsonl` | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_python_every_case` | `capture_vocabulary_python.jsonl` | ii (Python) |
 | `capture_vocabulary_robustness` (5) | none | i |
@@ -12687,6 +12690,36 @@ ref-name rows without a NUL. The 2 that differ are `-a`, which that command's
 line reads as an option. git accepts a ref named `-a` (the review showed it
 through the refspec route), as the reference does. `gitconfig_remote_rules_robustness`
 gives 10 MB names, values and refspecs an answer in one pass.
+
+## The origin capture signature and cache (`origin.py`)
+
+`origin_cache` covers lines 335–462 and the hit predicate at lines 201–207.
+`capture_signature` starts with `origin_gitfiles::walk::capture_files`.
+When discovery returns a Git directory, the signature appends machine
+configuration stamps, repository configuration stamps, legacy remote stamps,
+the worktree spelling, and the stamps of every ref that can shorten the
+branch name. A linked checkout reads each candidate in the private Git
+directory and again in the common directory. The machine configuration
+reader alone receives the caller's reuse flag. An unavailable kernel
+spelling adds a fresh marker in the spelling slot. An OS error or value
+error during an extended read replaces the whole extension with a fresh
+marker. Discovery without a Git directory returns the base signature.
+
+`OriginCache` is caller-owned. A lookup borrows the saved entry.
+`OriginEntry::matches` requires an equal signature and an elapsed time
+of at least zero and less than 600 seconds on each clock. Remembering a
+directory makes its capture the newest. Reading it preserves insertion
+order. The 257th distinct directory evicts the oldest. Clearing removes
+all entries. The entry holds the captured origin, its alternate remote
+spellings, the directory signature, and the times the capture began.
+Running the capture probes and applying the current caller's source
+belong to the capture operation.
+
+`origin_cache.jsonl` runs the reference cache through expiry, replacement,
+eviction and clearing. The POSIX fixture follows signatures across directory
+moves and changes to machine configuration, repository configuration, legacy
+remotes, and competing ref names. The simulated filesystem tests also
+exercise a long macOS kernel path and Windows discovery.
 
 ## The repository files origin reads in-process (`origin_gitfiles.py`)
 
@@ -23764,7 +23797,9 @@ What the reference has and this build does not, by area:
   (`_changed`, `_body_diff`, `_event_detail`, `_record_row`,
   `_link_change_rows`, `HistoryRow` and `_RecordWalk` are built):
   `history.py`'s `record_history` and the renderers.
-- Reading a checkout still requires the origin's settling (`origin.py`), `location.py` past its view continuity, the
+- Reading a checkout still requires the capture probes and caller wiring in
+  `origin.py`. Its signature and cache are built in `origin_cache`.
+  Other work remains in `location.py` past its view continuity, the
   capture's filesystem leaves and its capture signature and cache
   (`continuity`, `view_state`, their helpers and unit 1's leaves in
   `location::leaves`, and `_evicted`, `_stamp`, `signature` to

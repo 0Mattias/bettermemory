@@ -467,6 +467,7 @@ pub mod membership_shared;
 pub mod mirror_format;
 pub mod models_text;
 pub mod native_text;
+pub mod origin_cache;
 pub mod origin_dates;
 pub mod origin_gitfiles;
 pub mod origin_history;
