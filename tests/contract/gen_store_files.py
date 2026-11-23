@@ -67,6 +67,7 @@ from bettermemory.log import HISTORY_ACCEPTED, STORE_RESTORED, append_history_re
 from bettermemory.log import KeyRing, verify_chain
 from bettermemory.models import Category, Confidence, Source
 from bettermemory.search_lexicon import fts_match_query
+from bettermemory.log import GENESIS_MAC
 from bettermemory.store import Store
 from bettermemory.store_admission import LaterStoreError, StoreRefusedError
 from bettermemory.store_index import query_candidates, ranked_rows
@@ -1387,10 +1388,11 @@ def _real(case: Path) -> None:
         conn.close()
 
 
-_VOLATILE = (
-    (re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)?"), "<ts>"),
-    (re.compile(r"[0-9A-HJKMNP-TV-Z]{26}"), "<ulid>"),
-    (re.compile(r"[0-9a-f]{64}"), "<hex>"),
+# Consume full digests before matching an ID-shaped run of digits inside one.
+_VOLATILE = re.compile(
+    r"(?P<ts>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)?)"
+    r"|(?P<hex>[0-9a-f]{64})"
+    r"|(?P<ulid>[0-9A-HJKMNP-TV-Z]{26})"
 )
 
 
@@ -1398,10 +1400,15 @@ def _masked(dumped: dict[str, Any]) -> dict[str, Any]:
     """A dump with what the clock mints (times, ULIDs, and the MACs and
     digests over them) masked: what two builds of `_real` share."""
 
+    def replace(match: re.Match[str]) -> str:
+        # The log starts from a fixed anchor. A different predecessor must
+        # remain observable when comparing the first row of two stores.
+        if match[0] == GENESIS_MAC:
+            return GENESIS_MAC
+        return f"<{match.lastgroup}>"
+
     def mask(text: str) -> str:
-        for pattern, stand in _VOLATILE:
-            text = pattern.sub(stand, text)
-        return text
+        return _VOLATILE.sub(replace, text)
 
     return {
         "page_size": dumped["page_size"],

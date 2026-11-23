@@ -294,6 +294,40 @@ def test_every_golden_file_has_a_generator() -> None:
         assert on_disk == made
 
 
+def test_real_store_dump_masks_a_mac_containing_an_id_shaped_digit_run() -> None:
+    from tests.contract.gen_store_files import _masked
+
+    digits = "12345678901234567890123456"
+    mac = "ab" * 18 + digits + "cd"
+    assert len(mac) == 64
+    statement = f"VALUES ('{digits}', '{mac}', 'kept')"
+    dumped = {
+        "page_size": 4096,
+        "journal_mode": "wal",
+        "statements": [statement],
+        "keys": {},
+    }
+    assert _masked(dumped)["statements"] == ["VALUES ('<ulid>', '<hex>', 'kept')"]
+
+
+def test_real_store_dump_preserves_the_log_chain_anchor() -> None:
+    from bettermemory.log import GENESIS_MAC
+    from tests.contract.gen_store_files import _masked
+
+    def masked_anchor(value: str) -> object:
+        statement = f"INSERT INTO log (prev_mac, mac) VALUES ('{value}', '{'ab' * 32}')"
+        return _masked(
+            {
+                "page_size": 4096,
+                "journal_mode": "wal",
+                "statements": [statement],
+                "keys": {},
+            }
+        )["statements"]
+
+    assert masked_anchor(GENESIS_MAC) != masked_anchor("01" * 32)
+
+
 def test_no_golden_file_carries_a_host_fact() -> None:
     from tests.contract.gen_store_files import host_fact
 
