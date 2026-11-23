@@ -245,10 +245,9 @@ pub fn reference_python() -> Result<PathBuf, String> {
     }
 }
 
-/// Run `script` under the reference with `args`, every location it could
-/// resolve pointed into `home` (never the owner's files), and no other
-/// variable of the parent's but PATH and what Windows needs to start.
-pub fn run_reference(python: &Path, home: &Path, script: &str, args: &[&Path]) -> Output {
+/// Start a reference command with its own home and application paths, inheriting
+/// only the executable search path and the OS variables needed to start Python.
+pub fn reference_command(python: &Path, home: &Path) -> Command {
     fs::create_dir_all(home).expect("home");
     let mut cmd = Command::new(python);
     cmd.env_clear();
@@ -273,6 +272,12 @@ pub fn run_reference(python: &Path, home: &Path, script: &str, args: &[&Path]) -
         cmd.env(name, home.join(rel));
     }
     cmd.env("PYTHONDONTWRITEBYTECODE", "1");
+    cmd
+}
+
+/// Run `script` with `args` in the isolated reference environment.
+pub fn run_reference(python: &Path, home: &Path, script: &str, args: &[&Path]) -> Output {
+    let mut cmd = reference_command(python, home);
     cmd.arg("-c").arg(script);
     for a in args {
         cmd.arg(a);
