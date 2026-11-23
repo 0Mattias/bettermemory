@@ -6,6 +6,7 @@
 
 pub mod key_objects;
 
+pub(crate) mod integer;
 pub(crate) mod list_sort;
 
 use std::cmp::Ordering;

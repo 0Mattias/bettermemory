@@ -29,6 +29,7 @@ use crate::membership_records::records::{
     Checkout, Proposal, ANSWERED, DUPLICATE_CHECKOUT, FILE_CONTRADICTION, FIRST_SIGHT, IMPORT,
     LEGACY, SUBPROJECT_CONTRADICTION,
 };
+use crate::pyvalue::integer::sub_magnitude;
 use crate::pyvalue::{py_str, PyError, PyStr, PyValue};
 use crate::unicode;
 
@@ -92,32 +93,6 @@ fn parts(x: &str) -> (bool, &str) {
 fn divisible(x: &str, n: usize) -> bool {
     let (_, d) = parts(x);
     d == "0" || (d.len() > n && d.bytes().rev().take(n).all(|b| b == b'0'))
-}
-
-/// `|a - b|` of two magnitudes, `a >= b`, as digits without leading zeros.
-fn sub_magnitude(a: &str, b: &str) -> String {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    let mut out = Vec::with_capacity(a.len());
-    let mut borrow = 0i32;
-    for i in 0..a.len() {
-        let x = i32::from(a[a.len() - 1 - i] - b'0');
-        let y = if i < b.len() {
-            i32::from(b[b.len() - 1 - i] - b'0')
-        } else {
-            0
-        };
-        let mut d = x - y - borrow;
-        borrow = i32::from(d < 0);
-        if d < 0 {
-            d += 10;
-        }
-        out.push(b'0' + d as u8);
-    }
-    while out.len() > 1 && out.last() == Some(&b'0') {
-        out.pop();
-    }
-    out.reverse();
-    String::from_utf8(out).unwrap_or_default()
 }
 
 fn magnitude_ge(a: &str, b: &str) -> bool {

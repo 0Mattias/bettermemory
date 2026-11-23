@@ -130,6 +130,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership_migrate` | `membership_migrate.py`, unit 1: the constants (`LIVE`, `GONE`, `REPLACED`, `UNREACHABLE`, `RULE_PREFIX`, `LEGACY_REASON`, `MIGRATED`, `_RECORD_TABLES`, `_RECORD_KINDS`, `_SHA`, `_PROBE_BUDGET`, `_PROBE_WORKERS`), `RootDecision`, `RootlessHome`, `LegacyQuestion`, `MigrationTotals` (`to_dict`), `MigrationReport` (`homed`, `to_dict`, `lines`), `_basename`, `_origin`, `_text`, `_id_order`, `_repository_name`, `_shas`, `_json_list` | `membership_migrate_report.jsonl`, `membership_migrate_report_python.jsonl` |
 | `store_refusal` | `_store_refusal.py` whole: `bundle_refusal`, `_may_be_bundle_manifest`, `restore_state`, `_record_lock_held`, `_restore_marker`, `_restore_marker_at`, `_describe_restore`, `restore_refusal`, `store_refusal` and the constants; `json::loads_bytes` (`json.loads` of bytes) | `store_refusal.jsonl`, `store_refusal_posix.jsonl` |
 | `entry`, `cli::common`, `cli::root` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`; `cli/__init__.py`'s `_build_parser`, `_add_hook_subparser`, `main` (`cli::root`) | `cli_common.jsonl`, `cli_common_python.jsonl`, `cli_root.jsonl`, `cli_root_python.jsonl` |
+| `cli::log_report` | Ordered signed-log verification report, plain text, pretty JSON and exit status from `cli/log_cmd.py` | `cli_log_report.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
 | `credentials::gate` | unit 2 of `credentials.py`: `_is_placeholder`, `_looks_like_secret`, `_NUMBER_SUFFIX_RE`, `_DATETIME_SHAPE_RE`, `_PLACEHOLDER_VALUES`, `_PLACEHOLDER_WORDS` and the six patterns the two functions spell inline, each by a hand-written matcher | `credentials_gate.jsonl`, `credentials_gate_unicode.jsonl` |
 | `credentials::spans` | units 3 and 4 of `credentials.py`: `_GENERIC_KEYWORD_RE` and `_URI_USERINFO_RE` (built by the engine from their own text and flags), `CredentialMatch`, `_CONTEXT_CHARS`, `_merged_secret_spans`, `secret_spans`, `_redact_all`, `_safe_snippet`, `find_credential_markers` | `credentials_spans.jsonl`, `credentials_spans_unicode.jsonl` |
@@ -24225,6 +24226,21 @@ identity). Lone surrogates travel as code points (`text_field`). Tests:
 Left for later: `_ENVELOPES` and `probe_text` (owner_prompt.py 98-114),
 after pyre-6.
 
+## Signed-log verification output
+
+`cli::log_report::Report::from_verify` takes the store's typed verification
+result and the displayed path. The caller adds the replacement history,
+merges any external anchor checks into the ordered document and closes the
+store before requesting output. Text prints anchor checks before replacement
+history. JSON retains field insertion order, ASCII escapes and two-space
+indentation. A SQLite bytes key keeps its Python representation in text
+and raises the corresponding serialization error in JSON. The returned
+exit status is 0 for an `ok` report and 1 for either other verdict.
+
+The committed cases include the complete text and JSON digests of an
+intact, rekeyed, restored and accepted signed store. The command parser,
+read-only opening and anchor-file loading are separate units.
+
 ## Not built yet
 
 What the reference has and this build does not, by area:
@@ -24347,10 +24363,10 @@ What the reference has and this build does not, by area:
   (`_refuse`, `exit_if_bundle_file`, `key_unreadable_line`,
   `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`) and
   `cli/__init__.py`'s root parser and dispatch (`_build_parser`,
-  `_add_hook_subparser`, `main` in `cli::root`) and the shared membership
-  health display (`cli::membership_health`) are built; the rest,
-  `cli___init__-1b` (the help listing), `cli__common-1b` and the command
-  modules included, is not.
+  `_add_hook_subparser`, `main` in `cli::root`), the membership health
+  display (`cli::membership_health`) and signed-log verification output
+  (`cli::log_report`) are implemented. The help listing, remaining shared
+  openers and command handlers are still outstanding.
 - Of the Windows flavour of `location_probe` (unit ntreal built
   `nt_realpath`, `nt_abspath`, `view_path_windows` and `probe_windows`
   over `FinalPath`): a machine `FinalPath` over `bettermemory-sys`,

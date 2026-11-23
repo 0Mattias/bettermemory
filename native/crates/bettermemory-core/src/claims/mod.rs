@@ -389,26 +389,6 @@ fn decimal_value(cp: u32) -> u8 {
     (k % 10) as u8
 }
 
-fn add_decimal(a: &[u8], b: &[u8]) -> String {
-    let mut out = Vec::with_capacity(a.len().max(b.len()) + 1);
-    let (mut i, mut j, mut carry) = (a.len(), b.len(), 0u8);
-    while i > 0 || j > 0 || carry > 0 {
-        let mut s = carry;
-        if i > 0 {
-            i -= 1;
-            s += a[i];
-        }
-        if j > 0 {
-            j -= 1;
-            s += b[j];
-        }
-        out.push(b'0' + s % 10);
-        carry = s / 10;
-    }
-    out.reverse();
-    String::from_utf8(out).unwrap_or_default()
-}
-
 /// The four groups of `_HUNK_RE.match(line)`
 /// (`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`), as spans.
 type Span = (usize, usize);
@@ -454,7 +434,7 @@ pub fn hunk_lines(line: &[u32]) -> Result<Option<String>, IntTooLong> {
     };
     let removed = count(g[1])?;
     let added = count(g[3])?;
-    Ok(Some(add_decimal(&removed, &added)))
+    Ok(Some(crate::pyvalue::integer::add_digits(&removed, &added)))
 }
 
 /// `_MARK_HASH_RE.fullmatch(mark)`: 40 or 64 lowercase hex digits.
