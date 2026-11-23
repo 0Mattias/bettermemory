@@ -37,14 +37,15 @@ use super::create::{
 use super::digest::{self, DigestError};
 use super::restore_lock;
 use super::schema;
+use super::versions::{self, DiagnosticError, VersionDiagnostic};
 use super::write::WriteError;
-use super::{keys, log_row, meta_get, open_checks, sql_value, SqlValue, StoreError};
+use super::{keys, log_row, meta_get, sql_value, SqlValue, StoreError};
 use super::{StoreVersionError, BUSY_TIMEOUT, LOG_SELECT, SCHEMA_REVISION};
 use crate::json;
 use crate::lexicon;
 use crate::log::ring::binding_path::{self, BindingError, BindingPath};
 use crate::log::{self, fingerprint, HistoryOrigin, Key, KeyRing, LogRow};
-use crate::pyvalue::{self, PyValue};
+use crate::pyvalue::{self, PyStr, PyValue};
 use crate::unicode;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -420,6 +421,8 @@ pub struct WritableStore {
     pub(super) key: Key,
     pub(super) head: Option<(i64, String)>,
     digest: DigestOutcome,
+    digest_reason: Option<PyStr>,
+    pub(super) version_diagnostic: Option<Box<VersionDiagnostic>>,
     bound: bool,
 }
 
@@ -459,6 +462,23 @@ impl WritableStore {
     pub fn digest(&self) -> &DigestOutcome {
         &self.digest
     }
+
+    /// The exact reason a failed digest was left, including raw filesystem codepoints.
+    pub fn digest_reason(&self) -> Option<&[u32]> {
+        self.digest_reason.as_deref()
+    }
+    /// Run a single store operation while retaining its locked writer-check error
+    /// alongside its normal result. An operation which never begins a transaction
+    /// has no such error. The capture is local to this exclusive store borrow.
+    pub fn with_version_diagnostic<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> T,
+    ) -> (T, Option<Box<VersionDiagnostic>>) {
+        self.version_diagnostic = None;
+        let result = operation(self);
+        (result, self.version_diagnostic.take())
+    }
+
     /// Whether this open wrote the key ring's binding.
     pub fn bound(&self) -> bool {
         self.bound
@@ -487,6 +507,54 @@ pub fn open_for_writing_with(
     keys_dir: &Path,
     provider: &dyn Provider,
     hook: &mut dyn FnMut(Boundary),
+) -> Result<WritableStore, OpenError> {
+    open_writer(
+        path,
+        keys_dir,
+        provider,
+        hook,
+        &mut OpenDiagnostics::default(),
+    )
+}
+
+/// The ordinary writing-open error together with any original high-writer verdict.
+/// A malformed revision carries its exact source fields in `version`.
+#[derive(Debug)]
+pub struct OpenFailure {
+    pub error: Box<OpenError>,
+    pub read_only_reason: Option<PyStr>,
+    pub version: Option<Box<VersionDiagnostic>>,
+}
+
+/// The writing open with the complete reader-only reason if an initial
+/// writer minimum causes the supported opener to decline.
+pub fn open_for_writing_diagnostic(
+    path: &Path,
+    keys_dir: &Path,
+    provider: &dyn Provider,
+) -> Result<WritableStore, OpenFailure> {
+    let mut diagnostics = OpenDiagnostics::default();
+    open_writer(path, keys_dir, provider, &mut |_| {}, &mut diagnostics).map_err(|error| {
+        OpenFailure {
+            error: Box::new(error),
+            read_only_reason: diagnostics.read_only_reason,
+            version: diagnostics.version,
+        }
+    })
+}
+
+#[derive(Default)]
+struct OpenDiagnostics {
+    read_only_reason: Option<PyStr>,
+    version: Option<Box<VersionDiagnostic>>,
+}
+
+fn open_writer(
+    path: &Path,
+    keys_dir: &Path,
+    provider: &dyn Provider,
+    hook: &mut dyn FnMut(Boundary),
+    diagnostics: &mut OpenDiagnostics,
 ) -> Result<WritableStore, OpenError> {
     let file = store_path(path);
     // A create refuses before it sweeps when a store exists, so a dead
@@ -530,7 +598,7 @@ pub fn open_for_writing_with(
     // `_connect`'s `held.confirm()`: the connection has read the store,
     // and nothing of its meta or keys is read yet.
     held.confirm()?;
-    let plan = decide(&conn, &deadline, &file, keys_dir, provider)?;
+    let plan = decide(&conn, &deadline, &file, keys_dir, provider, diagnostics)?;
     if had_wal {
         // Decided to write: the close checkpoints as the reference's does.
         conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
@@ -548,7 +616,11 @@ pub fn open_for_writing_with(
         None => false,
     };
     hook(Boundary::Bound);
-    let outcome = digest_mark(&conn, &file, hook)?;
+    let mut digest_reason = None;
+    let outcome = digest_mark(&conn, &file, hook, &mut digest_reason)?;
+    if let DigestOutcome::Left(text) = &outcome {
+        digest_reason.get_or_insert_with(|| unicode::cps(text));
+    }
     let head = conn
         .query_row(
             "SELECT seq, mac FROM log ORDER BY seq DESC LIMIT 1",
@@ -567,6 +639,8 @@ pub fn open_for_writing_with(
         key: plan.key,
         head,
         digest: outcome,
+        digest_reason,
+        version_diagnostic: None,
         bound,
     })
 }
@@ -619,12 +693,18 @@ fn decide(
     file: &Path,
     keys_dir: &Path,
     provider: &dyn Provider,
+    diagnostics: &mut OpenDiagnostics,
 ) -> Result<Plan, OpenError> {
     let meta = read_meta(conn, deadline)?;
-    let shown = file.display().to_string();
+    let shown = versions::path_text(file);
     let version = provider.engine_version();
-    let opened = open_checks(&meta, &shown, &version)?;
+    let checked = super::open_checks_points(&meta, &shown, &version).map_err(|e| {
+        diagnostics.version = e.version;
+        e.error
+    })?;
+    let opened = checked.opened;
     if let Some(reason) = opened.verdict.read_only {
+        diagnostics.read_only_reason = checked.read_only_reason;
         return Err(not_ported(NotPorted::LaterWriter(reason)));
     }
     if opened.verdict.revision < SCHEMA_REVISION {
@@ -1372,12 +1452,33 @@ pub(crate) const REPLACE_ATTEMPTS: u32 = 5;
 /// `require_current_writer` inside a transaction: meta's minimum writer
 /// read again under the lock; above this build's, the connection is held
 /// to reading (`query_only`) and the transaction refused.
-pub(super) fn require_current_writer(conn: &Connection, path: &Path) -> Result<(), WriteError> {
+pub fn require_current_writer(
+    conn: &Connection,
+    path: &Path,
+) -> Result<(), DiagnosticError<WriteError>> {
     const KEY: &str = "min_writer_revision";
-    let mut stmt = conn.prepare("SELECT value FROM meta WHERE key = ?")?;
-    let mut rows = stmt.query([KEY])?;
-    let Some(row) = rows.next()? else {
+    let Some(raw) = current_writer_value(conn, KEY)? else {
         return Ok(());
+    };
+    let needed = versions::stored_revision(Some(&raw), KEY, || versions::path_text(path))
+        .map_err(|e| DiagnosticError::version(e, WriteError::Version))?;
+    if needed > SCHEMA_REVISION {
+        conn.execute_batch("PRAGMA query_only = ON")
+            .map_err(WriteError::from)?;
+        return Err(WriteError::LaterWriter {
+            path: path.to_owned(),
+            needed,
+        }
+        .into());
+    }
+    Ok(())
+}
+
+fn current_writer_value(conn: &Connection, key: &str) -> Result<Option<String>, WriteError> {
+    let mut stmt = conn.prepare("SELECT value FROM meta WHERE key = ?")?;
+    let mut rows = stmt.query([key])?;
+    let Some(row) = rows.next()? else {
+        return Ok(None);
     };
     let value = row.get_ref(0)?;
     let raw = sql_value(value)
@@ -1404,16 +1505,7 @@ pub(super) fn require_current_writer(conn: &Connection, path: &Path) -> Result<(
             }
         })?
         .py_str();
-    let needed =
-        super::stored_revision(Some(&raw), KEY, path.display()).map_err(WriteError::Version)?;
-    if needed > SCHEMA_REVISION {
-        conn.execute_batch("PRAGMA query_only = ON")?;
-        return Err(WriteError::LaterWriter {
-            path: path.to_owned(),
-            needed,
-        });
-    }
-    Ok(())
+    Ok(Some(raw))
 }
 
 /// `Store._transaction` around `body`: `BEGIN IMMEDIATE`, the writer
@@ -1421,11 +1513,15 @@ pub(super) fn require_current_writer(conn: &Connection, path: &Path) -> Result<(
 fn transaction<T>(
     conn: &Connection,
     path: &Path,
+    source: &mut Option<Box<VersionDiagnostic>>,
     body: impl FnOnce(&Connection) -> Result<T, DigestError>,
 ) -> Result<T, DigestError> {
     conn.execute_batch("BEGIN IMMEDIATE")?;
     let out = require_current_writer(conn, path)
-        .map_err(DigestError::Writer)
+        .map_err(|e| {
+            *source = e.version;
+            DigestError::Writer(e.error)
+        })
         .and_then(|()| body(conn))
         .and_then(|v| conn.execute_batch("COMMIT").map(|()| v).map_err(Into::into));
     if out.is_err() && !conn.is_autocommit() {
@@ -1444,19 +1540,31 @@ fn digest_mark(
     conn: &Connection,
     path: &Path,
     hook: &mut dyn FnMut(Boundary),
+    exact_reason: &mut Option<PyStr>,
 ) -> Result<DigestOutcome, OpenError> {
     // An overflow is not among what `digest_mark` catches: it leaves the
     // open.
-    let left = |e: DigestError| match e {
+    let mut source = None;
+    let mut left = |e: DigestError, version: Option<Box<VersionDiagnostic>>| match e {
         DigestError::Overflow => Err(OpenError::Overflow),
-        e => Ok(DigestOutcome::Left(e.to_string())),
+        e => {
+            let text = match &e {
+                DigestError::Writer(error) => {
+                    version.map_or_else(|| error.message_points(), |e| e.exact_message)
+                }
+                other => unicode::cps(&other.to_string()),
+            };
+            let legacy = versions::legacy_text(&text);
+            *exact_reason = Some(text);
+            Ok(DigestOutcome::Left(legacy))
+        }
     };
     match digest::current(conn) {
         Ok(true) => return Ok(DigestOutcome::Current),
         Ok(false) => {}
-        Err(e) => return left(e),
+        Err(e) => return left(e, source),
     }
-    let ingested = transaction(conn, path, |conn| {
+    let ingested = transaction(conn, path, &mut source, |conn| {
         let state = digest::state(conn)?;
         match digest::built(conn, state.as_deref())? {
             Some(seen) => digest::ingest(conn, seen).map(|()| true),
@@ -1469,7 +1577,7 @@ fn digest_mark(
             return Ok(DigestOutcome::Ingested);
         }
         Ok(false) => {}
-        Err(e) => return left(e),
+        Err(e) => return left(e, source),
     }
     // `_build`: its name is never a final byte (the last transaction
     // removes it).
@@ -1478,15 +1586,17 @@ fn digest_mark(
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::Relaxed)
     );
-    let start = match transaction(conn, path, |conn| digest::build_begin(conn, &token)) {
+    let start = match transaction(conn, path, &mut source, |conn| {
+        digest::build_begin(conn, &token)
+    }) {
         Ok(start) => start,
-        Err(e) => return left(e),
+        Err(e) => return left(e, source),
     };
     hook(Boundary::BuildBegun);
     for removed in [false, true] {
         let mut after = 0;
         loop {
-            let batch = transaction(conn, path, |conn| {
+            let batch = transaction(conn, path, &mut source, |conn| {
                 if !digest::build_owns(conn, &token)? {
                     return Ok(None);
                 }
@@ -1503,11 +1613,11 @@ fn digest_mark(
                 Ok(None) => {
                     return Ok(DigestOutcome::Left("another build took it over".to_owned()))
                 }
-                Err(e) => return left(e),
+                Err(e) => return left(e, source),
             }
         }
     }
-    let ended = transaction(conn, path, |conn| {
+    let ended = transaction(conn, path, &mut source, |conn| {
         if !digest::build_owns(conn, &token)? {
             return Ok(false);
         }
@@ -1516,9 +1626,9 @@ fn digest_mark(
     match ended {
         Ok(true) => hook(Boundary::BuildEnded),
         Ok(false) => return Ok(DigestOutcome::Left("another build took it over".to_owned())),
-        Err(e) => return left(e),
+        Err(e) => return left(e, source),
     }
-    let caught = transaction(conn, path, |conn| {
+    let caught = transaction(conn, path, &mut source, |conn| {
         let state = digest::state(conn)?;
         match digest::built(conn, state.as_deref())? {
             Some(seen) => digest::ingest(conn, seen).map(|()| true),
@@ -1531,7 +1641,7 @@ fn digest_mark(
             Ok(DigestOutcome::Built)
         }
         Ok(false) => Ok(DigestOutcome::Left("the build was not current".to_owned())),
-        Err(e) => left(e),
+        Err(e) => left(e, source),
     }
 }
 

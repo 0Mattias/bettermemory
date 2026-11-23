@@ -246,6 +246,7 @@ impl WritableStore {
         provider: &'s mut dyn Provider,
         hook: Option<&'s mut dyn FnMut(WriteBoundary)>,
     ) -> Result<Transaction<'s>, WriteError> {
+        self.version_diagnostic = None;
         if !self.conn.is_autocommit() {
             self.conn.execute_batch("ROLLBACK")?;
         }
@@ -263,7 +264,10 @@ impl WritableStore {
             open: true,
         };
         tx.passed(WriteBoundary::Begun);
-        require_current_writer(&tx.store.conn, tx.store.path())?;
+        require_current_writer(&tx.store.conn, tx.store.path()).map_err(|e| {
+            tx.store.version_diagnostic = e.version;
+            e.error
+        })?;
         Ok(tx)
     }
 

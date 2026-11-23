@@ -132,6 +132,21 @@ pub enum WriteError {
 }
 
 impl WriteError {
+    /// The callback or SQLite message delivered to a digest or event logger.
+    /// A version exception's full path comes from the same operation's
+    /// `VersionDiagnostic`.
+    pub fn message_points(&self) -> crate::pyvalue::PyStr {
+        match self {
+            Self::Version(error) => unicode::cps(&error.message),
+            Self::Callback(error) => error.exception.message.clone(),
+            Self::Clock(error) => crate::unicode::cps(&super::restore_lock::os_error_text(error)),
+            Self::Refused {
+                text: Some(text), ..
+            } => crate::unicode::cps(text),
+            other => crate::unicode::cps(&other.to_string()),
+        }
+    }
+
     pub fn class(&self) -> &'static str {
         match self {
             WriteError::NotPorted(_) => "not_ported",
@@ -180,7 +195,7 @@ impl std::fmt::Display for WriteError {
             WriteError::NotAnObject => f.write_str("a mutation's payload is an object"),
             WriteError::Version(error) => f.write_str(&error.message),
             WriteError::LaterWriter { path, needed } => {
-                let quoted = crate::printable::quoted(&super::restore_lock::path_text(path));
+                let quoted = crate::printable::quoted(&super::versions::path_text(path));
                 write!(f, "attempt to write a readonly database: {} now needs a writer at schema \
                     revision {needed}; this build writes {}. Upgrade bettermemory and reopen the store.",
                     crate::json::utf8_text(&quoted), super::SCHEMA_REVISION)

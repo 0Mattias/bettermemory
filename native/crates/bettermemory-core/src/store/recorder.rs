@@ -5,11 +5,12 @@ use super::exception::StoreException;
 use super::record_event::{
     record_bound, BoundCall, EventError, EventLogger, EventTransaction, PreparedPayload, Session,
 };
-use super::write::WriteError;
+use super::{write::WriteError, VersionDiagnostic};
 use crate::event_recorder::{ActorKeyObjects, Dispatch, EventActor, EventSink, PyException};
 use crate::event_redact::{redact_event_fields, Spans};
 use crate::pyvalue::{PyStr, PyValue};
 use crate::unicode::cps;
+use std::sync::Arc;
 
 /// The ordinary credential detector used for both the recorder and store.
 pub fn secret_spans(text: &[u32]) -> Vec<(usize, usize, PyStr)> {
@@ -80,37 +81,44 @@ impl EventSink for StoreEventSink<'_, '_> {
             .as_mut()
             .map(EventTransaction::reborrow)
             .map_err(|text| *text);
-        record_bound(
-            target,
-            &call,
-            || {
-                let mut payload = redact_event_fields(&fields, self.spans);
-                let (record, actor_keys) = match event.actor {
-                    EventActor::None => {
-                        return Ok(PreparedPayload {
-                            value: PyValue::Dict(payload),
-                            actor_keys: ActorKeyObjects::default(),
-                        })
-                    }
-                    EventActor::Published(actor) => (actor.to_record(), ActorKeyObjects::default()),
-                    EventActor::Given(record @ PyValue::Dict(_)) => (record, event.actor_keys),
-                    EventActor::Given(value) => {
-                        actor_record(&value, &event.actor_keys).map_err(EventError::Guard)?
-                    }
-                };
-                if matches!(&record, PyValue::Dict(entries) if !entries.is_empty()) {
-                    // Recorder already removed the one actor keyword from the fields.
-                    payload.push((PyValue::str("actor"), record));
+        let prepare = || {
+            let mut payload = redact_event_fields(&fields, self.spans);
+            let (record, actor_keys) = match event.actor {
+                EventActor::None => {
+                    return Ok(PreparedPayload {
+                        value: PyValue::Dict(payload),
+                        actor_keys: ActorKeyObjects::default(),
+                    })
                 }
-                Ok(PreparedPayload {
-                    value: PyValue::Dict(payload),
-                    actor_keys,
+                EventActor::Published(actor) => (actor.to_record(), ActorKeyObjects::default()),
+                EventActor::Given(record @ PyValue::Dict(_)) => (record, event.actor_keys),
+                EventActor::Given(value) => {
+                    actor_record(&value, &event.actor_keys).map_err(EventError::Guard)?
+                }
+            };
+            if matches!(&record, PyValue::Dict(entries) if !entries.is_empty()) {
+                // Recorder already removed the one actor keyword from the fields.
+                payload.push((PyValue::str("actor"), record));
+            }
+            Ok(PreparedPayload {
+                value: PyValue::Dict(payload),
+                actor_keys,
+            })
+        };
+        let (outcome, version) = match target {
+            Ok(EventTransaction::Store(store, provider)) => {
+                store.with_version_diagnostic(|store| {
+                    record_bound(
+                        Ok(EventTransaction::Store(store, provider)),
+                        &call,
+                        prepare,
+                        self.log,
+                    )
                 })
-            },
-            self.log,
-        )
-        .map(|_| ())
-        .map_err(exception)
+            }
+            other => (record_bound(other, &call, prepare, self.log), None),
+        };
+        outcome.map(|_| ()).map_err(|e| exception(e, version))
     }
 }
 
@@ -125,7 +133,7 @@ pub fn actor_record(
     })
 }
 
-fn exception(e: EventError) -> StoreException {
+fn exception(e: EventError, version: Option<Box<VersionDiagnostic>>) -> StoreException {
     let error = match e {
         EventError::Value(message) => {
             return PyException {
@@ -158,7 +166,16 @@ fn exception(e: EventError) -> StoreException {
             .into()
         }
         WriteError::LaterWriter { .. } | WriteError::RolledBack(_) => "OperationalError",
-        WriteError::Version(_) => "StoreVersionError",
+        WriteError::Version(_) => {
+            if let Some(version) = version {
+                let raised = StoreException::from(PyException {
+                    class: "StoreVersionError".into(),
+                    message: version.exact_message.clone(),
+                });
+                return raised.with_handle(Arc::<VersionDiagnostic>::from(version));
+            }
+            "StoreVersionError"
+        }
         WriteError::NotAnObject => "TypeError",
         WriteError::NotPorted(_) => "NotImplementedError",
     };

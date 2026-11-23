@@ -253,14 +253,7 @@ fn give_up(
 }
 
 fn reason(error: &WriteError) -> PyStr {
-    match error {
-        WriteError::Callback(error) => error.exception.message.clone(),
-        WriteError::Clock(error) => unicode::cps(&super::restore_lock::os_error_text(error)),
-        WriteError::Refused {
-            text: Some(text), ..
-        } => unicode::cps(text),
-        other => unicode::cps(&other.to_string()),
-    }
+    error.message_points()
 }
 
 /// The transaction a writer owns or the outer transaction it joins.

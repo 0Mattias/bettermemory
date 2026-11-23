@@ -68,6 +68,11 @@ pub mod schema;
 pub mod tables;
 pub mod tx;
 pub mod upgrade;
+pub mod versions;
+pub use versions::{
+    check_versions, check_versions_points, DiagnosticError, StoreVersionError, Verdict,
+    VersionDiagnostic,
+};
 pub mod write;
 pub mod writers;
 
@@ -83,9 +88,10 @@ use crate::datetime::{self, DateTime};
 use crate::json;
 use crate::lexicon;
 use crate::log::{KeyRing, LogRow, LogSource, VerifyError};
-use crate::pyvalue::{repr_str, PyError, PyStr, PyValue};
+use crate::pyvalue::{repr_str, PyError, PyValue};
 use crate::search::Record;
 use crate::{float_repr, unicode};
+use versions::shown;
 
 /// `store_schema.SCHEMA_VERSION`, `SCHEMA_REVISION`.
 pub const SCHEMA_VERSION: i64 = 1;
@@ -177,25 +183,6 @@ impl std::fmt::Display for StoreError {
             }
         }
     }
-}
-
-/// `store_versions.StoreVersionError`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StoreVersionError {
-    pub message: String,
-    pub key: Option<&'static str>,
-    pub needed: Option<i64>,
-}
-
-/// `store_versions.VersionVerdict` of a reader's open (`writing` False).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Verdict {
-    /// The store's minimum writer revision is above this build's: the
-    /// reference sets `query_only`; `reason` is its message.
-    pub read_only: Option<String>,
-    pub revision: i64,
-    pub min_reader: i64,
-    pub min_writer: i64,
 }
 
 /// A value as SQLite returned it.
@@ -1023,96 +1010,6 @@ pub(crate) fn meta_get<'a>(meta: &'a [(String, String)], key: &str) -> Option<&'
     meta.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
 }
 
-/// `store_versions._shown`.
-fn shown(text: &str) -> String {
-    let r = repr_str(&unicode::cps(text));
-    let inner = &r[1..r.len() - 1];
-    let cut: PyStr = if inner.len() <= 64 {
-        inner.to_vec()
-    } else {
-        let mut c = inner[..61].to_vec();
-        c.extend(unicode::cps("..."));
-        c
-    };
-    json::utf8_text(&cut)
-}
-
-/// `store_versions._stored_revision`.
-fn stored_revision(
-    raw: Option<&str>,
-    key: &'static str,
-    path: impl std::fmt::Display,
-) -> Result<i64, StoreVersionError> {
-    let Some(raw) = raw else {
-        return Ok(0);
-    };
-    let whole = (1..=9).contains(&raw.len()) && raw.bytes().all(|b| b.is_ascii_digit());
-    if !whole {
-        return Err(StoreVersionError {
-            message: format!(
-                "{path} carries a {key} that is not a whole number ('{}'); the store is not \
-                 opened: set meta's {key} back to a whole number, or restore the store from a \
-                 backup taken before the edit",
-                shown(raw)
-            ),
-            key: Some(key),
-            needed: None,
-        });
-    }
-    Ok(raw.parse::<i64>().unwrap_or(0))
-}
-
-/// `store_versions.check_versions` for a reader's open (`writing` False).
-/// `path` is the path as the reference spells it in a message, `version`
-/// the build's version (`bettermemory.__version__`).
-pub fn check_versions(
-    meta: &[(String, String)],
-    path: &str,
-    version: &str,
-) -> Result<Verdict, StoreVersionError> {
-    let revision = stored_revision(meta_get(meta, "schema_revision"), "schema_revision", path)?;
-    let min_reader = stored_revision(
-        meta_get(meta, "min_reader_revision"),
-        "min_reader_revision",
-        path,
-    )?;
-    let min_writer = stored_revision(
-        meta_get(meta, "min_writer_revision"),
-        "min_writer_revision",
-        path,
-    )?;
-    let newest = match meta_get(meta, "engine_version") {
-        Some(engine) if !engine.is_empty() => {
-            format!(" (its newest writer was bettermemory {})", shown(engine))
-        }
-        _ => String::new(),
-    };
-    if min_reader > SCHEMA_REVISION {
-        return Err(StoreVersionError {
-            message: format!(
-                "{path} needs a reader at schema revision {min_reader} or later (meta's \
-                 min_reader_revision){newest}; this build, bettermemory {version}, reads \
-                 revision {SCHEMA_REVISION}: upgrade bettermemory to open it"
-            ),
-            key: Some("min_reader_revision"),
-            needed: Some(min_reader),
-        });
-    }
-    let read_only = (min_writer > SCHEMA_REVISION).then(|| {
-        format!(
-            "{path} is open for reading only: it needs a writer at schema revision \
-             {min_writer} or later{newest}, and this build, bettermemory {version}, writes \
-             revision {SCHEMA_REVISION}: upgrade bettermemory to write to it"
-        )
-    });
-    Ok(Verdict {
-        read_only,
-        revision,
-        min_reader,
-        min_writer,
-    })
-}
-
 /// Python's `int(text)` of meta's `schema_version` (surrounding
 /// whitespace, a sign, underscores between digits, any Unicode decimal
 /// digits), as canonical decimal text.
@@ -1138,38 +1035,96 @@ pub fn open_checks(
     path: &str,
     version: &str,
 ) -> Result<Opened, StoreError> {
+    open_checks_points(meta, &unicode::cps(path), version)
+        .map(|checked| checked.opened)
+        .map_err(|e| e.error)
+}
+
+/// The legacy opening verdict plus the exact read-only warning when one is due.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckedOpen {
+    pub opened: Opened,
+    pub read_only_reason: Option<crate::pyvalue::PyStr>,
+}
+
+impl StoreFile {
+    /// Validate already-read metadata using the source file's own spelling.
+    pub fn check_opened(
+        &self,
+        meta: &[(String, String)],
+        version: &str,
+    ) -> Result<CheckedOpen, DiagnosticError<StoreError>> {
+        open_checks_at(self.connection(), meta, self.path(), version)
+    }
+}
+
+/// Apply the version verdict to an existing connection. A newer writer minimum
+/// sets query_only; malformed versions raise before that pragma.
+pub fn open_checks_at(
+    connection: &Connection,
+    meta: &[(String, String)],
+    path: &Path,
+    version: &str,
+) -> Result<CheckedOpen, DiagnosticError<StoreError>> {
+    let checked = open_checks_points(meta, &versions::path_text(path), version)?;
+    if checked.read_only_reason.is_some() {
+        connection
+            .execute_batch("PRAGMA query_only = ON")
+            .map_err(StoreError::from)?;
+    }
+    Ok(checked)
+}
+
+/// The opening checks with the exact diagnostic spelling of a Python Path.
+pub fn open_checks_points(
+    meta: &[(String, String)],
+    path: &[u32],
+    version: &str,
+) -> Result<CheckedOpen, DiagnosticError<StoreError>> {
+    let display = || versions::legacy_text(path);
     let store_id = meta_get(meta, "store_id").unwrap_or("");
     let expected = meta_get(meta, "key_fingerprint").unwrap_or("");
     if store_id.is_empty() || expected.is_empty() {
         return Err(StoreError::Refused(format!(
-            "{path} carries no store id or key fingerprint"
-        )));
+            "{} carries no store id or key fingerprint",
+            display()
+        ))
+        .into());
     }
     if !keys::is_store_id(store_id) {
         let head: String = store_id.chars().take(40).collect();
         return Err(StoreError::Refused(format!(
-            "{path} carries a store id this build never writes ({}); the key directory is \
+            "{} carries a store id this build never writes ({}); the key directory is \
              searched by it, so the store is not opened",
+            display(),
             json::utf8_text(&repr_str(&unicode::cps(&head)))
-        )));
+        ))
+        .into());
     }
     let schema_text = meta_get(meta, "schema_version").unwrap_or("0");
     let Some(schema) = python_int(schema_text) else {
         return Err(StoreError::Refused(format!(
             "invalid literal for int() with base 10: {}",
             json::utf8_text(&repr_str(&unicode::cps(schema_text)))
-        )));
+        ))
+        .into());
     };
     if decimal_above(&schema, SCHEMA_VERSION) {
         return Err(StoreError::Refused(format!(
-            "{path} is schema {schema}; this build reads up to {SCHEMA_VERSION}"
-        )));
+            "{} is schema {schema}; this build reads up to {SCHEMA_VERSION}",
+            display()
+        ))
+        .into());
     }
-    let verdict = check_versions(meta, path, version).map_err(StoreError::Version)?;
-    Ok(Opened {
-        store_id: store_id.to_owned(),
-        key_fingerprint: expected.to_owned(),
-        verdict,
+    let verdict = check_versions_points(meta, path, version)
+        .map_err(|e| DiagnosticError::version(e, StoreError::Version))?;
+    Ok(CheckedOpen {
+        opened: Opened {
+            store_id: store_id.to_owned(),
+            key_fingerprint: expected.to_owned(),
+            verdict: verdict.verdict,
+        },
+        read_only_reason: verdict.read_only_points,
     })
 }
 

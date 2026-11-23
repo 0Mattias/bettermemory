@@ -21,7 +21,7 @@ use std::time::Instant;
 use bettermemory_core::log::{KeyRing, ReportDict, ReportValue, VerifyError};
 use bettermemory_core::store::fold::{self, Cell, Label, Problem, TableFold};
 use bettermemory_core::store::keys::load_key_ring;
-use bettermemory_core::store::{open_checks, sqlite_version, StoreError, StoreFile};
+use bettermemory_core::store::{sqlite_version, StoreError, StoreFile};
 use bettermemory_core::unicode;
 
 /// The reference version the version contract's messages name.
@@ -104,7 +104,7 @@ fn main() {
 }
 
 fn run() -> i32 {
-    let mut args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<_> = std::env::args_os().collect();
     let with_fold = args.iter().any(|a| a == "--fold");
     args.retain(|a| a != "--fold");
     if args.len() != 3 {
@@ -146,8 +146,10 @@ fn run() -> i32 {
         Ok(m) => m,
         Err(e) => return fail(&mut fields, "meta", &e.to_string()),
     };
-    let path_text = store_path.to_string_lossy().into_owned();
-    let opened = open_checks(&meta, &path_text, VERSION);
+    let opened = store
+        .check_opened(&meta, VERSION)
+        .map(|v| v.opened)
+        .map_err(|e| e.error);
     timings.push(format!("\"version_contract\": {}", ms(t)));
     let opened = match opened {
         Ok(o) => {

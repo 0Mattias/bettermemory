@@ -11727,6 +11727,39 @@ write time (`Store._signing_key`, under the write's lock in
 `_finish_for_signing`); the next unit must read it there too, never trust
 a key read at open.
 
+### Store version diagnostics
+
+A reader calls `StoreFile::open` for file admission, then
+`StoreFile::check_opened` for metadata and version validation. A writer
+can obtain the same source exception with `open_for_writing_diagnostic`.
+The version checks examine schema revision, minimum reader and minimum
+writer in that order. The diagnostic carries the original path and
+message code points, the metadata key, and the needed revision when
+the reader minimum exceeds this build. A high writer minimum sets
+`query_only` on a reader. The writing opener returns its existing
+`NotPorted::LaterWriter` outcome together with the full read-only reason.
+
+The existing `check_versions`, `open_checks`, `StoreVersionError` and
+`Verdict` expose scalar strings. `check_versions_points` accepts a
+Python code-point spelling. The connection-backed reader and writer
+take a filesystem path. They preserve the raw spelling in the malformed
+revision and minimum-reader diagnostics. The locked higher-writer refusal
+and the upgrade proof quote the path using the reference's printable rules.
+
+Use `WritableStore::with_version_diagnostic` around a single mutation
+or event to obtain its ordinary result and any exact writer-check exception
+from the same transaction. A malformed writer minimum rolls back and
+propagates in both event policies. `WritableStore::digest_reason` gives
+the exact reason when a digest refresh was declined. `prove_exclusive_at`
+retains the underlying SQLite exception class, extended code and name.
+Its cleanup restores the connection in the same order as the Python proof.
+
+The 31 records in `store_version_diagnostics.jsonl` come from Python
+version checks, locked writes and exclusivity proofs on real SQLite
+connections. `store_version_diagnostics_files` exercises signed databases
+on disk, including two distinct invalid UTF-8 names on Linux, literal
+U+FFFD, and a refusal caused by a competing SQLite connection.
+
 ### The reference's order, and what each step writes
 
 Read from `src/bettermemory` at the create unit's tip (4a84448f; line

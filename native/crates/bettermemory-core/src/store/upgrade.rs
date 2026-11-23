@@ -5,10 +5,11 @@
 
 use rusqlite::{ffi, Connection};
 
-use crate::config::{pure_path, Flavour};
+use super::versions::{path_text, DiagnosticError, SqliteDiagnostic, VersionDiagnostic};
 use crate::printable::quoted;
 use crate::store::StoreVersionError;
-use crate::unicode;
+use crate::unicode::cps;
+use std::path::Path;
 
 /// `TRANSACTION_WRITER_REVISION`: the first build that rechecks the writer
 /// minimum within its write lock.
@@ -97,22 +98,13 @@ fn text_of(v: Option<rusqlite::types::Value>) -> Result<String, UpgradeError> {
 /// name shown is `str(Path(path))` on this host (doubled and trailing
 /// separators and `.` segments dropped, an empty name `.`).
 pub fn refusal(path: &str) -> StoreVersionError {
-    let flavour = if cfg!(windows) {
-        Flavour::Windows
-    } else {
-        Flavour::Posix
-    };
-    let shown = quoted(&unicode::cps(&pure_path(path, flavour)));
-    let shown: String = shown.iter().filter_map(|&c| char::from_u32(c)).collect();
-    StoreVersionError {
-        message: format!(
-            "{shown} needs a newer writer; another connection has it open. \
-             Close the daemon and every session using this store, then open it again. \
-             No schema step has run."
-        ),
-        key: None,
-        needed: None,
-    }
+    refusal_at(Path::new(path)).legacy()
+}
+
+fn refusal_at(path: &Path) -> VersionDiagnostic {
+    let mut message = quoted(&path_text(path));
+    message.extend(cps(" needs a newer writer; another connection has it open. Close the daemon and every session using this store, then open it again. No schema step has run."));
+    VersionDiagnostic::new(message, None, None)
 }
 
 /// `_prove_exclusive(conn, path)`: with no busy wait and the exclusive
@@ -123,6 +115,14 @@ pub fn refusal(path: &str) -> StoreVersionError {
 /// hold. An error there replaces the pending outcome, as a `finally`
 /// that raises does.
 pub fn prove_exclusive(conn: &Connection, path: &str) -> Result<(), UpgradeError> {
+    prove_exclusive_at(conn, Path::new(path)).map_err(|e| e.error)
+}
+
+/// The same exclusive proof with the filesystem spelling supplied by its caller.
+pub fn prove_exclusive_at(
+    conn: &Connection,
+    path: &Path,
+) -> Result<(), DiagnosticError<UpgradeError>> {
     let timeout = int_of(step(conn, "PRAGMA busy_timeout").map_err(raw)?)?;
     let mode = text_of(step(conn, "PRAGMA locking_mode").map_err(raw)?)?;
     let tried = (|| {
@@ -135,9 +135,11 @@ pub fn prove_exclusive(conn: &Connection, path: &str) -> Result<(), UpgradeError
     let outcome = match tried {
         Ok(()) => Ok(()),
         Err(e) if sqlite_class(&e) == "OperationalError" => {
-            Err(UpgradeError::Version(refusal(path)))
+            let mut error = refusal_at(path);
+            error.cause = SqliteDiagnostic::from_error(&e).map(Box::new);
+            Err(DiagnosticError::version(error, UpgradeError::Version))
         }
-        Err(e) => Err(raw(e)),
+        Err(e) => Err(raw(e).into()),
     };
     if !conn.is_autocommit() {
         step(conn, "ROLLBACK").map_err(raw)?;
