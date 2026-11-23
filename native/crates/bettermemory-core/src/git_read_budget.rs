@@ -161,6 +161,21 @@ impl<K: Hash + Eq + Clone> Progresses<K> {
     }
 }
 
+/// `call_scope` owns only the owner binding. Finish the original budget
+/// after removing that binding, including when the caller unwinds.
+struct CallOwner<'a> {
+    scope: &'a mut Scope,
+    previous: Option<Shared>,
+    budget: Shared,
+}
+
+impl Drop for CallOwner<'_> {
+    fn drop(&mut self) {
+        self.scope.owner = self.previous.take();
+        self.budget.borrow().finish();
+    }
+}
+
 /// `call_scope(store, name)` around `body`.
 pub fn call_scope<K: Hash + Eq + Clone, R>(
     scope: &mut Scope,
@@ -179,11 +194,13 @@ pub fn call_scope<K: Hash + Eq + Clone, R>(
         resume,
         ..ReadBudget::default()
     }));
-    let token = scope.owner.replace(budget.clone());
-    let out = body(scope, &budget);
-    scope.owner = token;
-    budget.borrow().finish();
-    out
+    let previous = scope.owner.replace(budget.clone());
+    let owner = CallOwner {
+        scope,
+        previous,
+        budget,
+    };
+    body(owner.scope, &owner.budget)
 }
 
 /// `call` (and `async_call`): the scope of `module.qualname` on the first
@@ -212,6 +229,39 @@ pub fn health_call<K: Hash + Eq + Clone, R>(
     call_scope(scope, progresses, &Store::Absent, "", |s, _| body(s))
 }
 
+/// Restore only the bindings this reader installed. Changes inside the
+/// shared budget, or to a binding the reader did not set, remain visible.
+struct ReadBindings<'a> {
+    scope: &'a mut Scope,
+    previous_active: Option<Shared>,
+    previous_root: Option<Option<Root>>,
+}
+
+impl Drop for ReadBindings<'_> {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous_root.take() {
+            self.scope.root = previous;
+        }
+        self.scope.active = self.previous_active.take();
+    }
+}
+
+fn with_read_bindings<R>(
+    scope: &mut Scope,
+    budget: Shared,
+    root: Option<Root>,
+    body: impl FnOnce(&mut Scope) -> R,
+) -> R {
+    let previous_active = scope.active.replace(budget);
+    let previous_root = root.map(|value| scope.root.replace(value));
+    let bindings = ReadBindings {
+        scope,
+        previous_active,
+        previous_root,
+    };
+    body(bindings.scope)
+}
+
 /// `reading(root, home=home)` around `body`.
 pub fn reading<R>(
     scope: &mut Scope,
@@ -220,12 +270,12 @@ pub fn reading<R>(
     body: impl FnOnce(&mut Scope, &Shared) -> R,
 ) -> R {
     let budget = scope.current().unwrap_or_default();
-    let active = scope.active.replace(budget.clone());
-    let root_token = scope.root.replace((root.to_vec(), home));
-    let out = body(scope, &budget);
-    scope.root = root_token;
-    scope.active = active;
-    out
+    with_read_bindings(
+        scope,
+        budget.clone(),
+        Some((root.to_vec(), home)),
+        |scope| body(scope, &budget),
+    )
 }
 
 /// `expired()`.
@@ -291,18 +341,11 @@ pub fn read<R, E>(
     fallback: impl FnOnce() -> R,
 ) -> Result<R, E> {
     let budget = scope.current().unwrap_or_default();
-    let active = scope.active.replace(budget);
-    let root_token = first.map(|root| scope.root.replace(root));
-    let out = body(scope);
-    if let Some(token) = root_token {
-        scope.root = token;
-    }
-    scope.active = active;
-    match out {
+    with_read_bindings(scope, budget, first, |scope| match body(scope) {
         Ok(v) => Ok(v),
         Err(Raise::Deadline(_)) => Ok(fallback()),
         Err(Raise::Other(e)) => Err(e),
-    }
+    })
 }
 
 /// `unread(fn)`.

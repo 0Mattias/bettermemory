@@ -57,6 +57,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `handlers::verify` | unit h_verify-1 of `handlers/verify.py`: the caps, `_check_verify_args`, `_refuse_stale_stored_claims`, `_refuse_unverifiable_stored_attestations`, `_relative_to_root`, `_refuse_evidence_free_stamp`, `_record_root`, `_within`, `_is_callers_tree` | `handlers_verify_args.jsonl`, `handlers_verify_args_unicode.jsonl`, `handlers_verify_gates.jsonl`, `handlers_verify_gates_python.jsonl` |
 | `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations`; unit passes: `_relative_attestation_keys`, `_read_attestations`, `_AttestationRead`, `_attestation_read`, `_read_citations`, `_check_anchored_attestations`, `_is_checkable_citation`, `_check_anchored_citations`; unit detect: `holds_commit`, `detect_path_drift`, `_detect_unanchored`, `_AnchoredRead` (`report`), `_detect_anchored` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl`, `verify_anchoring_passes.jsonl`, `verify_anchoring_passes_unicode.jsonl`, `verify_anchoring_detect.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
+| `response_history` | `_DriftPass` location, eligibility to key a row, and lazy whole-history reads in `_response.py` | `response_history.jsonl` |
 | `verify_basis`, `verify::status` | `verify_basis.py` whole (`unread_recommendation`, `dates_since`, `date_count_uncertainty`, `_count_since_verify` over the `AnchorWalk` trait) and `verify.py`'s status leaves (`CommitDriftStatus`, `_drift_recommendation`, `_claim_drift_recommendation`, `ResolvedCommitDrift`, `_index_paths`, `_unreadable`, `_gated_claims`, `commit_drift_status`, `staleness_verdict_from_report`), and the claim-level narrowing (`_weak_tier_evaluation`, `_claim_legs`, `_resolve_reachable`, `_resolve_with_claims`, `resolve_commit_drift` over the `DriftGit` and `Spelling` traits, and `LiteralReader`, the `LiteralLines` of the built literal reader), the claim anchors (`commit_drift_anchor_paths`, `_anchor_paths`, `_attested_anchor`, `_RELATIVE_CITATION_RE` on the engine) and the count (`resolve_commit_drift_count`, `_quiescent_drift_applicable`, `_anchor_specs`, `applicable_unread`, `compute_commit_drift`, `_narrow_commit_drift` over the `CountGit` trait) | `verify_basis.jsonl`, `verify_weak.jsonl`, `verify_count.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
 | `response_render` | `_response.py`'s `ResponseBuilder.render_hit`, `render_show`, `_SHOW_DEFAULTS`, `_NATIVE_SEP`, `_slashed`, `_path_states`, `_compact_origin`, `_grouped_links` | `response_render.jsonl` |
@@ -1660,7 +1661,9 @@ number of attestations).
 The response builder uses `response_links.rs`, `response_memo.rs` and
 `verdict_signals.rs` (311 lines of source). Its row serializers are in
 `response_rows`, and `response_reason::with_objection` adjusts a verdict
-when a record has an objection. The per-request drift pass is still pending.
+when a record has an objection. The drift pass locates the checkout and
+reads its history in `response_history`. Its per-hit memo and the
+connection to the response builder remain to be wired.
 
 ### The map
 
@@ -1733,6 +1736,46 @@ No regular expression is involved.
   rounds past a cap of 1,000, both as tenfold growth claims; infinite and
   NaN clocks; `i64` bounds). The shared builders are in
   `tests/common/response_leaf.rs`.
+
+## The location and whole history of a drift pass
+
+`response_history::HistoryPass` reproduces the location and history fields
+of `_response._DriftPass.__init__`, `located`, `_keyed_pair`,
+`_history_at`, `_owned`, `timestamps` and `history_applies`. The request
+owns the pass and the same `git_read_budget::Scope` its nested reads use.
+
+Opening the pass asks the files for the root and head. When the files
+decline, `located` remembers the first completed Git answer, including an
+absent pair. A failed Git lookup can be retried. A key check marks itself
+attempted before probing any reader. A row that forbids Git can validate a
+previously located pair. Discovery variables and the head currently read at
+the root decide whether Git's pair can key a row.
+
+The first whole-history attempt locates the head, records which head it
+is reading, and calls the dates reader with both the original cwd and the
+located pair. Missing dates can be retried. Returned dates, including an
+empty list, share the origin reader's `Arc` across hits. Every reuse of
+an unread result notifies the original runner. `history_applies` consults
+a prior attempted read first, then a location, and requests dates only
+when neither answers.
+
+Every `timestamps` call installs the pass's cwd and home flag for the
+duration of the read. A deadline reaching that decorator returns
+`CALL_BUDGET`. A nested date reader can itself return `CALL_BUDGET`,
+which the pass keeps. Other errors propagate with their original type.
+
+`HistoryReads` accepts a path as Python code points. The POSIX adapter
+uses `githead::discovery::discovery_moved`,
+`origin_gitfiles::walk::located_head`, `origin_dates::memo`, and the
+date reader's runner for failure counts. Its pair readers are supplied by
+the caller. The byte-based producers require a filesystem-encodable
+path. Other hosts supply their own path and origin readers through the
+same interface. The contract fixture exercises both pathlib flavours,
+including surrogate path code points, on every host.
+
+Construction of the concrete hit key, row lookup, the per-pass walked
+map, publication of resolved rows and the search/show wiring belong to
+subsequent units.
 
 ## The commit-drift bases and the status leaves of `verify.py` (`verify_basis.py`, `verify::status`)
 
@@ -16332,9 +16375,11 @@ Decisions:
   the owner, else a new one, and `_read` sets the root only for a first
   argument that has both `at_home` and `cwd` (the caller passes that
   pair, `bool(at_home)` already taken).
-- A body's result runs through every reset and `finish`, so a body that
-  fails (an `Err`) still writes its resume, as the reference's `finally`
-  does. A panic is not an exception and runs no reset.
+- Scope guards restore the bindings on return, error, and unwind. The
+  read decorator runs its deadline fallback while the reader's bindings
+  are active. The call that installed the owner resets it before writing
+  the original budget's resume point. A nested call reuses its owner's
+  budget and leaves finalization to the outer call.
 - `_PROGRESS` is keyed by a store's identity: `Store::Keyed` is a key
   with Rust's equality and hash, standing for the reference's hash and
   equality. `Store::Absent` (None) and `Store::Refused` (a store

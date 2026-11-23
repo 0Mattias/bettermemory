@@ -316,6 +316,7 @@
 //! - [`response_write`]: `ResponseBuilder`'s write and review shapes
 //!   (`committed`, `review`, `roster`, the similar and transient rows, the
 //!   origin and actor dicts);
+//! - [`response_history`]: the location, key eligibility and whole-history reads of a drift pass;
 //! - [`response_links`], [`response_memo`] and [`verdict_signals`]: the
 //!   response layer's leaves (`candidate_link_rows`, the per-hit drift
 //!   memo as a generic bounded LRU, and the verdict ladder);
@@ -492,6 +493,7 @@ pub mod recall_prompt;
 pub mod recall_settle;
 pub mod records;
 pub mod repository_history;
+pub mod response_history;
 pub mod response_links;
 pub mod response_memo;
 pub mod response_reason;
