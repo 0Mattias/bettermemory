@@ -1,7 +1,12 @@
-//! `cli/_common.py`, its parser-free leaves: `_refuse`,
+//! `cli/_common.py`, its supplied-path read-only opener and parser-free leaves: `_refuse`,
 //! `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`,
-//! `migration_line` and `parse_iso_cutoff`. The store openers and the
+//! `migration_line` and `parse_iso_cutoff`. The configured store path and the
 //! command context are a later unit.
+
+mod read_only;
+pub use read_only::{
+    open_read_only, open_read_only_with, Diagnostic, ReadOnlyError, ReaderFailure, StatFailure,
+};
 
 use std::path::Path;
 

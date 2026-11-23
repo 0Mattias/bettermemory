@@ -20118,7 +20118,8 @@ Read at 6cf944e5. `_entry.py` (38 lines) whole, and the leaves of
 | `exit_if_key_unreadable` | 161-180 | the block's outcome (an argument) | built |
 | `migration_line` | 320-328 | nothing | built |
 | `parse_iso_cutoff` | 376-477 | the clock (`now`, an argument) | built |
-| `read_only_store_path`, `open_read_only`, `open_owner_store`, `CliContext`, `cli_context`, `migrate_at_open`, `run_migration_at_open`, `cli_recorder` | the rest | the config, the store, the recorder | cli__common-1b, not built |
+| `open_read_only` | 75–127 | path stat, bundle check, supplied read-only opener | built (`cli::common`) |
+| `read_only_store_path`, `open_owner_store`, `CliContext`, `cli_context`, `migrate_at_open`, `run_migration_at_open`, `cli_recorder` | the rest | the config, the store, the recorder | cli__common-1b, not built |
 
 ### As built
 
@@ -20198,9 +20199,33 @@ is a fixed `now` patched into the module's `datetime`. The tests:
   or above 9999 raises an uncaught OverflowError (a traceback, after the
   warning under `"warn"`) instead of the flag's message.
 
+### Opening a supplied store path for reading
+
+`cli::common::open_read_only` accepts a selected filesystem path, a parser,
+an exit code and the read-only owner's constructor. The public wrapper applies
+the host's pathlib spelling, stats the supplied location, checks for a bundle
+with the configured-store remedy, then returns the constructor's owner. A
+missing component, a non-directory parent or a non-regular file uses the
+parser's usage error. Other caught read failures use the requested status,
+and a running restore uses 75. An unsupported bundle probe remains a typed
+failure. The caller owns config selection and supplies the read-only opener
+that performs key-state and provenance checks.
+
+`open_read_only_with` accepts the three operations separately. It keeps
+unexpected exceptions and exceptions raised while formatting diagnostics
+in their original types. The 68 cases of `cli_open_policy.jsonl` compare
+the reference's call order, status, exact stderr and exception identity.
+`cli_open_policy_files` keeps a real `StoreFile` alive through successive
+SQLite reads with a competing restore, and checks cleanup on failure. It
+also reads committed frames from live and orphan WAL files. A live SQLite
+reader may update the existing shared-memory reader marks. A programmatic
+path containing a NUL raises ValueError with the CPython 3.13 wording,
+`stat: embedded null character in path`. Python 3.12 and 3.14 agree.
+Python 3.11 raises `embedded null byte`. OS argument vectors exclude NUL.
+
 ### Left for later
 
-cli__common-1b: `read_only_store_path`, `open_read_only`,
+cli__common-1b: `read_only_store_path`,
 `open_owner_store`, `CliContext`, `cli_context`, `migrate_at_open`,
 `run_migration_at_open` and `cli_recorder`, which need the config's
 loader, the store's opens and the recorder.

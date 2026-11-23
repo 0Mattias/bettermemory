@@ -38,7 +38,7 @@ impl StoreException {
         }
     }
 
-    pub(super) fn os(error: &io::Error, filename: Option<&Path>, filename2: Option<&Path>) -> Self {
+    pub(crate) fn os(error: &io::Error, filename: Option<&Path>, filename2: Option<&Path>) -> Self {
         let class = os_class(error);
         let mut message = unicode::cps(&super::restore_lock::os_error_text(error));
         if let Some(path) = filename.filter(|_| error.raw_os_error().is_some()) {

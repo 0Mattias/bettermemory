@@ -1,0 +1,68 @@
+{"behavior":"non_regular","code":2,"phase":"stat","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: no bettermemory 9 store at memory.sqlite\n","trace":["stat"]}
+{"behavior":"non_regular","code":1,"phase":"stat","raw":true,"result":2,"stderr_cps":[117,115,97,103,101,58,32,98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,32,91,45,104,93,10,98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,58,32,101,114,114,111,114,58,32,110,111,32,98,101,116,116,101,114,109,101,109,111,114,121,32,57,32,115,116,111,114,101,32,97,116,32,114,97,119,45,56575,10],"trace":["stat"]}
+{"behavior":"missing_bad_str","code":2,"phase":"stat","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: no bettermemory 9 store at memory.sqlite\n","trace":["stat"]}
+{"behavior":"missing_bad_str","code":1,"phase":"stat","raw":true,"result":2,"stderr_cps":[117,115,97,103,101,58,32,98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,32,91,45,104,93,10,98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,58,32,101,114,114,111,114,58,32,110,111,32,98,101,116,116,101,114,109,101,109,111,114,121,32,57,32,115,116,111,114,101,32,97,116,32,114,97,119,45,56575,10],"trace":["stat"]}
+{"behavior":"not_directory","code":2,"phase":"stat","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: no bettermemory 9 store at memory.sqlite\n","trace":["stat"]}
+{"behavior":"not_directory","code":1,"phase":"stat","raw":true,"result":2,"stderr_cps":[117,115,97,103,101,58,32,98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,32,91,45,104,93,10,98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,58,32,101,114,114,111,114,58,32,110,111,32,98,101,116,116,101,114,109,101,109,111,114,121,32,57,32,115,116,111,114,101,32,97,116,32,114,97,119,45,56575,10],"trace":["stat"]}
+{"behavior":"os","code":2,"phase":"stat","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: cannot read the store at memory.sqlite: reason\n","trace":["stat","str"]}
+{"behavior":"os","code":1,"phase":"stat","raw":true,"result":1,"stderr_cps":[98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,58,32,101,114,114,111,114,58,32,99,97,110,110,111,116,32,114,101,97,100,32,116,104,101,32,115,116,111,114,101,32,97,116,32,114,97,119,45,56575,58,32,114,101,97,115,111,110,45,56574,10],"trace":["stat","str"]}
+{"behavior":"os_bad_str","code":2,"phase":"stat","raw":false,"result":"format","stderr":"","trace":["stat","str"]}
+{"behavior":"os_bad_str","code":1,"phase":"stat","raw":true,"result":"format","stderr":"","trace":["stat","str"]}
+{"behavior":"other","code":2,"phase":"stat","raw":false,"result":"original","stderr":"","trace":["stat"]}
+{"behavior":"other","code":1,"phase":"stat","raw":true,"result":"original","stderr":"","trace":["stat"]}
+{"behavior":"value_bad_str","code":2,"phase":"stat","raw":false,"result":"original","stderr":"","trace":["stat"]}
+{"behavior":"value_bad_str","code":1,"phase":"stat","raw":true,"result":"original","stderr":"","trace":["stat"]}
+{"behavior":"empty","code":2,"phase":"bundle","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: \n","trace":["stat","bundle"]}
+{"behavior":"empty","code":1,"phase":"bundle","raw":true,"result":1,"stderr":"bettermemory log: error: \n","trace":["stat","bundle"]}
+{"behavior":"refuse","code":2,"phase":"bundle","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: bundle\n","trace":["stat","bundle"]}
+{"behavior":"refuse","code":1,"phase":"bundle","raw":true,"result":1,"stderr_cps":[98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,58,32,101,114,114,111,114,58,32,98,117,110,100,108,101,45,56574,10],"trace":["stat","bundle"]}
+{"behavior":"os_bad_str","code":2,"phase":"bundle","raw":false,"result":"original","stderr":"","trace":["stat","bundle"]}
+{"behavior":"os_bad_str","code":1,"phase":"bundle","raw":true,"result":"original","stderr":"","trace":["stat","bundle"]}
+{"behavior":"restore","code":2,"phase":"bundle","raw":false,"result":"original","stderr":"","trace":["stat","bundle"]}
+{"behavior":"restore","code":1,"phase":"bundle","raw":true,"result":"original","stderr":"","trace":["stat","bundle"]}
+{"behavior":"other","code":2,"phase":"bundle","raw":false,"result":"original","stderr":"","trace":["stat","bundle"]}
+{"behavior":"other","code":1,"phase":"bundle","raw":true,"result":"original","stderr":"","trace":["stat","bundle"]}
+{"behavior":"ok","code":2,"phase":"open","raw":false,"result":"owner","stderr":"","trace":["stat","bundle","open"]}
+{"behavior":"ok","code":1,"phase":"open","raw":true,"result":"owner","stderr":"","trace":["stat","bundle","open"]}
+{"behavior":"missing","code":2,"phase":"open","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: cannot read the store at memory.sqlite: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"missing","code":1,"phase":"open","raw":true,"result":1,"stderr_cps":[98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,58,32,101,114,114,111,114,58,32,99,97,110,110,111,116,32,114,101,97,100,32,116,104,101,32,115,116,111,114,101,32,97,116,32,114,97,119,45,56575,58,32,114,101,97,115,111,110,45,56574,10],"trace":["stat","bundle","open","str"]}
+{"behavior":"not_directory","code":2,"phase":"open","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: cannot read the store at memory.sqlite: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"not_directory","code":1,"phase":"open","raw":true,"result":1,"stderr_cps":[98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,58,32,101,114,114,111,114,58,32,99,97,110,110,111,116,32,114,101,97,100,32,116,104,101,32,115,116,111,114,101,32,97,116,32,114,97,119,45,56575,58,32,114,101,97,115,111,110,45,56574,10],"trace":["stat","bundle","open","str"]}
+{"behavior":"os","code":2,"phase":"open","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: cannot read the store at memory.sqlite: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"os","code":1,"phase":"open","raw":true,"result":1,"stderr_cps":[98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,58,32,101,114,114,111,114,58,32,99,97,110,110,111,116,32,114,101,97,100,32,116,104,101,32,115,116,111,114,101,32,97,116,32,114,97,119,45,56575,58,32,114,101,97,115,111,110,45,56574,10],"trace":["stat","bundle","open","str"]}
+{"behavior":"value","code":2,"phase":"open","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: cannot read the store at memory.sqlite: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"value","code":1,"phase":"open","raw":true,"result":1,"stderr_cps":[98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,58,32,101,114,114,111,114,58,32,99,97,110,110,111,116,32,114,101,97,100,32,116,104,101,32,115,116,111,114,101,32,97,116,32,114,97,119,45,56575,58,32,114,101,97,115,111,110,45,56574,10],"trace":["stat","bundle","open","str"]}
+{"behavior":"database","code":2,"phase":"open","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: cannot read the store at memory.sqlite: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"database","code":1,"phase":"open","raw":true,"result":1,"stderr_cps":[98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,58,32,101,114,114,111,114,58,32,99,97,110,110,111,116,32,114,101,97,100,32,116,104,101,32,115,116,111,114,101,32,97,116,32,114,97,119,45,56575,58,32,114,101,97,115,111,110,45,56574,10],"trace":["stat","bundle","open","str"]}
+{"behavior":"restore","code":2,"phase":"open","raw":false,"result":75,"stderr":"bettermemory log: error: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"restore","code":1,"phase":"open","raw":true,"result":75,"stderr_cps":[98,101,116,116,101,114,109,101,109,111,114,121,32,108,111,103,58,32,101,114,114,111,114,58,32,114,101,97,115,111,110,45,56574,10],"trace":["stat","bundle","open","str"]}
+{"behavior":"lookalike_bad_str","code":2,"phase":"open","raw":false,"result":"original","stderr":"","trace":["stat","bundle","open"]}
+{"behavior":"lookalike_bad_str","code":1,"phase":"open","raw":true,"result":"original","stderr":"","trace":["stat","bundle","open"]}
+{"behavior":"other","code":2,"phase":"open","raw":false,"result":"original","stderr":"","trace":["stat","bundle","open"]}
+{"behavior":"other","code":1,"phase":"open","raw":true,"result":"original","stderr":"","trace":["stat","bundle","open"]}
+{"behavior":"os_bad_str","code":2,"phase":"open","raw":false,"result":"format","stderr":"","trace":["stat","bundle","open","str"]}
+{"behavior":"os_bad_str","code":1,"phase":"open","raw":true,"result":"format","stderr":"","trace":["stat","bundle","open","str"]}
+{"behavior":"restore_bad_str","code":2,"phase":"open","raw":false,"result":"format","stderr":"","trace":["stat","bundle","open","str"]}
+{"behavior":"restore_bad_str","code":1,"phase":"open","raw":true,"result":"format","stderr":"","trace":["stat","bundle","open","str"]}
+{"behavior":"os_custom_format","code":7,"phase":"stat","raw":false,"result":7,"stderr":"bettermemory log: error: cannot read the store at memory.sqlite: formatted\n","trace":["stat","format"]}
+{"behavior":"os_bad_format","code":7,"phase":"stat","raw":false,"result":"format","stderr":"","trace":["stat","format"]}
+{"behavior":"os_custom_format","code":7,"phase":"open","raw":false,"result":7,"stderr":"bettermemory log: error: cannot read the store at memory.sqlite: formatted\n","trace":["stat","bundle","open","format"]}
+{"behavior":"os_bad_format","code":7,"phase":"open","raw":false,"result":"format","stderr":"","trace":["stat","bundle","open","format"]}
+{"behavior":"restore_custom_format","code":7,"phase":"open","raw":false,"result":75,"stderr":"bettermemory log: error: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"restore_bad_format","code":7,"phase":"open","raw":false,"result":75,"stderr":"bettermemory log: error: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"restore","code":0,"phase":"open","raw":false,"result":75,"stderr":"bettermemory log: error: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"missing","code":0,"phase":"stat","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: no bettermemory 9 store at memory.sqlite\n","trace":["stat"]}
+{"behavior":"os","code":0,"phase":"open","raw":false,"result":0,"stderr":"bettermemory log: error: cannot read the store at memory.sqlite: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"empty","code":0,"phase":"bundle","raw":false,"result":0,"stderr":"bettermemory log: error: \n","trace":["stat","bundle"]}
+{"behavior":"restore","code":-7,"phase":"open","raw":false,"result":75,"stderr":"bettermemory log: error: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"missing","code":-7,"phase":"stat","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: no bettermemory 9 store at memory.sqlite\n","trace":["stat"]}
+{"behavior":"os","code":-7,"phase":"open","raw":false,"result":-7,"stderr":"bettermemory log: error: cannot read the store at memory.sqlite: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"empty","code":-7,"phase":"bundle","raw":false,"result":-7,"stderr":"bettermemory log: error: \n","trace":["stat","bundle"]}
+{"behavior":"restore","code":17,"phase":"open","raw":false,"result":75,"stderr":"bettermemory log: error: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"missing","code":17,"phase":"stat","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: no bettermemory 9 store at memory.sqlite\n","trace":["stat"]}
+{"behavior":"os","code":17,"phase":"open","raw":false,"result":17,"stderr":"bettermemory log: error: cannot read the store at memory.sqlite: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"empty","code":17,"phase":"bundle","raw":false,"result":17,"stderr":"bettermemory log: error: \n","trace":["stat","bundle"]}
+{"behavior":"restore","code":75,"phase":"open","raw":false,"result":75,"stderr":"bettermemory log: error: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"missing","code":75,"phase":"stat","raw":false,"result":2,"stderr":"usage: bettermemory log [-h]\nbettermemory log: error: no bettermemory 9 store at memory.sqlite\n","trace":["stat"]}
+{"behavior":"os","code":75,"phase":"open","raw":false,"result":75,"stderr":"bettermemory log: error: cannot read the store at memory.sqlite: reason\n","trace":["stat","bundle","open","str"]}
+{"behavior":"empty","code":75,"phase":"bundle","raw":false,"result":75,"stderr":"bettermemory log: error: \n","trace":["stat","bundle"]}
