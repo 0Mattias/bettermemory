@@ -9,6 +9,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use bettermemory_core::pyvalue::PyStr;
+use bettermemory_core::unicode;
 use bettermemory_core::verify_anchoring::anchor::{
     AnchorPaths, Anchoring, CallerView, Checkout, ClaimAnchor, HoldsFn, Home, MembershipModel,
     TranslateFn, UnknownCheckout, View, CONVICTING_ANCHORS, GLOBAL_RECORD, HELD_COMMIT_MEMO_CAP,
@@ -45,7 +47,11 @@ fn inside(p: &str, r: &str) -> bool {
 struct Paths(Log);
 
 impl AnchorPaths for Paths {
-    fn expected_home(&self, path: &str, roots: &[String]) -> bool {
+    fn expected_home(&self, path: &str, roots: &[PyStr]) -> bool {
+        let roots: Vec<_> = roots
+            .iter()
+            .map(|r| unicode::to_string(r).unwrap())
+            .collect();
         self.0
             .borrow_mut()
             .push(json!(["expected_home", path, roots]));
@@ -191,7 +197,7 @@ fn anchor_json(a: &Option<ClaimAnchor>) -> Value {
         None => Value::Null,
         Some(a) => json!({
             "root": a.root, "rule": a.rule, "caller_root": a.caller_root,
-            "origin_root": a.origin_root, "recorded_roots": a.recorded_roots,
+            "origin_root": a.origin_root.as_deref().map(|r| unicode::to_string(r).unwrap()), "recorded_roots": a.recorded_roots,
             "commit_standin": a.commit_standin,
         }),
     }
@@ -269,7 +275,7 @@ fn anchor_case(case: &Value) -> (Value, Value) {
             .get("h")
             .filter(|h| !h.is_null())
             .map(|h| held_fn(h, &log)),
-        origin_root: opt(&a["origin_root"]),
+        origin_root: a["origin_root"].as_str().map(unicode::cps),
         recorded_roots: strs(&a["recorded_roots"]),
         commit_standin: a["commit_standin"].as_bool().unwrap_or(false),
     };

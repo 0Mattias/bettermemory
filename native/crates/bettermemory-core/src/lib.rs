@@ -331,6 +331,10 @@
 //! - [`response_reason`] and [`response_trust`]: the reason a row asks for
 //!   a check and the verdict with its objection, and the trust appliers
 //!   that rewrite a row's verdict from the store's trust rows;
+//! - [`verdict`]: one staleness verdict per memory (`verdict.py`'s
+//!   `resolve_verdicts`, `memoised_verdicts`, `memory_verdict` and
+//!   `_verdict`), the commit legs a trait and the path drift read a
+//!   closure;
 //! - [`handlers`]: the MCP tool handlers, their first unit (the pure
 //!   gates of `handlers/verify.py`);
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
@@ -504,6 +508,7 @@ pub mod tool_handlers;
 pub mod transcript;
 pub mod unicode;
 pub mod use_tokens;
+pub mod verdict;
 pub mod verdict_signals;
 pub mod verify;
 pub mod verify_anchoring;

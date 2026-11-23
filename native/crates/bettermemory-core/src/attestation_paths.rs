@@ -58,10 +58,13 @@ pub enum Kind {
 
 /// A sequence of path texts and its class.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Paths {
+pub struct Paths<T = PyStr> {
     pub kind: Kind,
-    pub items: Vec<PyStr>,
+    pub items: Vec<T>,
 }
+
+/// References to the path strings already held by a record.
+pub type PathRefs<'a> = Paths<&'a [u32]>;
 
 /// What a call raises.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -436,8 +439,11 @@ fn present(targets: &Targets) -> Vec<PyStr> {
     targets.iter().filter_map(|(_, t)| t.clone()).collect()
 }
 
-/// `record_paths(record, absent=absent)`.
-pub fn record_paths(record: &Record, absent: bool) -> Paths {
+fn select_paths<'a, T>(
+    record: &'a Record,
+    absent: bool,
+    entry: impl Fn(&'a PyStr) -> T,
+) -> Paths<T> {
     let (targets, legacy) = if absent {
         (
             &record.verified_absent_path_targets,
@@ -449,13 +455,28 @@ pub fn record_paths(record: &Record, absent: bool) -> Paths {
     match targets {
         None => Paths {
             kind: Kind::Reference,
-            items: legacy.clone(),
+            items: legacy.iter().map(entry).collect(),
         },
         Some(targets) => Paths {
             kind: Kind::Literal,
-            items: present(targets),
+            items: targets
+                .iter()
+                .filter_map(|(_, t)| t.as_ref())
+                .map(entry)
+                .collect(),
         },
     }
+}
+
+/// `record_paths(record, absent=absent)` with owned paths.
+pub fn record_paths(record: &Record, absent: bool) -> Paths {
+    select_paths(record, absent, Clone::clone)
+}
+
+/// `record_paths` for a read over the record's lifetime. Python's tuple
+/// holds references to the path strings, including each non-null target.
+pub fn record_path_refs(record: &Record, absent: bool) -> PathRefs<'_> {
+    select_paths(record, absent, Vec::as_slice)
 }
 
 /// `commit_paths(record)`.

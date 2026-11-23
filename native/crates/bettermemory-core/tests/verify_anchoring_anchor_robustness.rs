@@ -7,6 +7,8 @@ mod timing;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use bettermemory_core::pyvalue::PyStr;
+use bettermemory_core::unicode::cps;
 use bettermemory_core::verify_anchoring::anchor::{
     AnchorPaths, Anchoring, CallerView, Checkout, ClaimAnchor, Home, MembershipModel,
     UnknownCheckout, View, HELD_COMMIT_MEMO_CAP,
@@ -16,8 +18,11 @@ use bettermemory_core::verify_anchoring::report::PathDriftReport;
 struct Plain;
 
 impl AnchorPaths for Plain {
-    fn expected_home(&self, path: &str, roots: &[String]) -> bool {
-        roots.iter().any(|r| self.inside(path, r))
+    fn expected_home(&self, path: &str, roots: &[PyStr]) -> bool {
+        let path = cps(path);
+        roots
+            .iter()
+            .any(|r| bettermemory_core::capture::paths::inside(&path, r))
     }
     fn relative_under(&self, path: &str, root: Option<&str>) -> Option<String> {
         let root = root?;

@@ -61,6 +61,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
 | `response_render` | `_response.py`'s `ResponseBuilder.render_hit`, `render_show`, `_SHOW_DEFAULTS`, `_NATIVE_SEP`, `_slashed`, `_path_states`, `_compact_origin`, `_grouped_links` | `response_render.jsonl` |
 | `response_reason`, `response_trust` | `_response.py`'s `check_reason` (`_named`, `_REASON_PATHS`, `_rejection_note`), `_UNTRUSTED_PROVENANCE`, `_untrusted`, `verdict_and_reason`, `_row_reason`, `_claim_at_index`, `TRUST_UNAVAILABLE_RECOMMENDATION`, `ResponseBuilder.attach_provenance`, `apply_trust_unavailable`, `apply_trust`; `verdict.py`'s `_OBJECTED` and `with_objection` | `response_reason.jsonl` |
+| `verdict` | `verdict.py`'s `MemoryVerdict`, `UnresolvedVerdict`, `resolve_verdicts`, `memoised_verdicts`, `memory_verdict`, `_open_legs`, `_verdict` (the commit legs a trait, the path drift read and `unchecked_verdict` closures) | `verdict.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms; `_query_biased_snippet` with its memos (`snippet`), `_memory_tokens`, `seed_memory_tokens` and their LRU (`token_cache`), `top_hit_leads_runner_up` | `search.jsonl`, `search_ranker.jsonl`, `search_snippet.jsonl`, `search_snippet_unicode.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
@@ -1896,9 +1897,9 @@ Decisions:
   `response_reason::Raised` and `ValueError`, which `zip(...,
   strict=True)` raises over unconfirmed paths and reasons of different
   lengths. The answer is a `Row` in the reference's key order.
-- `verify.PathDriftReport` is not built: the show takes
-  `PathDriftLists`, the ten fields `_path_states` and `render_show`
-  read, which the drift unit will fill.
+- The show takes `PathDriftLists`, the ten fields `_path_states` and
+  `render_show` read. Wiring those fields from `verify_anchoring::PathDriftReport`
+  remains part of the show integration.
 - `claims.parse_claim` is the caller's function, `ParsedClaim`: the
   claim's kind and `rel_path`, or `Err(ClaimRejected)` where it raises
   `ValueError`. The claims unit supplies it.
@@ -2007,6 +2008,94 @@ pinned as a count and SHA-256. Rust: `golden_response_reason.rs`,
 Left for later units: `apply_commit_drift_unread` and
 `apply_commit_drift_unchecked` (the drift unit), `_SHOW_DEFAULTS` and the
 rest of `ResponseBuilder`.
+
+## One staleness verdict per memory (`verdict.py`)
+
+`src/verdict.rs` reproduces the verdict `memory_show` emits and the memo
+read of it (278 lines of source). `_OBJECTED` and `with_objection` were
+built with `response_reason`.
+
+### The map
+
+| Function | Reference lines | Needs from the machine | Status |
+| --- | --- | --- | --- |
+| `MemoryVerdict` | 117-141 | nothing | built (generic over the unchecked leg) |
+| `UnresolvedVerdict` | 144-152 | nothing | built |
+| `resolve_verdicts` | 155-200 | the commit legs, the anchoring, the path drift read | built |
+| `memoised_verdicts` | 203-242 | as `resolve_verdicts` | built |
+| `memory_verdict` | 245-263 | as `resolve_verdicts` | built |
+| `_open_legs` | 266-277 | the legs' constructor, as a closure | built |
+| `_verdict` | 280-368 | as `resolve_verdicts` | built |
+
+No regular expression is involved.
+
+### What each reproduces
+
+- `commit_legs.CommitLegs` is unbuilt (commit_legs-1), so it is the trait
+  `CommitLegs` (`active`, `prime`, `lookup`, `store`), with
+  `CommitLegUnchecked` its associated type, opaque here. `lookup` answers
+  (answered, `Resolved`): a `ResolvedCommitDrift`, a `CommitDriftUnread`,
+  the unchecked leg or None. `open_legs` takes the constructor as a
+  closure, since the caller's origin and admission reach only the legs,
+  and keeps the reference's `active` test.
+- `verify_anchoring.Anchoring` is read through the trait
+  `VerdictAnchoring` (`prime`, `for_record`), which `Anchoring` implements
+  with `ClaimAnchor` its anchor; a test double answers any anchor type.
+- `detect_path_drift`'s module bindings wait for verify_candidates unit
+  4, so the read is a closure of (body, verified paths, absent paths,
+  worktree root, anchor), the paths built by `record_paths`.
+  `unchecked_verdict` is a closure too. `compute_verification_status`,
+  `commit_drift_status` and `staleness_verdict_from_report` are the
+  crate's own.
+- The calls keep the reference's order: the legs primed with every id
+  (an id given twice twice), else the anchoring; per row the calendar
+  status, the anchor, the path drift read, the lookup; the legs' store
+  after the last row of a resolving call. A raise (the calendar status's
+  `TypeError` on a naive `now` against an aware stamp, as
+  `VerdictError::NaiveAwareMix`) stops the batch where it falls, and no
+  store follows.
+- `resolve_verdicts` asserts every row answered; a row the legs leave
+  unanswered under `resolve=True` is `VerdictError::Unanswered`, the
+  reference's `AssertionError`, after the lookup and before the store.
+  `memoised_verdicts` answers `Verdict::Unresolved` exactly there.
+- The rollup is `spot_check_required` with an unread history, else
+  `unchecked_verdict` of it with an unchecked leg, else the rollup; the
+  commit count reaches the rollup only from a resolved drift.
+- The recorded worktree root goes to the path drift read only where no
+  anchor reads the record; `for_record` always gets it (None without an
+  origin, as with an origin whose root is None). The root keeps the
+  recorded Python code points through both reads and the anchor memo.
+  The path drift reader borrows each attested spelling from the record.
+  Its input grows with the number of paths, as the Python tuple does.
+
+### Reference finding
+
+`resolve_verdicts` checks its rows with `assert`. Under `python -O` the
+check is gone, and a row the legs leave unanswered comes back as an
+`UnresolvedVerdict` inside the list typed `list[MemoryVerdict]`, and the
+legs store. Reproduction: run `resolve_verdicts` under `-O` with legs
+whose `lookup` answers `(False, None)`. The port follows the assertion as
+the tests run it.
+
+### Fixtures
+
+`tests/contract/gen_verdict.py` writes `verdict.jsonl` (not gated, 33
+cases): `CommitLegs` and `detect_path_drift` scripted and logged,
+`compute_verification_status` logged around the real function, each patch
+restored before return. Every resolved kind, every unread value, the memo
+answered and not, the assertion, the naive clock mid-batch, duplicate ids,
+anchored and unanchored rows and `stale_after_days` bounds. A
+recommendation is written as its first 24 characters and its length; its
+text is pinned whole by `verify_status.jsonl`. The Rust test checks the
+logged calendar calls by place and arguments, since the port calls the
+function itself. Rust: `golden_verdict.rs`, `verdict_kills.rs`,
+`verdict_robustness.rs`.
+
+### Left for later
+
+The real `CommitLegs` (commit_legs-1), the bound `detect_path_drift`
+(verify_candidates unit 4), and `memory_show`'s call with the caller's
+origin and admission.
 
 ## Limits and key material
 
@@ -23723,7 +23812,8 @@ What the reference has and this build does not, by area:
   `_resolve_reachable`, `_resolve_with_claims`, `resolve_commit_drift`).
   Of the response layer, `_response_links.py`, the drift memo,
   `check_reason`, `verdict_and_reason`, the trust appliers,
-  `verdict.with_objection`, `render_hit`, `render_show` and the search
+  the per-memory reads in `verdict.py`, `verdict.with_objection`, `render_hit`,
+  `render_show` and the search
   and list serializers (`SIMILAR_HITS_SHOWN`, `ResponseBuilder.__init__`,
   `hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict`) and the
   write and review shapes (`committed`, `review`, `roster`,

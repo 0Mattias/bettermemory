@@ -12,6 +12,9 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
+use crate::pyvalue::PyStr;
+use crate::unicode::cps;
+
 /// `CONVICTING_ANCHORS`: the rules under which an absence is evidence.
 pub const CONVICTING_ANCHORS: [&str; 3] = ["home_checkout", "checkout", "absolute"];
 /// `UNANCHORED`: an absolute path under a view with no live view here.
@@ -82,7 +85,7 @@ pub trait MembershipModel {
 /// `commit_anchors.expected_home`, `commit_anchors.relative_under` and
 /// `_paths.inside`.
 pub trait AnchorPaths {
-    fn expected_home(&self, path: &str, roots: &[String]) -> bool;
+    fn expected_home(&self, path: &str, roots: &[PyStr]) -> bool;
     fn relative_under(&self, path: &str, root: Option<&str>) -> Option<String>;
     fn inside(&self, path: &str, root: &str) -> bool;
 }
@@ -95,7 +98,7 @@ pub struct ClaimAnchor {
     pub translate: Option<TranslateFn>,
     pub caller_root: Option<String>,
     pub holds: Option<HoldsFn>,
-    pub origin_root: Option<String>,
+    pub origin_root: Option<PyStr>,
     pub recorded_roots: Vec<String>,
     pub commit_standin: bool,
 }
@@ -138,7 +141,7 @@ impl ClaimAnchor {
         if rule == UNANCHORED {
             return (None, rule);
         }
-        let mut roots = self.recorded_roots.clone();
+        let mut roots: Vec<PyStr> = self.recorded_roots.iter().map(|r| cps(r)).collect();
         if let Some(origin) = self.origin_root.as_ref().filter(|o| !o.is_empty()) {
             roots.push(origin.clone());
         }
@@ -264,7 +267,7 @@ impl Shared {
     }
 }
 
-type AnchorKey = (String, Option<String>, Option<String>);
+type AnchorKey = (String, Option<String>, Option<PyStr>);
 
 /// The claim anchors of one request (`Anchoring`). Not shared across
 /// threads, as the model is not.
@@ -354,11 +357,20 @@ impl Anchoring {
         record_id: &str,
         origin_root: Option<&str>,
     ) -> Option<ClaimAnchor> {
+        self.for_record_at(record_id, origin_root.map(cps).as_deref())
+    }
+
+    /// The origin spelling from a record, including POSIX surrogateescape.
+    pub fn for_record_at(
+        &mut self,
+        record_id: &str,
+        origin_root: Option<&[u32]>,
+    ) -> Option<ClaimAnchor> {
         let home = self.home(record_id)?;
         let key = (
             home.project.clone(),
             home.checkout.clone(),
-            origin_root.map(str::to_string),
+            origin_root.map(<[u32]>::to_vec),
         );
         if let Some(found) = self.anchors.get(&key) {
             return Some(found.clone());
@@ -380,7 +392,7 @@ impl Anchoring {
             translate: Some(translate),
             caller_root,
             holds: Some(holds),
-            origin_root: origin_root.map(str::to_string),
+            origin_root: origin_root.map(<[u32]>::to_vec),
             recorded_roots: roots,
             commit_standin,
         };

@@ -7,6 +7,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use bettermemory_core::pyvalue::PyStr;
+use bettermemory_core::unicode::cps;
 use bettermemory_core::verify_anchoring::anchor::{
     AnchorPaths, Anchoring, CallerView, Checkout, ClaimAnchor, Home, MembershipModel,
     UnknownCheckout, View, HELD_COMMIT_MEMO_CAP, UNANCHORED,
@@ -16,8 +18,11 @@ use bettermemory_core::verify_anchoring::report::{PathDriftReport, ZipLengthErro
 struct Plain;
 
 impl AnchorPaths for Plain {
-    fn expected_home(&self, path: &str, roots: &[String]) -> bool {
-        roots.iter().any(|r| self.inside(path, r))
+    fn expected_home(&self, path: &str, roots: &[PyStr]) -> bool {
+        let path = cps(path);
+        roots
+            .iter()
+            .any(|r| bettermemory_core::capture::paths::inside(&path, r))
     }
     fn relative_under(&self, path: &str, root: Option<&str>) -> Option<String> {
         let root = root?;
@@ -145,12 +150,12 @@ fn an_empty_commit_is_not_none() {
 fn an_empty_origin_root_is_no_root() {
     let mut anchor = ClaimAnchor::new(Some("/w".into()), "project_checkout");
     anchor.translate = Some(Rc::new(|p: &str| (p.to_string(), "absolute".to_string())));
-    anchor.origin_root = Some(String::new());
+    anchor.origin_root = Some(Vec::new());
     assert_eq!(
         anchor.absolute("/x", &Plain),
         (Some("/x".into()), "absolute".into())
     );
-    anchor.origin_root = Some("/o".into());
+    anchor.origin_root = Some(cps("/o"));
     assert_eq!(anchor.absolute("/o/x", &Plain), (None, UNANCHORED.into()));
     assert_eq!(anchor.absolute("/o", &Plain), (None, UNANCHORED.into()));
 }
@@ -204,4 +209,21 @@ fn the_report_zip_is_strict_and_only_anchored() {
     assert!(!r.should_report());
     r.present_but_attested_absent = vec!["/a".into()];
     assert!(r.should_report() && !r.has_drift());
+}
+
+#[test]
+fn origin_code_points_distinguish_anchors_in_the_same_home() {
+    let model = Rc::new(Model::default());
+    let mut anchors = anchoring(model.clone(), Rc::default());
+    for suffix in [0xdc80, 0xfffd, 0xdcff, 0xdc80] {
+        let root = [47, suffix];
+        let anchor = bettermemory_core::verdict::VerdictAnchoring::for_record(
+            &mut anchors,
+            "one",
+            Some(&root),
+        )
+        .unwrap();
+        assert_eq!(anchor.origin_root.as_deref(), Some(root.as_slice()));
+    }
+    assert_eq!(model.anchors.get(), 3);
 }
