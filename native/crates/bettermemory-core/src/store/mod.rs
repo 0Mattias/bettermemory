@@ -90,7 +90,7 @@ use crate::datetime::{self, DateTime};
 use crate::json;
 use crate::lexicon;
 use crate::log::{KeyRing, LogRow, LogSource, VerifyError};
-use crate::pyvalue::{repr_str, PyError, PyValue};
+use crate::pyvalue::{repr_str, PyError, PyStr, PyValue};
 use crate::search::Record;
 use crate::{float_repr, unicode};
 use versions::shown;
@@ -1015,10 +1015,13 @@ pub(crate) fn meta_get<'a>(meta: &'a [(String, String)], key: &str) -> Option<&'
 /// Python's `int(text)` of meta's `schema_version` (surrounding
 /// whitespace, a sign, underscores between digits, any Unicode decimal
 /// digits), as canonical decimal text.
-fn python_int(text: &str) -> Option<String> {
-    match &crate::pyvalue::int_from_str(&unicode::cps(text)) {
-        Ok(PyValue::Int(decimal)) => Some(decimal.clone()),
-        _ => None,
+fn schema_integer(text: &str) -> Result<String, OpenCheckError> {
+    match fold::int_worded(&PyValue::Str(unicode::cps(text))) {
+        Ok(PyValue::Int(ref decimal)) => Ok(decimal.clone()),
+        Err(("ValueError", Some(message))) => {
+            Err(OpenCheckError::ValueError(unicode::cps(&message)))
+        }
+        _ => unreachable!("int(str) produces an integer or a ValueError with a message"),
     }
 }
 
@@ -1049,6 +1052,26 @@ pub struct CheckedOpen {
     pub read_only_reason: Option<crate::pyvalue::PyStr>,
 }
 
+/// The exception raised while validating metadata on an open connection.
+#[derive(Debug)]
+pub enum OpenCheckError {
+    ValueError(PyStr),
+    Version(VersionDiagnostic),
+    Sqlite(rusqlite::Error),
+}
+
+impl OpenCheckError {
+    fn legacy(self) -> DiagnosticError<StoreError> {
+        match self {
+            Self::ValueError(message) => {
+                StoreError::Refused(versions::legacy_text(&message)).into()
+            }
+            Self::Version(error) => DiagnosticError::version(error, StoreError::Version),
+            Self::Sqlite(error) => StoreError::Sqlite(error).into(),
+        }
+    }
+}
+
 impl StoreFile {
     /// Validate already-read metadata using the source file's own spelling.
     pub fn check_opened(
@@ -1058,68 +1081,85 @@ impl StoreFile {
     ) -> Result<CheckedOpen, DiagnosticError<StoreError>> {
         open_checks_at(self.connection(), meta, self.path(), version)
     }
+
+    /// Validate this connection using the caller's original Python Path spelling.
+    pub fn check_opened_as(
+        &self,
+        meta: &[(String, String)],
+        path: &[u32],
+        version: &str,
+    ) -> Result<CheckedOpen, OpenCheckError> {
+        open_checks_at_points(self.connection(), meta, path, version)
+    }
 }
 
-/// Apply the version verdict to an existing connection. A newer writer minimum
-/// sets query_only; malformed versions raise before that pragma.
+/// Apply the version verdict to an existing connection using its OS path.
 pub fn open_checks_at(
     connection: &Connection,
     meta: &[(String, String)],
     path: &Path,
     version: &str,
 ) -> Result<CheckedOpen, DiagnosticError<StoreError>> {
-    let checked = open_checks_points(meta, &versions::path_text(path), version)?;
+    open_checks_at_points(connection, meta, &versions::path_text(path), version)
+        .map_err(OpenCheckError::legacy)
+}
+
+/// Keep the caller's Path codepoints through metadata and revision checks.
+/// Only a successful later-writer verdict makes the connection query-only.
+pub fn open_checks_at_points(
+    connection: &Connection,
+    meta: &[(String, String)],
+    path: &[u32],
+    version: &str,
+) -> Result<CheckedOpen, OpenCheckError> {
+    let checked = checked_metadata(meta, path, version)?;
     if checked.read_only_reason.is_some() {
         connection
             .execute_batch("PRAGMA query_only = ON")
-            .map_err(StoreError::from)?;
+            .map_err(OpenCheckError::Sqlite)?;
     }
     Ok(checked)
 }
 
-/// The opening checks with the exact diagnostic spelling of a Python Path.
+/// The opening checks with the exact revision diagnostic and legacy error type.
 pub fn open_checks_points(
     meta: &[(String, String)],
     path: &[u32],
     version: &str,
 ) -> Result<CheckedOpen, DiagnosticError<StoreError>> {
-    let display = || versions::legacy_text(path);
+    checked_metadata(meta, path, version).map_err(OpenCheckError::legacy)
+}
+
+fn checked_metadata(
+    meta: &[(String, String)],
+    path: &[u32],
+    version: &str,
+) -> Result<CheckedOpen, OpenCheckError> {
+    let refused = |suffix: &str| {
+        let mut message = path.to_vec();
+        message.extend(suffix.chars().map(u32::from));
+        OpenCheckError::ValueError(message)
+    };
     let store_id = meta_get(meta, "store_id").unwrap_or("");
     let expected = meta_get(meta, "key_fingerprint").unwrap_or("");
     if store_id.is_empty() || expected.is_empty() {
-        return Err(StoreError::Refused(format!(
-            "{} carries no store id or key fingerprint",
-            display()
-        ))
-        .into());
+        return Err(refused(" carries no store id or key fingerprint"));
     }
     if !keys::is_store_id(store_id) {
-        let head: String = store_id.chars().take(40).collect();
-        return Err(StoreError::Refused(format!(
-            "{} carries a store id this build never writes ({}); the key directory is \
+        let first: PyStr = store_id.chars().take(40).map(u32::from).collect();
+        return Err(refused(&format!(
+            " carries a store id this build never writes ({}); the key directory is \
              searched by it, so the store is not opened",
-            display(),
-            json::utf8_text(&repr_str(&unicode::cps(&head)))
-        ))
-        .into());
+            json::utf8_text(&repr_str(&first))
+        )));
     }
-    let schema_text = meta_get(meta, "schema_version").unwrap_or("0");
-    let Some(schema) = python_int(schema_text) else {
-        return Err(StoreError::Refused(format!(
-            "invalid literal for int() with base 10: {}",
-            json::utf8_text(&repr_str(&unicode::cps(schema_text)))
-        ))
-        .into());
-    };
+    let schema = schema_integer(meta_get(meta, "schema_version").unwrap_or("0"))?;
     if decimal_above(&schema, SCHEMA_VERSION) {
-        return Err(StoreError::Refused(format!(
-            "{} is schema {schema}; this build reads up to {SCHEMA_VERSION}",
-            display()
-        ))
-        .into());
+        return Err(refused(&format!(
+            " is schema {schema}; this build reads up to {SCHEMA_VERSION}"
+        )));
     }
-    let verdict = check_versions_points(meta, path, version)
-        .map_err(|e| DiagnosticError::version(e, StoreError::Version))?;
+    let verdict = check_versions_points(meta, path, version).map_err(OpenCheckError::Version)?;
     Ok(CheckedOpen {
         opened: Opened {
             store_id: store_id.to_owned(),

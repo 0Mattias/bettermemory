@@ -11762,6 +11762,16 @@ connections. `store_version_diagnostics_files` exercises signed databases
 on disk, including two distinct invalid UTF-8 names on Linux, literal
 U+FFFD, and a refusal caused by a competing SQLite connection.
 
+A reader that holds the original Python Path can call
+`StoreFile::check_opened_as` or pass its borrowed connection to
+`open_checks_at_points`. These calls preserve each codepoint in metadata
+refusals and revision errors, including distinct spellings of one OS file.
+The connection becomes query-only when an accepted store needs a later writer.
+`store_open_reasons.jsonl` records the Python open up to first key access.
+For schema metadata the native integer parser follows CPython 3.13. A
+malformed suffix after 4,450 decimal digits raises the truncated invalid
+literal error on 3.12–3.14 and the digit-limit error on 3.11.
+
 ### The reference's order, and what each step writes
 
 Read from `src/bettermemory` at the create unit's tip (4a84448f; line
