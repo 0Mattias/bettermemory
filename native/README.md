@@ -132,6 +132,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `store_refusal` | `_store_refusal.py` whole: `bundle_refusal`, `_may_be_bundle_manifest`, `restore_state`, `_record_lock_held`, `_restore_marker`, `_restore_marker_at`, `_describe_restore`, `restore_refusal`, `store_refusal` and the constants; `json::loads_bytes` (`json.loads` of bytes) | `store_refusal.jsonl`, `store_refusal_posix.jsonl` |
 | `cli::common::read_only_path` (POSIX) | `cli._common.read_only_store_path`, `Config.resolved_directory` with the physical filesystem | `cli_read_only_path.jsonl`, `cli_read_only_path_posix.jsonl` |
 | `store::key_directory` (POSIX) | `log.default_keys_dir`, `store_schema.resolve_keys_dir` and the explicit key-directory selection in `store_open._open_connected` | `key_directory_posix.jsonl` |
+| `store::key_directory` (Windows) | the Windows Path, home expansion and LocalAppData lookup used by the same signing-key selector | `key_directory_windows.jsonl` |
 | `entry`, `cli::common`, `cli::root` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`; `cli/__init__.py`'s `_build_parser`, `_add_hook_subparser`, `main` (`cli::root`) | `cli_common.jsonl`, `cli_common_python.jsonl`, `cli_root.jsonl`, `cli_root_python.jsonl`, `cli_registry.jsonl` |
 | `cli::log_report` | Ordered signed-log verification report, plain text, pretty JSON and exit status from `cli/log_cmd.py` | `cli_log_report.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
@@ -20405,6 +20406,32 @@ that needs OS bytes, `os_path` applies POSIX surrogateescape and exposes
 the original codepoints, encoding, reason and character offsets on error.
 This preserves distinct spellings such as U+00E9 and the pair U+DCC3,
 U+DCA9 even when they refer to the same file.
+
+### The Windows signing-key directory
+
+The Windows selector returns the codepoints of the constructed Windows Path.
+CPython’s wide path parser combines valid surrogate pairs into scalars,
+retains lone surrogates and tests the drive colon at UTF-16 unit index one.
+`os_path` projects the result to native UTF-16. An explicit tilde stays literal.
+For `BETTERMEMORY_KEYS_DIR`, Windows home expansion consults `USERPROFILE`
+and then `HOMEDRIVE`/`HOMEPATH`. Named users follow CPython’s username
+and profile-directory rules.
+
+The default uses the locked platformdirs LocalAppData lookup. A fully
+qualified `WIN_PD_OVERRIDE_LOCAL_APPDATA` supplies the base after Python
+whitespace trimming. Otherwise the selector asks the shell for
+`FOLDERID_LocalAppData` with `KF_FLAG_DONT_VERIFY` on each lookup.
+It appends both application directory components and `keys`.
+The query retains a failed HRESULT’s original Windows error, and selection
+leaves the chosen directory untouched.
+
+The portable reference exercises the connected Store’s key-ring constructor,
+original path spelling, UTF-16 units and shell call order. The Windows
+native-parity test compares the actual selector with a second process
+running the shipped Python Store and checks the HRESULT errors separately.
+The path rules target CPython 3.13 on Windows. CPython 3.12 uses a
+codepoint-based split and can retain separate adjacent surrogate characters.
+CPython 3.11 also prints a different spelling for `./a:b` and a bare double slash.
 
 ### Physical read-only store selection on POSIX
 

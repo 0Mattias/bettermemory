@@ -991,3 +991,8 @@ mod tests {
 mod passwd;
 #[cfg(unix)]
 pub use passwd::account_home;
+
+#[cfg(any(windows, test))]
+mod known_folder;
+#[cfg(windows)]
+pub use known_folder::{local_app_data, WindowsFolderError};

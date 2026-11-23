@@ -142,7 +142,7 @@ def _from_store() -> bytes:
     return jsonl(rows)
 
 
-def generate() -> dict[str, bytes]:
+def in_fresh_process(module: str) -> bytes:
     # Pytest replaces log.default_keys_dir and platformdirs for its own clients.
     # Resolve the real functions in a fresh process, under a disposable home.
     repo = Path(__file__).resolve().parents[2]
@@ -162,11 +162,15 @@ def generate() -> dict[str, bytes]:
             ),
         )
         data = subprocess.check_output(
-            [sys.executable, "-m", "tests.contract.gen_key_directory"],
+            [sys.executable, "-m", module],
             cwd=repo,
             env=env,
         )
-    return {"key_directory_posix.jsonl": data}
+    return data
+
+
+def generate() -> dict[str, bytes]:
+    return {"key_directory_posix.jsonl": in_fresh_process(__name__)}
 
 
 if __name__ == "__main__":

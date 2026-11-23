@@ -236,6 +236,16 @@ fn nt_isabs(p: &[u32]) -> bool {
 /// `str.lower()` is equal: Python's, of the Unicode data the crate
 /// carries, with its final sigma (a byte kept as itself has no case).
 fn nt_join(path: &[u32], paths: &[&[u32]]) -> Vec<u32> {
+    nt_join_by(path, paths, |a, b| unicode::lower(a) == unicode::lower(b))
+}
+
+/// Join paths whose splitroot input may be Python characters or Windows
+/// wide units. Drive comparison is performed on the decoded Python strings.
+pub(crate) fn nt_join_by(
+    path: &[u32],
+    paths: &[&[u32]],
+    same_drive: impl Fn(&[u32], &[u32]) -> bool,
+) -> Vec<u32> {
     let (mut rd, mut rr, mut rp) = splitroot(path);
     for p in paths {
         let (pd, pr, pp) = splitroot(p);
@@ -248,7 +258,7 @@ fn nt_join(path: &[u32], paths: &[&[u32]]) -> Vec<u32> {
             continue;
         }
         if !pd.is_empty() && pd != rd {
-            if unicode::lower(&pd) != unicode::lower(&rd) {
+            if !same_drive(&pd, &rd) {
                 rd = pd;
                 rr = pr;
                 rp = pp;
