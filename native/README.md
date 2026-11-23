@@ -71,6 +71,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
 | `event_redact` | `events.py`'s second unit: `_SECRET_PATTERNS`, `_strip_known_secrets` and `redact_query` (`credentials.secret_spans` passed in), `NAMED_EVENT_FIELDS`, `named_event_fields`, `_named_inside`, `_named_entries`, `_redact_event_fields`; with `store_rows.event_import_payload`, `IMPORTED_FROM_V8` and `_ROW_COLUMNS` (`store::rows`) and `time_utils.isoformat_utc_optional` and `ensure_utc` (`time_utils`) | `event_redact.jsonl` |
 | `event_hook` | `events.py`'s suppression switch and a hook's deadline: `suppressed`, `deadline`, `_NOT_DONE`, `StoreBusy`'s text, `_store_busy`, `within_hook_budget`, `hook_body` (one owned `HookScope`, the clock an argument, the store's busy timeout the trait `BusyTimeout`), with the shared SQLite busy test `primary_code` and `is_busy` | `event_hook.jsonl` |
+| `event_recorder` | `events.py`'s fourth unit: `Recorder` (`session_for_request`, `worktree_for_request`, `records`, `record`) over the store's writer as the trait `EventSink`; the hook scope and the published caller are arguments, the workspace declaration, `_handlers.capture_origin().worktree_root` and `credentials.secret_spans` closures | `event_recorder.jsonl`, `event_recorder_python.jsonl` |
 | `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields`; audit-2/3: `is_duplicate_audit`, `probe_for_miss` with its helpers, `_count_recent_retrievals`, `_retrieved_ids` (the ranker and admission as traits), with `search_lane._relevance_label_v2` | `audit_fields.jsonl`, `audit_probe.jsonl` |
 | `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`); unit 2 (`recall_settle::interrupted`): `_probe_message` and `settle_interrupted`, the probe, the pool and the transcript read as closures | `recall_settle.jsonl`, `recall_settle_interrupted.jsonl` |
 | `recall_prompt` | `recall_prompt.py` whole: `_PromptTurn` (`PromptTurn`, `PromptTurnView`), `_prompt_window`, `_settle_before_probe`, `_prompt_probe`, `_record_hold`, `_record_delivery`; the session joins and `recall_admission`'s gate are traits, `Admission.on`, `settle_interrupted` and `_probe_message` closures | `recall_prompt.jsonl` |
@@ -6503,13 +6504,12 @@ of `src/bettermemory/events.py` by function:
 | `_SECRET_PATTERNS`, `_strip_known_secrets`, `redact_query` | 98-104, 659-722 | nothing; `credentials.secret_spans` (passed in) | built (unit 2, `event_redact`) |
 | `NAMED_EVENT_FIELDS`, `named_event_fields`, `_named_inside`, `_named_entries`, `_redact_event_fields` | 758-821 | nothing | built (unit 2, `event_redact`) |
 | `suppressed`, `deadline`, `StoreBusy`, `_store_busy`, `within_hook_budget`, `hook_body`, `_NOT_DONE` | 538-656 | the clock, the calling context, the store's busy timeout | built (`event_hook`; see the next section) |
-| `Recorder` (`session_for_request`, `worktree_for_request`, `records`, `record`) | 824-951 | the store's writer, the clock | unit 4 |
+| `Recorder` (`session_for_request`, `worktree_for_request`, `records`, `record`) | 825-951 | the store's writer, the hook scope, the published caller | built (unit 4, `event_recorder`; see its section) |
 | `_event_id_items`, `_event_id_list` | 954-990 | nothing | built (`event_id_items`, `event_id_list`, with `recall_settle` unit 1; see that section) |
 
-The cut: unit 1 is the leaves above (this build), unit 2 the redaction,
-which waits for `credentials` past its vendor-prefixed detectors (the
-second pass reads `secret_spans`), unit 3 the context and the deadline
-with the id-list readers, unit 4 the recorder on the store's writer.
+Unit 1 holds the row kinds and classes, unit 2 the redaction, unit 3 the
+hook context and deadline, and unit 4 the recorder over `EventSink`.
+The id-list readers are built with `recall_settle`.
 
 What unit 1 reproduces. A row's fields are the `dict` the handler passes,
 as `PyValue` pairs in insertion order, and a kind is code points (a kind
@@ -6620,8 +6620,85 @@ byte preview, spans read before the first pass, an absent field added);
 `tests/event_redact_robustness.rs` holds every pattern's backtracking
 shape at 20,000 and 200,000 code points, 100,000 spans, values nested
 200,000 deep in each named field shape, a 100,000-field event and a
-million code points. Left for later units: the detectors of
-`credentials` (`secret_spans`), and unit 4 above (unit 3 is `event_hook`, in the next section).
+million code points. `credentials::spans` supplies `secret_spans`.
+The next sections cover `event_recorder` and `event_hook`.
+
+## The recorder over the store's writer (`event_recorder`, `events.py` 825-951)
+
+`event_recorder` is `events.py`'s unit 4: `Recorder` with
+`session_for_request`, `worktree_for_request`, `records` and `record`.
+Lines checked against the source as it is now: the class 825-951.
+
+What it reproduces.
+
+- The store is the trait `EventSink` (`record_event(kind, session,
+  actor, best_effort, attempts, deadline, fields)`), so the recorder
+  does not wait for the store's writer (lane storeev1). `best_effort` and
+  `attempts` are `Some` only on a state row (`false` and
+  `STATE_WRITE_ATTEMPTS`), `deadline` only inside a hook body. The two
+  context variables are the `HookScope` passed to `records` and `record`;
+  the recorder holds none. The published caller (`identity._CURRENT`) is
+  the `Published` passed with it.
+- `session_for_request`: the published actor's session when its
+  `sources["session"]` is `transport` or `header`, else `session_id`.
+- `worktree_for_request`: `worktree_root` when the workspace declaration
+  is None, else `_handlers.capture_origin().worktree_root`. The
+  declaration is a closure the caller builds over
+  `identity::workspace_declaration` (its environment, working directory
+  and file system); the capture is a closure too, since `capture_origin`
+  is not built. Only whether the declaration is None is read, so the
+  host's spelling of the path never reaches a row.
+- `records`: false inside `suppressed`, else telemetry on or a state kind.
+- `record`, in the reference's order: suppressed returns; a measurement
+  row with telemetry off returns; `attribution` and `triggered_from` set
+  by `setdefault` when not empty; `worktree_root` appended when the
+  fields lack the key (a given None is kept); `harness_session` set by
+  `setdefault` on `HARNESS_STAMPED_KINDS`; `actor` popped, and a missing
+  or None one replaced by the published actor (`EventActor`); `session`
+  popped as any value (None included), else `session_for_request`. With
+  telemetry off a state row's fields go through `events::state_fields`
+  with `event_redact::redact_query` over the recorder's boxed
+  `secret_spans`. A measurement failure is logged (`event KIND not
+  recorded: TEXT`) and swallowed; a state failure is logged (`state row
+  KIND not recorded, the call fails: CLASS: TEXT`) and returned. The
+  declaration's and the capture's errors are returned on either class,
+  as the reference raises them before its `try`. `Recorder::warn` sends
+  each warning to the caller's log handler when the store call fails.
+  A handler failure propagates on either row class. Store, origin and
+  handler errors preserve every code point in the Python message.
+
+Decisions. A field named like a keyword the recorder passes
+(`best_effort`, `attempts`, `deadline`) raises CPython's `TypeError`
+inside the reference's `try`, so a measurement row warns and a state row
+raises; the text names the callable (`EventSink::call_name`, the store's
+`bettermemory.store_events.record_event` by default). Such a field that
+the recorder does not pass stays among `fields`, in its place, where
+Python's keyword binding hands it to that parameter; the sink binds it.
+A field named `self` or `kind` is CPython's `TypeError` from
+`Recorder.record()` itself. The first such field in keyword order is
+named in the error. Fields are `(str, value)` pairs, since a
+keyword's name is always a `str`. No regular expression is involved.
+
+`event_recorder.jsonl` (not gated, 77 KB) runs the recorder over a fake
+store that records each call: every stamp and pop on a state and a
+measurement kind with telemetry on and off, the redacted and kept fields
+of `turn_audited` and `search_miss`, a surrogate kind, each published
+caller shape (none, transport, header, env, no session, empty, declared,
+process cwd, harness only), the capture answering, None and raising,
+suppression, deadlines, store failures of two classes and a failing warning handler.
+`event_recorder_python.jsonl` (gated on the Python release, 15 KB) holds
+the colliding keywords and CPython's text. Every published caller,
+context variable and environment change is set and reset inside its
+row. The test's declaration closure answers the published workspace when
+it is declared and None when nothing is published (the generator clears
+the workspace variables of the environment for those rows).
+`tests/event_recorder_kills.rs` holds the cases a plausible wrong port
+fails; `tests/event_recorder_robustness.rs` holds 100,000 fields with
+telemetry off, a million-code-point kind and probe query, a value nested
+200,000 deep, deadlines at the float edges, and time at 20,000 fields
+against 2,000. Left for later: wiring the recorder into `StopSide` and
+the handlers, and `_handlers.capture_origin`.
+
 ## A hook's deadline and the suppression switch (`event_hook`, `events.py` 538-653)
 
 `event_hook` is `events.py`'s unit 3: `suppressed`, `deadline`,
@@ -6678,7 +6755,7 @@ Every reader of the two values in the reference, and how it receives them:
 | Reader | Reads | Receives |
 |---|---|---|
 | `store_events._time_left`, `_waiting_until`, `record_event` (`store_events.py` 87-173) | the deadline, as its `deadline` argument | `deadline: Option<f64>`, from `HookScope::deadline()` at the call |
-| `events.Recorder.records`, `Recorder.record` (`events.py` 870-923) | `_SUPPRESSED`, `_DEADLINE` | the scope by reference, when unit 4 ports the recorder |
+| `events.Recorder.records`, `Recorder.record` (`events.py` 870-923) | `_SUPPRESSED`, `_DEADLINE` | a borrowed `HookScope` in `event_recorder` |
 | `hook.run_audit` (`hook.py` 319-447, `hook_body("stop")`, `events.suppressed` at 411) | both, through the seams | `hook_stop_side::StopSide::within_hook_budget` and `suppressed` (`hook_stop_side.rs` 79, 88): a later wiring implements them by holding a `HookScope` and the clock in the `StopSide` value and calling `HookScope::within_hook_budget` and `suppressed` from them, mapping `HookFailure` into its `Error`; the seams' shape (event, optional store, a body handed the store back) is this one's |
 | `recall.py`'s `hook_body("session-start")` (713) and `hook_body("prompt")` (1451) | both | `HookScope::hook_body` when those hooks are ported |
 | `_daemon_client` (1698) | `StoreBusy`'s text, as an exception's message | `HookFailure::StoreBusy`'s `message` |
@@ -17119,9 +17196,8 @@ Reference findings: `realpath` of an absolute path raises when
 
 ## The Stop audit's front half (`hook.py` 319-725, unit hook-2a)
 
-`hook.py`'s Stop audit runs over modules not ported yet (`audit`,
-`recall`, `recall_settle`, `sessions`, `events`' recorder, `origin`), so
-the unit is the order of its calls, not their answers. `hook_stop_side`
+`hook.py`'s Stop audit calls `audit`, `recall`, `recall_settle`, `sessions`,
+`events`' recorder and `origin`. This unit implements the call order. `hook_stop_side`
 holds the trait `StopSide`: one method per call `hook.py` 319-946 makes
 outside itself, named after it, with the Python objects passed between
 them as associated types (`Store`, `Config`, `Report`, `Admission`,
@@ -23674,9 +23750,8 @@ What the reference has and this build does not, by area:
   templates (pyre-10).
 - This machine's id past its record, clone rule, facts, file reads and
   open: `machine.py`'s `check_import_fork`.
-- The telemetry rows past their kinds, classes, id-list readers, query
-  redaction and named event fields: `events.py`'s suppression and the
-  hook deadline (unit 3), and the `Recorder` (unit 4).
+- The telemetry recorder's `EventSink` adapter for `WritableStore`, and
+  its wiring into `StopSide` and the handlers.
 - The daemon, the MCP tools (of `_handlers.py` the refusal classes and
   the bundle are built, `tool_handlers`; the nine forwarders and the
   `DESC_*` re-exports are handlers-2b's), the hooks past the pure leaves of `hook.py`

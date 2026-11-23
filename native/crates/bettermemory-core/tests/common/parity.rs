@@ -205,6 +205,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "membership_lines_python.jsonl"
         // Where the JSON decoder stops recursing (`gen_membership_migrate_report`).
         | "membership_migrate_report_python.jsonl"
+        // CPython's text for a keyword passed twice (`gen_event_recorder`).
+        | "event_recorder_python.jsonl"
         | "claims_python.jsonl"
         // `datetime.fromisoformat` at its edges (`gen_cli_common`).
         | "cli_common_python.jsonl"

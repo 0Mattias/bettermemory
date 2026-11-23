@@ -202,6 +202,7 @@ from . import (
     gen_toml,
     gen_tool_handlers,
     gen_event_hook,
+    gen_event_recorder,
     gen_events_kinds,
     gen_event_redact,
     gen_audit,
@@ -405,6 +406,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "events_kinds": gen_events_kinds.generate,
     "event_redact": gen_event_redact.generate,
     "event_hook": gen_event_hook.generate,
+    "event_recorder": gen_event_recorder.generate,
+    "event_recorder_python": gen_event_recorder.generate_python,
     "audit_fields": gen_audit.generate,
     "audit_probe": gen_audit.generate_probe,
     "recall_settle": gen_recall_settle.generate,
@@ -878,6 +881,9 @@ PYTHON_GATED = frozenset(
         # ASCII follow the release's Unicode tables (`gen_membership_records`).
         "membership_records_identity_python",
         "membership_rows_python",
+        # CPython's text for a keyword passed twice names the callable as
+        # the release spells it (`gen_event_recorder`).
+        "event_recorder_python",
         "membership_shared_python",
         "origin_remote_python",
         "claims_python",

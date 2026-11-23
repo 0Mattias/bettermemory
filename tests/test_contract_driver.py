@@ -8,11 +8,12 @@ caller before each test, so only this check meets such a leak here."""
 
 from __future__ import annotations
 
+import logging
 import os
 
 import pytest
 
-from bettermemory import git_read_budget, identity
+from bettermemory import events, git_read_budget, identity
 from tests.contract.generate import LeftStateError, run_generator
 
 
@@ -49,6 +50,24 @@ def test_a_caller_published_before_the_generator_is_not_its_fault() -> None:
         assert run_generator("planted_clean", lambda: {"a": b""}) == {"a": b""}
     finally:
         identity.reset(found)
+
+
+@pytest.mark.parametrize("name", ["event_recorder", "event_recorder_python"])
+def test_recorder_fixture_is_independent_of_request_context(
+    name: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    expected = run_generator(name)
+    caller = _caller()
+    token = identity.publish(caller)
+    try:
+        with (
+            events.suppressed(),
+            caplog.at_level(logging.ERROR, logger=events.log.name),
+        ):
+            assert run_generator(name) == expected
+            assert identity.current() is caller
+    finally:
+        identity.reset(token)
 
 
 def test_another_context_var_left_set_fails_by_name() -> None:
