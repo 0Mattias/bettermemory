@@ -9,10 +9,11 @@
 //! over the name). The keys directory's locks (`flock_excl` on
 //! `<file>.lock`) go through [`RingLock`].
 //!
-//! `store/open.rs` keeps its own private copies of `load_current`,
-//! `read_binding`, `same_file` and the binding's text until a later store
-//! unit moves it onto this module.
+//! The store writer and the ring share the decoder and path comparisons
+//! in [`binding_path`]. The store writer still has its own current-key reader.
 
+pub mod binding_path;
+use binding_path::{BindingError, BindingPath, HOST};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -207,17 +208,6 @@ fn write_private(path: &Path, data: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// `Path(a) == Path(b)` on two spellings `str(Path(...))` gives: POSIX
-/// compares the text (a leading `//` kept, where `Path` equality in Rust
-/// folds it); Windows compares the text lowered, as `_str_normcase` does.
-fn same_path(a: &Path, b: &str) -> bool {
-    let a = a.to_string_lossy();
-    #[cfg(unix)]
-    return a == b;
-    #[cfg(not(unix))]
-    return a.to_lowercase() == b.to_lowercase();
-}
-
 /// `log._link_target`: what the link names, a Windows verbatim prefix
 /// dropped.
 fn link_target(path: &Path) -> io::Result<String> {
@@ -260,22 +250,6 @@ fn origin_dict(origin: &HistoryOrigin) -> PyValue {
     PyValue::Dict(items)
 }
 
-/// The text of a file as `read_text(encoding="utf-8")` gives it, parsed:
-/// None for bytes that are not UTF-8 or not JSON (ValueError), Err for
-/// RecursionError.
-fn parse_text(bytes: &[u8]) -> Result<Option<PyValue>, PyError> {
-    let Ok(text) = std::str::from_utf8(bytes) else {
-        return Ok(None);
-    };
-    // `read_text` reads universal newlines.
-    let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    match json::loads(&unicode::cps(&text)) {
-        Ok(raw) => Ok(Some(raw)),
-        Err(PyError::RecursionError) => Err(PyError::RecursionError),
-        Err(_) => Ok(None),
-    }
-}
-
 /// `Path(text)` in the host's flavour.
 fn host_path(text: &str) -> PathBuf {
     #[cfg(unix)]
@@ -288,25 +262,15 @@ fn host_path(text: &str) -> PathBuf {
 /// `Path(store_file).resolve()`, spelled as `str()` spells it: on POSIX
 /// `os.path.realpath` (non-strict, 3.13) with `cwd` as `os.getcwd()`.
 #[cfg(unix)]
-fn resolve(store_file: &Path, cwd: &[u8]) -> Result<String, RingError> {
-    use crate::fsdata::realpath::realpath;
-    let text = store_file
-        .to_str()
-        .ok_or_else(|| io::Error::other("a store path that is not UTF-8"))?;
-    let parsed = crate::config::pure_path(text, crate::config::Flavour::Posix);
-    let real = realpath(
-        &crate::fsdata::StdFs,
-        crate::fsdata::Flavour::Posix,
-        parsed.as_bytes(),
-        cwd,
-    )
-    // The walk raises ValueError alone (a NUL).
-    .map_err(|_| PyError::ValueError)?;
-    let real = String::from_utf8(real).map_err(|_| io::Error::other("not UTF-8"))?;
-    Ok(crate::config::pure_path(
-        &real,
-        crate::config::Flavour::Posix,
-    ))
+pub(crate) fn resolve(store_file: &Path, cwd: &[u8]) -> Result<BindingPath, BindingError> {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    // The non-strict POSIX walker ignores empty and dot components itself.
+    let bytes = store_file.as_os_str().as_bytes();
+    let real = crate::fsdata::realpath::realpath(&crate::fsdata::StdFs, HOST, bytes, cwd)
+        .map_err(|_| BindingError::Value)?;
+    Ok(BindingPath::resolved(Path::new(
+        &std::ffi::OsString::from_vec(real),
+    )))
 }
 
 /// On Windows `ntpath.realpath` (non-strict) as `Path.resolve` has it:
@@ -314,7 +278,7 @@ fn resolve(store_file: &Path, cwd: &[u8]) -> Result<String, RingError> {
 /// verbatim prefix dropped, `Path.resolve` spells none) and the part that
 /// is not there joined back as given.
 #[cfg(not(unix))]
-fn resolve(store_file: &Path, _cwd: &[u8]) -> Result<String, RingError> {
+pub(crate) fn resolve(store_file: &Path, _cwd: &[u8]) -> Result<BindingPath, BindingError> {
     let absolute = std::path::absolute(store_file)?;
     let mut head = absolute.as_path();
     let mut tail: Vec<&std::ffi::OsStr> = Vec::new();
@@ -331,13 +295,7 @@ fn resolve(store_file: &Path, _cwd: &[u8]) -> Result<String, RingError> {
         }
     };
     let real = tail.iter().rev().fold(real, |acc, name| acc.join(name));
-    let text = real
-        .to_str()
-        .ok_or_else(|| io::Error::other("a store path that is not UTF-8"))?;
-    Ok(text
-        .strip_prefix(r"\\?\UNC\")
-        .map(|t| format!(r"\\{t}"))
-        .unwrap_or_else(|| text.strip_prefix(r"\\?\").unwrap_or(text).to_owned()))
+    Ok(BindingPath::resolved(&real))
 }
 
 /// One store's key ring on disk (`log.KeyRing`): the keys directory and
@@ -552,27 +510,15 @@ impl<L: RingLock> KeyFiles<L> {
     /// with no NUL, the last `path` key winning as in a dict); an OSError
     /// other than not-found, and RecursionError, raise.
     pub fn read_binding(&self) -> Result<Option<PathBuf>, RingError> {
-        let bytes = match fs::read(self.binding_path()) {
-            Ok(b) => b,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e.into()),
-        };
-        let Some(raw) = parse_text(&bytes)? else {
-            return Ok(None);
-        };
-        let Some(PyValue::Str(value)) = raw.get("path") else {
-            return Ok(None);
-        };
-        if value.is_empty() || value.contains(&0) {
-            return Ok(None);
-        }
-        // A lone surrogate: a name no file here has (a stated difference:
-        // the reference returns that Path).
-        let Some(value) = unicode::to_string(value) else {
-            return Ok(None);
-        };
-        let bound = host_path(&value);
-        Ok(bound.is_absolute().then_some(bound))
+        Ok(self
+            .read_binding_exact()?
+            .map(|path| path.exact_host())
+            .transpose()?)
+    }
+
+    /// Read the original Python spelling, including values the OS cannot hold.
+    pub fn read_binding_exact(&self) -> Result<Option<BindingPath>, BindingError> {
+        binding_path::read(&self.binding_path(), HOST)
     }
 
     /// `KeyRing.rebind_store`: the ring bound to `store_file` resolved
@@ -584,18 +530,39 @@ impl<L: RingLock> KeyFiles<L> {
         store_file: &Path,
         cwd: &[u8],
     ) -> Result<Option<PathBuf>, RingError> {
+        Ok(self.rebind_with(store_file, cwd, |previous| previous.exact_host())?)
+    }
+
+    /// Rebind while returning the exact previous spelling recorded by Python.
+    pub fn rebind_store_exact(
+        &self,
+        store_file: &Path,
+        cwd: &[u8],
+    ) -> Result<Option<BindingPath>, BindingError> {
+        self.rebind_with(store_file, cwd, Ok)
+    }
+
+    fn rebind_with<T>(
+        &self,
+        store_file: &Path,
+        cwd: &[u8],
+        previous_value: impl FnOnce(BindingPath) -> Result<T, BindingError>,
+    ) -> Result<Option<T>, BindingError> {
         let resolved = resolve(store_file, cwd)?;
         self.ensure_dir()?;
         let path = self.binding_path();
         let _guard = self.hold(&path)?;
-        let previous = match self.read_binding() {
-            Err(RingError::Os(_)) => None,
-            other => other?,
+        let previous = match self.read_binding_exact() {
+            Err(BindingError::Os(_)) => None,
+            value => value?,
         };
-        if !previous.as_deref().is_some_and(|p| same_path(p, &resolved)) {
-            let value = PyValue::Dict(vec![(PyValue::str("path"), PyValue::str(&resolved))]);
-            write_private(&path, &dumps(&value)?)?;
+        let unchanged = previous
+            .as_ref()
+            .is_some_and(|p| p.lexical_eq(&resolved, HOST));
+        let returned = previous.map(previous_value).transpose()?;
+        if !unchanged {
+            write_private(&path, resolved.json()?.as_bytes())?;
         }
-        Ok(previous)
+        Ok(returned)
     }
 }

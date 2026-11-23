@@ -879,7 +879,7 @@ fn orphans_beside(file: &Path) -> Vec<PyStr> {
     let suffix: Vec<u32> = unicode::cps(".sqlite");
     let mut found: Vec<((PyStr, u128), PyStr)> = Vec::new();
     for entry in entries.flatten() {
-        let name = os_text(&entry.file_name());
+        let name = crate::fsutil::fsdecode(&entry.file_name());
         if name.len() < prefix.len() + suffix.len()
             || !name.starts_with(&prefix)
             || !name.ends_with(&suffix)
@@ -926,33 +926,6 @@ fn orphan_order(name: &[u32]) -> (PyStr, u128) {
         at += 1;
     }
     (name.to_vec(), 1)
-}
-
-/// A file name or path as Python's `str` holds it: UTF-8 with undecodable
-/// bytes as lone surrogates (`surrogateescape`) on unix; UTF-16 with lone
-/// surrogates kept on Windows.
-fn os_text(text: &OsStr) -> PyStr {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        let bytes = text.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        for chunk in bytes.utf8_chunks() {
-            out.extend(chunk.valid().chars().map(|c| c as u32));
-            out.extend(chunk.invalid().iter().map(|&b| 0xDC00 + u32::from(b)));
-        }
-        out
-    }
-    #[cfg(not(unix))]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        char::decode_utf16(text.encode_wide())
-            .map(|r| match r {
-                Ok(c) => c as u32,
-                Err(e) => u32::from(e.unpaired_surrogate()),
-            })
-            .collect()
-    }
 }
 
 /// Everything up to the closed connection, in the temporary file: the
@@ -1270,23 +1243,7 @@ fn write_binding(
     written: &mut Vec<PathBuf>,
 ) -> io::Result<()> {
     let resolved = fs::canonicalize(file)?;
-    let text = os_text(resolved.as_os_str());
-    #[cfg(not(unix))]
-    let text = {
-        // `Path.resolve` spells no verbatim prefix.
-        let s = |t: &str| unicode::cps(t);
-        if text.starts_with(&s(r"\\?\UNC\")) {
-            [s(r"\\"), text[8..].to_vec()].concat()
-        } else if text.starts_with(&s(r"\\?\")) {
-            text[4..].to_vec()
-        } else {
-            text
-        }
-    };
-    let value = PyValue::Dict(vec![(PyValue::str("path"), PyValue::Str(text))]);
-    let json = json::dumps(&value, DumpOptions::DEFAULT)
-        .map(|t| json::utf8_text(&t))
-        .map_err(|_| io::Error::other("the binding"))?;
+    let json = crate::log::ring::binding_path::BindingPath::resolved(&resolved).json()?;
     locked_write(
         &keys_dir.join(format!("{store_id}.path")),
         json.as_bytes(),

@@ -645,19 +645,23 @@ pub(crate) fn file_uri(path: &Path) -> String {
     // `file:////server/share/x`, with `/` separators and the colon kept.
     #[cfg(not(unix))]
     let bytes = {
-        let text = path.to_string_lossy().into_owned();
-        let text = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
-            format!(r"\\{rest}")
+        use crate::log::ring::binding_path::BindingPath;
+        use crate::response_write::{fsencode_as, FsEncoding};
+        let path = BindingPath::resolved(path);
+        let mut text = fsencode_as(path.text(), FsEncoding::SurrogatePass)
+            .expect("a path decoded from Windows UTF-16");
+        for byte in &mut text {
+            if *byte == b'\\' {
+                *byte = b'/';
+            }
+        }
+        let mut bytes = if text.starts_with(b"//") {
+            b"//".to_vec()
         } else {
-            text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned()
+            b"///".to_vec()
         };
-        let text = text.replace('\\', "/");
-        let text = if text.starts_with("//") {
-            format!("//{text}")
-        } else {
-            format!("///{text}")
-        };
-        text.into_bytes()
+        bytes.extend(text);
+        bytes
     };
     #[cfg(not(unix))]
     let keep: &[u8] = b"/-._~:";
@@ -670,6 +674,19 @@ pub(crate) fn file_uri(path: &Path) -> String {
         }
     }
     out
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn sqlite_uri_preserves_isolated_wide_units() {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    let mut name: Vec<u16> = r"C:\ordinary\".encode_utf16().collect();
+    name.push(0xd800);
+    assert_eq!(
+        file_uri(Path::new(&OsString::from_wide(&name))),
+        "file:///C:/ordinary/%ED%A0%80"
+    );
 }
 
 /// One store file open for reading only.

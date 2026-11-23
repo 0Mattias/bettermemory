@@ -229,6 +229,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "machine_identity_python.jsonl"
         | "store_rotation_python.jsonl"
         | "membership_shared_python.jsonl"
+        // Pathlib changed absolute Windows path classification in Python 3.13.
+        | "ring_binding_paths.jsonl"
         // Rows whose input is nested past where `json.loads` stops
         // recursing, which is the interpreter's and the system's
         // (`gen_log_keyfiles`, `gen_machine`).

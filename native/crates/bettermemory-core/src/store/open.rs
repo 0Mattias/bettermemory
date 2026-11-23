@@ -40,8 +40,9 @@ use super::schema;
 use super::write::WriteError;
 use super::{keys, log_row, meta_get, open_checks, sql_value, SqlValue, StoreError};
 use super::{StoreVersionError, BUSY_TIMEOUT, LOG_SELECT, SCHEMA_REVISION};
-use crate::json::{self, DumpOptions};
+use crate::json;
 use crate::lexicon;
+use crate::log::ring::binding_path::{self, BindingError, BindingPath};
 use crate::log::{self, fingerprint, HistoryOrigin, Key, KeyRing, LogRow};
 use crate::pyvalue::{self, PyValue};
 use crate::unicode;
@@ -83,6 +84,8 @@ pub enum NotPorted {
         keys_dir: PathBuf,
         store_id: String,
         other: PathBuf,
+        /// Present when the original Python spelling differs from the OS projection.
+        original_spelling: Option<Box<BindingPath>>,
         unread: Option<String>,
     },
     /// No key file: the reference retires nothing, writes a new key and
@@ -125,6 +128,7 @@ impl NotPorted {
                 keys_dir,
                 store_id,
                 other,
+                original_spelling,
                 unread,
             } => {
                 // `_bound_words`, the summary and the remedy.
@@ -142,7 +146,10 @@ impl NotPorted {
                      directory, which binds the key ring to this one on the record (it \
                      rewrites {})",
                     keys_dir.display(),
-                    other.display(),
+                    crate::native_text::utf8_text(&original_spelling.as_ref().map_or_else(
+                        || crate::fsutil::fsdecode(other.as_os_str()),
+                        |p| p.text().to_vec()
+                    )),
                     keys_dir.join(format!("{store_id}.path")).display()
                 )
             }
@@ -207,6 +214,8 @@ pub enum OpenError {
     /// RecursionError out of reading a restore's marker nested past the
     /// decoder's depth (`restore_lock.admit` lets it through).
     MarkerRecursion,
+    /// Exception raised by the JSON decoder reading the ring binding.
+    BindingRecursion(&'static str),
     /// `StoreRefusedError` / `LaterStoreError` (`admit_store`).
     Admission(admission::Refusal),
     /// `ValueError` from `_open_connected`'s opening checks: the message.
@@ -237,7 +246,7 @@ impl OpenError {
             OpenError::NotFound(_) => "FileNotFoundError",
             OpenError::RestoreRunning => "RestoreRunningError",
             OpenError::RestoreLocked(_) => "RestoreLockedError",
-            OpenError::MarkerRecursion => "RecursionError",
+            OpenError::MarkerRecursion | OpenError::BindingRecursion(_) => "RecursionError",
             OpenError::Admission(r) => {
                 if r.later.is_some() {
                     "LaterStoreError"
@@ -273,6 +282,7 @@ impl std::fmt::Display for OpenError {
             OpenError::NotFound(p) => write!(f, "no store at {}", p.display()),
             OpenError::RestoreRunning => write!(f, "{}", restore_lock::RESTORE_RUNNING_WHY),
             OpenError::RestoreLocked(m) | OpenError::Refused(m) => write!(f, "{m}"),
+            OpenError::BindingRecursion(message) => f.write_str(message),
             OpenError::MarkerRecursion => write!(f, "{}", restore_lock::RECURSION_TEXT),
             OpenError::Admission(r) => write!(f, "is not opened: {}", r.why),
             OpenError::Version(e) => write!(f, "{}", e.message),
@@ -642,34 +652,18 @@ fn decide(
         step: "resolve the store's path",
         error,
     })?;
-    let binding = read_binding(keys_dir, &store_id);
-    let bind = match binding {
-        // `bind_store` raises OSError, `_claim_key_ring` logs it: no binding
-        // is written and the open goes on.
-        Err(_) => None,
-        Ok(None) => {
-            let origin = ring
-                .read_origin()
-                .map_err(|_| not_ported(NotPorted::Unreadable("the origin anchor")))?;
-            let head = ring
-                .read_head()
-                .map_err(|_| not_ported(NotPorted::Unreadable("the head")))?;
-            if (origin.is_some() || head.is_some()) && !fits(conn, &ring, origin.as_ref())? {
-                return Err(not_ported(NotPorted::Unclaimed));
-            }
-            Some(resolved.clone())
+    let bind = planned_binding(keys_dir, &store_id, &resolved, || {
+        let origin = ring
+            .read_origin()
+            .map_err(|_| not_ported(NotPorted::Unreadable("the origin anchor")))?;
+        let head = ring
+            .read_head()
+            .map_err(|_| not_ported(NotPorted::Unreadable("the head")))?;
+        if (origin.is_some() || head.is_some()) && !fits(conn, &ring, origin.as_ref())? {
+            return Err(not_ported(NotPorted::Unclaimed));
         }
-        Ok(Some(bound)) if same_file(&bound, &resolved) => None,
-        // `bind_store`'s `_bound`: another file that no longer holds this
-        // store (moved, deleted, another store or no store there) is no
-        // claim, and the ring is bound to this file; one that still holds
-        // it, or cannot be read to tell, keeps it.
-        Ok(Some(bound)) => match holds_store(&bound, &store_id) {
-            Ok(false) => Some(resolved.clone()),
-            Ok(true) => return Err(bound_elsewhere(keys_dir, &store_id, bound, None)),
-            Err(why) => return Err(bound_elsewhere(keys_dir, &store_id, bound, Some(why))),
-        },
-    };
+        Ok(())
+    })?;
     let Some(key) = key else {
         return Err(not_ported(NotPorted::KeyMissing));
     };
@@ -891,70 +885,6 @@ fn load_current(keys_dir: &Path, store_id: &str) -> Result<Option<Key>, OpenErro
     }
 }
 
-/// `KeyRing.read_binding`: the bound store file, None when there is no
-/// binding or it does not read as one (an object with a non-empty
-/// absolute string `path`); Err when the file is there and cannot be read.
-fn read_binding(keys_dir: &Path, store_id: &str) -> io::Result<Option<PathBuf>> {
-    let bytes = match fs::read(keys_dir.join(format!("{store_id}.path"))) {
-        Ok(b) => b,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e),
-    };
-    let Ok(text) = std::str::from_utf8(&bytes) else {
-        return Ok(None);
-    };
-    // `read_text` reads universal newlines.
-    let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let Ok(raw) = json::loads(&unicode::cps(&text)) else {
-        return Ok(None);
-    };
-    let value = match &raw {
-        PyValue::Dict(items) => items
-            .iter()
-            .find(|(k, _)| matches!(k, PyValue::Str(k) if k == &unicode::cps("path")))
-            .map(|(_, v)| v),
-        _ => None,
-    };
-    let Some(PyValue::Str(value)) = value else {
-        return Ok(None);
-    };
-    if value.is_empty() || value.contains(&0) {
-        return Ok(None);
-    }
-    let Some(value) = unicode::to_string(value) else {
-        // A lone surrogate: a name no file here has.
-        return Ok(None);
-    };
-    // `Path(value)`: pathlib's parsing (separators collapsed, `.` segments
-    // and a trailing separator dropped), so the binding names the file the
-    // reference's names, whatever its spelling.
-    #[cfg(unix)]
-    let flavour = crate::config::Flavour::Posix;
-    #[cfg(not(unix))]
-    let flavour = crate::config::Flavour::Windows;
-    let bound = PathBuf::from(crate::config::pure_path(&value, flavour));
-    Ok(bound.is_absolute().then_some(bound))
-}
-
-/// `log._same_file`: one spelling, or `os.path.samefile`.
-fn same_file(a: &Path, b: &Path) -> bool {
-    if a == b {
-        return true;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        match (fs::metadata(a), fs::metadata(b)) {
-            (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
-            _ => false,
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
-    }
-}
-
 fn row_at(conn: &Connection, seq: i64) -> Result<Option<LogRow>, OpenError> {
     let mut statement = conn.prepare(&format!("{LOG_SELECT} WHERE seq = ?"))?;
     let mut rows = statement.query([seq])?;
@@ -1153,6 +1083,27 @@ fn record_engine(conn: &Connection, version: &str) {
     }
 }
 
+/// The writer decides whether to bind, consulting the store's history only
+/// when the binding is absent. Its locked re-read below uses the same decoder.
+fn planned_binding(
+    keys_dir: &Path,
+    store_id: &str,
+    resolved: &Path,
+    unbound: impl FnOnce() -> Result<(), OpenError>,
+) -> Result<Option<PathBuf>, OpenError> {
+    let path = keys_dir.join(format!("{store_id}.path"));
+    let needed = match binding_path::read(&path, binding_path::HOST) {
+        Ok(Some(bound)) => needs_binding(keys_dir, store_id, bound, resolved)?,
+        Ok(None) => {
+            unbound()?;
+            true
+        }
+        Err(BindingError::Os(_)) => false,
+        Err(error) => return Err(binding_failure(error)),
+    };
+    Ok(needed.then(|| resolved.to_owned()))
+}
+
 /// `KeyRing.bind_store`'s write: under `<id>.path.lock`, the binding read
 /// again (another opener may have bound it meanwhile), then written
 /// atomically and owner-only: `{"path": <the store file, resolved>}`.
@@ -1163,58 +1114,86 @@ fn record_engine(conn: &Connection, version: &str) {
 /// goes on as a reader's, so this one refuses, before the digest is
 /// touched and with no key handed out.
 fn bind(keys_dir: &Path, store_id: &str, resolved: &Path) -> Result<bool, OpenError> {
-    let run = || -> io::Result<Result<bool, OpenError>> {
+    let path = keys_dir.join(format!("{store_id}.path"));
+    let open_lock = || -> io::Result<fs::File> {
         owner_only_dir(keys_dir)?;
-        // A dead opener's (or create's) staging file, over an hour old.
         create::sweep_ring_temps(keys_dir);
-        let path = keys_dir.join(format!("{store_id}.path"));
         let lock_path = with_suffix(&path, ".lock");
         let lock = match new_private_file(&lock_path) {
-            Ok(f) => f,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => fs::OpenOptions::new()
                 .read(true)
                 .write(true)
                 .open(&lock_path)?,
-            Err(e) => return Err(e),
+            result => result?,
         };
         lock.lock()?;
-        match read_binding(keys_dir, store_id)? {
-            Some(bound) if same_file(&bound, resolved) => return Ok(Ok(false)),
-            Some(bound) => match holds_store(&bound, store_id) {
-                Ok(false) => {}
-                Ok(true) => return Ok(Err(bound_elsewhere(keys_dir, store_id, bound, None))),
-                Err(why) => return Ok(Err(bound_elsewhere(keys_dir, store_id, bound, Some(why)))),
-            },
-            None => {}
-        }
-        let text = binding_text(resolved)?;
-        replace_atomic(&path, text.as_bytes())?;
-        drop(lock);
-        Ok(Ok(true))
+        Ok(lock)
     };
-    run().unwrap_or(Ok(false))
+    let Ok(_guard) = open_lock() else {
+        return Ok(false);
+    };
+    match binding_path::read(&path, binding_path::HOST) {
+        Ok(Some(bound)) => {
+            if !needs_binding(keys_dir, store_id, bound, resolved)? {
+                return Ok(false);
+            }
+        }
+        Ok(None) => {}
+        Err(BindingError::Os(_)) => return Ok(false),
+        Err(error) => return Err(binding_failure(error)),
+    }
+    Ok(BindingPath::resolved(resolved)
+        .json()
+        .and_then(|text| replace_atomic(&path, text.as_bytes()))
+        .is_ok())
 }
 
-fn bound_elsewhere(
+fn binding_failure(error: BindingError) -> OpenError {
+    match error {
+        BindingError::Recursion(message) => OpenError::BindingRecursion(message),
+        BindingError::Value => OpenError::Refused("invalid binding path".to_owned()),
+        BindingError::Os(error) => OpenError::Io {
+            step: "read the binding",
+            error,
+        },
+    }
+}
+
+fn needs_binding(
     keys_dir: &Path,
     store_id: &str,
-    other: PathBuf,
-    unread: Option<String>,
-) -> OpenError {
-    not_ported(NotPorted::BoundElsewhere {
-        keys_dir: keys_dir.to_path_buf(),
+    bound: BindingPath,
+    resolved: &Path,
+) -> Result<bool, OpenError> {
+    if bound.same_file(&BindingPath::resolved(resolved)) {
+        return Ok(false);
+    }
+    // _store_id_at catches ValueError from stat on an unencodable path.
+    let Some(other) = bound.host_path() else {
+        return Ok(true);
+    };
+    let unread = match holds_store(&other, &bound, store_id) {
+        Ok(false) => return Ok(true),
+        Ok(true) => None,
+        Err(reason) => Some(reason),
+    };
+    let original_spelling =
+        (crate::fsutil::fsdecode(other.as_os_str()) != bound.text()).then(|| Box::new(bound));
+    Err(not_ported(NotPorted::BoundElsewhere {
+        keys_dir: keys_dir.to_owned(),
         store_id: store_id.to_owned(),
         other,
+        original_spelling,
         unread,
-    })
+    }))
 }
 
 /// `_bound_store_check`'s ``holds_store``: does the store file at `other`
 /// still hold store id `store_id` (`_store_id_at(other) == store_id`)?
 /// Err(why) when it cannot be read to tell, which the reference takes as
 /// holding it (and says why).
-fn holds_store(other: &Path, store_id: &str) -> Result<bool, String> {
-    store_id_at(other).map(|id| id.as_deref() == Some(store_id))
+fn holds_store(other: &Path, spelling: &BindingPath, store_id: &str) -> Result<bool, String> {
+    store_id_at(other, spelling).map(|id| id.as_deref() == Some(store_id))
 }
 
 /// `store_keys._store_id_at`: the store id meta records in the file at
@@ -1224,7 +1203,7 @@ fn holds_store(other: &Path, store_id: &str) -> Result<bool, String> {
 /// the admission deadline, a 2 s busy timeout. Ok(None) when no file is
 /// there or it does not read as a store; Err when it cannot be read to
 /// tell (the reference's OSError text).
-fn store_id_at(path: &Path) -> Result<Option<String>, String> {
+fn store_id_at(path: &Path, spelling: &BindingPath) -> Result<Option<String>, String> {
     let status = match fs::metadata(path) {
         Ok(status) => status,
         Err(e)
@@ -1288,7 +1267,12 @@ fn store_id_at(path: &Path) -> Result<Option<String>, String> {
                 if !r.timed_out && (r.holds_meta == Some(false) || unreadable_schema(&r)) {
                     return Ok(None);
                 }
-                failed = Some(format!("{} is not opened: {}", resolved.display(), r.why));
+                let resolved = BindingPath::resolved(&resolved);
+                failed = Some(format!(
+                    "{} is not opened: {}",
+                    crate::native_text::utf8_text(resolved.text()),
+                    r.why
+                ));
             }
             Err(OpenError::Sqlite(e)) => {
                 if !not_a_store_code(&e) {
@@ -1299,7 +1283,10 @@ fn store_id_at(path: &Path) -> Result<Option<String>, String> {
         }
     }
     match failed {
-        Some(why) => Err(format!("{} could not be read ({why})", path.display())),
+        Some(why) => Err(format!(
+            "{} could not be read ({why})",
+            crate::native_text::utf8_text(spelling.text())
+        )),
         None => Ok(None),
     }
 }
@@ -1327,25 +1314,6 @@ fn is_link_loop(e: &io::Error) -> bool {
     #[cfg(not(unix))]
     let code = 1921;
     e.raw_os_error() == Some(code)
-}
-
-/// `json.dumps({"path": str(resolved)})`.
-fn binding_text(resolved: &Path) -> io::Result<String> {
-    let text = resolved
-        .to_str()
-        .ok_or_else(|| io::Error::other("a store path that is not UTF-8"))?;
-    // `Path.resolve` spells no verbatim prefix.
-    #[cfg(not(unix))]
-    let owned = text
-        .strip_prefix(r"\\?\UNC\")
-        .map(|t| format!(r"\\{t}"))
-        .unwrap_or_else(|| text.strip_prefix(r"\\?\").unwrap_or(text).to_owned());
-    #[cfg(not(unix))]
-    let text = owned.as_str();
-    let value = PyValue::Dict(vec![(PyValue::str("path"), PyValue::str(text))]);
-    json::dumps(&value, DumpOptions::DEFAULT)
-        .map(|t| json::utf8_text(&t))
-        .map_err(|_| io::Error::other("the binding"))
 }
 
 /// `_fsutil.atomic_write_bytes(path, data, mode_before_rename=0o600)`: a
@@ -1570,6 +1538,70 @@ fn digest_mark(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binding_reads_preserve_decoder_errors_at_both_stages() {
+        let mut nonce = [0; 12];
+        getrandom::fill(&mut nonce).unwrap();
+        let dir = std::env::temp_dir().join(format!("bm-binding-{nonce:x?}"));
+        fs::create_dir(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let document = dir.join("test.path");
+        let resolved = dir.join("file");
+        let beyond_decoder_limit = crate::json::MAX_DEPTH + 2;
+        for raw in [
+            b"[".repeat(beyond_decoder_limit),
+            br#"{"x":"#.repeat(beyond_decoder_limit),
+        ] {
+            fs::write(&document, &raw).unwrap();
+            let error = planned_binding(&dir, "test", &resolved, || {
+                panic!("unexpected history read")
+            })
+            .unwrap_err();
+            assert_eq!(error.class(), "RecursionError");
+            let locked_error = bind(&dir, "test", &resolved).unwrap_err();
+            assert_eq!(locked_error.class(), error.class());
+            assert_eq!(locked_error.to_string(), error.to_string());
+            assert_eq!(fs::read(&document).unwrap(), raw);
+            // Returning from the locked read releases its guard.
+            let lock = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(dir.join("test.path.lock"))
+                .unwrap();
+            lock.try_lock().unwrap();
+        }
+        fs::remove_file(&document).unwrap();
+        fs::create_dir(&document).unwrap();
+        assert!(planned_binding(&dir, "test", &resolved, || panic!(
+            "unexpected history read"
+        ))
+        .unwrap()
+        .is_none());
+        assert!(!bind(&dir, "test", &resolved).unwrap());
+        assert!(document.is_dir());
+        fs::remove_dir(&document).unwrap();
+        for malformed in [None, Some(b"not json".as_slice())] {
+            if let Some(raw) = malformed {
+                fs::write(&document, raw).unwrap();
+            }
+            let mut calls = 0;
+            let plan = planned_binding(&dir, "test", &resolved, || {
+                calls += 1;
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(calls, 1);
+            assert_eq!(plan.as_deref(), Some(resolved.as_path()));
+            assert!(bind(&dir, "test", &resolved).unwrap());
+            assert_eq!(
+                fs::read_to_string(&document).unwrap(),
+                BindingPath::resolved(&resolved).json().unwrap()
+            );
+            fs::remove_file(&document).unwrap();
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn versions_order_as_pep_440() {

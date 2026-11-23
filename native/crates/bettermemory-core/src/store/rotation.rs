@@ -19,7 +19,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::fsutil::{REPLACE_ATTEMPTS, REPLACE_BACKOFF_S};
-use crate::log::ring::{KeyFiles, RingError, RingLock};
+use crate::log::ring::{KeyFiles, RingLock};
 use crate::log::{fingerprint, row_verifies, Key, LogRow};
 use crate::pyvalue::{repr_str, PyError};
 use crate::store::create::KEY_BYTES;
@@ -104,22 +104,20 @@ fn spelled_cps(path: &Path) -> Vec<u32> {
     }
 }
 
-/// `Path(path)` as the host's calls read it: the `Path` spelling, joined
-/// to `cwd` (`os.getcwd()`) when relative. A path that is not UTF-8 is
-/// joined unnormalized.
+/// The supplied store path's Python spelling relative to the supplied cwd.
 #[cfg(unix)]
 fn host_path(path: &Path, cwd: &[u8]) -> PathBuf {
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt;
-    let path = match path.to_str() {
-        Some(text) => PathBuf::from(crate::config::pure_path(text, HOST)),
-        None => path.to_path_buf(),
-    };
-    if path.is_absolute() {
-        path
-    } else {
-        Path::new(OsStr::from_bytes(cwd)).join(path)
-    }
+    use std::ffi::{OsStr, OsString};
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let text = crate::fsutil::fsdecode(path.as_os_str());
+    let pure = crate::verify_anchoring::attest::pure_text(crate::fsdata::Flavour::Posix, &text)
+        .expect("POSIX lexical paths accept all code points");
+    let bytes = crate::response_write::fsencode_as(
+        &pure,
+        crate::response_write::FsEncoding::SurrogateEscape,
+    )
+    .expect("a path decoded from OS bytes");
+    Path::new(OsStr::from_bytes(cwd)).join(OsString::from_vec(bytes))
 }
 
 /// `Path(a) == Path(b)`: the spellings compared, case-folded under the
@@ -310,37 +308,6 @@ fn replace_atomic(
     }
 }
 
-/// `os.path.samefile`: both stat (links followed) to one device and inode;
-/// any failure is false. Each path is read as `Path` spells it, relative to
-/// `cwd`.
-#[cfg(unix)]
-fn same_file(a: &Path, b: &Path, cwd: &[u8]) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    match (
-        fs::metadata(host_path(a, cwd)),
-        fs::metadata(host_path(b, cwd)),
-    ) {
-        (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
-        _ => false,
-    }
-}
-
-/// `Path(store_file).resolve()` equals `bound`, `cwd` answering
-/// `os.getcwd()`; a ValueError (a NUL) is false.
-#[cfg(unix)]
-fn resolves_to(store_file: &Path, bound: &Path, cwd: &[u8]) -> bool {
-    use crate::fsdata::{realpath::realpath, Flavour, StdFs};
-    use std::os::unix::ffi::{OsStrExt, OsStringExt};
-    let text = match store_file.to_str() {
-        Some(t) => crate::config::pure_path(t, crate::config::Flavour::Posix).into_bytes(),
-        None => store_file.as_os_str().as_bytes().to_vec(),
-    };
-    match realpath(&StdFs, Flavour::Posix, &text, cwd) {
-        Ok(real) => std::ffi::OsString::from_vec(real) == bound,
-        Err(_) => false,
-    }
-}
-
 /// `_bound_here_or_nowhere` (908-920): the ring is bound to no file, or to
 /// `store_file` by its resolved spelling or as the same file. A binding
 /// that cannot be read is false; RecursionError propagates.
@@ -349,17 +316,27 @@ pub fn bound_here_or_nowhere<L: RingLock>(
     store_file: &Path,
     cwd: &[u8],
 ) -> Result<bool, Declined> {
-    let bound = match ring.read_binding() {
-        Ok(bound) => bound,
-        Err(RingError::Py(e)) => return Err(Declined::Py(e)),
-        Err(_) => return Ok(false),
-    };
-    let Some(bound) = bound else {
-        return Ok(true);
+    use crate::log::ring::binding_path::BindingError;
+    let bound = match ring.read_binding_exact() {
+        Ok(Some(bound)) => bound,
+        Ok(None) => return Ok(true),
+        Err(BindingError::Os(_)) => return Ok(false),
+        Err(BindingError::Recursion(_)) => return Err(Declined::Py(PyError::RecursionError)),
+        Err(BindingError::Value) => return Err(Declined::Py(PyError::ValueError)),
     };
     #[cfg(unix)]
     {
-        Ok(resolves_to(store_file, &bound, cwd) || same_file(&bound, store_file, cwd))
+        use crate::log::ring::{
+            binding_path::{same_identity, HOST},
+            resolve,
+        };
+        let Ok(resolved) = resolve(store_file, cwd) else {
+            return Ok(false);
+        };
+        Ok(bound.lexical_eq(&resolved, HOST)
+            || bound
+                .host_path()
+                .is_some_and(|p| same_identity(&p, &host_path(store_file, cwd))))
     }
     #[cfg(not(unix))]
     {

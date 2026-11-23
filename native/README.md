@@ -49,7 +49,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `attestation_paths` | `attestation_paths.py` whole: `LiteralPaths`/`ReferencePaths` (`Paths` and its `Kind`), `path_mode`, `interpret_path`, `_may_be_literal`, `joined_path`, `_REFERENCE_ROOT`, `absolute_spelling`, `literal_path`, `reference_path`, `placeholder_spelling`, `target_path`, `record_paths`, `commit_paths`, `compile_targets`, `unverifiable_inputs`, with `ntpath.splitdrive` and both `commonpath`s; the host (`os.name`, `expanduser`, `lstat`, `ntpath.normcase` on Windows) a trait | `attestation_paths.jsonl`, `attestation_paths_posix.jsonl` |
 | `project_file` | units 1 and 2 of `project_file.py`: the constants, `ErrorReason`, `ProjectFile`, `ProjectFileError` (`directory`, `line`), `Found`, `Above`, `mint_id`, `render`, `_ID_RE` (`id_text`), `_bad_name`, `_bad_char`, `_toml_string`; `parse`, `_absolute`, `_evicted`, `_parse_stat`, `_read_bounded`, `_from_table`, `_os_text` | `project_file.jsonl`, `project_file_parse.jsonl`, `project_file_parse_python.jsonl`, `project_file_parse_posix.jsonl` |
 | `project_walk` | unit 3 of `project_file.py`: `Walk` and its properties, `above_start`, `find`, `_walk`, `_look`, `write` (`WriteEffects`), with `path_eq` and `is_relative_to` | `project_walk.jsonl` |
-| `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store` | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_posix_python.jsonl`, `log_keyfiles_darwin.jsonl` |
+| `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store` | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_posix_python.jsonl`, `log_keyfiles_darwin.jsonl`, `ring_binding_paths.jsonl`, `ring_binding_path_codecs.jsonl` |
 | `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record`; unit 3 (`machine::open`): `_write_record`, `open_machine`, `StdMachine` (`gethostuuid`, the `ioreg` spawn) | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_python.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl`, `machine_open.jsonl`, `machine_open_platform.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
@@ -2381,24 +2381,29 @@ today; no test claims Windows lock interop. A follow-up after fsutil2
 folds moves `RingLock`'s default and `open_lock` onto
 `fsutil::flock_excl`.
 
-`store/open.rs` keeps private copies of `load_current`, `read_binding`,
-`same_file`, `is_link_loop` and `binding_text` until a later store unit
-moves it onto `log::ring`; the copies in `ring.rs` are deliberate, and
-`binding_text`'s Windows prefix stripping is kept in `ring.rs`'s Windows
-`resolve`. Until then `open.rs`'s `KeyUnreadable` text lacks the tail
-`; the store is not rekeyed over it`, its `read_binding` takes the first
-of two `path` keys where the reference takes the last, and it reads a
-binding nested past the JSON limit as none where the reference raises
-RecursionError.
+The ring and both writer-open reads use `log::ring::binding_path`.
+`BindingPath` keeps the normalized absolute Python spelling in code points.
+POSIX preserves exactly two leading slashes and component `..`. Windows
+compares normalized path text with Python Unicode lowercase. The host
+projection uses surrogateescape on POSIX and UTF-16 units on Windows.
+Distinct lexical spellings may identify the same file. The writer compares
+the spellings first, then checks physical identity. It propagates the
+decoder's RecursionError from the initial plan and the locked re-read.
+The ring and the store writer serialize through the same default JSON codec.
 
-**Stated differences.** A binding whose `path` holds a lone surrogate
-reads as none (the reference returns that `Path`); a store path or link
-target that is not UTF-8 is refused or shown lossily. On Windows,
-`rebind_store` resolves as non-strict `ntpath.realpath` does, with
-`fs::canonicalize` over the longest head that is there (a link inside
-the missing tail is not followed), and compares the two spellings
-lowered with Rust's `to_lowercase` where `WindowsPath` uses `str.lower`;
-the Windows `strerror` is the C runtime's, not asked here. `retire_current`
+`KeyFiles::read_binding_exact` and `rebind_store_exact` return the recorded
+spelling, including a path with no lossless OS representation. The existing
+PathBuf methods return an InvalidData error when a round trip would change
+that spelling. Rebinding checks that result before updating the file.
+`ring_binding_paths.jsonl` covers real binding documents under both pathlib
+flavours. `ring_binding_path_codecs.jsonl` records encodings, serialized
+text, and lexical equality for aliases, isolated surrogates and case variants.
+
+**Stated differences.** The writer still has its own `load_current` and
+`is_link_loop`. Its `KeyUnreadable` text omits the ring reader's final
+clause. A link target outside UTF-8 is shown lossily. On Windows,
+`rebind_store` canonicalizes the longest existing head and appends the
+missing tail. For key-file errors, the Windows `strerror` is the C runtime's, not asked here. `retire_current`
 reads a missing retired name as `Path.exists` does under 3.13, the
 pinned interpreter: an OSError other than not-found raises, where 3.14
 reads any OSError as absent. No fixture row holds any of these.
@@ -2488,10 +2493,9 @@ Decisions:
 - `_signs_a_segment` takes `SegmentStart` (the fingerprint a segment is
   under and its first row): `log::TrustSegment` carries neither.
 - `_bound_here_or_nowhere` resolves the store file with
-  `fsdata::realpath` over the `Path` spelling (`config::pure_path`), and
-  `samefile` stats both paths by that spelling joined to `cwd` when
-  relative, so `cwd` stands for `os.getcwd()` in both; a store path that
-  is not UTF-8 goes unnormalized.
+  `fsdata::realpath` over its Python path spelling, including names with
+  undecodable bytes. For differing spellings, `samefile` stats the
+  recorded path and the supplied store path relative to `cwd`.
 - `KeysDirUnreadableError` compares `link` and `keys_dir` as pathlib
   does, by their spellings (`//k` is not `/k`; `./k` is `k`).
 - The Windows flavour: a ring bound to a file declines
