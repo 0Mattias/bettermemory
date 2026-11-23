@@ -463,6 +463,7 @@ pub mod membership;
 pub mod membership_lines;
 pub mod membership_migrate;
 pub mod membership_records;
+pub mod membership_resolve;
 pub mod membership_rows;
 pub mod membership_shared;
 pub mod mirror_format;

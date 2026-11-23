@@ -370,6 +370,16 @@ pub fn view_made(
     found: Option<&PyStr>,
     carriers: impl FnOnce(&[PyStr]) -> Vec<Checkout>,
 ) -> Result<bool, Raised> {
+    try_view_made(k, found, |tokens| Ok(carriers(tokens)), |e| e)
+}
+
+/// The same read with a fallible carrier lookup on a live membership store.
+pub fn try_view_made<E>(
+    k: &Checkout,
+    found: Option<&PyStr>,
+    carriers: impl FnOnce(&[PyStr]) -> Result<Vec<Checkout>, E>,
+    token_error: impl FnOnce(Raised) -> E,
+) -> Result<bool, E> {
     let Some(token) = truthy_token(k.token.as_ref()) else {
         return Ok(false);
     };
@@ -380,8 +390,8 @@ pub fn view_made(
     if found == token || k.stamps.is_empty() {
         return Ok(false);
     }
-    let got = carriers(&asked(token, found));
-    made_by(k, found, &got)
+    let got = carriers(&asked(token, found))?;
+    made_by(k, found, &got).map_err(token_error)
 }
 
 // ---------------------------------------------------------------------------

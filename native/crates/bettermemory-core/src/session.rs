@@ -105,6 +105,33 @@ impl<K: Eq + Hash + Clone, V> OrderedMap<K, V> {
         self.slots[i].as_ref().map(|(_, v)| v)
     }
 
+    /// A borrowed lookup for an index whose key shares ownership of its data.
+    pub(crate) fn get_borrowed<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Eq + Hash + ?Sized,
+    {
+        let slot = *self.index.get(key)?;
+        self.slots[slot].as_ref().map(|(_, value)| value)
+    }
+
+    pub(crate) fn get_or_insert_default(&mut self, key: K) -> &mut V
+    where
+        V: Default,
+    {
+        let slot = *self.index.entry(key.clone()).or_insert_with(|| {
+            let next = self.slots.len();
+            self.slots.push(Some((key, V::default())));
+            next
+        });
+        &mut self.slots[slot].as_mut().expect("indexed slot").1
+    }
+
+    /// Consuming the map releases the index before its ordered entries are used.
+    pub(crate) fn into_entries(self) -> impl Iterator<Item = (K, V)> {
+        self.slots.into_iter().flatten()
+    }
+
     pub fn insert(&mut self, key: K, value: V) {
         if let Some(&i) = self.index.get(&key) {
             self.slots[i] = Some((key, value));

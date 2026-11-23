@@ -120,6 +120,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token`; unit 4 in `identity`: `_strings`, `_flag`, `_FULL_SHA`, `PortableIdentity` (`to_json`, `from_json`, `digest`), `ImportedProject` and the bounds and import words, and in `outcomes`: `Declaration`, `Declared`, `Why`, `UnresolvedProject`, `Health`, `EpisodeRef`, `Handoff`, `RecallAdmission` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl`, `membership_records_identity.jsonl`, `membership_records_identity_python.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks`; unit 2a in `membership::shared_heal`: `_carriers`, `_restamped`, `_healed`, `_chosen`, `retired_into`, `_folded`, and the `MembershipLog` trait; unit 2b in `membership::shared_ask`: `_ask_which`, `_retire_into`, `_asked_at`, `_asked_here`, `_unseen`, `_asked_plan` | `membership_shared.jsonl`, `membership_shared_python.jsonl`, `membership_shared_heal.jsonl`, `membership_shared_ask.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
+| `membership_resolve::tally` | `_tally`, `_at_the_path`, `_strength`, `_unordered`; ordered and fallible reads on the membership model | `membership_tally.jsonl` |
 | `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal`; unit mqueries of `membership_queries.py` in `queries`: `home`, `homes`, `_home_from`, `admit_recall`, `restated`, `_written_afresh`, `_restatement`, `filed_elsewhere`, the trait `ScopeReader`; unit membership-4a: `_touch_view`, `_checkout_name`, `_give_token`, `token_written`, `_foreign`; unit mlegacy in `legacy`: `pending`, `settle_legacy_questions`, `below_root`, `_declared_below`, `_record_counts`, `_records_by_project`, and `first_output` of `membership_queries.py`; rung 2 of `membership_resolve.py` in `rung`: `_token_now`, `_token_read`, `_by_object`, `_rung_two` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl`, `membership_queries.jsonl`, `membership_touch.jsonl`, `membership_legacy.jsonl`, `membership_rung.jsonl` |
 | `declare` | `declare.py` whole: `declaring_model` and its inner `write_token`, with the re-mint, the machine row's write, the liveness and the clock as arguments | `declare.jsonl` |
 | `location_continuity` | `location.continuity` (`location.py` 1040-1094) | `location_continuity.jsonl` |
@@ -4799,7 +4800,7 @@ Decisions:
   lists vectors, its sets `BTreeSet`s. Set order is observed only after
   `membership_resolve` sorts the sets, which that unit checks; nothing
   here iterates them.
-- `Location.root_file` is a private function over `Location.files`:
+- `membership_rows::root_file` reads `Location.files` for the tally:
   the first file for a folder checkout, else the file whose folder is
   the root by `_same_path` (`capture::paths::norm`, pure).
 - `_unwritten` joins `info` and the token name (`checkout_token::TOKEN_NAME`,
@@ -4996,10 +4997,10 @@ membership-4.
   IndependentReader)` is the caller passing the same reader again as
   `git: Option<&dyn IndependentReader>`. `NeedIndependent` is the error
   of `specific`, `most_specific` and `independent`, which touch no store.
-- `held` and `rewritten` take `exclude: Option<&PyStr>`: the reference's
-  callers pass `()` or one project. Their maps, and `_held`'s sets,
-  answer in key order where the reference's dicts follow the order of a
-  set; no caller reads them unsorted. `held` reads a row's project (and
+- `held` and `rewritten` return key-ordered maps and take one optional
+  exclusion. The tally uses their ordered variants to exclude multiple
+  projects and retain the order in which it finds each candidate.
+  Boundary messages use that order. `held` reads a row's project (and
   canonicalises it) before its commit id, and `rewritten` its
   fingerprint first, skipping a row without one, as the reference does.
   `str.lower` of a commit id is `unicode::lower`; the fixtures hold
@@ -5365,15 +5366,15 @@ the callers that give `below_root` the location's `view_path`.
 `membership_resolve.py` (1,924 lines) holds the methods `Membership`
 binds for a resolution: the tally, the ladder's rungs, the liveness
 plan, first sight, join, ask and new, the sighting's writes, the
-subprojects and the declared folders. The Rust lives in
-`src/membership/`, one file per unit, as further `impl` blocks of
-`Membership`. The module is far past 600 lines of Rust, so it is cut
-into units, leaves first; unit mresrung (rung 2) is built.
+subprojects and the declared folders. The rung methods live in
+`src/membership/`, with the tally and its model adapter in
+`src/membership_resolve/`. The module is far past 600 lines of Rust, so it is cut
+into units. Rung two and the witness tally are built.
 
 | function | reference lines | needs from the machine | status |
 | --- | --- | --- | --- |
-| `_tally` | 133-263 | the store | later |
-| `_at_the_path`, `_strength` | 266-326 | the store | later |
+| `_tally` | 133-263 | the store and history | built in `membership_resolve::tally` |
+| `_at_the_path`, `_strength` | 266-326 | the store | built in `membership_resolve::tally` |
 | `resolve` | 332-395 | the store, a transaction, the history reader | later (with `_resolve`) |
 | `_token_now` | 398-431 | the token file (a closure) | built (mresrung) |
 | `_token_read` | 434-451 | the token file's stat and read, a bounded read | built (mresrung) |
@@ -5383,7 +5384,52 @@ into units, leaves first; unit mresrung (rung 2) is built.
 | `_first_sight`, `_join`, `_content_candidates`, `_ask`, `_new`, `_display_name` | 954-1301 | the store, the clock | later |
 | `_observe` | 1307-1453 | the store, the clock, the token writer | later |
 | `_subproject_line`, `_nested_answer`, `_subproject` | 1459-1563 | the store | later |
-| `_resolve_folder`, `_asked_folder`, `_declared_folder`, `_declared_dirs`, `prefetch_declared`, `_declared_todo`, `_unordered` | 1569-1924 | the store, the file system | later |
+| `_resolve_folder`, `_asked_folder`, `_declared_folder`, `_declared_dirs`, `prefetch_declared`, `_declared_todo` | 1569-1903 | the store, the file system | later |
+| `_unordered` | 1905-1924 | none | built in `membership_resolve::tally` |
+
+### Membership tally and witness strength
+
+`membership_resolve::tally` reads witnesses, local paths, token carriers and
+per-witness blob sets in the caller’s existing transaction. It uses
+`membership_rows::Tally` to preserve candidate, contradiction, rekey and
+boundary-drop order. The concrete `Membership` binding reads the four direct
+store queries without passing them through the model's row cache. Collection
+exclusions apply before history queries. Existing single-exclusion history
+methods keep their sorted-map results.
+
+`tally_with_reads` accepts fallible history and view providers. An error from
+holds, fingerprint, parents, holds_objects, view_state or live_view ends the
+tally at that operation and carries the original error. `tally` accepts the
+existing infallible native history and model liveness providers.
+
+CPython traverses sets when reading local remotes, held commits, and the projects
+sharing a commit or fingerprint. This order can reach a boundary message.
+`tally_in_order` and `TallyReads` accept the upstream remote order and
+`HistoryOrder` preserves the observed history set orders. A rewritten project
+keeps its first encounter in the traversal. With no observed order, the native
+Location and history sets use codepoint order. Before N6, the capture-to-resolver
+binding must carry the original set order when bridging an existing Python
+caller, and supply the fallible adapters when the host can raise.
+
+The tally shares each canonical project ID between its order and lookup
+structures and transfers the ID to the result. On one macOS arm64 release
+benchmark with 2,000 IDs sharing a 2,048-codepoint prefix, the SQLite-backed
+projection took 75.2 ms cold and 44.6 ms warm, with 171 MB peak RSS. Python
+used 82 MB. A trivial in-memory provider with 2,000 deliberately disjoint
+exclusions took 24.8 ms and 92 MB. The Python comparison, which received a
+prebuilt exclusion set, took 2.0 ms. The two current resolution call sites
+supply zero exclusions or construct a singleton. With these shapes and the
+same 2,048-codepoint prefix, the SQLite-backed warm measurements were
+2.54 and 3.86 times the Python durations.
+
+`membership_tally.jsonl` covers ordered outcomes and synchronous read traces
+from the real Python Membership, including real sets under two pinned hash
+seeds. Its strength rows cover all 1,024 combinations of ten codes for each
+of eight born, shallow and project-history settings. The fixture includes
+null fingerprints, multi-project exclusions, and errors from all six provider
+reads. `golden_membership_tally`, `membership_tally_kills` and
+`membership_tally_robustness` exercise these contracts.
+
 
 Rung 2 (`membership::rung`):
 
@@ -23898,7 +23944,8 @@ What the reference has and this build does not, by area:
   resolves the rest; its admission is `store::caller`).
 - `membership_resolve.py` past rung 2 of the ladder (`_token_now`,
   `_token_read`, `_by_object` and `_rung_two` are built in
-  `membership::rung`): the tally, the other rungs, the liveness plan,
+  `membership::rung` and the tally and tie wording in
+  `membership_resolve::tally`): the other rungs, the liveness plan,
   first sight, join, ask and new, the sighting's writes, the
   subprojects and the declared folders.
 - `membership_migrate.py` past its constants, its report types

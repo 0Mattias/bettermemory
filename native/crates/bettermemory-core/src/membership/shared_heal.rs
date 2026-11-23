@@ -50,7 +50,7 @@ fn py<E>(e: PyError) -> Error<E> {
     })
 }
 
-fn token_error<E>(e: &checkout_token::Raised) -> Error<E> {
+pub(crate) fn token_error<E>(e: &checkout_token::Raised) -> Error<E> {
     Error::Raised(Raised {
         class: e.class(),
         message: String::new(),
