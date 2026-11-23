@@ -2195,11 +2195,14 @@ its caller's stack already used, so it can stop lower when called deep in
 a stack, while the native limit is fixed. Native never rejects what the
 reference accepts.
 
-`sort_keys` sorts as Python compares keys: exactly between an int and a
-float at any size, and, for fewer than 64 keys, as CPython 3.13's
-`list.sort` leaves a NaN key, which compares false both ways (its run
-detection changed in 3.13; `json_edges.jsonl`). Past 63 keys with a NaN
-among them the order is a fixed total order, not pinned to CPython's.
+`sort_keys` compares integers and floats exactly at every size. For NaN and
+mixed key types it follows CPython 3.13's `list.sort` comparison sequence:
+run detection, binary insertion, merging and galloping. This determines
+the signed payload and the first comparison that raises TypeError. Python
+3.11 and 3.12 can place a NaN differently because they detect runs
+differently. The SQLite row sorter uses the same comparison sequence.
+`signed_key_sort_posix_python.jsonl` checks canonical payload digests,
+row MACs and the first comparison errors through real event writes.
 
 Seqs are i64, as SQLite stores them; `verify_chain` counts the expected seq
 in i128, so a chain that runs to `i64::MAX` reports as the reference does,

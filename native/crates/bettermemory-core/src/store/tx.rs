@@ -36,7 +36,7 @@ use super::fold::Applier;
 use super::open::{require_current_writer, WritableStore};
 use super::write::{
     before, candidates, is_active, last_row, load_current, move_head, native_origin, pending_is,
-    py_error, HeadMove, WriteBoundary, WriteError, WriteNotPorted, KINDS, SUPERSEDES,
+    HeadMove, WriteBoundary, WriteError, WriteNotPorted, KINDS, SUPERSEDES,
 };
 use crate::datetime::DateTime;
 use crate::log::{fingerprint, next_row, Key, LogRow};
@@ -475,6 +475,10 @@ impl Transaction<'_> {
         // compute_mac encodes ts, session and kind in that order. If a
         // column fails, canonical_payload is still the first operation
         // after the timestamp and can raise an earlier error of its own.
+        let payload_error = |e: crate::pyvalue::PyError| WriteError::Refused {
+            class: e.name(),
+            text: crate::json::payload_error_text(payload),
+        };
         let columns = || {
             Ok((
                 ts.utf8()?,
@@ -485,7 +489,7 @@ impl Transaction<'_> {
         let (ts, session, kind) = match columns() {
             Ok(columns) => columns,
             Err(e) => {
-                crate::json::canonical_payload(payload).map_err(py_error)?;
+                crate::json::canonical_payload(payload).map_err(payload_error)?;
                 return Err(e);
             }
         };
@@ -497,7 +501,7 @@ impl Transaction<'_> {
             session.as_deref(),
             &ts,
         )
-        .map_err(py_error)?;
+        .map_err(payload_error)?;
         conn.prepare(
             "INSERT INTO log(seq, ts, session, kind, payload, prev_mac, mac) \
              VALUES (?, ?, ?, ?, ?, ?, ?)",

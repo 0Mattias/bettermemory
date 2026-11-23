@@ -186,6 +186,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
     match file {
         // NFC, `str.lower`, `str.isspace` and `re`'s `\w` past ASCII.
         "attribution_unicode.jsonl" => &[Unicode],
+        // Writable POSIX store; Python 3.13 changed sort-run detection.
+        "signed_key_sort_posix_python.jsonl" => &[Python, Platform],
         // `find_control_tokens` past ASCII (`gen_handlers_verify`).
         "handlers_verify_args_unicode.jsonl" => &[Unicode],
         // `Path.resolve` meets a link loop: 3.11 and 3.12 raise RuntimeError.

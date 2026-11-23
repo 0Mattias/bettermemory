@@ -62,24 +62,7 @@ pub(crate) fn not_found(key: &PyValue) -> WriteError {
     }
 }
 
-/// The type's name as CPython's error messages spell it (`tp_name`:
-/// `'datetime.datetime' object has no attribute 'strip'`, where
-/// `type(x).__name__` is `datetime`), checked against the reference for
-/// every variant.
-pub(crate) fn type_name(v: &PyValue) -> &'static str {
-    match v {
-        PyValue::None => "NoneType",
-        PyValue::Bool(_) => "bool",
-        PyValue::Int(_) => "int",
-        PyValue::Float(_) => "float",
-        PyValue::Str(_) => "str",
-        PyValue::DateTime(_) => "datetime.datetime",
-        PyValue::Path(_) => "PurePosixPath",
-        PyValue::Tuple(_) => "tuple",
-        PyValue::List(_) => "list",
-        PyValue::Dict(_) => "dict",
-    }
-}
+pub(crate) use crate::pyvalue::type_name;
 
 /// `bool(value)`.
 pub fn truthy(v: &PyValue) -> bool {

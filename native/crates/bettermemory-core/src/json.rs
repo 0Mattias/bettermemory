@@ -9,9 +9,7 @@
 use std::collections::HashMap;
 
 use crate::float_repr;
-use crate::pyvalue::{
-    cmp_keys, lt_keys, py_str, python_small_sort, PyError, PyStr, PyValue, SMALL_SORT,
-};
+use crate::pyvalue::{lt_keys, py_str, PyError, PyStr, PyValue};
 use crate::unicode;
 
 /// The keyword arguments a `json.dumps` call site passes.
@@ -172,6 +170,81 @@ fn key_text(key: &PyValue) -> Result<PyStr, PyError> {
     })
 }
 
+/// CPython sorts dict items before checking which key types JSON can encode.
+/// Tuple comparison first tests corresponding elements for equality, then
+/// orders the first unequal pair. Use a work list for nested tuple keys.
+fn python_key_lt(
+    a: &PyValue,
+    b: &PyValue,
+    same_nan: impl Fn(usize) -> bool,
+) -> Result<bool, String> {
+    if let Some(less) = lt_keys(a, b) {
+        return Ok(less);
+    }
+    use std::cmp::Ordering;
+    enum Step<'a> {
+        Pair(&'a PyValue, &'a PyValue),
+        Length(usize, usize),
+    }
+
+    let mut ordinal = 0;
+    let mut work = vec![Step::Pair(a, b)];
+    while let Some(step) = work.pop() {
+        let order = match step {
+            Step::Length(a, b) => a.cmp(&b),
+            Step::Pair(a, b) => match (a, b) {
+                (PyValue::Tuple(x), PyValue::Tuple(y)) => {
+                    work.push(Step::Length(x.len(), y.len()));
+                    work.extend(x.iter().zip(y).rev().map(|(x, y)| Step::Pair(x, y)));
+                    continue;
+                }
+                (PyValue::Path(x), PyValue::Path(y)) => {
+                    x.split(|&c| c == 47).cmp(y.split(|&c| c == 47))
+                }
+                (PyValue::DateTime(x), PyValue::DateTime(y)) => {
+                    if x.offset_us.is_some() != y.offset_us.is_some() {
+                        return Err("can't compare offset-naive and offset-aware datetimes".into());
+                    }
+                    let instant = |d: &crate::datetime::DateTime| {
+                        d.wall_us() - i128::from(d.offset_us.unwrap_or(0))
+                    };
+                    instant(x).cmp(&instant(y))
+                }
+                (PyValue::None, PyValue::None) => Ordering::Equal,
+                _ => {
+                    let less = lt_keys(a, b).ok_or_else(|| {
+                        format!(
+                            "'<' not supported between instances of '{}' and '{}'",
+                            crate::pyvalue::type_name(a),
+                            crate::pyvalue::type_name(b)
+                        )
+                    })?;
+                    let nan_a = matches!(a, PyValue::Float(f) if f.is_nan());
+                    let nan_b = matches!(b, PyValue::Float(f) if f.is_nan());
+                    if nan_a || nan_b {
+                        if nan_a && nan_b && same_nan(ordinal) {
+                            ordinal += 1;
+                            continue;
+                        }
+                        return Ok(false);
+                    }
+                    if less {
+                        Ordering::Less
+                    } else if lt_keys(b, a) == Some(true) {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Equal
+                    }
+                }
+            },
+        };
+        if order != Ordering::Equal {
+            return Ok(order == Ordering::Less);
+        }
+    }
+    Ok(false)
+}
+
 /// The deepest nesting of containers the reference reads or writes: CPython
 /// 3.13's C JSON decoder and encoder and `repr` raise RecursionError on the
 /// 9,999th nested container (measured through `json.loads`,
@@ -188,7 +261,8 @@ enum Frame<'a> {
         next: usize,
     },
     Dict {
-        items: Vec<&'a (PyValue, PyValue)>,
+        items: &'a [(PyValue, PyValue)],
+        order: Vec<usize>,
         next: usize,
     },
 }
@@ -196,6 +270,7 @@ enum Frame<'a> {
 struct Encoder {
     options: DumpOptions,
     out: PyStr,
+    message: Option<String>,
 }
 
 impl Encoder {
@@ -250,34 +325,30 @@ impl Encoder {
                 if items.is_empty() {
                     push(&mut self.out, "{}");
                 } else {
-                    let mut order: Vec<&(PyValue, PyValue)> = items.iter().collect();
+                    let mut order: Vec<usize> = (0..items.len()).collect();
                     if self.options.sort_keys && order.len() > 1 {
-                        // `sorted(dct.items())` raises TypeError for any two
-                        // keys `<` refuses; a sort of two or more keys of
-                        // classes that do not compare always meets such a
-                        // pair.
-                        let first = &order[0].0;
-                        if order.iter().any(|(k, _)| cmp_keys(first, k).is_none()) {
-                            return Err(PyError::TypeError);
-                        }
-                        // Every pair now compares. Few keys sort as
-                        // CPython 3.13's binary insertion leaves them, NaN
-                        // included; many by a total order that agrees with
-                        // `<` on every pair without a NaN.
-                        if order.len() < SMALL_SORT {
-                            python_small_sort(&mut order, |a, b| {
-                                lt_keys(&a.0, &b.0).unwrap_or(false)
+                        if items.iter().all(|(key, _)| matches!(key, PyValue::Str(_))) {
+                            order.sort_by(|&a, &b| match (&items[a].0, &items[b].0) {
+                                (PyValue::Str(a), PyValue::Str(b)) => a.cmp(b),
+                                _ => unreachable!("string keys"),
                             });
                         } else {
-                            order.sort_by(|a, b| {
-                                cmp_keys(&a.0, &b.0).unwrap_or(std::cmp::Ordering::Equal)
-                            });
+                            // NaNs have no ordering. Mixed keys may raise on a specific comparison.
+                            // Both the signed text and the error depend on CPython's comparison sequence.
+                            crate::pyvalue::list_sort::sort_by(&mut order, |&a, &b| {
+                                python_key_lt(&items[a].0, &items[b].0, |_| false)
+                            })
+                            .map_err(|message| {
+                                self.message = Some(message);
+                                PyError::TypeError
+                            })?;
                         }
                     }
                     push(&mut self.out, "{");
                     self.newline(depth + 1);
                     return Ok(Some(Frame::Dict {
-                        items: order,
+                        items,
+                        order,
                         next: 0,
                     }));
                 }
@@ -303,10 +374,12 @@ impl Encoder {
                     *next += 1;
                     items.get(index).map(|item| (index, None, item))
                 }
-                Frame::Dict { items, next } => {
+                Frame::Dict { items, order, next } => {
                     let index = *next;
                     *next += 1;
-                    items.get(index).map(|(k, v)| (index, Some(k), v))
+                    order
+                        .get(index)
+                        .map(|&i| (index, Some(&items[i].0), &items[i].1))
                 }
             };
             let Some((index, key, item)) = item else {
@@ -323,7 +396,12 @@ impl Encoder {
                 self.newline(depth);
             }
             if let Some(key) = key {
-                let key = key_text(key)?;
+                let key = key_text(key).inspect_err(|_| {
+                    self.message = Some(format!(
+                        "keys must be str, int, float, bool or None, not {}",
+                        crate::pyvalue::type_name(key)
+                    ));
+                })?;
                 encode_str(&mut self.out, &key, self.options.ensure_ascii);
                 push(&mut self.out, self.options.key_separator);
             }
@@ -341,9 +419,22 @@ pub fn dumps(value: &PyValue, options: DumpOptions) -> Result<PyStr, PyError> {
     let mut encoder = Encoder {
         options,
         out: Vec::new(),
+        message: None,
     };
     encoder.encode(value)?;
     Ok(encoder.out)
+}
+
+/// Comparison or key-conversion diagnostic when a canonical write failed.
+/// Successful writes encode their payload only once.
+pub(crate) fn payload_error_text(value: &PyValue) -> Option<String> {
+    let mut encoder = Encoder {
+        options: DumpOptions::LOG_PAYLOAD,
+        out: Vec::new(),
+        message: None,
+    };
+    let _ = encoder.encode(value);
+    encoder.message
 }
 
 /// `text.encode("utf-8", "backslashreplace").decode("utf-8")`: each lone

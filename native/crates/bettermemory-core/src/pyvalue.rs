@@ -4,6 +4,8 @@
 //! may hold a lone surrogate. An integer keeps its decimal text, since a
 //! Python `int` has no bound.
 
+pub(crate) mod list_sort;
+
 use std::cmp::Ordering;
 
 use crate::datetime::DateTime;
@@ -34,6 +36,25 @@ pub enum PyValue {
     List(Vec<PyValue>),
     /// Insertion order, as a Python `dict` keeps it.
     Dict(Vec<(PyValue, PyValue)>),
+}
+
+/// The type's name as CPython's error messages spell it (`tp_name`:
+/// `'datetime.datetime' object has no attribute 'strip'`, where
+/// `type(x).__name__` is `datetime`), checked against the reference for
+/// every variant.
+pub(crate) fn type_name(v: &PyValue) -> &'static str {
+    match v {
+        PyValue::None => "NoneType",
+        PyValue::Bool(_) => "bool",
+        PyValue::Int(_) => "int",
+        PyValue::Float(_) => "float",
+        PyValue::Str(_) => "str",
+        PyValue::DateTime(_) => "datetime.datetime",
+        PyValue::Path(_) => "PurePosixPath",
+        PyValue::Tuple(_) => "tuple",
+        PyValue::List(_) => "list",
+        PyValue::Dict(_) => "dict",
+    }
 }
 
 impl PyValue {
@@ -196,8 +217,8 @@ fn cmp_int_float(int: &str, float: f64) -> Option<Ordering> {
 
 /// A total order on two dict keys that `<` compares, or None for a pair
 /// `<` refuses (TypeError). It agrees with `<` on every pair without a
-/// NaN, and puts a NaN after every number. Sorts many keys
-/// ([`python_small_sort`] sorts few).
+/// NaN or signed zero. JSON key sorting uses [`lt_keys`] so NaNs
+/// keep the ordering CPython's comparison sequence gives them.
 pub fn cmp_keys(a: &PyValue, b: &PyValue) -> Option<Ordering> {
     match (a, b) {
         (PyValue::Str(x), PyValue::Str(y)) => Some(x.cmp(y)),
