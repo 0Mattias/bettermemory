@@ -19,7 +19,7 @@ from bettermemory.store import Store
 from ._common import jsonl
 from ._fixed import Ticker, fixed
 from ._sandbox import world
-from .gen_store_open import _engine, _made
+from .gen_store_create import _fixed as fixed_creation
 from .gen_store_record_event import LOG0, WALL0
 from .gen_store_write import decode
 
@@ -69,12 +69,11 @@ def cases() -> list[tuple[str, list[Any]]]:
 def _run(
     directory: Path, keys: list[Any], use_actor: bool
 ) -> tuple[dict[str, Any], str]:
-    _made("created", {}, directory)
     metadata = {"metadata": {decode(key): i for i, key in enumerate(keys)}}
     kwargs = {"actor": metadata} if use_actor else metadata
     with (
-        _engine(),
-        Store.open(directory / "memory.sqlite", keys_dir=directory / "keys") as store,
+        fixed_creation(),
+        Store.create(directory / "memory.sqlite", keys_dir=directory / "keys") as store,
     ):
         previous = store._conn.execute("SELECT mac FROM log WHERE seq=1").fetchone()[0]
         with fixed(log=Ticker(LOG0, timedelta(0)), wall=Ticker(WALL0, timedelta(0))):

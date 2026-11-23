@@ -1236,7 +1236,6 @@ POSIX_ONLY = frozenset(
         "store_records_e",
         "store_returned_posix",
         "store_record_event_posix",
-        "signed_key_sort_posix_python",
         "store_membership",
         "store_rotation",
         "store_rotation_python",

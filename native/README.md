@@ -2214,7 +2214,9 @@ the signed payload and the first comparison that raises TypeError. Python
 3.11 and 3.12 can place a NaN differently because they detect runs
 differently. The SQLite row sorter uses the same comparison sequence.
 `signed_key_sort_posix_python.jsonl` checks canonical payload digests,
-row MACs and the first comparison errors through real event writes.
+row MACs and the first comparison errors through Python event writes on all
+platforms. The native row signer checks those same cases everywhere. On
+POSIX the native test also writes and reads back each event in SQLite.
 
 Seqs are i64, as SQLite stores them; `verify_chain` counts the expected seq
 in i128, so a chain that runs to `i64::MAX` reports as the reference does,
