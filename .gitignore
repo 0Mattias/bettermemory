@@ -59,4 +59,4 @@ htmlcov/
 bench/.llm-cache/
 
 # The native build (Rust) writes here; CARGO_TARGET_DIR points inside it.
-native/target/
+native/**/target/

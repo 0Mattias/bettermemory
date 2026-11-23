@@ -27,8 +27,13 @@ import time
 import traceback
 import unicodedata
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import Context, copy_context
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
+from threading import RLock
 
 from . import (
     gen_argparse,
@@ -1351,49 +1356,158 @@ def _process_state() -> dict[str, object]:
     return state
 
 
-def _cwd_and_environ() -> tuple[str, dict[str, str]]:
-    return os.getcwd(), dict(os.environ)
+def _generator_context() -> Context:
+    """Isolate known mutable package values and keep shared budget aliases."""
+    from bettermemory import config, git_read_budget, identity
+
+    context = copy_context()
+    if isinstance(caller := identity.current(), identity.Caller):
+        context.run(identity._CURRENT.set, caller.model_copy(deep=True))
+    if isinstance(trial := config._TRIAL.get(), list):
+        context.run(config._TRIAL.set, trial.copy())
+
+    # ReadBudget and its progress may be shared by two bindings. Copy their
+    # graph with one memo, substituting a fresh lock for each progress lock.
+    memo: dict[int, object] = {}
+    for variable in (git_read_budget._OWNER, git_read_budget._ACTIVE):
+        budget = variable.get()
+        if isinstance(budget, git_read_budget.ReadBudget):
+            if budget.progress is not None:
+                memo.setdefault(id(budget.progress.lock), RLock())
+            context.run(variable.set, deepcopy(budget, memo))
+    return context
+
+
+def _mutable_state() -> dict[str, object]:
+    """Snapshot fields whose values may change without rebinding a ContextVar."""
+    from bettermemory import config, git_read_budget, identity
+
+    values: dict[str, object] = {}
+    if isinstance(caller := identity.current(), identity.Caller):
+        values["identity._CURRENT"] = caller.model_dump()
+    if isinstance(trial := config._TRIAL.get(), list):
+        values["config._TRIAL"] = tuple(trial)
+    for name, variable in (
+        ("git_read_budget._OWNER", git_read_budget._OWNER),
+        ("git_read_budget._ACTIVE", git_read_budget._ACTIVE),
+    ):
+        if isinstance(budget := variable.get(), git_read_budget.ReadBudget):
+            progress = (
+                (budget.progress.resume,) if budget.progress is not None else None
+            )
+            values[name] = replace(budget, progress=None), progress
+    return values
+
+
+def _same_directory(identity: os.stat_result) -> bool:
+    try:
+        os.getcwd()  # Unlinked directories may still have a matching inode.
+        return os.path.samestat(os.stat("."), identity)
+    except OSError:
+        return False
+
+
+@contextmanager
+def _cwd_handle() -> Iterator[int | None]:
+    fd = None
+    if os.chdir in os.supports_fd:
+        search = getattr(os, "O_SEARCH", getattr(os, "O_PATH", os.O_RDONLY))
+        for flags in dict.fromkeys((search, os.O_RDONLY)):
+            try:
+                fd = os.open(".", flags)
+                break
+            except OSError:
+                pass
+    try:
+        yield fd
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def _restore_environment(
+    cwd: str, identity: os.stat_result, fd: int | None, environ: dict[str, str]
+) -> list[str]:
+    """Describe and undo changes before the next generator runs."""
+    left = []
+    try:
+        current_dir: str | None = os.getcwd()
+        moved = current_dir != cwd or not _same_directory(identity)
+    except OSError:
+        current_dir, moved = None, True
+    if moved:
+        left.append(f"the working directory ({cwd!r} to {current_dir!r})")
+        try:
+            # A generator may have renamed the directory it started in.
+            os.chdir(fd if fd is not None else cwd)
+            if not _same_directory(identity):
+                left.append("could not restore the original working directory identity")
+        except OSError as exc:
+            left.append(f"could not restore the working directory: {exc}")
+
+    changed = sorted(
+        key
+        for key in environ.keys() | os.environ.keys()
+        if environ.get(key) != os.environ.get(key)
+    )
+    for key in changed:
+        if key in environ:
+            os.environ[key] = environ[key]
+        else:
+            del os.environ[key]
+    if changed:
+        left.append("the environment (" + ", ".join(changed) + ")")
+    return left
 
 
 def run_generator(
     name: str, generate: Callable[[], dict[str, bytes]] | None = None
 ) -> dict[str, bytes]:
-    """Run generator ``name`` (or ``generate`` under that name) and return
-    its files. Every driver runs a generator through here: the pinned
-    run, the as-found run and the golden test. Raises
-    `LeftStateError` naming the generator when it left a ContextVar of
-    the reference, the working directory or the environment other than it
-    found them: in one process, the next generator would read it."""
+    """Run a generator with the caller's context, preserving it for the next run.
+
+    A leak on success raises LeftStateError. A generator that raises retains
+    its original error and gets a diagnostic note if it also leaked state.
+    """
     if generate is None:
         generate = GENERATORS[name]
-    before = _process_state()
-    where = _cwd_and_environ()
-    produced = generate()
-    after = _process_state()
-    left = [key for key in before if after[key] is not before[key]]
-    now_cwd, now_env = _cwd_and_environ()
-    if now_cwd != where[0]:
-        left.append(f"the working directory ({where[0]!r} to {now_cwd!r})")
-    if now_env != where[1]:
-        changed = sorted(
-            key
-            for key in set(now_env) | set(where[1])
-            if now_env.get(key) != where[1].get(key)
-        )
-        left.append(f"the environment ({', '.join(changed)})")
-    if left:
-        raise LeftStateError(
-            f"generator {name} left process-wide state set: {'; '.join(left)}"
-        )
-    return produced
+    context = _generator_context()
+    before = context.run(_process_state)
+    mutable = context.run(_mutable_state)
+    cwd, directory, environ = os.getcwd(), os.stat("."), dict(os.environ)
+    with _cwd_handle() as fd:
+        failure: BaseException | None = None
+        try:
+            return context.run(generate)
+        except BaseException as exc:
+            failure = exc
+            raise
+        finally:
+            after = context.run(_process_state)
+            actual = context.run(_mutable_state) if mutable else {}
+            left = [
+                key
+                for key in before
+                if after[key] is not before[key]
+                or (key in mutable and mutable[key] != actual.get(key))
+            ]
+            left.extend(_restore_environment(cwd, directory, fd, environ))
+            if left:
+                message = (
+                    f"generator {name} left process-wide state set: {'; '.join(left)}"
+                )
+                if failure is None:
+                    raise LeftStateError(message)
+                failure.add_note(message)
 
 
 def as_found(out: Path) -> int:
     """Every generator under whatever is present, into ``out``, with
     ``platform.json``. Exit 0 when every generator ran, 1 when one raised
-    (the files of the others are written all the same)."""
+    (the files of the others are written all the same). A lost working
+    directory stops the run before another fixture can use the wrong tree."""
     from ._diff import _differing
 
+    directory = os.stat(".")
     out.mkdir(parents=True, exist_ok=True)
     generators: dict[str, dict[str, object]] = {}
     files: dict[str, object] = {}
@@ -1408,7 +1522,10 @@ def as_found(out: Path) -> int:
         started = time.monotonic()
         try:
             produced = run_generator(name, generate)
-        except Exception as exc:  # recorded, and the run goes on
+        except Exception as exc:
+            # A relative input or output path would now name the wrong fixture.
+            if not _same_directory(directory):
+                raise
             failed += 1
             entry["raised"] = f"{type(exc).__name__}: {exc}"
             entry["traceback"] = traceback.format_exc().splitlines()[-12:]
