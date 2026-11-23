@@ -254,6 +254,11 @@ pub struct Signature {
     pub ceilings: Option<Vec<u8>>,
 }
 
+/// A fresh `_Undetermined()`: a first slot equal to no other.
+pub fn undetermined() -> First {
+    First::Undetermined(UNDETERMINED.fetch_add(1, Ordering::Relaxed))
+}
+
 fn bare(first: First, env: &Env) -> Signature {
     Signature {
         first,
@@ -307,9 +312,6 @@ pub fn signature<F: Fs, A: Answers + ?Sized, R: Records + ?Sized, O: Owners + ?S
     match read_all() {
         Ok(signature) => Ok(signature),
         Err(Failure::Raised(class)) => Err(class),
-        Err(_) => Ok(bare(
-            First::Undetermined(UNDETERMINED.fetch_add(1, Ordering::Relaxed)),
-            env,
-        )),
+        Err(_) => Ok(bare(undetermined(), env)),
     }
 }

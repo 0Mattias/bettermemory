@@ -25,6 +25,10 @@
 //!   (`attribute_files_signature`, `gitattributes_signature`), the
 //!   index's `.gitmodules` entry with its memo (`_index_gitmodules`) and
 //!   `_gitdir_at_root`. Built.
+//! - [`walk`], unit 7 with unit 4's remainder: the origin cache's
+//!   signature (`capture_files`), the files beside the history
+//!   (`walk_files_signature`), the head `locate` reads (`located_head`)
+//!   and the check at the end of a search (`files_held`). Built.
 //!
 //! Texts are Python `str` values as code points ([`PyStr`]), since a
 //! caller's text may hold a lone surrogate, which the reference's UTF-8
@@ -34,6 +38,7 @@ pub mod attrs;
 pub mod facts;
 pub mod machine;
 pub mod root;
+pub mod walk;
 
 use crate::pyvalue::PyStr;
 

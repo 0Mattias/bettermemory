@@ -79,6 +79,7 @@ from . import (
     gen_origin_gitfiles_facts,
     gen_origin_gitfiles_machine,
     gen_origin_gitfiles_root,
+    gen_origin_gitfiles_walk,
     gen_gitconfig_wildmatch,
     gen_origin_remote,
     gen_owner_prompt,
@@ -470,6 +471,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "origin_gitfiles_facts_posix": gen_origin_gitfiles_facts.generate_posix,
     "origin_gitfiles_root_posix": gen_origin_gitfiles_root.generate_posix,
     "origin_gitfiles_attrs_posix": gen_origin_gitfiles_attrs.generate_posix,
+    "origin_gitfiles_walk_posix": gen_origin_gitfiles_walk.generate_posix,
     "ulid": gen_ulid.generate,
     "durability": gen_durability.generate,
     "durability_unicode": gen_durability.generate_unicode,
@@ -1137,6 +1139,8 @@ PLATFORM_GATED = frozenset(
 #: ``origin_gitfiles_attrs_posix`` makes links, a FIFO and mode-000 entries
 #: and discovers repositories through the owner's check, which declines off
 #: POSIX (`gen_origin_gitfiles_attrs`).
+#: ``origin_gitfiles_walk_posix`` discovers repositories through the owner's
+#: check, which declines off POSIX (`gen_origin_gitfiles_walk`).
 #: ``store_rotation`` and ``store_rotation_python`` finish key rotations
 #: over links, hard links, mode-000 files and read-only folders
 #: (`gen_store_rotation`).
@@ -1236,6 +1240,7 @@ POSIX_ONLY = frozenset(
         "origin_gitfiles_facts_posix",
         "origin_gitfiles_root_posix",
         "origin_gitfiles_attrs_posix",
+        "origin_gitfiles_walk_posix",
         "gitsystem_record",
         "gitsystem_record_python",
         "gitsystem_probe",

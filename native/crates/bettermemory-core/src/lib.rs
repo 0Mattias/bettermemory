@@ -352,8 +352,11 @@
 //!   machine: a file's prefix, a path relative to the root, the root as
 //!   the kernel spells it; and what git dies on in a config, what a config
 //!   text says, and the directories a check holds), unit 4 (the config
-//!   memo and the root read from the files) and unit 6 (the attribute
-//!   file signatures and the index's `.gitmodules` entry);
+//!   memo and the root read from the files), unit 6 (the attribute
+//!   file signatures and the index's `.gitmodules` entry) and unit 7
+//!   (the origin cache's signature, the files beside the history, the
+//!   located head and the check at the end of a search), so the whole
+//!   module;
 //! - [`checkout_token`]: the checkout token, whole: the text, the reads
 //!   over the file-system trait, the write, and the re-mint with its
 //!   claim;
