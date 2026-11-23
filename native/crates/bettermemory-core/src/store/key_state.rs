@@ -1,4 +1,7 @@
 //! Read-only projections of a store's key, origin anchor, and head checkpoint.
+mod paths;
+pub(crate) use paths::{normalize_spelling, resolve_spelling, ring_file};
+
 use super::{log_row, StoreError, LOG_SELECT};
 use crate::fsutil::fsdecode;
 use crate::log::ring::{KeyFiles, KeyUnreadable};
@@ -256,6 +259,33 @@ impl RingFit {
     }
 }
 
+/// Read one complete log row. pysqlite decodes all seven selected columns
+/// before Python sees the row, including when only its sequence or MAC is used.
+pub(super) fn first_log_row(
+    conn: &Connection,
+    tail: &str,
+    params: &[&dyn rusqlite::ToSql],
+) -> Result<Option<LogRow>, StateError> {
+    let mut statement = conn.prepare(&format!("{LOG_SELECT} {tail}"))?;
+    let mut rows = statement.query(params)?;
+    let Some(row) = rows.next()? else {
+        return Ok(None);
+    };
+    match log_row(row) {
+        Err(StoreError::NotUtf8 { column, .. }) => {
+            let bytes = row
+                .get_ref(column)?
+                .as_bytes()
+                .expect("NotUtf8 identifies a text column");
+            Err(StateError::raised(
+                "OperationalError",
+                &super::sqlite_text_error(column, bytes),
+            ))
+        }
+        result => Ok(Some(result?)),
+    }
+}
+
 /// Check the tip before inquiring about an older row. Retain the caller's transaction
 /// and the reader's column coercions. In particular an oversized positive sequence needs
 /// no SQLite bind, whereas a sequence below the SQLite range does.
@@ -263,13 +293,7 @@ pub fn head_status(head: Option<&Head>, conn: &Connection) -> Result<HeadStatus,
     let Some(h) = head else {
         return Ok(HeadStatus::Absent);
     };
-    let first =
-        |tail: &str, params: &[&dyn rusqlite::ToSql]| -> Result<Option<LogRow>, StateError> {
-            let mut stmt = conn.prepare(&format!("{LOG_SELECT} {tail}"))?;
-            let mut rows = stmt.query(params)?;
-            Ok(rows.next()?.map(log_row).transpose()?)
-        };
-    let Some(last) = first("ORDER BY seq DESC LIMIT 1", &[])? else {
+    let Some(last) = first_log_row(conn, "ORDER BY seq DESC LIMIT 1", &[])? else {
         return Ok(HeadStatus::Past);
     };
     if matches!(h.seq, PyValue::Float(f) if f.is_nan()) {
@@ -318,7 +342,7 @@ pub fn head_status(head: Option<&Head>, conn: &Connection) -> Result<HeadStatus,
             "Python int too large to convert to SQLite INTEGER",
         )
     })?;
-    let row = first("WHERE seq > ? ORDER BY seq", &[&lower])?;
+    let row = first_log_row(conn, "WHERE seq > ? ORDER BY seq", &[&lower])?;
     Ok(
         if row.is_some_and(|r| {
             cmp_keys(&h.seq, &PyValue::int(i128::from(r.seq))) == Some(Ordering::Equal)
@@ -376,9 +400,10 @@ impl fmt::Debug for KeyState {
 }
 
 fn bound_words(
-    ring: &KeyFiles,
+    dir: &[u32],
+    binding: &[u32],
     store_id: &[u32],
-    other: &Path,
+    other: &[u32],
     unread: Option<&[u32]>,
 ) -> (PyStr, PyStr) {
     let holds = match unread {
@@ -391,13 +416,13 @@ fn bound_words(
     let summary = words(
         "the key ring under {} is bound elsewhere: it belongs to the store at {}, {}; every \
             open of this file is read-only, and nothing is rekeyed or written",
-        &[&path_text(ring.keys_dir()), &path_text(other), &holds],
+        &[dir, other, &holds],
     );
     let remedy = words(
         "move or remove one of the two stores, or run `bettermemory key adopt --yes` with \
             BETTERMEMORY_DIR naming this file's directory, which binds the key ring to this one on \
             the record (it rewrites {})",
-        &[&path_text(&ring.binding_path())],
+        &[binding],
     );
     (summary, remedy)
 }
@@ -429,18 +454,6 @@ impl KeyState {
     pub fn held(&self) -> Option<String> {
         self.key.as_ref().map(|k| fingerprint(k.bytes()))
     }
-    fn bound(&self) -> Result<(PyStr, PyStr), StateError> {
-        let other = self
-            .bound_to
-            .as_deref()
-            .ok_or_else(|| StateError::raised("AssertionError", ""))?;
-        Ok(bound_words(
-            &self.keyring,
-            &cps(self.keyring.store_id()),
-            other,
-            self.unread.as_deref(),
-        ))
-    }
     fn history(&self) -> Result<PyStr, StateError> {
         let mut marks = Vec::new();
         if let Some(fit) = &self.unfit {
@@ -462,17 +475,89 @@ impl KeyState {
             marks.join(cps(" and ").as_slice())
         })
     }
+    /// Retain the Python Path spellings alongside the filesystem observation.
+    pub fn spelled<'a>(
+        &'a self,
+        store_file: &[u32],
+        keys_dir: &[u32],
+        bound_to: Option<&[u32]>,
+    ) -> KeyStateView<'a> {
+        KeyStateView {
+            facts: self,
+            store_file: normalize_spelling(store_file),
+            keys_dir: normalize_spelling(keys_dir),
+            bound_to: bound_to.map(normalize_spelling),
+        }
+    }
+
+    fn native_view(&self) -> KeyStateView<'_> {
+        KeyStateView {
+            facts: self,
+            store_file: path_text(&self.store_file),
+            keys_dir: path_text(self.keyring.keys_dir()),
+            bound_to: self.bound_to.as_deref().map(path_text),
+        }
+    }
+
     pub fn summary(&self) -> Result<PyStr, StateError> {
-        let path = path_text(&self.key_path());
-        let expected = first16(&self.expected);
-        Ok(match self.state {
+        self.native_view().summary()
+    }
+    pub fn remedy(&self) -> Result<Option<PyStr>, StateError> {
+        self.native_view().remedy()
+    }
+    pub fn refusal(&self, path: &Path) -> Result<PyStr, StateError> {
+        self.native_view().refusal(&path_text(path))
+    }
+    pub fn details(&self) -> Result<PyValue, StateError> {
+        self.native_view().details()
+    }
+}
+
+/// Text returned by KeyState uses the supplied Path spelling even where two
+/// distinct Python strings project to identical host bytes.
+pub struct KeyStateView<'a> {
+    facts: &'a KeyState,
+    pub store_file: PyStr,
+    keys_dir: PyStr,
+    bound_to: Option<PyStr>,
+}
+
+impl KeyStateView<'_> {
+    fn ring_file(&self, suffix: &str) -> PyStr {
+        ring_file(&self.keys_dir, self.facts.keyring.store_id(), suffix)
+    }
+
+    pub fn withheld(&self) -> Option<PyStr> {
+        match self.facts.state {
+            KeyStatus::BoundElsewhere => self.bound_to.clone(),
+            KeyStatus::Unclaimed => Some(self.ring_file(".path")),
+            _ => None,
+        }
+    }
+    fn bound(&self) -> Result<(PyStr, PyStr), StateError> {
+        let other = self
+            .bound_to
+            .as_deref()
+            .ok_or_else(|| StateError::raised("AssertionError", ""))?;
+        Ok(bound_words(
+            &self.keys_dir,
+            &self.ring_file(".path"),
+            &cps(self.facts.keyring.store_id()),
+            other,
+            self.facts.unread.as_deref(),
+        ))
+    }
+    pub fn summary(&self) -> Result<PyStr, StateError> {
+        let path = self.ring_file(".key");
+        let expected = first16(&self.facts.expected);
+        Ok(match self.facts.state {
             KeyStatus::Present => words(
                 "the key at {} matches the store (fingerprint {})",
                 &[&path, expected],
             ),
             KeyStatus::Unreadable => {
                 let unknown = cps("unknown");
-                let reason = self
+                let reason = self.facts
                     .error
                     .as_ref()
                     .map_or(unknown.as_slice(), |e| e.reason.as_slice());
@@ -490,7 +575,7 @@ impl KeyState {
                 &[&path],
             ),
             KeyStatus::Foreign => {
-                let held = cps(&self.held().unwrap_or_default());
+                let held = cps(&self.facts.held().unwrap_or_default());
                 words(
                     "the key at {} (fingerprint {}) is not the store's (fingerprint {}): the log cannot be \
                         verified here, and the next owner open keeps it only if it signs a segment of the log, \
@@ -499,7 +584,7 @@ impl KeyState {
                 )
             }
             KeyStatus::Unclaimed => {
-                let why = match &self.unfit {
+                let why = match &self.facts.unfit {
                     Some(fit) => fit.reason()?,
                     None => None,
                 };
@@ -508,14 +593,14 @@ impl KeyState {
                     "the key ring under {} is bound to no store file yet and holds a history this file does \
                         not carry{}: it is bound only to the file that carries it, so every open of this file \
                         is read-only, and nothing is rekeyed or written",
-                    &[&path_text(self.keyring.keys_dir()), &detail],
+                    &[&self.keys_dir, &detail],
                 )
             }
             KeyStatus::BoundElsewhere => self.bound()?.0,
         })
     }
     pub fn remedy(&self) -> Result<Option<PyStr>, StateError> {
-        Ok(Some(match self.state {
+        Ok(Some(match self.facts.state {
             KeyStatus::Present => return Ok(None),
             KeyStatus::Unreadable => cps("make it readable to this account again (owner-only, 0600), and the volume a link to it \
                 points into mounted"),
@@ -525,7 +610,7 @@ impl KeyState {
                     kept), or point BETTERMEMORY_KEYS_DIR at the directory that holds it, before anything \
                     opens the store for writing",
                 &[&fsdecode(
-                    self.key_path().file_name().expect("key filename"),
+                    self.facts.key_path().file_name().expect("key filename"),
                 )],
             ),
             KeyStatus::Foreign => cps("file the key whose fingerprint the store records back with `bettermemory key import \
@@ -536,16 +621,16 @@ impl KeyState {
                     writing open binds the ring to it, or run `bettermemory key adopt --yes` with \
                     BETTERMEMORY_DIR naming its directory, which binds the ring to it on the record and \
                     refuses a file that does not carry that history",
-                &[&self.history()?],
+                &[&self.facts.history()?],
             ),
             KeyStatus::BoundElsewhere => self.bound()?.1,
         }))
     }
-    pub fn refusal(&self, path: &Path) -> Result<PyStr, StateError> {
+    pub fn refusal(&self, path: &[u32]) -> Result<PyStr, StateError> {
         let remedy = self
             .remedy()?
             .unwrap_or_else(|| cps("open it from the process that owns the store"));
-        let owner = if matches!(self.state, KeyStatus::Missing | KeyStatus::Foreign) {
+        let owner = if matches!(self.facts.state, KeyStatus::Missing | KeyStatus::Foreign) {
             " If the key is lost for good, open it with allow_rekey=True from the process that owns \
                 the store, which writes a new key and starts a new chain segment."
         } else {
@@ -554,7 +639,7 @@ impl KeyState {
         Ok(words(
             "store {} is open for reading only: {}. {}.{}",
             &[
-                &path_text(path),
+                &normalize_spelling(path),
                 &self.summary()?,
                 &sentence(&remedy),
                 &cps(owner),
@@ -563,107 +648,43 @@ impl KeyState {
     }
     pub fn details(&self) -> Result<PyValue, StateError> {
         let mut out = vec![
-            item("key_state", PyValue::str(self.state.name())),
-            item("key_path", PyValue::Str(path_text(&self.key_path()))),
-            item("expected_fingerprint", PyValue::Str(self.expected.clone())),
+            item("key_state", PyValue::str(self.facts.state.name())),
+            item("key_path", PyValue::Str(self.ring_file(".key"))),
+            item(
+                "expected_fingerprint",
+                PyValue::Str(self.facts.expected.clone()),
+            ),
         ];
-        if let Some(k) = self.held() {
+        if let Some(k) = self.facts.held() {
             out.push(item("held_fingerprint", PyValue::str(&k)));
         }
-        if let Some(e) = &self.error {
+        if let Some(e) = &self.facts.error {
             out.push(item("reason", PyValue::Str(e.reason.clone())));
         }
         if let Some(other) = &self.bound_to {
-            out.push(item("bound_to", PyValue::Str(path_text(other))));
+            out.push(item("bound_to", PyValue::Str(other.clone())));
         }
-        if self.bound_to.is_some() || self.unfit.is_some() {
-            out.push(item(
-                "binding_path",
-                PyValue::Str(path_text(&self.keyring.binding_path())),
-            ));
+        if self.bound_to.is_some() || self.facts.unfit.is_some() {
+            out.push(item("binding_path", PyValue::Str(self.ring_file(".path"))));
         }
-        if let Some(fit) = &self.unfit {
+        if let Some(fit) = &self.facts.unfit {
             out.push(item("ring_fit", fit.to_dict()?));
         }
         Ok(PyValue::Dict(out))
     }
 }
 
-#[cfg(unix)]
-fn resolved_for_guard(p: &Path) -> Result<PathBuf, StateError> {
-    use std::os::unix::ffi::{OsStrExt, OsStringExt};
-    // Absolute paths still resolve if the process's working directory was removed.
-    let cwd = if p.is_absolute() {
-        PathBuf::new()
-    } else {
-        match std::env::current_dir() {
-            Ok(cwd) => cwd,
-            Err(_) => return Ok(p.to_owned()),
-        }
-    };
-    let fs = &crate::fsdata::StdFs;
-    let resolved = crate::fsdata::realpath::realpath(
-        fs,
-        crate::fsdata::Flavour::Posix,
-        p.as_os_str().as_bytes(),
-        cwd.as_os_str().as_bytes(),
-    )
-    .map_err(|_| StateError::raised("ValueError", "lstat: embedded null character in path"))?;
-    Ok(std::ffi::OsString::from_vec(resolved).into())
-}
-
-#[cfg(windows)]
-fn resolved_for_guard(p: &Path) -> Result<PathBuf, StateError> {
-    use std::ffi::OsString;
-    use std::os::windows::ffi::{OsStrExt, OsStringExt};
-    if p.as_os_str().encode_wide().any(|u| u == 0) {
-        return Err(StateError::raised(
-            "ValueError",
-            "embedded null character in path",
-        ));
-    }
-    let Ok(abs) = std::path::absolute(p) else {
-        return Ok(p.to_owned());
-    };
-    let mut head = abs.as_path();
-    let mut tail = Vec::new();
-    loop {
-        match std::fs::canonicalize(head) {
-            Ok(known) => {
-                let units: Vec<_> = known.as_os_str().encode_wide().collect();
-                let prefix: Vec<_> = r"\\?\".encode_utf16().collect();
-                let unc: Vec<_> = r"\\?\UNC\".encode_utf16().collect();
-                let trim = if let Some(rest) = units.strip_prefix(unc.as_slice()) {
-                    [&[92, 92][..], rest].concat()
-                } else {
-                    units
-                        .strip_prefix(prefix.as_slice())
-                        .unwrap_or(&units)
-                        .to_vec()
-                };
-                let mut out = PathBuf::from(OsString::from_wide(&trim));
-                for n in tail.into_iter().rev() {
-                    out.push(n)
-                }
-                return Ok(out);
-            }
-            Err(_) => match (head.file_name(), head.parent()) {
-                (Some(name), Some(parent)) => {
-                    tail.push(name);
-                    head = parent;
-                }
-                _ => return Ok(p.to_owned()),
+fn guard_path(path: &[u32]) -> Result<PyStr, StateError> {
+    match resolve_spelling(path) {
+        Err(
+            StateError::Read(StoreError::Io(_))
+            | StateError::Raised {
+                class: "RuntimeError",
+                ..
             },
-        }
+        ) => Ok(normalize_spelling(path)),
+        result => result,
     }
-}
-
-fn path_identity(p: &Path) -> PyStr {
-    let spelling = path_text(p);
-    #[cfg(windows)]
-    return crate::unicode::lower(&spelling);
-    #[cfg(not(windows))]
-    spelling
 }
 
 static WARNED: LazyLock<Mutex<HashSet<(PyStr, PyStr)>>> =
@@ -673,8 +694,12 @@ pub enum Level {
     Warning,
     Debug,
 }
-fn level(pair: (PathBuf, PathBuf)) -> Level {
-    let pair = (path_identity(&pair.0), path_identity(&pair.1));
+fn level(pair: (PyStr, PyStr)) -> Level {
+    #[cfg(windows)]
+    let pair = (
+        crate::unicode::lower(&pair.0),
+        crate::unicode::lower(&pair.1),
+    );
     let first = WARNED
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -722,8 +747,16 @@ pub fn warn_bound_elsewhere<E>(
     unread: Option<&[u32]>,
     emit: impl FnOnce(Warning<'_>) -> Result<(), E>,
 ) -> Result<(), WarningError<E>> {
-    let level = level((resolved_for_guard(path)?, resolved_for_guard(other)?));
-    let (summary, remedy) = bound_words(ring, store_id, other, unread);
+    let dir = path_text(ring.keys_dir());
+    let other = path_text(other);
+    let level = level((guard_path(&path_text(path))?, guard_path(&other)?));
+    let (summary, remedy) = bound_words(
+        &dir,
+        &ring_file(&dir, ring.store_id(), ".path"),
+        store_id,
+        &other,
+        unread,
+    );
     emit(Warning {
         level,
         path,
@@ -732,20 +765,50 @@ pub fn warn_bound_elsewhere<E>(
     })
     .map_err(WarningError::Logger)
 }
+
+pub(crate) fn warn_bound_exact<E>(
+    state: &KeyState,
+    store: &[u32],
+    dir: &[u32],
+    bound: &[u32],
+    emit: impl FnOnce(Level, PyStr, PyStr) -> Result<(), E>,
+) -> Result<(), WarningError<E>> {
+    let view = state.spelled(store, dir, Some(bound));
+    let other = view.bound_to.as_deref().expect("bound path supplied");
+    let level = level((guard_path(&view.store_file)?, guard_path(other)?));
+    let (summary, remedy) = view.bound()?;
+    emit(level, summary, sentence(&remedy)).map_err(WarningError::Logger)
+}
+
+pub(crate) fn warn_unclaimed_exact<E>(
+    state: &KeyState,
+    store: &[u32],
+    dir: &[u32],
+    emit: impl FnOnce(Level, PyStr, PyStr) -> Result<(), E>,
+) -> Result<(), WarningError<E>> {
+    let view = state.spelled(store, dir, None);
+    unclaimed(&view, emit)
+}
+
+fn unclaimed<E>(
+    view: &KeyStateView<'_>,
+    emit: impl FnOnce(Level, PyStr, PyStr) -> Result<(), E>,
+) -> Result<(), WarningError<E>> {
+    let level = level((guard_path(&view.store_file)?, view.ring_file(".path")));
+    let remedy = sentence(&view.remedy()?.unwrap_or_default());
+    emit(level, view.summary()?, remedy).map_err(WarningError::Logger)
+}
+
 pub fn warn_unclaimed<E>(
     state: &KeyState,
     emit: impl FnOnce(Warning<'_>) -> Result<(), E>,
 ) -> Result<(), WarningError<E>> {
-    let level = level((
-        resolved_for_guard(&state.store_file)?,
-        state.keyring.binding_path(),
-    ));
-    let remedy = sentence(&state.remedy()?.unwrap_or_default());
-    emit(Warning {
-        level,
-        path: &state.store_file,
-        summary: state.summary()?,
-        remedy,
+    unclaimed(&state.native_view(), |level, summary, remedy| {
+        emit(Warning {
+            level,
+            path: &state.store_file,
+            summary,
+            remedy,
+        })
     })
-    .map_err(WarningError::Logger)
 }

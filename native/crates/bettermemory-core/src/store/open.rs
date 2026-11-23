@@ -1274,7 +1274,17 @@ fn needs_binding(
 /// Err(why) when it cannot be read to tell, which the reference takes as
 /// holding it (and says why).
 fn holds_store(other: &Path, spelling: &BindingPath, store_id: &str) -> Result<bool, String> {
-    store_id_at(other, spelling).map(|id| id.as_deref() == Some(store_id))
+    store_id_at(other, spelling)
+        .map(|id| id.as_deref() == Some(store_id))
+        .map_err(|error| match error {
+            SecondaryError::Stat(e) => e.to_string(),
+            SecondaryError::Reason(reason) => crate::native_text::utf8_text(&reason),
+        })
+}
+
+pub(super) enum SecondaryError {
+    Stat(io::Error),
+    Reason(crate::pyvalue::PyStr),
 }
 
 /// `store_keys._store_id_at`: the store id meta records in the file at
@@ -1284,7 +1294,10 @@ fn holds_store(other: &Path, spelling: &BindingPath, store_id: &str) -> Result<b
 /// the admission deadline, a 2 s busy timeout. Ok(None) when no file is
 /// there or it does not read as a store; Err when it cannot be read to
 /// tell (the reference's OSError text).
-fn store_id_at(path: &Path, spelling: &BindingPath) -> Result<Option<String>, String> {
+pub(super) fn store_id_at(
+    path: &Path,
+    spelling: &BindingPath,
+) -> Result<Option<String>, SecondaryError> {
     let status = match fs::metadata(path) {
         Ok(status) => status,
         Err(e)
@@ -1299,7 +1312,7 @@ fn store_id_at(path: &Path, spelling: &BindingPath) -> Result<Option<String>, St
         }
         // ELOOP (macOS 62, Linux 40), or Windows' reparse-point cycle.
         Err(e) if is_link_loop(&e) => return Ok(None),
-        Err(e) => return Err(format!("{e}")),
+        Err(e) => return Err(SecondaryError::Stat(e)),
     };
     if !status.is_file() {
         return Ok(None);
@@ -1309,7 +1322,7 @@ fn store_id_at(path: &Path, spelling: &BindingPath) -> Result<Option<String>, St
     if super::beside(&resolved, "-wal").exists() && super::beside(&resolved, "-shm").exists() {
         queries.insert(0, "mode=ro");
     }
-    let mut failed: Option<String> = None;
+    let mut failed: Option<crate::pyvalue::PyStr> = None;
     for query in queries {
         let uri = format!("{}?{query}", super::file_uri(&resolved));
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
@@ -1324,7 +1337,7 @@ fn store_id_at(path: &Path, spelling: &BindingPath) -> Result<Option<String>, St
             Ok(opened) => opened,
             Err(e) => {
                 // Nothing of the file was read: no answer.
-                failed = Some(e.to_string());
+                failed = Some(crate::unicode::cps(&e.to_string()));
                 continue;
             }
         };
@@ -1348,26 +1361,28 @@ fn store_id_at(path: &Path, spelling: &BindingPath) -> Result<Option<String>, St
                 if !r.timed_out && (r.holds_meta == Some(false) || unreadable_schema(&r)) {
                     return Ok(None);
                 }
-                let resolved = BindingPath::resolved(&resolved);
-                failed = Some(format!(
-                    "{} is not opened: {}",
-                    crate::native_text::utf8_text(resolved.text()),
-                    r.why
-                ));
+                let mut why = super::key_state::resolve_spelling(spelling.text())
+                    .unwrap_or_else(|_| BindingPath::resolved(&resolved).text().to_vec());
+                why.extend(crate::unicode::cps(" is not opened: "));
+                why.extend(crate::unicode::cps(&r.why));
+                failed = Some(why);
             }
             Err(OpenError::Sqlite(e)) => {
                 if !not_a_store_code(&e) {
-                    failed = Some(e.to_string());
+                    failed = Some(crate::unicode::cps(&e.to_string()));
                 }
             }
-            Err(e) => failed = Some(e.to_string()),
+            Err(e) => failed = Some(crate::unicode::cps(&e.to_string())),
         }
     }
     match failed {
-        Some(why) => Err(format!(
-            "{} could not be read ({why})",
-            crate::native_text::utf8_text(spelling.text())
-        )),
+        Some(why) => {
+            let mut message = spelling.text().to_vec();
+            message.extend(crate::unicode::cps(" could not be read ("));
+            message.extend(why);
+            message.push(u32::from(b')'));
+            Err(SecondaryError::Reason(message))
+        }
         None => Ok(None),
     }
 }
@@ -1489,19 +1504,7 @@ fn current_writer_value(conn: &Connection, key: &str) -> Result<Option<String>, 
             // pysqlite's 198-byte diagnostic treats each non-ASCII byte
             // as a replacement and the first NUL as the end of the value.
             let bytes = value.as_bytes().expect("only invalid TEXT fails sql_value");
-            let message = b"Could not decode to UTF-8 column 'value' with text '"
-                .iter()
-                .chain(bytes.iter().take_while(|&&b| b != 0))
-                .chain(b"'")
-                .take(198)
-                .map(|&b| {
-                    if b.is_ascii() {
-                        char::from(b)
-                    } else {
-                        '\u{fffd}'
-                    }
-                })
-                .collect();
+            let message = super::sqlite_text_error("value", bytes);
             WriteError::Refused {
                 class: "OperationalError",
                 text: Some(message),

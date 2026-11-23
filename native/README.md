@@ -2363,6 +2363,31 @@ files. `store_key_state.jsonl`, `store_key_state_signed.jsonl` and
 `store_key_state_warnings.jsonl` cover the Python projections, checkpoints from
 two normally created signed stores, and the store logger's raw arguments.
 
+## Read-only store key inspection on a physical signed file
+
+`store::key_read::key_state_on` classifies a physical `log::ring::KeyFiles`
+against an existing, admitted SQLite connection. It retains the caller’s
+transaction, checks a pending committed rotation first, and reports the
+held key, binding and any unfit history in `PhysicalKeyState`. Its logger
+runs at the original call site and can return a typed caller error. An
+unclaimed ring and a ring bound to another file keep their shared,
+process-wide first-warning behavior.
+
+`ReaderRing::new` accepts a directory as Python Unicode code points.
+`key_state_at` takes the native store path along with its original
+Python spelling. Use `PhysicalKeyState::view()` for the source spelling
+of the store, keys directory and bound file. Directory selection and opening
+the primary SQLite connection belong to the caller. Only finishing a
+previously committed owner rotation changes key file contents during inspection.
+SQLite may update its existing shared-memory bookkeeping.
+
+`ring_fit` reads the origin and its exact row, tries a retained key first,
+then reads remaining physical keys if needed. It reads the head and log
+tip separately. A later call can therefore see key files changed since
+open while still using the connection’s held SQLite snapshot. The
+caller can inspect an existing-connection fit directly or use the fit
+withheld by an unclaimed ring.
+
 ## The key ring's files (`log.py`, unit log-1)
 
 `log::ring` reads and writes the files a keys directory holds for one
@@ -2491,14 +2516,14 @@ used.
 | `_signs_a_segment` | 74-87 | nothing | built (`signs_a_segment`) |
 | `KeysDirUnreadableError` | 102-122 | nothing | built (`keys_dir_unreadable`: reason and message) |
 | `prepare_store_dir` | 125-140 | `lstat`, `readlink`, `mkdir` | built earlier in `store::create` |
-| `_store_id_at`, `_bound_store_check` | 143-260 | SQLite, `stat` | store_keys-3 |
-| `_resolved_for_guard`, `_bound_words`, `_sentence`, `_warn_bound_elsewhere`, `_key_ring_elsewhere` | 266-350 | `realpath`, logging | built in `store::key_state` through `_warn_bound_elsewhere`. `_key_ring_elsewhere` remains in store_keys-2 |
+| `_store_id_at`, `_bound_store_check` | 143-260 | SQLite, `stat` | shared secondary identity read in `store::open` and the reader’s ownership check in `store::key_read` |
+| `_resolved_for_guard`, `_bound_words`, `_sentence`, `_warn_bound_elsewhere`, `_key_ring_elsewhere` | 266-350 | `realpath`, logging | shared warning projection and guard in `store::key_state`, physical binding inspection in `store::key_read` |
 | `_claim_key_ring` | 353-417 | the ring's lock, `realpath` | store_keys-3 |
-| `KeyState`, `key_state` | 423-693 | the ring, SQLite | `KeyState` and its projections are built in `store::key_state`. Loading the state in `key_state` remains in store_keys-3 |
-| `RingFit`, `head_status`, `ring_fit`, `_fit_read_only`, `_unclaimed_fit`, `_warn_unclaimed` | 696-877 | SQLite, logging | `RingFit`, `head_status` and `_warn_unclaimed` are built in `store::key_state`. The three fit readers remain in store_keys-2 |
+| `KeyState`, `key_state` | 423-693 | the ring, SQLite | `KeyState` and its projections are built in `store::key_state`. `store::key_read` loads the state for an existing connection and `claim=False`. The claiming opener has its own contract |
+| `RingFit`, `head_status`, `ring_fit`, `_fit_read_only`, `_unclaimed_fit`, `_warn_unclaimed` | 696-877 | SQLite, logging | `RingFit`, `head_status` and `_warn_unclaimed` are built in `store::key_state`. `store::key_read` implements `ring_fit` and existing-connection `_unclaimed_fit`. The separate `_fit_read_only` opens its own connection |
 | `pending_key_path` | 880-885 | nothing | built |
 | `write_key_once` | 888-905 | `open(O_EXCL, 0600)`, `fsync` | built |
-| `_bound_here_or_nowhere` | 908-920 | `realpath`, `stat` | built (POSIX; declines under the Windows flavour) |
+| `_bound_here_or_nowhere` | 908-920 | `realpath`, `stat` | the standalone rotation helper handles POSIX. The physical reader provides the host-resolved Windows and POSIX checks |
 | `_current_named` | 923-932 | the ring's read | built |
 | `finish_rotation` | 935-988 | read, rename, the pause | built |
 | `_rename_read_attempts` | 991-996 | the platform (an argument) | built |

@@ -50,6 +50,7 @@ pub mod home;
 pub mod index_reads;
 pub mod journal;
 pub mod key_directory;
+pub mod key_read;
 pub mod key_state;
 pub mod keys;
 pub mod membership;
@@ -1176,6 +1177,26 @@ fn checked_metadata(
 // ---------------------------------------------------------------------------
 // The log
 // ---------------------------------------------------------------------------
+
+/// sqlite3's uncoded OperationalError when its default text factory cannot
+/// decode a fetched column. CPython builds this diagnostic in a fixed buffer
+/// and decodes each displayed byte as ASCII with replacement.
+pub(crate) fn sqlite_text_error(column: &str, raw: &[u8]) -> String {
+    let prefix = format!("Could not decode to UTF-8 column '{column}' with text '");
+    prefix
+        .bytes()
+        .chain(raw.iter().copied().take_while(|&b| b != 0))
+        .chain(std::iter::once(b'\''))
+        .take(198)
+        .map(|b| {
+            if b.is_ascii() {
+                char::from(b)
+            } else {
+                char::REPLACEMENT_CHARACTER
+            }
+        })
+        .collect()
+}
 
 pub(crate) const LOG_SELECT: &str =
     "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log";

@@ -208,27 +208,61 @@ fn write_private(path: &Path, data: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// `log._link_target`: what the link names, a Windows verbatim prefix
-/// dropped.
-fn link_target(path: &Path) -> io::Result<String> {
-    let target = fs::read_link(path)?.to_string_lossy().into_owned();
-    if let Some(rest) = target.strip_prefix(r"\\?\UNC\") {
-        return Ok(format!(r"\\{rest}"));
-    }
-    Ok(target.strip_prefix(r"\\?\").unwrap_or(&target).to_owned())
-}
-
-/// `log._dangling_link`: why `path` is there and cannot be read when it is
-/// a symbolic link to nothing, else None.
-pub fn dangling_link(path: &Path) -> Option<String> {
-    let is_link = fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
-    if !is_link || fs::metadata(path).is_ok() {
+/// Read the link target as Python code points, dropping the verbatim prefix
+/// used by Windows readlink. POSIX surrogateescaped bytes remain distinct.
+fn dangling_reason(path: &Path) -> Option<Vec<u32>> {
+    if !fs::symlink_metadata(path).is_ok_and(|m| m.is_symlink()) || fs::metadata(path).is_ok() {
         return None;
     }
-    let target = link_target(path).ok()?;
-    Some(format!(
-        "it is a symbolic link to {target}, which is not there"
-    ))
+    let target = crate::fsutil::fsdecode(fs::read_link(path).ok()?.as_os_str());
+    let mut text = unicode::cps("it is a symbolic link to ");
+    let unc = unicode::cps(r"\\?\UNC\");
+    let verbatim = unicode::cps(r"\\?\");
+    if let Some(tail) = target.strip_prefix(unc.as_slice()) {
+        text.extend(unicode::cps(r"\\"));
+        text.extend(tail);
+    } else {
+        text.extend(target.strip_prefix(verbatim.as_slice()).unwrap_or(&target));
+    }
+    text.extend(unicode::cps(", which is not there"));
+    Some(text)
+}
+
+fn lossy_reason(text: &[u32]) -> String {
+    text.iter()
+        .map(|&cp| char::from_u32(cp).unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect()
+}
+
+/// FileIO on Windows checks UCRT errno after open/read. In particular a
+/// path exceeding the Windows filename limit is reported as ENOENT there.
+pub(crate) fn key_not_found(error: &io::Error) -> bool {
+    #[cfg(windows)]
+    if let Some(code) = error.raw_os_error() {
+        return bettermemory_sys::windows_file_error::crt(code).0 == 2;
+    }
+    error.kind() == io::ErrorKind::NotFound
+}
+
+/// The existing writer's string projection of a dangling link.
+pub fn dangling_link(path: &Path) -> Option<String> {
+    dangling_reason(path).map(|reason| lossy_reason(&reason))
+}
+
+#[derive(Debug)]
+pub(crate) struct CurrentReadError {
+    pub path: PathBuf,
+    pub cause: io::Error,
+    pub dangling: Option<Vec<u32>>,
+}
+impl CurrentReadError {
+    pub(crate) fn legacy(&self) -> KeyUnreadable {
+        KeyUnreadable::new(
+            self.path.clone(),
+            &self.cause,
+            self.dangling.as_deref().map(lossy_reason),
+        )
+    }
 }
 
 /// `json.dumps(value)`, as bytes.
@@ -298,6 +332,21 @@ pub(crate) fn resolve(store_file: &Path, _cwd: &[u8]) -> Result<BindingPath, Bin
     Ok(BindingPath::resolved(&real))
 }
 
+pub(crate) fn validated_store_id(store_id: &PyValue) -> Result<String, BadId> {
+    if let PyValue::Str(id) = store_id {
+        if is_store_id(id) {
+            return Ok(unicode::to_string(id).expect("hex store id"));
+        }
+    }
+    let text = py_str(store_id).map_err(BadId::Py)?;
+    let head: Vec<u32> = text.iter().copied().take(40).collect();
+    let shown = unicode::to_string(&repr_str(&head)).unwrap_or_default();
+    Err(BadId::ValueError(format!(
+        "not a store id: {shown}; a store id is 32 lowercase hex digits, \
+             and the key ring names its files after it"
+    )))
+}
+
 /// One store's key ring on disk (`log.KeyRing`): the keys directory and
 /// the store id its files are named after.
 #[derive(Clone, Debug)]
@@ -317,27 +366,17 @@ impl KeyFiles<FileLock> {
 
 impl<L: RingLock> KeyFiles<L> {
     pub fn with_lock(keys_dir: &Path, store_id: &PyValue, lock: L) -> Result<Self, BadId> {
-        if let PyValue::Str(id) = store_id {
-            if is_store_id(id) {
-                // `Path(keys_dir)`: pathlib's parsing of the spelling.
-                let keys_dir = match keys_dir.to_str() {
-                    Some(text) => host_path(text),
-                    None => keys_dir.to_path_buf(),
-                };
-                return Ok(KeyFiles {
-                    keys_dir,
-                    store_id: unicode::to_string(id).unwrap_or_default(),
-                    lock,
-                });
-            }
-        }
-        let text = py_str(store_id).map_err(BadId::Py)?;
-        let head: Vec<u32> = text.iter().copied().take(40).collect();
-        let shown = unicode::to_string(&repr_str(&head)).unwrap_or_default();
-        Err(BadId::ValueError(format!(
-            "not a store id: {shown}; a store id is 32 lowercase hex digits, \
-             and the key ring names its files after it"
-        )))
+        let id = validated_store_id(store_id)?;
+        // Path(keys_dir) parses separators and dot components.
+        let keys_dir = match keys_dir.to_str() {
+            Some(text) => host_path(text),
+            None => keys_dir.to_owned(),
+        };
+        Ok(Self {
+            keys_dir,
+            store_id: id,
+            lock,
+        })
     }
 
     pub fn keys_dir(&self) -> &Path {
@@ -387,16 +426,28 @@ impl<L: RingLock> KeyFiles<L> {
     /// [`KeyUnreadable`] when it is there and cannot be read, or when the
     /// key file or the keys directory is a link to nothing.
     pub fn load_current(&self) -> Result<Option<Key>, KeyUnreadable> {
+        self.load_current_exact().map_err(|e| e.legacy())
+    }
+
+    pub(crate) fn load_current_exact(&self) -> Result<Option<Key>, CurrentReadError> {
         let path = self.current_path();
         match fs::read(&path) {
             Ok(bytes) => Ok(Some(Key::new(bytes))),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                match dangling_link(&path).or_else(|| dangling_link(&self.keys_dir)) {
+            Err(cause) if key_not_found(&cause) => {
+                match dangling_reason(&path).or_else(|| dangling_reason(&self.keys_dir)) {
+                    Some(reason) => Err(CurrentReadError {
+                        path,
+                        cause,
+                        dangling: Some(reason),
+                    }),
                     None => Ok(None),
-                    Some(reason) => Err(KeyUnreadable::new(path, &e, Some(reason))),
                 }
             }
-            Err(e) => Err(KeyUnreadable::new(path, &e, None)),
+            Err(cause) => Err(CurrentReadError {
+                path,
+                cause,
+                dangling: None,
+            }),
         }
     }
 

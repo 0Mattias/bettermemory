@@ -203,6 +203,7 @@ from . import (
     gen_store_create,
     gen_store_digest_query,
     gen_store_files,
+    gen_store_key_read,
     gen_store_key_state,
     gen_store_open,
     gen_store_records,
@@ -446,6 +447,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "credentials_spans_unicode": gen_credentials_spans.generate_unicode,
     "builder_schema": gen_builder_schema.generate,
     "state_files": gen_state.generate,
+    "store_key_read": gen_store_key_read.generate,
+    "store_key_read_signed": gen_store_key_read.signed,
+    "store_key_read_paths_posix": gen_store_key_read.posix_paths,
     "store_key_state": gen_store_key_state.generate,
     "store_key_state_signed": gen_store_key_state.signed,
     "store_key_state_warnings": gen_store_key_state.warning_process,
@@ -1247,6 +1251,7 @@ PLATFORM_GATED = frozenset(
 #: (`gen_store_event_reads`).
 POSIX_ONLY = frozenset(
     {
+        "store_key_read_paths_posix",
         "external_anchor_files_posix",
         # Real project symlinks and surrogateescaped environment bytes.
         "cli_read_only_path_posix",

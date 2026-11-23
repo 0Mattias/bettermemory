@@ -395,7 +395,7 @@ impl KeyRing {
         let PyValue::Dict(_) = raw else {
             return Ok(None);
         };
-        let (Some(seq), Some(mac)) = (raw.get("seq"), raw.get("mac")) else {
+        let Some(seq) = raw.get("seq") else {
             return Ok(None);
         };
         let seq = match py_int(seq) {
@@ -403,11 +403,23 @@ impl KeyRing {
             Err(PyError::OverflowError) => return Err(PyError::OverflowError),
             Err(_) => return Ok(None),
         };
+        let Some(mac) = raw.get("mac") else {
+            return Ok(None);
+        };
         let mac = match py_str(mac) {
             Ok(mac) => mac,
             Err(PyError::RecursionError) => return Err(PyError::RecursionError),
             Err(_) => return Ok(None),
         };
+        if let Some(ts) = raw.get("ts") {
+            if let Err(error) = py_str(ts) {
+                return if error == PyError::RecursionError {
+                    Err(error)
+                } else {
+                    Ok(None)
+                };
+            }
+        }
         Ok(Some(Head { seq, mac }))
     }
 
@@ -513,6 +525,17 @@ pub fn check_origin(
     row: Option<&LogRow>,
     keys: &[Key],
 ) -> OriginCheck {
+    check_origin_with_keys(origin, row, keys, row_verifies)
+}
+
+/// Iteration starts only after the origin and its row agree. Callers may
+/// defer enumerating the physical ring until a supplied key has missed.
+pub(crate) fn check_origin_with_keys<K: std::borrow::Borrow<Key>>(
+    origin: Option<&HistoryOrigin>,
+    row: Option<&LogRow>,
+    keys: impl IntoIterator<Item = K>,
+    mut verifies: impl FnMut(&[u8], &LogRow) -> bool,
+) -> OriginCheck {
     let Some(origin) = origin else {
         return OriginCheck {
             status: "absent",
@@ -534,8 +557,11 @@ pub fn check_origin(
         return mismatch("mac");
     }
     let mut signer_held = false;
+    let mut tried = false;
     for key in keys {
-        if row_verifies(key.bytes(), row) {
+        let key = key.borrow();
+        tried = true;
+        if verifies(key.bytes(), row) {
             return OriginCheck {
                 status: "ok",
                 seq: Some(origin.seq),
@@ -553,7 +579,7 @@ pub fn check_origin(
         reason: None,
         signer: None,
     };
-    if keys.is_empty() {
+    if !tried {
         return unverifiable;
     }
     if origin.key_fingerprint.is_none() || signer_held {

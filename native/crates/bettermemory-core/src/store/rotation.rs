@@ -200,10 +200,10 @@ fn write_once(
 /// Which kind of call raised: one through the C runtime (`open`, `read`,
 /// `write`), whose error is an errno, or `os.replace`, which on Windows
 /// raises with the system's error code (`[WinError n]`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Call {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Call {
     Crt,
-    Rename,
+    Win32,
 }
 
 /// `str(exc)` of the OSError Python raises for `error` on `path` (none for
@@ -240,7 +240,7 @@ fn errno_words(error: &io::Error, code: i32, _call: Call) -> Option<String> {
 /// with trailing white space and dots removed.
 #[cfg(not(unix))]
 fn errno_words(error: &io::Error, code: i32, call: Call) -> Option<String> {
-    if call != Call::Rename {
+    if call != Call::Win32 {
         return None;
     }
     Some(format!(
@@ -359,6 +359,48 @@ fn prefix(recorded: &str) -> String {
     recorded.chars().take(16).collect()
 }
 
+pub(super) enum RotationFailure {
+    Read(crate::log::ring::CurrentReadError),
+    Os {
+        error: io::Error,
+        call: Call,
+        path: Option<PathBuf>,
+        to: Option<PathBuf>,
+    },
+    Occupied(PathBuf),
+}
+impl RotationFailure {
+    fn legacy_text(&self) -> Option<String> {
+        match self {
+            Self::Read(e) => Some(e.legacy().to_string()),
+            Self::Os {
+                error,
+                call,
+                path,
+                to,
+            } => os_text(error, *call, path.as_deref(), to.as_deref()),
+            Self::Occupied(p) => Some(format!(
+                "{} holds another key under the same prefix",
+                spelled(p)
+            )),
+        }
+    }
+    fn crt(error: io::Error, path: Option<&Path>) -> Self {
+        Self::Os {
+            error,
+            call: Call::Crt,
+            path: path.map(Path::to_owned),
+            to: None,
+        }
+    }
+}
+
+pub(super) enum RotationNotice {
+    Pending(RotationFailure),
+    Failed(RotationFailure),
+    Finished,
+}
+
 /// The `try` of `finish_rotation`: the current key kept under its
 /// fingerprint, then the pending key renamed over it; the error's text.
 fn make_current<L: RingLock>(
@@ -367,33 +409,34 @@ fn make_current<L: RingLock>(
     recorded: &str,
     windows: bool,
     sleep: &mut dyn FnMut(f64),
-) -> Result<(), Option<String>> {
-    let current = ring.load_current().map_err(|e| Some(e.to_string()))?;
+) -> Result<(), RotationFailure> {
+    let current = ring.load_current_exact().map_err(RotationFailure::Read)?;
     if let Some(current) = current {
         let named = fingerprint(current.bytes());
         if named != recorded {
             let retired = ring.retired_path(&named);
             let wrote = write_once(&retired, current.bytes(), &bettermemory_sys::fsync).map_err(
                 |e| match e {
-                    WriteFailure::Open(e) => os_text(&e, Call::Crt, Some(&retired), None),
-                    WriteFailure::Write(e) => os_text(&e, Call::Crt, None, None),
+                    WriteFailure::Open(e) => RotationFailure::crt(e, Some(&retired)),
+                    WriteFailure::Write(e) => RotationFailure::crt(e, None),
                 },
             )?;
             if !wrote {
                 let there =
-                    fs::read(&retired).map_err(|e| os_text(&e, Call::Crt, Some(&retired), None))?;
+                    fs::read(&retired).map_err(|e| RotationFailure::crt(e, Some(&retired)))?;
                 if there != current.bytes() {
-                    return Err(Some(format!(
-                        "{} holds another key under the same prefix",
-                        spelled(&retired)
-                    )));
+                    return Err(RotationFailure::Occupied(retired));
                 }
             }
         }
     }
     let target = ring.current_path();
-    replace_atomic(pending, &target, windows, sleep)
-        .map_err(|e| os_text(&e, Call::Rename, Some(pending), Some(&target)))
+    replace_atomic(pending, &target, windows, sleep).map_err(|e| RotationFailure::Os {
+        error: e,
+        call: Call::Win32,
+        path: Some(pending.to_owned()),
+        to: Some(target),
+    })
 }
 
 /// `finish_rotation` (935-988) for the store file `store_file` whose meta
@@ -407,60 +450,64 @@ pub fn finish_rotation<L: RingLock>(
     windows: bool,
     sleep: &mut dyn FnMut(f64),
 ) -> Result<Finished, Declined> {
+    let mut log = Vec::new();
+    let key = finish_with(
+        ring,
+        recorded,
+        windows,
+        sleep,
+        || bound_here_or_nowhere(ring, store_file, cwd),
+        |notice| {
+            let store = spelled(store_file);
+            let (level,text) = match notice {
+                RotationNotice::Pending(error) => (Level::Warning,format!(
+                    "store {store}: the pending key {} cannot be read: {}",
+                    spelled(&pending_key_path(ring)), error.legacy_text().ok_or(Declined::NotPorted)?)),
+                RotationNotice::Failed(error) => (Level::Warning,format!(
+                    "store {store}: the rotated key {} could not be made current ({}); the next open tries again",
+                    prefix(recorded),error.legacy_text().ok_or(Declined::NotPorted)?)),
+                RotationNotice::Finished => (Level::Info,format!(
+                    "store {store}: the key {} a rotation committed is now the current key", prefix(recorded))),
+            };
+            log.push(LogLine { level, text });
+            Ok(())
+        },
+    )?;
+    Ok(Finished { key, log })
+}
+
+pub(super) fn finish_with<L: RingLock, E>(
+    ring: &KeyFiles<L>,
+    recorded: &str,
+    windows: bool,
+    sleep: &mut dyn FnMut(f64),
+    bound_here: impl FnOnce() -> Result<bool, E>,
+    mut emit: impl FnMut(RotationNotice) -> Result<(), E>,
+) -> Result<Option<Key>, E> {
     let pending = pending_key_path(ring);
-    let mut done = Finished::default();
     let key = match fs::read(&pending) {
-        Ok(key) => key,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            done.key = current_named(ring, recorded);
-            return Ok(done);
-        }
+        Ok(bytes) => Key::new(bytes),
+        Err(e) if crate::log::ring::key_not_found(&e) => return Ok(current_named(ring, recorded)),
         Err(e) => {
-            let why = os_text(&e, Call::Crt, Some(&pending), None).ok_or(Declined::NotPorted)?;
-            done.log.push(LogLine {
-                level: Level::Warning,
-                text: format!(
-                    "store {}: the pending key {} cannot be read: {why}",
-                    spelled(store_file),
-                    spelled(&pending),
-                ),
-            });
-            return Ok(done);
+            emit(RotationNotice::Pending(RotationFailure::crt(
+                e,
+                Some(&pending),
+            )))?;
+            return Ok(None);
         }
     };
-    if key.len() != KEY_BYTES || fingerprint(&key) != recorded {
-        return Ok(done);
+    if key.bytes().len() != KEY_BYTES || fingerprint(key.bytes()) != recorded || !bound_here()? {
+        return Ok(None);
     }
-    if !bound_here_or_nowhere(ring, store_file, cwd)? {
-        return Ok(done);
-    }
-    if let Err(why) = make_current(ring, &pending, recorded, windows, sleep) {
+    if let Err(error) = make_current(ring, &pending, recorded, windows, sleep) {
         if let Some(now) = current_named(ring, recorded) {
-            done.key = Some(now);
-            return Ok(done);
+            return Ok(Some(now));
         }
-        let why = why.ok_or(Declined::NotPorted)?;
-        done.log.push(LogLine {
-            level: Level::Warning,
-            text: format!(
-                "store {}: the rotated key {} could not be made current ({why}); the next \
-                 open tries again",
-                spelled(store_file),
-                prefix(recorded)
-            ),
-        });
-        return Ok(done);
+        emit(RotationNotice::Failed(error))?;
+        return Ok(None);
     }
-    done.log.push(LogLine {
-        level: Level::Info,
-        text: format!(
-            "store {}: the key {} a rotation committed is now the current key",
-            spelled(store_file),
-            prefix(recorded)
-        ),
-    });
-    done.key = Some(Key::new(key));
-    Ok(done)
+    emit(RotationNotice::Finished)?;
+    Ok(Some(key))
 }
 
 /// `_rename_read_attempts` (991-996): `_REPLACE_ATTEMPTS` on Windows, else 1.

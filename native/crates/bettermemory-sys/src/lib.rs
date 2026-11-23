@@ -514,6 +514,10 @@ pub fn strerror(code: i32) -> Option<String> {
     String::from_utf8(buf[..end].to_vec()).ok()
 }
 
+/// The UCRT and CPython error projections used by physical Windows file operations.
+#[cfg(windows)]
+pub mod windows_file_error;
+
 /// Elsewhere `os.strerror` is the C runtime's table, which is not
 /// ported: None.
 #[cfg(not(unix))]
@@ -658,6 +662,8 @@ pub fn unlock_byte(file: &File, offset: u64) -> io::Result<()> {
 #[cfg(windows)]
 #[link(name = "kernel32")]
 extern "system" {
+    fn FindFirstFileW(name: *const u16, data: *mut Win32FindData) -> *mut core::ffi::c_void;
+    fn FindClose(handle: *mut core::ffi::c_void) -> i32;
     fn GetFinalPathNameByHandleW(
         file: *mut core::ffi::c_void,
         buf: *mut u16,
@@ -675,6 +681,48 @@ extern "system" {
         template: *mut core::ffi::c_void,
     ) -> *mut core::ffi::c_void;
     fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
+}
+
+// WIN32_FIND_DATAW. Each FILETIME is two DWORDs, with DWORD alignment.
+#[cfg(windows)]
+#[repr(C)]
+struct Win32FindData {
+    attributes: u32,
+    creation_time: [u32; 2],
+    last_access_time: [u32; 2],
+    last_write_time: [u32; 2],
+    size_high: u32,
+    size_low: u32,
+    reserved: [u32; 2],
+    name: [u16; 260],
+    alternate_name: [u16; 14],
+}
+
+/// Return the actual final component, as CPython's nt._findfirstfile does.
+#[cfg(windows)]
+pub fn find_first_name(path: &[u16]) -> io::Result<Vec<u16>> {
+    if path.contains(&0) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "embedded NUL"));
+    }
+    let mut input = path.to_vec();
+    input.push(0);
+    let mut data = std::mem::MaybeUninit::<Win32FindData>::zeroed();
+    // SAFETY: input is NUL-terminated and data points to a writable WIN32_FIND_DATAW.
+    let handle = unsafe { FindFirstFileW(input.as_ptr(), data.as_mut_ptr()) };
+    if handle as isize == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: a successful search returned this valid search handle and initialized data.
+    let data = unsafe {
+        FindClose(handle);
+        data.assume_init()
+    };
+    let len = data
+        .name
+        .iter()
+        .position(|&u| u == 0)
+        .unwrap_or(data.name.len());
+    Ok(data.name[..len].to_vec())
 }
 
 /// Calls `fill(buf, len)` with a buffer of `len` wide characters until

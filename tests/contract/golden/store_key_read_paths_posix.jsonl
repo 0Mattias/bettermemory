@@ -1,0 +1,8 @@
+{"directory":[98,97,100,0,100,105,114],"op":"fit","result":["absent","absent",2],"sql":1}
+{"directory":[98,97,100,0,100,105,114],"op":"classify","result":["ValueError","embedded null byte"],"sql":0}
+{"directory":[98,97,100,55296,100,105,114],"op":"fit","result":["absent","absent",2],"sql":1}
+{"directory":[98,97,100,55296,100,105,114],"op":"classify","result":["UnicodeEncodeError","'utf-8' codec can't encode character '\\ud800' in position 3: surrogates not allowed",[98,97,100,55296,100,105,114,47,73,68,46,107,101,121,46,112,101,110,100,105,110,103],3,4],"sql":0}
+{"directory":[0,65,55296,55297,66],"op":"fit","result":["absent","absent",2],"sql":1}
+{"directory":[0,65,55296,55297,66],"op":"classify","result":["UnicodeEncodeError","'utf-8' codec can't encode characters in position 2-3: surrogates not allowed",[0,65,55296,55297,66,47,73,68,46,107,101,121,46,112,101,110,100,105,110,103],2,4],"sql":0}
+{"directory":[65,55296,56575,66],"op":"fit","result":["absent","absent",2],"sql":1}
+{"directory":[65,55296,56575,66],"op":"classify","result":["UnicodeEncodeError","'utf-8' codec can't encode characters in position 1-2: surrogates not allowed",[65,55296,56575,66,47,73,68,46,107,101,121,46,112,101,110,100,105,110,103],1,3],"sql":0}
