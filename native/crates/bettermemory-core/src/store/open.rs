@@ -1452,6 +1452,8 @@ pub(crate) const REPLACE_ATTEMPTS: u32 = 5;
 /// `require_current_writer` inside a transaction: meta's minimum writer
 /// read again under the lock; above this build's, the connection is held
 /// to reading (`query_only`) and the transaction refused.
+// The diagnostic travels with the write error the transaction returns.
+#[allow(clippy::result_large_err)]
 pub fn require_current_writer(
     conn: &Connection,
     path: &Path,
