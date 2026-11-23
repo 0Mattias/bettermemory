@@ -33,6 +33,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks; its second unit (`src/origin_history/located.rs`): `located_key`, `history_guard`, `cuts`, `shallow_file`, `cuts_in` | `origin_history.jsonl`, `origin_history_located.jsonl`, `origin_history_located_modes.jsonl`, `origin_history_cuts.jsonl` |
 | `origin_model` | `origin_model.py`'s `Origin` as captured: `CapturedOrigin`, the stored `records::Origin` with `_repo_url_alternates`, `git_indeterminate` and `git_refusal` beside it | `origin_model.jsonl` |
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves; `origin_dates::memo`: `_instant`, `commit_author_timestamps` and `_remember_dates` over the caller's `TimestampsMemo`, `MemoLeaves` and `ShallowHold` | `origin_dates_reads.jsonl`, `origin_dates_memo.jsonl` |
+| `origin_git` | The Git process and repository identity probes in `origin.py`. `OriginRunner` implements `origin_dates::OriginGit` and shares the calling thread’s counts with its other Git readers. |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
 | `use_tokens` | the per-turn use-token bookkeeping of `handlers/_shared.py`: `_drain_expired_use_tokens`, `_emit_expired_use_tokens`, `_advance_turn`, `_event_ts_epoch`, `_scan_settled_use_events`, `_already_recorded_pending_ids` and its alias `_hook_attributed_pending_ids`, `_attach_use_tokens`; the recorder and its log are a trait (`UseLog`) | `use_tokens.jsonl`, `use_tokens_python.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth. Unit pyre-5b: `_sre`'s ASSERT and ASSERT_NOT (`Op::Look`, `Op::LookEnd`) run in `exec` as sub-attempts on the same stack; `supports` refuses nothing. Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`). Unit pyre-6b: `Pattern.sub`, `subn` and `split` with a count, a literal or a function replacement, a literal holding a backslash refused as a template (`replace::ReplaceError::Template`). Unit pyre-7 (tests only): every pattern of the reference the engine runs, built from its own text and flags, against `re` over texts that tell its mutants apart, the four data-built families, the tripwire on the reference's sites | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl`, `pyre_inventory.jsonl` |
@@ -8263,6 +8264,9 @@ that Unicode too.
 | `golden_canonical_json`: `canonical_json_every_case` | `canonical_json.jsonl` | i |
 | `golden_datetime`: `datetime_every_case` | `datetime.jsonl` | i |
 | `golden_origin_history`: `origin_history_every_case`; `origin_history_kills` (12), `origin_history_robustness` (5) | `origin_history.jsonl` (the last two none) | i |
+| `golden_origin_git`: `scripted_processes` | `origin_git.jsonl` | i |
+| `golden_origin_git`: `directory_error_by_python` | `origin_git_python.jsonl` | ii (Python) |
+| `golden_origin_git_posix`: `normal_repositories` | `origin_git_posix.jsonl` | iii (platform) |
 | `golden_origin_dates_reads`: `every_row`; `origin_dates_kills` (7), `origin_dates_robustness` (3) | `origin_dates_reads.jsonl` (the last two none) | i |
 | `golden_origin_dates_memo`: `every_row`; `origin_dates_memo_kills` (7), `origin_dates_memo_robustness` (2) | `origin_dates_memo.jsonl` (the last two none) | i |
 | `golden_origin_history_located`: `origin_history_located_every_query`, `origin_history_located_modes_every_query` (unix; `golden_origin_history_located_not_posix` records the gap off it as class os); `origin_history_located_kills` (15), `origin_history_located_robustness` (7) | `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` (the last two none) | i |
@@ -16981,6 +16985,36 @@ rather than laying out repositories: the leaves are pinned against real
 repositories by their own units, and a scripted step names the git
 release nowhere.
 
+## Git processes and repository identity in `origin.py`
+
+`origin_git::OriginRunner` applies membership’s discovery rule before asking
+Git. A refused entry returns the synthetic exit 128 with the original
+arguments. An attempted process goes through `git_run::run_git` with the
+as-stored history settings. Identity calls decode stdout as filesystem
+text. Text calls decode invalid UTF-8 with replacement. A successful
+empty output, nonzero exit, missing executable and deadline each retain
+their own counter and logging behavior. `Counts` is passed between
+runners serving a single thread. The process-wide unanswered count
+comes from `git_calls::UNANSWERED`.
+
+The branch and remote probes keep significant whitespace and retain
+the order of alternative URLs. The root probe compares Git’s answer
+with the checkout membership follows. It consults the file reader after
+a nonzero exit and reports the first stderr line when Git refused the
+repository. `RepositoryFiles` connects these calls to the existing
+discovery, filesystem and config memo readers on POSIX. Its dependencies’
+platform limits apply. Callers of the existing `OriginGit` trait can
+retrieve a deferred error with `take_error`; subsequent reads and
+counter updates stay suppressed until it is consumed.
+
+`origin_git.jsonl` records subprocesses, both loggers, results and all
+five counters. `origin_git_python.jsonl` records the pinned Python
+3.13 `Path.is_dir` error handling and the broader suppression in Python
+3.14. `origin_git_posix.jsonl` follows real primary and linked
+repositories, a refused entry, a Git ownership refusal, a missing
+directory and a regular file. The ownership probe checks the first
+stderr line against the one its Git executable actually wrote.
+
 ## HEAD and refs from a git directory's files
 
 `githead` is the resolution half of `src/bettermemory/githead.py` (line
@@ -24175,8 +24209,8 @@ What the reference has and this build does not, by area:
   (`_changed`, `_body_diff`, `_event_detail`, `_record_row`,
   `_link_change_rows`, `HistoryRow` and `_RecordWalk` are built):
   `history.py`'s `record_history` and the renderers.
-- Reading a checkout still requires the capture probes and caller wiring in
-  `origin.py`. Its signature and cache are built in `origin_cache`.
+- Checkout capture still requires the orchestration and caller wiring in
+  `origin.py`. `origin_git` supplies its Git probes and `origin_cache` its signature and cache.
   Other work remains in `location.py` past its view continuity, the
   capture's filesystem leaves and its capture signature and cache
   (`continuity`, `view_state`, their helpers and unit 1's leaves in

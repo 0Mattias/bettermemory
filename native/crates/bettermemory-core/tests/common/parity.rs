@@ -188,6 +188,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "attribution_unicode.jsonl" => &[Unicode],
         // Python 3.13 changed sort-run detection for partially ordered keys.
         "signed_key_sort_posix_python.jsonl" => &[Python],
+        "origin_git_python.jsonl" => &[Python],
+        "origin_git_posix.jsonl" => &[Platform],
         // `find_control_tokens` past ASCII (`gen_handlers_verify`).
         "handlers_verify_args_unicode.jsonl" => &[Unicode],
         // `Path.resolve` meets a link loop: 3.11 and 3.12 raise RuntimeError.

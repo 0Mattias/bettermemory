@@ -82,6 +82,7 @@ from . import (
     gen_gitconfig_legacy,
     gen_gitconfig_tree,
     gen_gitconfig_remote_rules,
+    gen_origin_git,
     gen_origin_gitfiles,
     gen_origin_gitfiles_attrs,
     gen_origin_gitfiles_facts,
@@ -491,6 +492,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "origin_remote_python": gen_origin_remote.generate_python,
     "owner_prompt": gen_owner_prompt.generate,
     "gitconfig_remote_rules": gen_gitconfig_remote_rules.generate,
+    "origin_git": gen_origin_git.generate,
+    "origin_git_python": gen_origin_git.generate_python,
+    "origin_git_posix": gen_origin_git.generate_posix,
     "origin_gitfiles_leaves": gen_origin_gitfiles.generate,
     "origin_gitfiles_leaves_python": gen_origin_gitfiles.generate_python,
     "origin_gitfiles_machine": gen_origin_gitfiles_machine.generate,
@@ -887,6 +891,7 @@ PYTHON_GATED = frozenset(
         "store_reads_python",
         "store_rows_leaves_python",
         "signed_key_sort_posix_python",
+        "origin_git_python",
         "origin_gitfiles_leaves_python",
         "project_file_parse_python",
         "pyre_python",
@@ -1042,6 +1047,7 @@ def pydantic_core_version() -> str:
 PLATFORM = "darwin-arm64"
 PLATFORM_GATED = frozenset(
     {
+        "origin_git_posix",
         "symbols_platform",
         "models_text_platform",
         "location_stamps_platform",
@@ -1281,6 +1287,7 @@ POSIX_ONLY = frozenset(
         "origin_gitfiles_facts_posix",
         "origin_gitfiles_root_posix",
         "origin_gitfiles_attrs_posix",
+        "origin_git_posix",
         "origin_gitfiles_walk_posix",
         "origin_cache_posix",
         "gitsystem_record",

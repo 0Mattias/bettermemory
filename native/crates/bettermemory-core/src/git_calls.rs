@@ -152,12 +152,19 @@ pub fn printed_path(stdout: &[u32], windows: bool) -> &[u32] {
     path
 }
 
-/// `subcommand(args)`.
-pub fn subcommand<S: AsRef<str>>(args: &[S]) -> &str {
+/// The first argument after leading `-c setting` pairs. A trailing
+/// `-c` without a setting is itself the subcommand.
+pub(crate) fn subcommand_index<T>(args: &[T], config: impl Fn(&T) -> bool) -> usize {
     let mut i = 0;
-    while i + 1 < args.len() && args[i].as_ref() == "-c" {
+    while i + 1 < args.len() && config(&args[i]) {
         i += 2;
     }
+    i
+}
+
+/// `subcommand(args)`.
+pub fn subcommand<S: AsRef<str>>(args: &[S]) -> &str {
+    let i = subcommand_index(args, |arg| arg.as_ref() == "-c");
     args.get(i).map_or("", AsRef::as_ref)
 }
 

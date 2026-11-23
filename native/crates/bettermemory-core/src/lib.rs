@@ -475,6 +475,7 @@ pub mod models_text;
 pub mod native_text;
 pub mod origin_cache;
 pub mod origin_dates;
+pub mod origin_git;
 pub mod origin_gitfiles;
 pub mod origin_history;
 pub mod origin_model;

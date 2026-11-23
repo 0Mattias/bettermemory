@@ -1,0 +1,8 @@
+["ENOENT",[null,true,null],0,[0,1,0,0,0]]
+["ENOTDIR",[null,true,null],0,[0,1,0,0,0]]
+["ELOOP",[null,true,null],0,[0,1,0,0,0]]
+["EBADF",[null,true,null],0,[0,1,0,0,0]]
+["EACCES",[null,false,null],1,[0,0,0,0,0]]
+["EPERM",[null,false,null],1,[0,0,0,0,0]]
+["EIO",[null,false,null],1,[0,0,0,0,0]]
+["ENAMETOOLONG",[null,false,null],1,[0,0,0,0,0]]

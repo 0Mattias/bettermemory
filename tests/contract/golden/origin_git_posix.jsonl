@@ -1,0 +1,11 @@
+{"scenarios":10}
+["outside","empty",false,[[null,false,null],null,[null,[],true]],[0,3,0,0,0]]
+["unborn","repo",false,[["<root>/repo",false,null],"trunk",[null,[],false]],[0,1,0,0,0]]
+["alternate","repo",false,[["<root>/repo",false,null],"trunk",["https://example.invalid/first",["https://example.invalid/second "],false]],[0,1,0,0,0]]
+["rewrite","repo/child",false,[["<root>/repo",false,null],"trunk",["https://example.invalid/repo",["alias:repo"],false]],[0,0,0,0,0]]
+["linked","linked",false,[["<root>/linked",false,null],"linked",["https://example.invalid/repo",["alias:repo"],false]],[0,0,0,0,0]]
+["detached","repo",false,[["<root>/repo",false,null],null,["https://example.invalid/repo",["alias:repo"],false]],[0,1,0,0,0]]
+["refused-entry","refused",false,[[null,false,null],null,[null,[],true]],[0,3,0,0,0]]
+["ownership","repo",true,[["<root>/repo",true,"<first stderr line>"],null,[null,[],true]],[0,3,0,0,0]]
+["missing","missing",false,[[null,true,null],null,[null,[],true]],[2,3,0,2,2]]
+["file","regular",false,[[null,true,null],null,[null,[],true]],[2,3,0,2,2]]

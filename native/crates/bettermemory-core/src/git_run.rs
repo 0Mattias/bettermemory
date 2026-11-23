@@ -13,7 +13,7 @@ use crate::git_read_budget::Scope;
 use crate::gitsystem::answers;
 use crate::gitsystem::ask::{environment, Env, PINS};
 use crate::pyvalue::PyStr;
-use crate::unicode::{cps, to_string};
+use crate::unicode::cps;
 
 /// What `subprocess.run` did with one command.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,19 +110,13 @@ impl<'a> Call<'a> {
 /// What `run_git` answers, with the lines it logged.
 pub type Ran = (Result<Option<Completed>, RunRaised>, Vec<Line>);
 
-/// `subcommand(args)` over code points: the element `git_calls::subcommand`
-/// picks. An element no `&str` holds (a lone surrogate) is never `-c`,
-/// so a stand-in that is not `-c` chooses the same place.
-fn subcommand_of(args: &[PyStr]) -> PyStr {
-    let spelled: Vec<String> = args
-        .iter()
-        .map(|a| to_string(a).unwrap_or_else(|| "\u{fffd}".to_owned()))
-        .collect();
-    let picked = calls::subcommand(&spelled);
-    spelled
-        .iter()
-        .position(|s| std::ptr::eq(s.as_str(), picked))
-        .map_or_else(Vec::new, |i| args[i].clone())
+/// `subcommand(args)` over Python strings, including lone surrogates.
+/// Only the leading option pairs are inspected.
+pub fn subcommand_of(args: &[PyStr]) -> &[u32] {
+    let i = calls::subcommand_index(args, |arg| {
+        arg.as_slice() == [u32::from(b'-'), u32::from(b'c')]
+    });
+    args.get(i).map_or(&[], Vec::as_slice)
 }
 
 fn join(parts: &[&[u32]]) -> PyStr {
@@ -231,7 +225,7 @@ pub fn run_git(
         Some(Spawned::TimedOut) => {
             let message = join(&[
                 &cps("git "),
-                &subcommand_of(call.args),
+                subcommand_of(call.args),
                 &cps(" timed out after "),
                 &cps(&float_repr::repr(allowed)),
                 &cps("s in "),
@@ -268,7 +262,7 @@ pub fn log_nonzero_exit(
     let first = first_line(&text);
     let line = join(&[
         &cps("git "),
-        &subcommand_of(args),
+        subcommand_of(args),
         &cps(&format!(" exited {returncode} in ")),
         &spelled(where_),
         &cps(": "),
