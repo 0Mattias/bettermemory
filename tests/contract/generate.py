@@ -37,6 +37,7 @@ from threading import RLock
 
 from . import (
     gen_argparse,
+    gen_argparse_help,
     gen_external_anchor,
     gen_attribution,
     gen_hook_leaf,
@@ -353,6 +354,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "argparse_python": gen_argparse.generate_python,
     "argparse_subparsers": gen_argparse.generate_subparsers,
     "argparse_subparsers_python": gen_argparse.generate_subparsers_python,
+    "argparse_help": gen_argparse_help.generate,
+    "argparse_help_python": gen_argparse_help.generate_python,
     "transcript": gen_transcript.generate,
     "transcript_python": gen_transcript.generate_python,
     "transcript_turns": gen_transcript.generate_turns,
@@ -888,6 +891,7 @@ PYTHON_GATED = frozenset(
     {
         "argparse_python",
         "argparse_subparsers_python",
+        "argparse_help_python",
         "cli_common_python",
         "cli_root_python",
         # 3.11 and 3.12 raise RuntimeError where `Path.resolve` meets a link loop.

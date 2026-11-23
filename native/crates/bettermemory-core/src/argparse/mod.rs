@@ -8,11 +8,12 @@
 //!
 //! Effects are arguments: the help formatter's width is passed in (the
 //! reference reads it from `shutil.get_terminal_size`), and the help text
-//! and the filling of a long version text come through [`HelpText`], which
-//! a later unit (argparse-2) fills. Subparsers (`add_subparsers`,
+//! and the filling of a long version text come through [`HelpText`], implemented by
+//! [`help::DefaultHelp`] for the standard listing and wrapped version. Subparsers (`add_subparsers`,
 //! `add_parser` and the PARSER `nargs`) are argparse-1b's, in
 //! [`subparsers`].
 
+pub mod help;
 pub mod parse;
 pub mod subparsers;
 pub mod usage;
@@ -120,7 +121,7 @@ pub enum Parsed {
     Exit(Outcome),
 }
 
-/// The help formatter's texts this unit leaves to argparse-2.
+/// Optional formatting operations supplied to the parser.
 pub trait HelpText {
     /// `parser.format_help()` at `width`.
     fn format_help(&self, _parser: &ArgumentParser, _width: i64) -> Option<PyStr> {

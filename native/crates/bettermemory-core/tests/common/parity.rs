@@ -198,6 +198,7 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `argparse` of 3.13.13: its texts and readings (`gen_argparse`).
         | "argparse_python.jsonl"
         | "argparse_subparsers_python.jsonl"
+        | "argparse_help_python.jsonl"
         | "json_edges.jsonl"
         | "toml.jsonl"
         // The TypeError's text of an unhashable set element (`gen_use_tokens`).

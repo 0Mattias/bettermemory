@@ -5,14 +5,14 @@
 
 use super::{ArgumentParser, HelpText, Kind};
 use crate::pyvalue::PyStr;
-use crate::unicode::{cps, is_space, upper};
+use crate::unicode::{cps, upper};
 
 const NL: u32 = 0x0A;
 
 /// `HelpFormatter.format_help` of a root section holding one item: the
 /// item between newlines, runs of three or more newlines made two
 /// (`_long_break_matcher`), newlines stripped from both ends, one added.
-fn finish(item: &[u32]) -> PyStr {
+pub(super) fn finish(item: &[u32]) -> PyStr {
     let mut text = vec![NL];
     text.extend(item);
     text.push(NL);
@@ -44,7 +44,7 @@ fn bracket(part: PyStr) -> PyStr {
 
 /// `_metavar_formatter`'s one metavar: the metavar, `{choices}` or the
 /// default one.
-fn metavar(a: &super::Action, default: PyStr) -> PyStr {
+pub(super) fn metavar(a: &super::Action, default: PyStr) -> PyStr {
     if let Some(m) = &a.metavar {
         return m.clone();
     }
@@ -182,22 +182,8 @@ pub fn format_version(text: &[u32], width: i64, hook: &dyn HelpText) -> Option<P
     if text.windows(marker.len()).any(|w| w == marker) {
         return None;
     }
-    let mut collapsed: PyStr = Vec::with_capacity(text.len());
-    for &c in text {
-        let ws = matches!(c, 0x09..=0x0D | 0x20);
-        if !(ws && collapsed.last() == Some(&0x20)) {
-            collapsed.push(if ws { 0x20 } else { c });
-        }
-    }
-    let start = collapsed
-        .iter()
-        .position(|&c| !is_space(c))
-        .unwrap_or(collapsed.len());
-    let end = collapsed
-        .iter()
-        .rposition(|&c| !is_space(c))
-        .map_or(start, |e| e + 1);
-    let text = &collapsed[start..end];
+    let normalized = super::help::normalized(text);
+    let text = normalized.as_slice();
     let fill_width = width.max(11);
     let mut item = if text.len() as i64 <= fill_width {
         text.to_vec()

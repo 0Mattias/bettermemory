@@ -27,7 +27,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `health_roots` | `health_roots.py` 21-73: `EstateProgress` (`ordered`, `attempt`), `_LAST_CHECKED_CAP`; `progress_for_store` is the open Store's own `EstateProgress` | `health_roots.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
-| `argparse` | unit argparse-1a: the flat-parser subset of CPython 3.13.13's `argparse` the hook mains use: `ArgumentParser(prog, description, add_help)`, `add_argument` (`store`, `store_true`, `help`, `version`; positionals of one argument with `choices`), `parse_args` (`_parse_known_args` with `_parse_optional`, `_get_option_tuples`, `consume_optional`, `consume_positionals`, `_match_argument`, `_match_arguments_partial`, the negative-number matcher), `error` and `_format_usage` with its wrapping, as an `Outcome` without a process exit; unit argparse-1b: `add_subparsers(dest)` with its `prog` derived from the parent's positionals, `add_parser`, the PARSER `nargs` and `_SubParsersAction.__call__` with the child's namespace merged in the reference's order and its leftovers after the parent's. Unit argparse-1c adds the one-value `append` action used by `log verify --anchor FILE` | `argparse.jsonl`, `argparse_python.jsonl`, `argparse_subparsers.jsonl`, `argparse_subparsers_python.jsonl`, `cli_log_args.jsonl` |
+| `argparse` | unit argparse-1a: the flat-parser subset of CPython 3.13.13's `argparse` the hook mains use: `ArgumentParser(prog, description, add_help)`, `add_argument` (`store`, `store_true`, `help`, `version`; positionals of one argument with `choices`), `parse_args` (`_parse_known_args` with `_parse_optional`, `_get_option_tuples`, `consume_optional`, `consume_positionals`, `_match_argument`, `_match_arguments_partial`, the negative-number matcher), `error` and `_format_usage` with its wrapping, as an `Outcome` without a process exit; unit argparse-1b: `add_subparsers(dest)` with its `prog` derived from the parent's positionals, `add_parser`, the PARSER `nargs` and `_SubParsersAction.__call__` with the child's namespace merged in the reference's order and its leftovers after the parent's. Unit argparse-1c adds the one-value `append` action used by `log verify --anchor FILE`. Unit argparse-2a formats default help and wraps version text | `argparse.jsonl`, `argparse_python.jsonl`, `argparse_subparsers.jsonl`, `argparse_subparsers_python.jsonl`, `cli_log_args.jsonl`, `argparse_help.jsonl`, `argparse_help_python.jsonl` |
 | `native_text`, `caches`, `daemon_client`, `install_hints` | `native_text.py` 15-40 (`has_surrogates`, `utf8_text`, `encoded_json`, `origin_projection`), `_caches.py` whole (`register` under a key, `clear_all`), `_daemon_client.py` 149-172 (`STORE_FILENAME` re-exported, `START_TIMEOUT_SECONDS`, `HOOK_TIMEOUT_SECONDS`, `HOOK_HARNESS_TIMEOUT_SECONDS`, `HOOK_MARGIN_SECONDS`, `hook_budget_seconds`), `_install_hints.py` 41-130 (every spelling) | `native_text.jsonl`, `daemon_client.jsonl`, `install_hints.jsonl` |
 | `transcript` | `transcript.py` whole: `CHUNK_BYTES`, `WALK_BYTES`, `ReverseLines`, `_row`, `_prompt_id`, `StopTurn`, `_Pending`, `stop_turn`, `InterruptedTurn`, `interrupted_turns`, `owner_words`, `CompactMarker`, `compact_marker`; the file (`Opener`) and `owner_prompt.py` (`OwnerPrompt`) are traits | `transcript.jsonl`, `transcript_python.jsonl`, `transcript_turns.jsonl` |
 | `origin_history` | `origin_history.py`'s first unit: the pins, `HistoryUnread`, `unanswered`, `note_unread`, `read_lines`, `author_instant`, `author_dates`, `log_stdin`, `ReachableWalk.shas_touching`, the author-date memo (`recall`, `checked_cut`, `base_for`, `remember`, `remember_failure`) as a value with the clock an argument, the tally of walks; its second unit (`src/origin_history/located.rs`): `located_key`, `history_guard`, `cuts`, `shallow_file`, `cuts_in` | `origin_history.jsonl`, `origin_history_located.jsonl`, `origin_history_located_modes.jsonl`, `origin_history_cuts.jsonl` |
@@ -11112,7 +11112,7 @@ machine and its status:
 | `_VersionAction.__call__`, `_format_text`, `_fill_text` | 1175-1182, 500-504, 646-651 | the width | argparse-1a for a text that fits; `textwrap.fill` of a longer one is the `HelpText` hook's |
 | `error`, `exit`, `_print_message` | 2658-2685 | stdout, stderr, the exit | argparse-1a, as an `Outcome` |
 | `add_subparsers`, `add_parser`, `_SubParsersAction.__call__`, the leftovers of `_parse_known_args2` | 1185-1293, 1873-1903, 1945-1974 | the width | argparse-1b (`subparsers`); `title=`, `description=`, `required=`, `metavar=`, `prog=` of `add_subparsers` and `aliases=`, `deprecated=` of `add_parser` are not taken |
-| `format_help`, `_format_action`, `_split_lines`, `textwrap` | 500-660, 2618-2640 | the width | argparse-2, through `HelpText::format_help` and `HelpText::fill` |
+| `format_help`, `_format_action`, `_split_lines`, `textwrap` | 500-660, 2618-2640 | the width | argparse-2a (`help::DefaultHelp`) for the default English formatter and supported declarations |
 | `nargs` `?`, `*`, `+`, integers, REMAINDER; `type=`; mutually exclusive groups; `fromfile_prefix_chars`; intermixed parsing; deprecation warnings | | | not needed by the two mains; not built |
 
 **What each reproduces.** `ArgumentParser::new` adds `-h/--help` as
@@ -11145,10 +11145,9 @@ stripped by `str.strip`, as `_fill_text` does, then exits 0.
 
 **Decisions.**
 
-- The help text, and the fill of a version text longer than the width,
-  are the help formatter's, which argparse-2 ports. They reach the parser
-  through the `HelpText` trait, whose default (`Unfilled`) declines, and a
-  declined text makes `parse_args` answer `NotPorted`. A version text
+- Help text and long version text reach the parser through `HelpText`.
+  `DefaultHelp` renders both. A caller that supplies `Unfilled` gets
+  `NotPorted` for a requested formatting operation. A version text
   naming `%(prog)` is declined the same way (the reference applies `%`
   formatting to it).
 - The width is an argument and may be any `i64`; the three-quarters test
@@ -11234,7 +11233,7 @@ Decisions of argparse-1b:
   overflow. Below 100 levels the answers agree.
 - `add_parser`'s `help` is `Option<&str>`, so `help=None` passed
   explicitly (which still adds a `_ChoicesPseudoAction`) cannot be said;
-  only argparse-2's help listing would read it, and the product passes a
+  only the help listing reads this distinction, and the product passes a
   string.
 - No pattern is added: the PARSER pattern is over the private `A`/`O`/`-`
   alphabet and is matched by hand under rule 3, as the other `nargs`
@@ -11253,10 +11252,25 @@ make the `prog` prefix wrap. `golden_argparse_subparsers`,
 `argparse_subparsers_kills` and `argparse_subparsers_robustness` (a tree
 99 deep answers, trees 100, 166 and 20,000 deep decline on a 2 MiB
 thread, every width, a child's argv ten times longer within `TENFOLD`)
-check them. Help output of a subparser (the choices' help lines) is
-argparse-2's: the help rows hand the case's stdout to the parser through the
-test `HelpText`, so they check that help ran and its exit status, not the
-`{a,b}` group or the choices' help lines.
+check them. The subparser fixture supplies a test `HelpText` to isolate
+the parse outcome. The default formatter has its own listing fixtures.
+
+**Default help (argparse-2a).** Pass `argparse::help::DefaultHelp` to
+`parse_args` to render the standard description, usage, positional and
+optional sections. The renderer uses codepoint widths, groups each option’s
+aliases, indents child choices, and wraps help and version text using
+CPython 3.13.13’s whitespace and hyphen rules. Action help supports
+literal percent escapes and `%(prog)s`. Other substitutions can use the
+existing formatter hook. Custom argument groups, alternate formatter
+classes and localized or coloured pages are outside this unit.
+
+`golden_argparse_help` compares the actual root, log and log verify
+listings at 18 terminal widths against the shipped Python parser. Its
+root and log sibling declarations come from the fixture, and verify uses
+`cli::log_args::add_verify_parser`. `argparse_help_boundaries` exercises
+width extremes, raw codepoints, alias layout and parser precedence.
+The process command catalog must supply the ordered sibling declarations
+for an installed invocation to reproduce the complete pages.
 
 **Unit argparse-1c and the log verify declaration.** The single-value
 `append` action accepts the same arguments and choices as `store`. Each
@@ -20464,7 +20478,7 @@ separate units.
 | `_build_parser` | 73-150 | `__version__` and the formatter's width (arguments); each command's `add_subparser` (a `Command`) | built (`cli::root::build_parser`) |
 | `_add_hook_subparser` | 152-177 | nothing | built (`cli::root::add_hook_subparser`) |
 | `main` | 178-298 | `sys.argv[1:]`, `hook_main`, the shim, the commands (arguments) | built (`cli::root::main`) |
-| the help listing and its order | 119-150 | argparse-2's formatter | cli___init__-1b, not built |
+| the help listing and its order | 119-150 | `argparse::help::DefaultHelp` | cli___init__-1b still needs the complete process command catalog |
 
 ### As built
 
@@ -20539,8 +20553,8 @@ tests are `golden_cli_root` (the same stand-ins in
 
 ### Left for later
 
-cli___init__-1b: the help listing and its order (argparse-2's
-formatter). The command modules themselves (`cli/*_cmd.py`, `migrate`,
+cli___init__-1b still needs the ordered root and log declarations at
+the process entry point for the full help listing. The command modules themselves (`cli/*_cmd.py`, `migrate`,
 `export` and the rest) and the shim are their own units.
 
 ## The credential detectors
@@ -24438,8 +24452,8 @@ What the reference has and this build does not, by area:
   sequence over `StopSide` in `hook_stop.rs`) and its settlement half
   (hook-2b, in `hook_settle.rs`), and the command line. Of
   the hook mains' argument parsing, the flat parser (argparse-1a) and
-  the subparsers (argparse-1b) are built; the help formatter
-  (argparse-2) is not. The native `bettermemory --version` executable
+  the subparsers (argparse-1b) are built. The default English formatter
+  (argparse-2a) renders the supplied parser declarations. The native `bettermemory --version` executable
   is built. Of the command line, the process entry's hook-word routing
   (`entry`) and `cli/_common.py`'s parser-free leaves
   (`_refuse`, `exit_if_bundle_file`, `key_unreadable_line`,

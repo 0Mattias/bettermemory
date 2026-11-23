@@ -1,0 +1,9 @@
+{"fill":"ab-cd----ef other-word","out":"ab-cd\n----ef\nother-\nword","width":7}
+{"fill":"a-b-c x-y-foo A\u2014\u2014B","out":"a-b-c\nx-y-\nfoo\nA\u2014\u2014B","width":5}
+{"fill":"\talpha  beta\n  gamma\rd","out":"alpha  beta\ngamma d","width":12}
+{"fill":"  \u2003\u00c0\u00e9 \u00e0\u00a0b x\u2003y","out":"  \u2003\u00c0\u00e9\n\u00e0\u00a0b x\u2003y","width":8}
+{"fill":"use --this-very-long-option and wait","out":"use --this-\nvery-long-\noption and\nwait","width":11}
+{"fill":[97,56575,98,45,45,45,45,194,223,32,95,178,45,97,98,45,99,100],"out":[97,56575,98,45,45,45,45,194,223,10,95,178,45,97,98,45,99,100],"width":9}
+{"fill":"\ud83d\ude00e\u0301 non-breaking\u00a0space","out":"\ud83d\ude00e\u0301 non-break\ning\u00a0space","width":13}
+{"fill":"------","out":"--\n--\n--","width":2}
+{"fill":"","out":"","width":78}
