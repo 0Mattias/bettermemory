@@ -272,6 +272,7 @@ fn operating_system_and_crt_read_errors_match_windows_python() {
 from pathlib import Path
 from bettermemory.log import KeyRing
 from bettermemory import store_keys
+from bettermemory._fsutil import sqlite_file_uri
 import json,sqlite3,sys,logging
 path,keys=map(Path,sys.argv[1:3]); ring=KeyRing(keys,sys.argv[3])
 class Capture(logging.Handler):
@@ -280,7 +281,7 @@ class Capture(logging.Handler):
         observed.append([type(e).__name__,str(e),e.errno,getattr(e,'winerror',None),e.filename,e.filename2,str(e.path) if hasattr(e,'path') else None,getattr(e,'reason',None)])
 observed=[]
 store_keys.log.addHandler(Capture())
-conn=sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)
+conn=sqlite3.connect(sqlite_file_uri(path)+'?mode=ro',uri=True)
 try:
     st=store_keys.key_state(ring,path,sys.argv[4],conn=conn)
     assert st.state=='unreadable'
@@ -361,6 +362,7 @@ fn a_committed_rotation_reports_the_original_windows_rename_error() {
 from pathlib import Path
 from bettermemory.log import KeyRing
 from bettermemory import store_keys
+from bettermemory._fsutil import sqlite_file_uri
 from bettermemory.key_lifecycle import rotate_key
 import json,sys,logging,sqlite3
 path,keys,tracker=map(Path,sys.argv[1:4])
@@ -374,7 +376,7 @@ class Capture(logging.Handler):
         e=r.args[-1]
         observed.append([r.levelname,r.msg,type(e).__name__,str(e),e.errno,e.winerror,e.filename,e.filename2])
 store_keys.log.addHandler(Capture())
-conn=sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)
+conn=sqlite3.connect(sqlite_file_uri(path)+'?mode=ro',uri=True)
 try:
     state=store_keys.key_state(ring,path,expected,conn=conn,warn=False)
 finally:

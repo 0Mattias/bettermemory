@@ -86,3 +86,9 @@ native/crates/bettermemory-core/src/**/reference_*.json -text
 # there would write a file the reference never writes.
 # tests/test_native_embedded_files.py holds every embedded file to this rule.
 native/crates/bettermemory-core/src/config/default_config.toml -text
+
+# The Windows key-directory reference script the native tests compile in
+# (`include_str!` in tests/key_directory_windows_reference.rs), byte for
+# byte: the test hands the embedded text to the reference Python, and a
+# CRLF checkout would embed bytes the committed script does not have.
+native/crates/bettermemory-core/tests/common/key_directory_windows.py -text

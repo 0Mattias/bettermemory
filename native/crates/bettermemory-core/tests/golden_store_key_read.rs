@@ -12,7 +12,7 @@ use bettermemory_core::{
 use common::{parity::Ledger, stores::scratch};
 use key_read_support::{selects, Signed};
 use serde_json::json;
-use std::{fs, sync::atomic::Ordering};
+use std::{fs, path::PathBuf, sync::atomic::Ordering};
 
 #[test]
 fn classifies_reopened_signed_stores() {
@@ -21,6 +21,11 @@ fn classifies_reopened_signed_stores() {
     let independent = Signed::new(&root.0.join("independent"));
     let backup = root.0.join("backup.sqlite");
     fs::copy(&first.path, &backup).unwrap();
+    // The binding spells no verbatim prefix (as `Path.resolve` spells none),
+    // and the scratch root is canonical: on Windows it starts with `\\?\`
+    // (CI run 45260976205).
+    let spelled = first.path.to_str().unwrap();
+    let bound = PathBuf::from(spelled.strip_prefix(r"\\?\").unwrap_or(spelled));
     let name = "store_key_read.jsonl";
     let rows = common::jsonl(name);
     let mut ledger = Ledger::new("classifies_reopened_signed_stores", name);
@@ -73,7 +78,7 @@ fn classifies_reopened_signed_stores() {
                 let actual = json!([
                     s.state.name(),
                     s.held().as_deref() == Some(first.named.as_str()),
-                    s.bound_to.as_deref() == Some(&first.path),
+                    s.bound_to.as_deref() == Some(bound.as_path()),
                     s.unfit.is_some(),
                     logs,
                     !conn.is_autocommit()

@@ -8,9 +8,9 @@ use bettermemory_core::store::key_state::{warn_bound_elsewhere, Level};
 use bettermemory_core::unicode::cps;
 use common::{created, parity, stores::scratch};
 use serde_json::Value;
-use std::{fs, os::windows::ffi::OsStrExt, os::windows::fs::OpenOptionsExt, path::Path};
+use std::{fs, os::windows::ffi::OsStrExt, path::Path, process::Command};
 
-const NAME: &str = "locked_key_state_path_matches_windows_python";
+const NAME: &str = "denied_key_state_path_matches_windows_python";
 const REFERENCE: &str = r#"
 import ctypes, json, nt, sys
 from ctypes import wintypes
@@ -20,9 +20,9 @@ path, missing = map(Path, sys.argv[1:3])
 try:
     nt._getfinalpathname(path)
 except OSError as exc:
-    locked = exc.winerror
+    denied = exc.winerror
 else:
-    raise AssertionError('the file must be held for exclusive read')
+    raise AssertionError('the file must deny SYNCHRONIZE')
 try:
     nt._getfinalpathname(missing)
 except OSError as exc:
@@ -49,27 +49,46 @@ finally:
 resolved = _resolved_for_guard(path)
 if resolved != _resolved_for_guard(path.parent / 'child' / '..' / path.name):
     raise AssertionError('guard aliases differ')
-print(json.dumps([locked, absent, words(resolved.name), count.value]))
+print(json.dumps([denied, absent, words(resolved.name), count.value]))
 "#;
 
+/// Deny or allow again the Users group SYNCHRONIZE on `path`, as CPython's
+/// `test_realpath_permission` does. `CreateFileW` asks for that right even
+/// when no access is requested, so a denied file makes `_getfinalpathname`
+/// fail with ERROR_ACCESS_DENIED, one of the codes that send the non-strict
+/// `realpath` to the directory-entry lookup. An exclusive open does not:
+/// with no access requested the share mode is never checked and the call
+/// succeeds (CI run 45260976205). The scratch root is canonical; `icacls`
+/// is given the path without its verbatim prefix.
+fn synchronize(path: &Path, denied: bool) {
+    let rule: &[&str] = if denied {
+        &["/deny", "*S-1-5-32-545:(S)"]
+    } else {
+        &["/remove:d", "*S-1-5-32-545"]
+    };
+    let spelled = path.to_str().unwrap();
+    let done = Command::new("icacls")
+        .arg(spelled.strip_prefix(r"\\?\").unwrap_or(spelled))
+        .args(rule)
+        .output()
+        .unwrap();
+    assert!(done.status.success(), "{done:?}");
+}
+
 #[test]
-fn locked_key_state_path_matches_windows_python() {
+fn denied_key_state_path_matches_windows_python() {
     let tmp = scratch("guard-fallback");
     let work = tmp.0.join("fixture");
     fs::create_dir(&work).unwrap();
     let stored = work.join("Mixed-É.name");
     let absent = work.join("absent");
     fs::write(&stored, b"data").unwrap();
-    let held = fs::OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(&stored)
-        .unwrap();
+    synchronize(&stored, true);
     let wide = |p: &Path| p.as_os_str().encode_wide().collect::<Vec<_>>();
     let observed = bettermemory_sys::final_path_name(&wide(&stored))
         .unwrap_err()
         .raw_os_error();
-    assert_eq!(observed, Some(32));
+    assert_eq!(observed, Some(5));
     let name = wide(Path::new("Mixed-É.name"));
     let id = std::process::id().to_string();
     let home = tmp.0.join("home");
@@ -119,7 +138,7 @@ fn locked_key_state_path_matches_windows_python() {
     if let (Ok(python), Some(before)) = (&python, before) {
         let after = observe(python);
         for result in [&before, &after] {
-            assert_eq!(result[0], 32);
+            assert_eq!(result[0], 5);
             assert_eq!(result[1], 2);
             assert_eq!(result[2], serde_json::json!(name));
         }
@@ -128,7 +147,7 @@ fn locked_key_state_path_matches_windows_python() {
             "search handles grew: {before}, {after}"
         );
     }
-    drop(held);
+    synchronize(&stored, false);
     fs::remove_file(stored).unwrap();
     fs::remove_dir(work).unwrap();
     match python {

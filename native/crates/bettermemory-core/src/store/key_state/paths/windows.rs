@@ -125,17 +125,32 @@ mod tests {
     use super::*;
     use crate::unicode::cps;
 
+    /// Deny or allow again the Users group SYNCHRONIZE on `path`, as
+    /// CPython's `test_realpath_permission` does. `CreateFileW` asks for
+    /// that right even when no access is requested, so a denied file makes
+    /// `_getfinalpathname` fail with ERROR_ACCESS_DENIED, one of the codes
+    /// that send the non-strict `realpath` to the directory-entry lookup.
+    /// An exclusive open does not: with no access requested the share mode
+    /// is never checked and the call succeeds (CI run 45260976205).
+    fn synchronize(path: &std::path::Path, denied: bool) {
+        let rule: &[&str] = if denied {
+            &["/deny", "*S-1-5-32-545:(S)"]
+        } else {
+            &["/remove:d", "*S-1-5-32-545"]
+        };
+        let done = std::process::Command::new("icacls")
+            .arg(path)
+            .args(rule)
+            .output()
+            .unwrap();
+        assert!(done.status.success(), "{done:?}");
+    }
+
     #[test]
-    fn resolve_recovers_the_entry_spelling_when_final_path_is_locked() {
-        use std::os::windows::fs::OpenOptionsExt;
+    fn resolve_recovers_the_entry_spelling_when_final_path_is_denied() {
         let file =
             std::env::temp_dir().join(format!("BM-Guard-{:016x}.tmp", getrandom::u64().unwrap()));
-        let held = std::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .share_mode(0)
-            .open(&file)
-            .unwrap();
+        std::fs::write(&file, b"").unwrap();
         let name = file.file_name().unwrap();
         let lower = file.with_file_name(name.to_ascii_lowercase());
         let lookup = if std::fs::symlink_metadata(&lower).is_ok() {
@@ -143,19 +158,20 @@ mod tests {
         } else {
             &file
         };
+        synchronize(&file, true);
         assert_eq!(
             bettermemory_sys::final_path_name(
                 &lookup.as_os_str().encode_wide().collect::<Vec<_>>()
             )
             .unwrap_err()
             .raw_os_error(),
-            Some(32)
+            Some(5)
         );
         let result = resolve_spelling(&fsdecode(lookup.as_os_str())).unwrap();
         let basename =
             crate::gitfile_rule::hostpath::text::basename(crate::fsdata::Flavour::Windows, &result);
         assert_eq!(basename, fsdecode(name));
-        drop(held);
+        synchronize(&file, false);
         std::fs::remove_file(file).unwrap();
     }
 
