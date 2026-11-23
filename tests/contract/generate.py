@@ -55,6 +55,7 @@ from . import (
     gen_cli_membership_health,
     gen_cli_open_policy,
     gen_cli_read_only_path,
+    gen_key_directory,
     gen_cli_root,
     gen_native_process_entry,
     gen_config,
@@ -423,6 +424,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "cli_open_policy": gen_cli_open_policy.generate,
     "cli_read_only_path": gen_cli_read_only_path.generate,
     "cli_read_only_path_posix": gen_cli_read_only_path.generate_posix,
+    "key_directory_posix": gen_key_directory.generate,
     "cli_common_python": gen_cli_common.generate_python,
     "cli_log_args": gen_cli_log_args.generate,
     "cli_registry": gen_cli_registry.generate,
@@ -1242,6 +1244,7 @@ POSIX_ONLY = frozenset(
         "external_anchor_files_posix",
         # Real project symlinks and surrogateescaped environment bytes.
         "cli_read_only_path_posix",
+        "key_directory_posix",
         "store_event_reads_naive",
         # `os.fsencode` encodes a surrogate with `surrogatepass` on Windows.
         "response_write_posix",

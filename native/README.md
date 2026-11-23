@@ -131,6 +131,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership_migrate` | `membership_migrate.py`, unit 1: the constants (`LIVE`, `GONE`, `REPLACED`, `UNREACHABLE`, `RULE_PREFIX`, `LEGACY_REASON`, `MIGRATED`, `_RECORD_TABLES`, `_RECORD_KINDS`, `_SHA`, `_PROBE_BUDGET`, `_PROBE_WORKERS`), `RootDecision`, `RootlessHome`, `LegacyQuestion`, `MigrationTotals` (`to_dict`), `MigrationReport` (`homed`, `to_dict`, `lines`), `_basename`, `_origin`, `_text`, `_id_order`, `_repository_name`, `_shas`, `_json_list` | `membership_migrate_report.jsonl`, `membership_migrate_report_python.jsonl` |
 | `store_refusal` | `_store_refusal.py` whole: `bundle_refusal`, `_may_be_bundle_manifest`, `restore_state`, `_record_lock_held`, `_restore_marker`, `_restore_marker_at`, `_describe_restore`, `restore_refusal`, `store_refusal` and the constants; `json::loads_bytes` (`json.loads` of bytes) | `store_refusal.jsonl`, `store_refusal_posix.jsonl` |
 | `cli::common::read_only_path` (POSIX) | `cli._common.read_only_store_path`, `Config.resolved_directory` with the physical filesystem | `cli_read_only_path.jsonl`, `cli_read_only_path_posix.jsonl` |
+| `store::key_directory` (POSIX) | `log.default_keys_dir`, `store_schema.resolve_keys_dir` and the explicit key-directory selection in `store_open._open_connected` | `key_directory_posix.jsonl` |
 | `entry`, `cli::common`, `cli::root` | `_entry.route_hook_word`, `main`, `_daemon_client.HOOK_WORDS`; `cli/_common.py`'s `_refuse`, `exit_if_bundle_file`, `key_unreadable_line`, `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`; `cli/__init__.py`'s `_build_parser`, `_add_hook_subparser`, `main` (`cli::root`) | `cli_common.jsonl`, `cli_common_python.jsonl`, `cli_root.jsonl`, `cli_root_python.jsonl`, `cli_registry.jsonl` |
 | `cli::log_report` | Ordered signed-log verification report, plain text, pretty JSON and exit status from `cli/log_cmd.py` | `cli_log_report.jsonl` |
 | `credentials::prefixed` | unit 1 of `credentials.py`: `_PREFIXED_DETECTORS` (the twelve vendor-prefixed shapes, each by a hand-written matcher), `_is_masked_token`, `_is_spent_run`, `_MIN_BODY_DIVERSITY` | `credentials_prefixed.jsonl`, `credentials_prefixed_unicode.jsonl` |
@@ -20378,6 +20379,22 @@ Read at 6cf944e5. `_entry.py` (38 lines) whole, and the leaves of
 | `read_only_store_path` | 54–73 | POSIX config, cwd, environment, passwd and filesystem | built (`cli::common::read_only_path`) |
 | `open_read_only` | 75–127 | path stat, bundle check, supplied read-only opener | built (`cli::common`) |
 | `open_owner_store`, `CliContext`, `cli_context`, `migrate_at_open`, `run_migration_at_open`, `cli_recorder` | the rest | the config, the store, the recorder | cli__common-1b, not built |
+
+### The signing-key directory selected by a POSIX Store
+
+`store::key_directory::resolve_keys_dir` returns the Python codepoints of the
+selected directory. An explicit argument receives the lexical normalization
+of `Path`. An omitted argument uses a nonempty `BETTERMEMORY_KEYS_DIR` with
+home expansion, then falls back to `default_keys_dir`. That default appends
+`keys` to the application configuration directory. The CLI and Store share
+the POSIX account lookup and platform configuration selection.
+
+The Store opener needs this result after checking the database versions.
+The directory selector performs no key-file reads. At the first operation
+that needs OS bytes, `os_path` applies POSIX surrogateescape and exposes
+the original codepoints, encoding, reason and character offsets on error.
+This preserves distinct spellings such as U+00E9 and the pair U+DCC3,
+U+DCA9 even when they refer to the same file.
 
 ### Physical read-only store selection on POSIX
 

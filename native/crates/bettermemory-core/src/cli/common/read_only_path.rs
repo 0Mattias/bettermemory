@@ -2,20 +2,18 @@
 //! operation creates a configuration, opens a store or acquires a lock.
 use super::{path_text, refuse};
 use crate::cli::{Exit, UsageError};
+use crate::config::posix::{bytes, error_text, expanded, failure, os_error, path, user_config_dir};
 use crate::config::{self, Config, ConfigError, Labels, Notices, OsFailure};
-use crate::fsdata::{realpath::realpath, Flavour, PyErr, StdFs};
-use crate::gitfile_rule::follow::fsencode;
+use crate::fsdata::{realpath::realpath, Flavour, StdFs};
 use crate::githead::discovery::pure;
-use crate::pyvalue::{repr_str, PyStr};
+use crate::pyvalue::PyStr;
 use crate::store::create::STORE_FILENAME;
 use crate::toml::Table;
 use crate::unicode::cps;
 use std::collections::HashSet;
 use std::env;
-use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 /// One-shot configuration notices belong to the process that runs commands.
@@ -74,40 +72,6 @@ impl<E, F: FnMut(PathWarning<'_>) -> Result<(), WarningError<E>>> Notices
     fn note(&mut self, _: String) {}
 }
 
-fn error_text(class: &'static str, message: &str) -> ConfigError {
-    ConfigError {
-        class,
-        message: cps(message),
-    }
-}
-fn bytes(path: &Path) -> &[u8] {
-    path.as_os_str().as_bytes()
-}
-fn path(bytes: Vec<u8>) -> PathBuf {
-    OsString::from_vec(bytes).into()
-}
-fn failure(error: io::Error) -> OsFailure {
-    let errno = error
-        .raw_os_error()
-        .expect("POSIX filesystem error carries errno");
-    OsFailure {
-        class: PyErr::of_errno(bettermemory_sys::errno_name(errno).unwrap_or("")).name(),
-        errno,
-        strerror: bettermemory_sys::strerror(errno).unwrap_or_else(|| error.to_string()),
-    }
-}
-fn os_error(error: OsFailure, file: Option<&Path>) -> ConfigError {
-    let mut message = cps(&format!("[Errno {}] {}", error.errno, error.strerror));
-    if let Some(p) = file {
-        message.extend(cps(": "));
-        message.extend(repr_str(&path_text(p)));
-    }
-    ConfigError {
-        class: error.class,
-        message,
-    }
-}
-
 fn resolved(p: &Path) -> Result<PathBuf, ConfigError> {
     let cwd = if p.is_absolute() {
         PathBuf::new()
@@ -119,65 +83,6 @@ fn resolved(p: &Path) -> Result<PathBuf, ConfigError> {
         .map_err(|_| config::nul_in_path("lstat").into())
 }
 
-/// The empty HOME spells '/' in pathlib, while platformdirs treats it as
-/// absent and consults the current account. Named users always use passwd.
-fn home(name: Option<&[u8]>, config_home: bool) -> Result<Option<PathBuf>, ConfigError> {
-    let env_home = env::var_os("HOME").filter(|v| !config_home || !v.is_empty());
-    let h = match (name, env_home) {
-        (None, Some(v)) => Some(PathBuf::from(v)),
-        _ => {
-            if name.is_some_and(|n| n.contains(&0)) {
-                return Err(error_text("ValueError", "embedded null byte"));
-            }
-            bettermemory_sys::account_home(name).map_err(|e| os_error(failure(e), None))?
-        }
-    };
-    Ok(h.filter(|p| !bytes(p).starts_with(b"~")).map(|p| {
-        let b = bytes(&p);
-        let end = b.iter().rposition(|v| *v != b'/').map_or(0, |i| i + 1);
-        if end == 0 {
-            PathBuf::from("/")
-        } else {
-            path(pure(&b[..end]))
-        }
-    }))
-}
-fn expanded(p: &Path) -> Result<PathBuf, ConfigError> {
-    let raw = pure(bytes(p));
-    if !raw.starts_with(b"~") {
-        return Ok(path(raw));
-    }
-    let split = raw.iter().position(|b| *b == b'/').unwrap_or(raw.len());
-    let named = &raw[1..split];
-    let base = home((!named.is_empty()).then_some(named), false)?.ok_or_else(config::no_home)?;
-    Ok(if split == raw.len() {
-        base
-    } else {
-        base.join(OsStr::from_bytes(&raw[split + 1..]))
-    })
-}
-fn default_user() -> Result<PathBuf, ConfigError> {
-    let xdg = env::var_os("XDG_CONFIG_HOME").map(|v| {
-        let points = path_text(Path::new(&v));
-        path(fsencode(crate::claims::strip(&points)).expect("os.fsdecode round trip"))
-    });
-    let base = match xdg.filter(|p| p.is_absolute()) {
-        Some(p) => p,
-        None => {
-            let suffix = if cfg!(target_os = "macos") {
-                "Library/Application Support"
-            } else {
-                ".config"
-            };
-            let home = home(None, true)?.ok_or_else(|| {
-                let reason=format!("could not determine the home directory for '~/{suffix}', set HOME or an absolute XDG variable");
-                error_text("RuntimeError", &reason)
-            })?;
-            home.join(suffix)
-        }
-    };
-    Ok(path(pure(bytes(&base.join("bettermemory/config.toml")))))
-}
 fn labels(p: &Path) -> Labels {
     Labels {
         text: path_text(p),
@@ -323,7 +228,9 @@ pub fn read_only_store_path<E>(
     warn: &mut impl FnMut(PathWarning<'_>) -> Result<(), WarningError<E>>,
 ) -> Result<PathBuf, PathError<E>> {
     let code = exit_code.unwrap_or(2);
-    let user = default_user().map_err(|e| load_error(parser, e, code))?;
+    let user = user_config_dir()
+        .map_err(|e| load_error(parser, e, code))?
+        .join("config.toml");
     let managed = if cfg!(target_os = "macos") {
         "/Library/Application Support/bettermemory/managed.toml"
     } else {

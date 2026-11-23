@@ -49,6 +49,8 @@ pub mod fold;
 pub mod home;
 pub mod index_reads;
 pub mod journal;
+#[cfg(unix)]
+pub mod key_directory;
 pub mod key_state;
 pub mod keys;
 pub mod membership;

@@ -16,12 +16,12 @@
 //! - [`report`] holds the three commands' documents and the audit's
 //!   findings, each returned as the text the CLI prints and its exit code.
 //!
-//! Nothing here reads the process environment or the file system
-//! directly: the environment is a map ([`Env`]) and every file and path
-//! operation goes through a [`Fs`], so a test can hand both in as data and
+//! The configuration loader takes the environment as a map ([`Env`]) and its file
+//! and path operations through [`Fs`], so a test can hand both in as data and
 //! the same inputs give the same text on every platform. [`report::SystemFs`]
 //! reads the real file system, and is not for use until a later unit
-//! compares it with `pathlib` (see its documentation).
+//! compares it with `pathlib` (see its documentation). The POSIX CLI and Store
+//! use shared host functions here for the actual user configuration directory.
 //!
 //! The loader's one-shot notices (a removed key, a pinned key, a scalar
 //! section) are logged once per process for each file and key
@@ -34,6 +34,8 @@ pub mod decode;
 pub mod difflib;
 pub(crate) mod directory;
 mod labels;
+#[cfg(unix)]
+pub(crate) mod posix;
 pub mod report;
 use crate::pyvalue::PyStr;
 use crate::unicode::cps;
