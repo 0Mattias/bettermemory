@@ -473,24 +473,59 @@ struct Segment {
 }
 
 #[derive(Clone, Debug)]
-struct OriginCheck {
-    status: &'static str,
-    seq: Option<i64>,
-    reason: Option<&'static str>,
+pub struct OriginCheck {
+    pub status: &'static str,
+    pub seq: Option<i64>,
+    pub reason: Option<&'static str>,
+    pub signer: Option<String>,
 }
 
-fn check_origin(origin: Option<&HistoryOrigin>, row: Option<&LogRow>, keys: &[Key]) -> OriginCheck {
+impl OriginCheck {
+    pub fn holds(&self) -> bool {
+        self.status == "ok"
+    }
+    pub fn broken(&self) -> bool {
+        self.status == "mismatch"
+    }
+
+    /// The signer's fingerprint is held privately from the report.
+    pub fn to_dict(&self) -> PyValue {
+        let mut entries = vec![(PyValue::str("status"), PyValue::str(self.status))];
+        if let Some(seq) = self.seq {
+            entries.push((PyValue::str("seq"), PyValue::int(i128::from(seq))));
+        }
+        if let Some(reason) = self.reason {
+            entries.push((PyValue::str("reason"), PyValue::str(reason)));
+        }
+        PyValue::Dict(entries)
+    }
+}
+
+impl PartialEq for OriginCheck {
+    fn eq(&self, other: &Self) -> bool {
+        (self.status, self.seq, self.reason) == (other.status, other.seq, other.reason)
+    }
+}
+impl Eq for OriginCheck {}
+
+pub fn check_origin(
+    origin: Option<&HistoryOrigin>,
+    row: Option<&LogRow>,
+    keys: &[Key],
+) -> OriginCheck {
     let Some(origin) = origin else {
         return OriginCheck {
             status: "absent",
             seq: None,
             reason: None,
+            signer: None,
         };
     };
     let mismatch = |reason| OriginCheck {
         status: "mismatch",
         seq: Some(origin.seq),
         reason: Some(reason),
+        signer: None,
     };
     let Some(row) = row else {
         return mismatch("missing");
@@ -505,6 +540,7 @@ fn check_origin(origin: Option<&HistoryOrigin>, row: Option<&LogRow>, keys: &[Ke
                 status: "ok",
                 seq: Some(origin.seq),
                 reason: None,
+                signer: Some(fingerprint(key.bytes())),
             };
         }
         if Some(fingerprint(key.bytes())) == origin.key_fingerprint {
@@ -515,6 +551,7 @@ fn check_origin(origin: Option<&HistoryOrigin>, row: Option<&LogRow>, keys: &[Ke
         status: "unverifiable",
         seq: Some(origin.seq),
         reason: None,
+        signer: None,
     };
     if keys.is_empty() {
         return unverifiable;

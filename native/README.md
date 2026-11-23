@@ -2313,6 +2313,26 @@ wiped on drop. The store unit, when it reads key files, must keep their
 bytes in such a zeroize-on-drop wrapper from the read on (`Key::new` takes
 the `Vec` without copying it), not in a plain `Vec<u8>` or `String`.
 
+## Store key state and signed checkpoints (store_keys-2a)
+
+`store::key_state::KeyState` holds what the opener observed. Its summary,
+remedy, write refusal and ordered details use the original filesystem spelling
+and Unicode code points. `RingFit` combines the checked origin and head.
+`log::check_origin` records the fingerprint of the first key that verified the
+anchored row. The public origin report includes its status, sequence and reason.
+
+`head_status` reads the log tip and, for an older checkpoint, the named row on
+the caller's SQLite connection. The caller retains ownership of its transaction.
+The bound and unclaimed warnings share the process-wide first-observation guard.
+Their callbacks receive the level, path, summary and capitalized remedy after
+the guard is released.
+
+A read-only opener retains its observed key state and possession. A subsequent
+log verification on that same reader reloads the current key, head and origin
+files. `store_key_state.jsonl`, `store_key_state_signed.jsonl` and
+`store_key_state_warnings.jsonl` cover the Python projections, checkpoints from
+two normally created signed stores, and the store logger's raw arguments.
+
 ## The key ring's files (`log.py`, unit log-1)
 
 `log::ring` reads and writes the files a keys directory holds for one
@@ -2442,10 +2462,10 @@ used.
 | `KeysDirUnreadableError` | 102-122 | nothing | built (`keys_dir_unreadable`: reason and message) |
 | `prepare_store_dir` | 125-140 | `lstat`, `readlink`, `mkdir` | built earlier in `store::create` |
 | `_store_id_at`, `_bound_store_check` | 143-260 | SQLite, `stat` | store_keys-3 |
-| `_resolved_for_guard`, `_bound_words`, `_sentence`, `_warn_bound_elsewhere`, `_key_ring_elsewhere` | 266-350 | `realpath`, logging | store_keys-2 |
+| `_resolved_for_guard`, `_bound_words`, `_sentence`, `_warn_bound_elsewhere`, `_key_ring_elsewhere` | 266-350 | `realpath`, logging | built in `store::key_state` through `_warn_bound_elsewhere`. `_key_ring_elsewhere` remains in store_keys-2 |
 | `_claim_key_ring` | 353-417 | the ring's lock, `realpath` | store_keys-3 |
-| `KeyState`, `key_state` | 423-693 | the ring, SQLite | store_keys-2 (`key_path`, `withheld`), store_keys-3 |
-| `RingFit`, `head_status`, `ring_fit`, `_fit_read_only`, `_unclaimed_fit`, `_warn_unclaimed` | 696-877 | SQLite, logging | store_keys-2 |
+| `KeyState`, `key_state` | 423-693 | the ring, SQLite | `KeyState` and its projections are built in `store::key_state`. Loading the state in `key_state` remains in store_keys-3 |
+| `RingFit`, `head_status`, `ring_fit`, `_fit_read_only`, `_unclaimed_fit`, `_warn_unclaimed` | 696-877 | SQLite, logging | `RingFit`, `head_status` and `_warn_unclaimed` are built in `store::key_state`. The three fit readers remain in store_keys-2 |
 | `pending_key_path` | 880-885 | nothing | built |
 | `write_key_once` | 888-905 | `open(O_EXCL, 0600)`, `fsync` | built |
 | `_bound_here_or_nowhere` | 908-920 | `realpath`, `stat` | built (POSIX; declines under the Windows flavour) |
@@ -2535,12 +2555,10 @@ and its C stack (3.14 on Linux reads it), so the row is held to CPython
 | `store_rotation_kills.rs` | the Windows retry, a later attempt finishing, `repr`'s quotes, the retired copy written once, the length and fingerprint checks, one prefix removed | i |
 | `store_rotation_robustness.rs` | an 8 MiB pending file, a 1 MiB fingerprint, a binding 100,000 deep, a path past PATH_MAX, `_signs_a_segment` linear over 100,000 segments | i |
 
-**Left for store_keys-2:** `_warn_bound_elsewhere`, `_key_ring_elsewhere`,
-`KeyState.key_path` and `withheld`, the parts of `RingFit`,
-`_fit_read_only`, `_unclaimed_fit`, `_warn_unclaimed`. Then
-store_keys-3: `_store_id_at`, `_claim_key_ring`, `key_state`,
-`_signing_key`, and wiring the finish into `store/open.rs` and
-`store/write.rs`.
+The remaining store_keys-2 functions are `_key_ring_elsewhere`, `ring_fit`,
+`_fit_read_only` and `_unclaimed_fit`. Store_keys-3 covers `_store_id_at`,
+`_claim_key_ring`, `key_state`, `_signing_key` and wiring the finish into
+`store/open.rs` and `store/write.rs`.
 
 ## This machine's id (`machine.py`)
 

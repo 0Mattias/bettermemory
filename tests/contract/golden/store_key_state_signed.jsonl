@@ -1,0 +1,9 @@
+{"case":"absent","expected":["ok","absent"]}
+{"case":"current","expected":["ok","ok"]}
+{"case":"stale-first","expected":["ok","stale"]}
+{"case":"stale-middle","expected":["ok","stale"]}
+{"case":"other-current","expected":["ok","mismatch"]}
+{"case":"other-middle","expected":["ok","mismatch"]}
+{"case":"before-first","expected":["ok","mismatch"]}
+{"case":"far-ahead","expected":["ok","tail_deleted"]}
+{"case":"lower-bind","expected":["OverflowError","Python int too large to convert to SQLite INTEGER"]}

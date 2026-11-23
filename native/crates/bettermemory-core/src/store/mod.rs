@@ -49,6 +49,7 @@ pub mod fold;
 pub mod home;
 pub mod index_reads;
 pub mod journal;
+pub mod key_state;
 pub mod keys;
 pub mod membership;
 pub mod mint;
