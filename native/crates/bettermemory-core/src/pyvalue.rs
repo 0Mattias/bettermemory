@@ -139,7 +139,7 @@ fn number(value: &PyValue) -> Option<Number<'_>> {
     }
 }
 
-fn cmp_int_text(a: &str, b: &str) -> Ordering {
+pub(crate) fn cmp_int_text(a: &str, b: &str) -> Ordering {
     let (an, a) = a.strip_prefix('-').map_or((false, a), |r| (true, r));
     let (bn, b) = b.strip_prefix('-').map_or((false, b), |r| (true, r));
     let magnitude = a.len().cmp(&b.len()).then_with(|| a.cmp(b));

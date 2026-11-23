@@ -397,6 +397,7 @@
 #![forbid(unsafe_code)]
 
 pub mod admission;
+pub mod anchor;
 pub mod argparse;
 pub mod attestation_paths;
 pub mod attribution;

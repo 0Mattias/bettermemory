@@ -939,9 +939,9 @@ impl DecodeFailure {
                  {n} digits; use sys.set_int_max_str_digits() to increase the limit"
             ),
             DecodeFailure::Recursion => {
-                "maximum recursion depth exceeded while decoding a JSON array from a unicode \
-                 string"
-                    .to_owned()
+                let mut kind = "array";
+                decode_failure_in(text, &mut kind);
+                format!("maximum recursion depth exceeded while decoding a JSON {kind} from a unicode string")
             }
         }
     }
@@ -1033,6 +1033,10 @@ fn scan_string(s: &[u32], start: usize) -> Result<usize, DecodeFailure> {
 /// [`DecodeFailure`] for a text `json.loads` refuses, None for one it
 /// reads. Iterative: nesting is an explicit stack, at most [`MAX_DEPTH`].
 pub fn decode_failure(s: &[u32]) -> Option<DecodeFailure> {
+    decode_failure_in(s, &mut "array")
+}
+
+fn decode_failure_in(s: &[u32], deep_container: &mut &'static str) -> Option<DecodeFailure> {
     use DecodeFailure::At;
     if s.first() == Some(&0xFEFF) {
         return Some(At("Unexpected UTF-8 BOM (decode using utf-8-sig)", 0));
@@ -1065,6 +1069,7 @@ pub fn decode_failure(s: &[u32]) -> Option<DecodeFailure> {
             },
             Some(open @ ('[' | '{')) => {
                 if stack.len() + 1 > MAX_DEPTH {
+                    *deep_container = if open == '[' { "array" } else { "object" };
                     return Some(DecodeFailure::Recursion);
                 }
                 let array = open == '[';

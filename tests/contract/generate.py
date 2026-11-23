@@ -37,6 +37,7 @@ from threading import RLock
 
 from . import (
     gen_argparse,
+    gen_external_anchor,
     gen_attribution,
     gen_hook_leaf,
     gen_caller_admission,
@@ -449,6 +450,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "fold_python": gen_fold.generate_python,
     "store_event_reads": gen_store_event_reads.generate,
     "store_event_reads_naive": gen_store_event_reads.generate_naive,
+    "external_anchor": gen_external_anchor.generate,
+    "external_anchor_files_posix": gen_external_anchor.posix,
+    "external_anchor_signed": gen_external_anchor.signed,
     "store_create": gen_store_create.generate,
     "store_digest_query": gen_store_digest_query.generate,
     "store_digest_query_sqlite": gen_store_digest_query.generate_sqlite,
@@ -1211,6 +1215,7 @@ PLATFORM_GATED = frozenset(
 #: (`gen_store_event_reads`).
 POSIX_ONLY = frozenset(
     {
+        "external_anchor_files_posix",
         "store_event_reads_naive",
         # `os.fsencode` encodes a surrogate with `surrogatepass` on Windows.
         "response_write_posix",

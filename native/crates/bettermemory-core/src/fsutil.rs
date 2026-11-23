@@ -282,6 +282,54 @@ pub fn bounded_stream_read<R: Read + ?Sized>(
     Ok(raw)
 }
 
+/// Failure of Python's regular-file-only `bounded_read`.
+#[derive(Debug)]
+pub enum BoundedReadError {
+    Open(std::io::Error),
+    Io(std::io::Error),
+    Directory(i32),
+    NonRegular,
+    TooLarge { size: u64, limit: u64 },
+    NullPath,
+}
+
+/// Open nonblocking, check the opened object, then read at most the cap.
+/// A file growing after the metadata check cannot make this read unbounded.
+pub fn bounded_read(path: &Path, limit: u64) -> Result<Vec<u8>, BoundedReadError> {
+    use std::fs::OpenOptions;
+    if fsdecode(path.as_os_str()).contains(&0) {
+        return Err(BoundedReadError::NullPath);
+    }
+    let mut open = OpenOptions::new();
+    open.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open.custom_flags(bettermemory_sys::O_NONBLOCK);
+    }
+    let file = open.open(path).map_err(BoundedReadError::Open)?;
+    let stat = file.metadata().map_err(BoundedReadError::Io)?;
+    #[cfg(unix)]
+    if stat.is_dir() {
+        use std::os::fd::AsRawFd;
+        return Err(BoundedReadError::Directory(file.as_raw_fd()));
+    }
+    if !stat.is_file() {
+        return Err(BoundedReadError::NonRegular);
+    }
+    if stat.len() > limit {
+        return Err(BoundedReadError::TooLarge {
+            size: stat.len(),
+            limit,
+        });
+    }
+    let mut raw = Vec::new();
+    file.take(limit)
+        .read_to_end(&mut raw)
+        .map_err(BoundedReadError::Io)?;
+    Ok(raw)
+}
+
 /// `FLOCK_TIMEOUT_SECONDS` (473): how long the Windows branch of
 /// [`flock_excl`] waits for a contended lock.
 pub const FLOCK_TIMEOUT_SECONDS: f64 = 30.0;

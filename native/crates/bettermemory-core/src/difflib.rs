@@ -308,22 +308,29 @@ fn is_line_boundary(cp: u32) -> bool {
 /// `str.splitlines()`: the lines without their ends, `\r\n` one end, no
 /// empty last line after a final end.
 pub fn splitlines(text: &[u32]) -> Vec<PyStr> {
-    let mut out = Vec::new();
-    let (mut start, mut i) = (0, 0);
-    while i < text.len() {
-        if is_line_boundary(text[i]) {
-            out.push(text[start..i].to_vec());
-            if text[i] == 0x0d && text.get(i + 1) == Some(&0x0a) {
-                i += 1;
-            }
-            start = i + 1;
+    splitline_slices(text).map(<[u32]>::to_vec).collect()
+}
+
+/// Borrow each Python line, including empty interior lines, with no per-line
+/// allocation. A final line separator does not yield an additional line.
+pub(crate) fn splitline_slices(mut text: &[u32]) -> impl Iterator<Item = &[u32]> {
+    std::iter::from_fn(move || {
+        if text.is_empty() {
+            return None;
         }
-        i += 1;
-    }
-    if start < text.len() {
-        out.push(text[start..].to_vec());
-    }
-    out
+        if let Some(end) = text.iter().position(|&c| is_line_boundary(c)) {
+            let width = if text[end] == 0x0d && text.get(end + 1) == Some(&0x0a) {
+                2
+            } else {
+                1
+            };
+            let line = &text[..end];
+            text = &text[end + width..];
+            Some(line)
+        } else {
+            Some(std::mem::take(&mut text))
+        }
+    })
 }
 
 /// `history._body_diff(before, after, old=old, new=new)`: `None` reads as

@@ -1197,6 +1197,39 @@ Left for h_verify-2: `_stamp`, `_load_verify_snapshot` and the handler
 `h_memory_verify` (lines 323-386 and 438-885), with the JSON layer that
 fills `Arg`.
 
+## External signed-chain anchor files (`anchor.py`)
+
+`anchor::load_anchors` reads a regular file through
+`fsutil::bounded_read`. The reader checks the opened descriptor before
+reading and accepts files through 16 MiB. It decodes one optional UTF-8
+BOM, then accepts one complete JSON object or a sequence of JSON Lines.
+Blank lines count toward locations. Python code points are preserved in
+paths, labels, timestamps and diagnostics. On POSIX, a directory error
+identifies the opened descriptor; Rust drops the descriptor on this path.
+For a programmatically supplied path containing NUL, the native diagnostic
+uses CPython 3.13's `open: embedded null character in path`. CPython 3.11
+spells this `embedded null byte`.
+
+`anchor::check_anchors` uses the caller's connection and
+`history::read_snapshot`. It computes SHA-256 over each stored MAC's
+Python text followed by a newline, then checks each supplied anchor in
+input order. A matching store's parsed file sequence is in the positive
+SQLite integer range. An `Anchor` constructed by a caller holds a
+canonical decimal sequence, so foreign anchors can pass through even
+when that integer is larger than SQLite can bind. `merge_into_report`
+attaches the ordered results before sorting the existing and new
+problems by integer sequence and problem text. It retains the original
+relative order of ties and marks a mismatch as tampered.
+
+`golden_external_anchor` checks the three fixtures from
+`gen_external_anchor.py`, including a historical signed store rebuilt
+from `store_bases.json` and opened read-only by both implementations.
+`external_anchor_kills` and `external_anchor_robustness` cover sequence
+gaps, checked versus foreign oversized integers, nonblocking files,
+ownership of caller transactions and a WAL append between verification
+queries. The CLI owns option parsing, report formatting and store
+acquisition. Anchor creation and writing belong to later units.
+
 ## Anchoring and the sparse checkout (`verify_anchoring.py`)
 
 `src/bettermemory/verify_anchoring.py`, read at 9b4a365a, decides whether
