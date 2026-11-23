@@ -20074,6 +20074,30 @@ module; no golden row holds such a text.
 Tests: `golden_membership_migrate_report`,
 `membership_migrate_report_kills`, `membership_migrate_report_robustness`.
 
+## Membership health on the command line
+
+`cli::membership_health` implements `health_model`, `_where`, `health_dict` and
+`health_lines` from `cli/membership_cmd.py` lines 341–445. The constructor uses
+the process machine cache. The projection reads the caller's `Health` once
+and looks up each requested checkout, including repeats and the empty ID, in
+the original order. `checkout_path` uses the concrete membership model and
+its newest view. The lookup adapter distinguishes a missing key in that guarded
+read from an exception while accessing the resulting path.
+
+The projection retains key insertion order throughout. The renderer walks the
+supplied suppressed-turn mapping in its own order and sums Python-size signed
+counts. It quotes project names and visible paths with the shared terminal
+quoter. `Health` defaults to signed SQLite counts and accepts `Health<PyValue>`
+for a caller that supplies wider Python integers. The default interpreter limit
+of 4,300 digits applies when an integer is rendered.
+
+`cli_membership_health.jsonl` compares the Python sections, raw line code
+points, ordered calls and exceptions. The Unix SQLite test creates the same
+seven signed rows as Python, checks their MACs, reads membership paths through
+the real query, and checks that construction and display preserved every row.
+The aggregate `Membership.health` query and the callers in CLI health and
+`memory_admin` remain separate units.
+
 ## The process entry and the CLI's shared leaves
 
 Read at 6cf944e5. `_entry.py` (38 lines) whole, and the leaves of
@@ -20184,8 +20208,10 @@ loader, the store's opens and the recorder.
 Read at origin/v9 (7be0e20e); the file is the same in the tree.
 `cli/__init__.py` is 298 lines: imports and the module text (1-70), and
 three functions. Unit cli___init__-1a builds the root parser and `main`'s
-routing and dispatch; the command modules (`cli/*_cmd.py` and their
-kin), the shim and the check of the help listing are later units.
+routing and dispatch. `cli::membership_health` builds the membership
+section shared by CLI health and `memory_admin`, plus its CLI text lines.
+Command registration, handlers, the shim and the help listing remain
+separate units.
 
 ### The map
 
@@ -24159,7 +24185,8 @@ What the reference has and this build does not, by area:
   (`_refuse`, `exit_if_bundle_file`, `key_unreadable_line`,
   `exit_if_key_unreadable`, `migration_line`, `parse_iso_cutoff`) and
   `cli/__init__.py`'s root parser and dispatch (`_build_parser`,
-  `_add_hook_subparser`, `main` in `cli::root`) are built; the rest,
+  `_add_hook_subparser`, `main` in `cli::root`) and the shared membership
+  health display (`cli::membership_health`) are built; the rest,
   `cli___init__-1b` (the help listing), `cli__common-1b` and the command
   modules included, is not.
 - Of the Windows flavour of `location_probe` (unit ntreal built

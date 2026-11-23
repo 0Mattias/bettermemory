@@ -90,38 +90,38 @@ pub struct Why {
 
 /// `UnresolvedProject`: a provisional project of decision B6.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UnresolvedProject {
+pub struct UnresolvedProject<N = i64> {
     pub project: PyStr,
     pub name: PyStr,
     pub state: PyStr,
     pub checkout: Option<PyStr>,
     pub path: Option<PyStr>,
-    pub memories: i64,
-    pub episodes: i64,
+    pub memories: N,
+    pub episodes: N,
 }
 
 /// `Health`: the membership section of health. `suppressed_turns` keeps
 /// the mapping's order. `unresolved` defaults to empty.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Health {
+pub struct Health<N = i64> {
     pub open_proposals: Vec<Proposal>,
     pub provisional: Vec<Project>,
-    pub suppressed_turns: Vec<(PyStr, i64)>,
-    pub indeterminate: i64,
-    pub deferred: i64,
+    pub suppressed_turns: Vec<(PyStr, N)>,
+    pub indeterminate: N,
+    pub deferred: N,
     pub without_live_view: Vec<PyStr>,
-    pub unresolved: Vec<UnresolvedProject>,
+    pub unresolved: Vec<UnresolvedProject<N>>,
 }
 
-impl Health {
+impl<N> Health<N> {
     /// `Health(open_proposals, provisional, suppressed_turns,
     /// indeterminate, deferred, without_live_view)`: nothing unresolved.
     pub fn new(
         open_proposals: Vec<Proposal>,
         provisional: Vec<Project>,
-        suppressed_turns: Vec<(PyStr, i64)>,
-        indeterminate: i64,
-        deferred: i64,
+        suppressed_turns: Vec<(PyStr, N)>,
+        indeterminate: N,
+        deferred: N,
         without_live_view: Vec<PyStr>,
     ) -> Self {
         Health {

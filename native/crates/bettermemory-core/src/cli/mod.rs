@@ -5,6 +5,7 @@
 use crate::pyvalue::PyStr;
 
 pub mod common;
+pub mod membership_health;
 pub mod root;
 
 /// `SystemExit(code)` with what the command wrote to stderr before it:
