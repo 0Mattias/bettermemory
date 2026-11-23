@@ -3,7 +3,7 @@
 //! 1062-1153, `_anchor_specs` 1156-1176, `applicable_unread` 1179-1199,
 //! `compute_commit_drift` 1201-1334 under `git_read_budget.unread`, and
 //! `_narrow_commit_drift` 1337-1411. `resolve_hit_drift` (1414-1533) is
-//! left for a later unit.
+//! implemented in the sibling `hit` module.
 //!
 //! The two git reads `weak`'s [`DriftGit`] does not hold
 //! (`origin.repo_toplevel` and
@@ -191,18 +191,27 @@ pub fn applicable_unread(
     anchors: &[PyStr],
     claims: &[Claim],
 ) -> Option<HistoryUnread> {
-    let Ok(top) = toplevel_of(git, at) else {
-        return Some(HistoryUnread::CallBudget);
-    };
+    try_applicable_unread(why, git, at, anchors, claims).unwrap_or(Some(HistoryUnread::CallBudget))
+}
+
+/// The undecorated hit resolver propagates the deadline raised by either read.
+pub(super) fn try_applicable_unread(
+    why: HistoryUnread,
+    git: &dyn CountGit,
+    at: Place,
+    anchors: &[PyStr],
+    claims: &[Claim],
+) -> Result<Option<HistoryUnread>, ReadDeadline> {
+    let top = toplevel_of(git, at)?;
     let at = Place {
         cwd: at.cwd,
         toplevel: top.as_deref(),
     };
-    match after_read(git, anchor_specs(git, at, anchors, claims)) {
-        Err(_) => Some(HistoryUnread::CallBudget),
-        Ok(Some(s)) if s.is_empty() => None,
+    let specs = after_read(git, anchor_specs(git, at, anchors, claims))?;
+    Ok(match specs {
+        Some(paths) if paths.is_empty() => None,
         _ => Some(why),
-    }
+    })
 }
 
 /// `_quiescent_drift_applicable`.
@@ -210,7 +219,7 @@ pub fn quiescent_drift_applicable(c: CountReads, anchors: &[PyStr], claims: &[Cl
     quiescent_applicable(c, anchors, claims).unwrap_or(true)
 }
 
-fn quiescent_applicable(
+pub(super) fn quiescent_applicable(
     c: CountReads,
     anchors: &[PyStr],
     claims: &[Claim],
@@ -231,6 +240,38 @@ fn quiescent_applicable(
     Ok(after_read(c.git, c.git.paths_in_history(c.at, &pathspecs))?.unwrap_or(true))
 }
 
+/// Narrow at the exact location supplied by the caller. Only the show
+/// entry point looks up a missing toplevel before it reaches this step.
+pub(super) fn resolve_at(
+    c: CountReads,
+    since: &DateTime,
+    count: i64,
+    anchors: &[PyStr],
+    claims: &[Claim],
+    walk: Option<&ReachableWalk>,
+) -> Result<Option<ResolvedCommitDrift>, WeakError> {
+    let failed = Cell::new(None);
+    let mut count_only = || {
+        resolve_commit_drift_count(c, since, count, anchors, &[], None).unwrap_or_else(|e| {
+            failed.set(Some(e));
+            None
+        })
+    };
+    let resolved = resolve_commit_drift(
+        c.reads(),
+        since,
+        count,
+        anchors,
+        claims,
+        walk,
+        &mut count_only,
+    )?;
+    match failed.take() {
+        Some(error) => Err(error),
+        None => Ok(resolved),
+    }
+}
+
 /// `_narrow_commit_drift`: the narrowed resolution, or None.
 #[allow(clippy::too_many_arguments)]
 pub fn narrow_commit_drift(
@@ -247,25 +288,7 @@ pub fn narrow_commit_drift(
     if count > 0 {
         let top = toplevel_of(c.git, c.at)?;
         let c = c.with_top(top.as_deref());
-        let failed = Cell::new(None);
-        let mut count_only = || {
-            resolve_commit_drift_count(c, since, count, anchors, &[], None).unwrap_or_else(|e| {
-                failed.set(Some(e));
-                None
-            })
-        };
-        let resolved = resolve_commit_drift(
-            c.reads(),
-            since,
-            count,
-            anchors,
-            claims,
-            walk,
-            &mut count_only,
-        )?;
-        if let Some(e) = failed.take() {
-            return Err(e);
-        }
+        let resolved = resolve_at(c, since, count, anchors, claims, walk)?;
         let Some(resolved) = resolved else {
             return Ok(None);
         };

@@ -1768,7 +1768,7 @@ reference's re-exports of `Anchoring`, `PathDriftReport`,
 | `resolve_commit_drift_count` | `verify.py` 924-1059 | git (`CountGit`, which extends `DriftGit`) | built (`verify::count`) |
 | `_quiescent_drift_applicable`, `_anchor_specs`, `applicable_unread` | `verify.py` 1062-1199 | as above | built (`verify::count`) |
 | `compute_commit_drift` (under `git_read_budget.unread`), `_narrow_commit_drift` | `verify.py` 1201-1411 | as above, the walk (`AnchorWalk`, `Unwalked`), the dates, the anchor's `commit_root` and `project_commit_anchors` (closures), the read budget (`Scope`) | built (`verify::count`) |
-| `resolve_hit_drift` | `verify.py` 1414-1533 | as above, with `walked` | lane vhit |
+| `resolve_hit_drift` | `verify.py` 1414-1533 | supplied root and heads, pass-owned walk reader, lazy timestamps | built (`verify::hit`) |
 | the rest of `verify.py` | `verify.py` 1600 on | git, the store | later units |
 
 ### Decisions
@@ -1926,10 +1926,22 @@ over them, up to the `memory_show` block `compute_commit_drift` answers.
 - The `TypeError` of a naive author date ordered against the aware
   stamp is `WeakError::NaiveAware`.
 
-The cut: `resolve_hit_drift` (1414-1533) moves to lane vhit, which waits
-on this one. It reads the walk through `commits_since_anchor` with a
-`toplevel` that may be None and the pass's `walked`, which
-`AnchorWalk` does not take yet.
+The per-hit entry point is `verify::hit::resolve_hit_drift`. It receives
+both heads and the optional toplevel from the response pass. Its walker
+can reuse the same map over successive hits. Both the walk and the date
+list are shared objects. A successful walk or a newly abandoned one
+skips the whole-history date read. A positive count uses the supplied
+toplevel for its claim and path reads. A quiescent or unread count uses
+the same applicability checks as the show surface. The date basis and
+count of the narrowed result determine whether its zero is uncertain.
+Read errors propagate through the outer result, including the shared
+Git-read deadline. The concrete response-pass memo and Git traversal
+belong to their own units.
+
+`verify_hit.jsonl` compares sequences of hits, the provider arguments
+and order, the walked-map keys and the abandoned-walk counter. Its cwd
+and toplevels use portable single-component paths. The fixture runs on
+all hosts because this entry point receives its projected anchors.
 
 Fixtures: `tests/contract/gen_verify_count.py` writes `verify_count.jsonl`
 (POSIX only: the anchors are deduplicated on
@@ -24068,7 +24080,8 @@ What the reference has and this build does not, by area:
   narrowing (`_weak_tier_evaluation`, `_claim_legs`, `_resolve_reachable`,
   `_resolve_with_claims`, `resolve_commit_drift`), and its anchor and
   drift-count readers (`verify::anchors`, `verify::count`).
-  The per-hit `resolve_hit_drift` remains in unit vhit.
+  `verify::hit` supplies the per-hit drift result. The response pass still
+  needs to connect its memo and concrete Git reads.
   Of the response layer, `_response_links.py`, the drift memo,
   `check_reason`, `verdict_and_reason`, the trust appliers,
   the per-memory reads in `verdict.py`, `verdict.with_objection`, `render_hit`,

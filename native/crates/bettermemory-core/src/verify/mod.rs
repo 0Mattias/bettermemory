@@ -1,5 +1,5 @@
 //! `verify.py`: the claim anchors (`anchors`), the commit-drift count and
-//! `compute_commit_drift` (`count`), the status leaves (`status`), the claim-level `weak` tier
+//! `compute_commit_drift` (`count`), the per-hit drift resolution (`hit`), the status leaves (`status`), the claim-level `weak` tier
 //! and its git and spelling traits (`weak`), the two-leg narrowing and
 //! `resolve_commit_drift` (`legs`), and the literal reader the claim index
 //! reads through (`literal_lines`). The verdict
@@ -11,6 +11,7 @@
 
 pub mod anchors;
 pub mod count;
+pub mod hit;
 pub mod legs;
 pub mod literal_lines;
 pub mod status;

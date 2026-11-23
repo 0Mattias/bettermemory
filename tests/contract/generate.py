@@ -254,6 +254,7 @@ from . import (
     gen_verify_basis,
     gen_verify_weak,
     gen_verify_count,
+    gen_verify_hit,
     gen_store_provenance,
     gen_store_bulk,
 )
@@ -518,6 +519,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "verify_basis": gen_verify_basis.generate,
     "verify_weak": gen_verify_weak.generate,
     "verify_count": gen_verify_count.generate,
+    "verify_hit": gen_verify_hit.generate,
     "verify_anchoring_skip": gen_verify_anchoring_sparse.generate_skip,
     "githead": gen_githead.generate,
     "githead_discovery": gen_githead_discovery.generate,

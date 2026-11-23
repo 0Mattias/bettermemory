@@ -137,14 +137,17 @@ impl Script {
         }
     }
 
-    fn log(&self, v: Value) {
-        self.calls.borrow_mut().push(v);
+    fn log(&self, at: Place, mut call: Value) {
+        if self.s["trace_cwd"].as_bool() == Some(true) {
+            call.as_array_mut().expect("a call").insert(1, out(at.cwd));
+        }
+        self.calls.borrow_mut().push(call);
     }
 }
 
 impl DriftGit for Script {
     fn resolve_repo_pathspecs(&self, at: Place, paths: &[PyStr]) -> Option<Vec<PyStr>> {
-        self.log(json!(["rp", top(&at), outs(paths)]));
+        self.log(at, json!(["rp", top(&at), outs(paths)]));
         match self.s.get("rp") {
             None => Some(paths.to_vec()),
             Some(Value::Null) => None,
@@ -156,7 +159,7 @@ impl DriftGit for Script {
         at: Place,
         pathspecs: &[PyStr],
     ) -> Option<Vec<(DateTime, PyStr)>> {
-        self.log(json!(["pairs", top(&at), outs(pathspecs)]));
+        self.log(at, json!(["pairs", top(&at), outs(pathspecs)]));
         let got = self.pairs.borrow_mut().remove(0);
         got.as_array().map(|a| {
             a.iter()
@@ -170,15 +173,15 @@ impl DriftGit for Script {
         })
     }
     fn paths_in_history(&self, at: Place, pathspecs: &[PyStr]) -> Option<bool> {
-        self.log(json!(["hist", top(&at), outs(pathspecs)]));
+        self.log(at, json!(["hist", top(&at), outs(pathspecs)]));
         self.s.get("hist").and_then(Value::as_bool)
     }
     fn too_large(&self, at: Place, shas: &[PyStr], pathspecs: &[PyStr]) -> bool {
-        self.log(json!(["big", top(&at), outs(shas), outs(pathspecs)]));
+        self.log(at, json!(["big", top(&at), outs(shas), outs(pathspecs)]));
         self.s.get("big").and_then(Value::as_bool).unwrap_or(false)
     }
     fn commit_patch_stream(&self, at: Place, shas: &[PyStr], pathspecs: &[PyStr]) -> Option<PyStr> {
-        self.log(json!(["stream", top(&at), outs(shas), outs(pathspecs)]));
+        self.log(at, json!(["stream", top(&at), outs(shas), outs(pathspecs)]));
         self.s.get("stream").and_then(Value::as_str).map(cps)
     }
     fn local_patch_window(
@@ -187,7 +190,7 @@ impl DriftGit for Script {
         shas: &[PyStr],
         pathspecs: &[PyStr],
     ) -> Option<PatchWindow> {
-        self.log(json!(["split", top(&at), outs(shas), outs(pathspecs)]));
+        self.log(at, json!(["split", top(&at), outs(shas), outs(pathspecs)]));
         let w = self.s.get("split").filter(|w| !w.is_null())?;
         Some(PatchWindow {
             stream: text(&w[0]),
@@ -205,13 +208,10 @@ impl DriftGit for Script {
         _claims: &[Claim],
         _spell: &dyn Spelling,
     ) -> Option<LiteralFloor> {
-        self.log(json!([
-            "floor",
-            top(&at),
-            outs(shas),
-            outs(specs),
-            outs(pathspecs)
-        ]));
+        self.log(
+            at,
+            json!(["floor", top(&at), outs(shas), outs(specs), outs(pathspecs)]),
+        );
         match self.s.get("floor") {
             None => Some(LiteralFloor::default()),
             Some(Value::Null) => None,
@@ -230,13 +230,16 @@ impl DriftGit for Script {
         since: Option<&DateTime>,
     ) -> Box<dyn Spelling> {
         let stamp = since.map_or(Value::Null, |d| json!(d.isoformat()));
-        self.log(json!([
-            "spelled",
-            top(&at),
-            outs(specs),
-            anchor.map_or(Value::Null, out),
-            stamp
-        ]));
+        self.log(
+            at,
+            json!([
+                "spelled",
+                top(&at),
+                outs(specs),
+                anchor.map_or(Value::Null, out),
+                stamp
+            ]),
+        );
         Box::new(Chosen::of_script(&self.s))
     }
 }
