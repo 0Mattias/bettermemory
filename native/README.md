@@ -6027,8 +6027,7 @@ three writers that is rolled back or committed. POSIX only, as
 `store_tx.jsonl`; `store_record_event_not_posix.rs` records the gap, and
 the kills and robustness tests run everywhere.
 
-The remaining store integration is the recorder's `EventSink` adapter
-for `WritableStore`.
+`store::recorder::StoreEventSink` connects the recorder to `WritableStore`.
 
 ## The store_rows leaves (`store::rows`)
 
@@ -7002,7 +7001,7 @@ What it reproduces.
 
 - The store is the trait `EventSink` (`record_event(kind, session,
   actor, best_effort, attempts, deadline, fields)`). The writable store's
-  event writer is `store::record_event`. `best_effort` and
+  event writer is `store::record_event`, bound by `store::recorder::StoreEventSink`. `best_effort` and
   `attempts` are `Some` only on a state row (`false` and
   `STATE_WRITE_ATTEMPTS`), `deadline` only inside a hook body. The two
   context variables are the `HookScope` passed to `records` and `record`;
@@ -7067,6 +7066,46 @@ telemetry off, a million-code-point kind and probe query, a value nested
 200,000 deep, deadlines at the float edges, and time at 20,000 fields
 against 2,000. Left for later: wiring the recorder into `StopSide` and
 the handlers, and `_handlers.capture_origin`.
+
+### Recording through the signed store
+
+`store::recorder::StoreEventSink` connects `Recorder` to an owning
+`WritableStore` and its clock, a caller's active `Transaction`, or a keyless
+connection's refusal. A recorder can reuse that binding across requests.
+The credential detector `store::recorder::secret_spans` supplies the normal
+span input for both stages. Python binds extra `attempts`, `deadline` and
+`best_effort` keywords to writer controls. The writer reads these where Python
+first needs them. For example, a joined write skips attempts and deadline
+arithmetic. Row signing serializes the redacted payload before encoding
+the session. A successful SQL commit survives a later checkpoint error.
+
+`Recorder::record_typed` exposes the structured warning and returns the
+original store or handler error. The return carries its Python inheritance,
+code points, SQLite code, OS fields and optionally the caller's original
+opaque exception handle. A direct `BaseException` escapes immediately.
+An ordinary exception reaches the recorder warning; a state row reraises it.
+The original `record` and `EventSink::record_event` interfaces remain available.
+
+`RecorderFields::from_json` reads an actual keyword object with the
+standard decoder's single NaN object. For a native or runtime producer,
+`ActorKeyObjects::bind` retains each NaN key's identity, including inside
+tuples. `Recorder::record_fields` passes those handles through actor
+conversion and canonical sorting. Repeated references update the first
+key in place. Separately constructed NaNs remain distinct even when
+they have identical floating-point bits.
+
+`recorder_store_posix.jsonl` compares the ordered diagnostics, timestamps,
+timeout restoration, caller and outside connection views, signed rows and
+durable head on isolated stores. `recorder_store_python_posix.jsonl` holds
+the unhashable-actor diagnostic whose wording changes on Python 3.14
+and signed descending numeric-key runs whose NaN ordering changed in
+Python 3.13. The portable rows exercise raw JSON actor pairs and nested
+metadata on both sides of the 64-key threshold, comparing direct
+canonical bytes by SHA-256 and persisted log rows by HMAC. The
+signed-store fixtures require POSIX key-ring binding.
+`recorder_store_kills` checks same-name exceptions on both sides of COMMIT
+and in the keyless handler. The live hook and handler entrypoints still
+supply the published context, origin capture and runtime callbacks.
 
 ## A hook's deadline and the suppression switch (`event_hook`, `events.py` 538-653)
 
@@ -24292,8 +24331,8 @@ What the reference has and this build does not, by area:
   templates (pyre-10).
 - This machine's id past its record, clone rule, facts, file reads and
   open: `machine.py`'s `check_import_fork`.
-- The telemetry recorder's `EventSink` adapter for `WritableStore`, and
-  its wiring into `StopSide` and the handlers.
+- Wiring the telemetry recorder and its signed store adapter into
+  `StopSide` and the handlers.
 - The daemon, the MCP tools (of `_handlers.py` the refusal classes and
   the bundle are built, `tool_handlers`; the nine forwarders and the
   `DESC_*` re-exports are handlers-2b's), the hooks past the pure leaves of `hook.py`

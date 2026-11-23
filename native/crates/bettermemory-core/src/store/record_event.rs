@@ -28,6 +28,7 @@ use crate::event_hook::{is_busy, primary_code, BusyTimeout};
 use crate::event_redact::{name_fields, redact_event_fields, Spans};
 use crate::json::{canonical_payload, loads};
 use crate::log::LogRow;
+use crate::pyvalue::key_objects::KeyObjects;
 use crate::pyvalue::{repr_str, PyStr, PyValue};
 use crate::recall_prompt::PyException;
 use crate::unicode;
@@ -47,6 +48,12 @@ pub enum Logged {
         reason: PyStr,
         next: i64,
         tries: i64,
+    },
+    /// A retry whose Python integer arguments exceed the machine range.
+    WideRetry {
+        reason: PyStr,
+        next: String,
+        tries: String,
     },
     /// `log.warning("event %s not recorded: %s")`.
     NotRecorded(PyStr),
@@ -130,7 +137,13 @@ pub fn busy(e: &WriteError) -> bool {
 /// Whether `except (sqlite3.Error, OSError, RuntimeError)` catches `e`.
 pub fn caught(e: &WriteError) -> bool {
     match e {
-        WriteError::Callback(e) => e.family != ExceptionFamily::Other,
+        WriteError::Callback(e) => matches!(
+            e.family,
+            ExceptionFamily::Os
+                | ExceptionFamily::Runtime
+                | ExceptionFamily::Sqlite
+                | ExceptionFamily::Operational
+        ),
         WriteError::Sqlite(e) => !matches!(failure_of(e), Some(("MemoryError", _))),
         WriteError::Clock(_) | WriteError::RolledBack(_) | WriteError::LaterWriter { .. } => true,
         WriteError::Refused { class, .. } => {
@@ -256,7 +269,15 @@ pub enum EventTransaction<'a, 's> {
     Joined(&'a mut Transaction<'s>),
 }
 
-impl EventTransaction<'_, '_> {
+impl<'s> EventTransaction<'_, 's> {
+    /// Borrow the same owner or active caller transaction for one operation.
+    pub fn reborrow(&mut self) -> EventTransaction<'_, 's> {
+        match self {
+            Self::Store(store, provider) => EventTransaction::Store(store, &mut **provider),
+            Self::Joined(tx) => EventTransaction::Joined(tx),
+        }
+    }
+
     fn write<T, E: From<WriteError>>(
         self,
         body: impl FnOnce(&mut Transaction<'_>) -> Result<T, E>,
@@ -279,6 +300,170 @@ pub fn record_event(
     spans: Spans,
     log: &mut dyn EventLogger,
 ) -> Result<Option<LogRow>, EventError> {
+    let controls = BoundCall {
+        kind: call.kind,
+        session: Session::Text(call.session),
+        best_effort: call.best_effort,
+        attempts: PyValue::int(call.attempts.into()),
+        deadline: call.deadline.map_or(PyValue::None, PyValue::Float),
+    };
+    record_bound(
+        target,
+        &controls,
+        || {
+            Ok(PreparedPayload {
+                value: event_payload(fields, actor, spans),
+                actor_keys: KeyObjects::default(),
+            })
+        },
+        log,
+    )
+}
+
+pub(super) struct PreparedPayload {
+    pub value: PyValue,
+    pub actor_keys: KeyObjects,
+}
+
+pub(super) enum Session<'a> {
+    Text(Option<&'a [u32]>),
+    Value(&'a PyValue),
+}
+
+pub(super) struct BoundCall<'a> {
+    pub kind: &'a [u32],
+    pub session: Session<'a>,
+    pub best_effort: bool,
+    pub attempts: PyValue,
+    pub deadline: PyValue,
+}
+
+impl BoundCall<'_> {
+    fn append(
+        &self,
+        tx: &mut Transaction<'_>,
+        payload: &PreparedPayload,
+    ) -> Result<LogRow, WriteError> {
+        match self.session {
+            Session::Text(value) => tx.append_at(self.kind, &payload.value, value, None),
+            Session::Value(value) => {
+                tx.append_event(self.kind, &payload.value, value, &payload.actor_keys)
+            }
+        }
+    }
+
+    fn time_remaining(&self, provider: &mut dyn Provider) -> Result<Option<f64>, WriteError> {
+        if matches!(self.deadline, PyValue::None) {
+            return Ok(None);
+        }
+        let now = provider.event_monotonic()?;
+        let deadline = match &self.deadline {
+            PyValue::Bool(b) => f64::from(*b),
+            PyValue::Float(f) => *f,
+            PyValue::Int(s) => {
+                s.parse::<f64>()
+                    .ok()
+                    .filter(|f| f.is_finite())
+                    .ok_or_else(|| {
+                        refused(
+                            "OverflowError",
+                            "int too large to convert to float".to_owned(),
+                        )
+                    })?
+            }
+            value => {
+                return Err(refused(
+                    "TypeError",
+                    format!(
+                        "unsupported operand type(s) for -: '{}' and 'float'",
+                        super::home::type_name(value)
+                    ),
+                ))
+            }
+        };
+        Ok(Some(deadline - now))
+    }
+}
+
+fn refused(class: &'static str, text: String) -> WriteError {
+    WriteError::Refused {
+        class,
+        text: Some(text),
+    }
+}
+
+enum TryNumber {
+    Small(i64),
+    Wide(String),
+}
+
+impl TryNumber {
+    // The caller's max(1, attempts), then the integer-only range.
+    fn total(value: &PyValue) -> Result<Self, WriteError> {
+        match value {
+            PyValue::Int(s) if s.starts_with('-') => Ok(Self::Small(1)),
+            PyValue::Int(s) => Ok(s
+                .parse::<i64>()
+                .map_or_else(|_| Self::Wide(s.clone()), |i| Self::Small(i.max(1)))),
+            PyValue::Bool(_) => Ok(Self::Small(1)),
+            PyValue::Float(f) if *f > 1.0 => Err(refused(
+                "TypeError",
+                "'float' object cannot be interpreted as an integer".into(),
+            )),
+            PyValue::Float(_) => Ok(Self::Small(1)),
+            other => Err(refused(
+                "TypeError",
+                format!(
+                    "'>' not supported between instances of '{}' and 'int'",
+                    super::home::type_name(other)
+                ),
+            )),
+        }
+    }
+
+    fn advance(&mut self) {
+        match self {
+            Self::Small(n) if *n < i64::MAX => *n += 1,
+            Self::Small(n) => *self = Self::Wide((i128::from(*n) + 1).to_string()),
+            Self::Wide(n) => *n = super::writers::plus_one(n),
+        }
+    }
+
+    fn less_than(&self, total: &Self) -> bool {
+        match (self, total) {
+            (Self::Small(a), Self::Small(b)) => a < b,
+            (Self::Small(_), Self::Wide(_)) => true,
+            (Self::Wide(_), Self::Small(_)) => false,
+            (Self::Wide(a), Self::Wide(b)) => (a.len(), a) < (b.len(), b),
+        }
+    }
+
+    fn retry(&self, total: &Self, reason: PyStr) -> Logged {
+        let text = |n: &Self| match n {
+            Self::Small(i) => i.to_string(),
+            Self::Wide(s) => s.clone(),
+        };
+        match (self, total) {
+            (Self::Small(next), Self::Small(tries)) => Logged::Retry {
+                reason,
+                next: *next,
+                tries: *tries,
+            },
+            _ => Logged::WideRetry {
+                reason,
+                next: text(self),
+                tries: text(total),
+            },
+        }
+    }
+}
+
+pub(super) fn record_bound(
+    target: Result<EventTransaction<'_, '_>, &[u32]>,
+    call: &BoundCall<'_>,
+    payload: impl FnOnce() -> Result<PreparedPayload, EventError>,
+    log: &mut dyn EventLogger,
+) -> Result<Option<LogRow>, EventError> {
     refuse_kind(call.kind)?;
     let target = match target {
         Ok(target) => target,
@@ -288,44 +473,34 @@ pub fn record_event(
             return Ok(None);
         }
     };
-    let payload = event_payload(fields, actor, spans);
+    let payload = payload()?;
     let (store, provider) = match target {
         EventTransaction::Store(store, provider) => (store, provider),
         EventTransaction::Joined(tx) => {
-            return match tx.scope(|t| t.append_at(call.kind, &payload, call.session, None)) {
+            return match tx.scope(|t| call.append(t, &payload)) {
                 Ok(row) => Ok(Some(row)),
                 Err(e) => give_up(call.kind, e, call.best_effort, log),
             };
         }
     };
-    let tries = call.attempts.max(1);
-    let mut attempt = 1;
+    let tries = TryNumber::total(&call.attempts)?;
+    let mut attempt = TryNumber::Small(1);
     loop {
-        let result = one_try(store, provider, call, &payload, log);
-        let e = match result {
+        let e = match one_try(store, provider, call, &payload, log) {
             Ok(row) => return Ok(Some(row)),
             Err(e) => e,
         };
-        if attempt < tries && busy(&e) {
-            let now = match call.deadline {
-                Some(_) => provider.monotonic().map_err(WriteError::Clock)?,
-                None => 0.0,
-            };
-            if time_left(call.deadline, now) {
-                log.emit_typed(
-                    call.kind,
-                    Logged::Retry {
-                        reason: reason(&e),
-                        next: attempt + 1,
-                        tries,
-                    },
-                    Some(&e),
-                )
+        if attempt.less_than(&tries)
+            && busy(&e)
+            && call
+                .time_remaining(provider)?
+                .is_none_or(|left| left > EVENT_RETRY_PAUSE_SECONDS)
+        {
+            attempt.advance();
+            log.emit_typed(call.kind, attempt.retry(&tries, reason(&e)), Some(&e))
                 .map_err(EventError::Log)?;
-                provider.pause(EVENT_RETRY_PAUSE_SECONDS);
-                attempt += 1;
-                continue;
-            }
+            provider.event_pause(EVENT_RETRY_PAUSE_SECONDS)?;
+            continue;
         }
         return give_up(call.kind, e, call.best_effort, log);
     }
@@ -335,14 +510,14 @@ pub fn record_event(
 fn one_try(
     store: &mut WritableStore,
     provider: &mut dyn Provider,
-    call: &EventCall<'_>,
-    payload: &PyValue,
+    call: &BoundCall<'_>,
+    payload: &PreparedPayload,
     log: &mut dyn EventLogger,
 ) -> Result<LogRow, WriteError> {
     let mut lowered = None;
-    if let Some(deadline) = call.deadline {
+    if let Some(remaining) = call.time_remaining(provider)? {
         let held = store.busy_timeout_seconds;
-        let left = (deadline - provider.monotonic().map_err(WriteError::Clock)?).max(0.0);
+        let left = remaining.max(0.0);
         if left < held {
             store.set_busy_timeout(left).map_err(timeout_error)?;
             lowered = Some(held);
@@ -350,7 +525,7 @@ fn one_try(
     }
     let out = catch_unwind(AssertUnwindSafe(|| {
         let mut tx = store.begin(provider)?;
-        let row = tx.append_at(call.kind, payload, call.session, None)?;
+        let row = call.append(&mut tx, payload)?;
         tx.commit_with_checkpoint(|_, path, error| {
             log.emit_typed(
                 call.kind,

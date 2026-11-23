@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 
 use crate::float_repr;
+use crate::pyvalue::key_objects::KeyObjects;
 use crate::pyvalue::{lt_keys, py_str, PyError, PyStr, PyValue};
 use crate::unicode;
 
@@ -267,13 +268,14 @@ enum Frame<'a> {
     },
 }
 
-struct Encoder {
+struct Encoder<'k> {
+    key_context: Option<(&'k PyValue, &'k KeyObjects)>,
     options: DumpOptions,
     out: PyStr,
     message: Option<String>,
 }
 
-impl Encoder {
+impl Encoder<'_> {
     fn newline(&mut self, level: usize) {
         if let Some(indent) = self.options.indent {
             self.out.push(u32::from(b'\n'));
@@ -282,6 +284,14 @@ impl Encoder {
                 indent.saturating_mul(level),
             ));
         }
+    }
+
+    fn check_digits(&mut self, text: &str) -> Result<(), PyError> {
+        if text.trim_start_matches('-').len() > crate::toml::INT_MAX_STR_DIGITS {
+            self.message = Some(crate::toml::INT_STR_LIMIT_MESSAGE.into());
+            return Err(PyError::ValueError);
+        }
+        Ok(())
     }
 
     fn max_depth(&self) -> usize {
@@ -296,7 +306,10 @@ impl Encoder {
             PyValue::None => push(&mut self.out, "null"),
             PyValue::Bool(true) => push(&mut self.out, "true"),
             PyValue::Bool(false) => push(&mut self.out, "false"),
-            PyValue::Int(text) => push(&mut self.out, text),
+            PyValue::Int(text) => {
+                self.check_digits(text)?;
+                push(&mut self.out, text);
+            }
             PyValue::Float(f) => push(&mut self.out, &float_text(*f)),
             PyValue::Str(s) => encode_str(&mut self.out, s, self.options.ensure_ascii),
             PyValue::DateTime(_) | PyValue::Path(_) => {
@@ -333,10 +346,15 @@ impl Encoder {
                                 _ => unreachable!("string keys"),
                             });
                         } else {
+                            let context = self
+                                .key_context
+                                .filter(|(dictionary, _)| std::ptr::eq(*dictionary, value));
                             // NaNs have no ordering. Mixed keys may raise on a specific comparison.
                             // Both the signed text and the error depend on CPython's comparison sequence.
                             crate::pyvalue::list_sort::sort_by(&mut order, |&a, &b| {
-                                python_key_lt(&items[a].0, &items[b].0, |_| false)
+                                python_key_lt(&items[a].0, &items[b].0, |ordinal| {
+                                    context.is_some_and(|(_, keys)| keys.same(a, b, ordinal))
+                                })
                             })
                             .map_err(|message| {
                                 self.message = Some(message);
@@ -396,6 +414,9 @@ impl Encoder {
                 self.newline(depth);
             }
             if let Some(key) = key {
+                if let PyValue::Int(text) = key {
+                    self.check_digits(text)?;
+                }
                 let key = key_text(key).inspect_err(|_| {
                     self.message = Some(format!(
                         "keys must be str, int, float, bool or None, not {}",
@@ -417,6 +438,7 @@ impl Encoder {
 /// lone surrogate when `ensure_ascii` is off), or the exception type.
 pub fn dumps(value: &PyValue, options: DumpOptions) -> Result<PyStr, PyError> {
     let mut encoder = Encoder {
+        key_context: None,
         options,
         out: Vec::new(),
         message: None,
@@ -425,10 +447,14 @@ pub fn dumps(value: &PyValue, options: DumpOptions) -> Result<PyStr, PyError> {
     Ok(encoder.out)
 }
 
-/// Comparison or key-conversion diagnostic when a canonical write failed.
-/// Successful writes encode their payload only once.
-pub(crate) fn payload_error_text(value: &PyValue) -> Option<String> {
+/// Replay a failed canonical serialization for the error text its caller
+/// displays. Successful store writes only encode the payload once.
+pub(crate) fn payload_error_text(
+    value: &PyValue,
+    key_context: Option<(&PyValue, &KeyObjects)>,
+) -> Option<String> {
     let mut encoder = Encoder {
+        key_context,
         options: DumpOptions::LOG_PAYLOAD,
         out: Vec::new(),
         message: None,

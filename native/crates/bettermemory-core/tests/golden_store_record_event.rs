@@ -337,15 +337,21 @@ fn an_interrupted_callback_restores_the_wait_and_rolls_back_its_scope() {
         deadline: Some(0.002),
     };
     let held = store.busy_timeout();
-    assert!(catch_unwind(AssertUnwindSafe(|| record_event(
-        Ok(EventTransaction::Store(&mut store, &mut clocks)),
-        &call,
-        &[],
-        None,
-        &mut no_spans,
-        &mut Vec::new(),
-    )))
-    .is_err());
+    let timestamp_panic = catch_unwind(AssertUnwindSafe(|| {
+        drop(record_event(
+            Ok(EventTransaction::Store(&mut store, &mut clocks)),
+            &call,
+            &[],
+            None,
+            &mut no_spans,
+            &mut Vec::new(),
+        ));
+    }))
+    .expect_err("interrupted at event timestamp");
+    assert_eq!(
+        timestamp_panic.downcast_ref::<&str>().copied(),
+        Some("interrupted at event timestamp")
+    );
     assert!(store.connection().is_autocommit());
     assert_eq!(store.busy_timeout(), held);
     let ms: i64 = store
@@ -363,15 +369,21 @@ fn an_interrupted_callback_restores_the_wait_and_rolls_back_its_scope() {
             .unwrap();
         panic!("interrupted in capture guard");
     };
-    assert!(catch_unwind(AssertUnwindSafe(|| record_capture(
-        EventTransaction::Joined(&mut tx),
-        &cps("capture_undo"),
-        &[],
-        None,
-        None,
-        Some(&mut guard),
-    )))
-    .is_err());
+    let capture_panic = catch_unwind(AssertUnwindSafe(|| {
+        drop(record_capture(
+            EventTransaction::Joined(&mut tx),
+            &cps("capture_undo"),
+            &[],
+            None,
+            None,
+            Some(&mut guard),
+        ));
+    }))
+    .expect_err("interrupted in capture guard");
+    assert_eq!(
+        capture_panic.downcast_ref::<&str>().copied(),
+        Some("interrupted in capture guard")
+    );
     let remaining: i64 = tx
         .connection()
         .query_row(
@@ -414,7 +426,7 @@ fn outcome(r: Result<Option<LogRow>, EventError>) -> Value {
 fn levels(log: &[Logged]) -> Vec<&'static str> {
     log.iter()
         .map(|l| match l {
-            Logged::Retry { .. } => "INFO",
+            Logged::Retry { .. } | Logged::WideRetry { .. } => "INFO",
             Logged::NotRecorded(_) | Logged::HeadCheckpoint { .. } => "WARNING",
         })
         .collect()
@@ -495,7 +507,7 @@ fn event(
             .into_iter()
             .map(|(kind, entry)| {
                 let reason = match entry {
-                    Logged::Retry { reason, .. } => reason,
+                    Logged::Retry { reason, .. } | Logged::WideRetry { reason, .. } => reason,
                     Logged::HeadCheckpoint { error, .. } => error.exception.message,
                     Logged::NotRecorded(reason) => reason,
                 };
@@ -823,6 +835,9 @@ fn run(case: &Value, header: &Value) -> Result<usize, String> {
             .filter_map(|line| match line {
                 Logged::Retry { next, tries, .. } => Some([*next, *tries]),
                 Logged::NotRecorded(_) | Logged::HeadCheckpoint { .. } => None,
+                Logged::WideRetry { .. } => {
+                    panic!("machine-sized store call reported a wide retry")
+                }
             })
             .collect();
         if json!(retries) != rec["retries"] {

@@ -159,7 +159,7 @@ fn call(
     logger: &mut Logger,
     best_effort: bool,
     deadline: f64,
-) -> Result<Option<i64>, EventError> {
+) -> Result<Option<i64>, Box<EventError>> {
     let call = EventCall {
         kind: &cps("probe"),
         session: None,
@@ -169,6 +169,7 @@ fn call(
     };
     record_event(Ok(target), &call, &[], None, &mut |_| Vec::new(), logger)
         .map(|row| row.map(|r| r.seq))
+        .map_err(Box::new)
 }
 
 #[test]
@@ -245,7 +246,9 @@ fn exceptions_from_both_clocks_and_the_terminal_handler_keep_their_type_and_code
             true,
             1.0,
         );
-        assert!(matches!(result, Err(EventError::Write(WriteError::Callback(e))) if e == fail));
+        assert!(
+            matches!(*result.unwrap_err(), EventError::Write(WriteError::Callback(e)) if e == fail)
+        );
         assert_eq!(snapshot(store.path()), (tick as i64, 1));
         assert!(log.entries.is_empty());
     }
@@ -271,11 +274,11 @@ fn exceptions_from_both_clocks_and_the_terminal_handler_keep_their_type_and_code
             true,
             1.0,
         );
-        match result {
-            Err(EventError::Write(WriteError::Callback(e))) if fail_at_head => {
+        match *result.unwrap_err() {
+            EventError::Write(WriteError::Callback(e)) if fail_at_head => {
                 assert_eq!(e, original)
             }
-            Err(EventError::Log(e)) if !fail_at_head => {
+            EventError::Log(e) if !fail_at_head => {
                 assert_eq!(e, original);
                 assert_eq!(log.cause, [caught]);
             }
@@ -413,7 +416,7 @@ fn malformed_head_raises_after_commit_and_bypasses_the_os_warning() {
             1.0,
         );
         assert!(
-            matches!(result, Err(EventError::Write(WriteError::Refused { class: actual, text: Some(ref text) })) if actual == class && text == message)
+            matches!(*result.unwrap_err(), EventError::Write(WriteError::Refused { class: actual, text: Some(ref text) }) if actual == class && text == message)
         );
         assert_eq!(std::fs::read_to_string(head).unwrap(), raw);
         assert_eq!(store.head().unwrap().0, 2);

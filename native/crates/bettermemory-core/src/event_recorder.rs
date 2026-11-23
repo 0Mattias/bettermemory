@@ -16,8 +16,12 @@ use crate::events::{
     STATE_WRITE_ATTEMPTS,
 };
 use crate::identity::{Actor, Published, SOURCE_HEADER, SOURCE_TRANSPORT};
-use crate::pyvalue::{PyStr, PyValue};
+pub use crate::pyvalue::key_objects::{
+    KeyIdentity as ActorKeyIdentity, KeyObjects as ActorKeyObjects,
+};
+use crate::pyvalue::{PyError, PyStr, PyValue};
 pub use crate::recall_prompt::PyException;
+use crate::store::exception::{ExceptionFamily, StoreException};
 use crate::unicode::cps;
 
 /// The `actor=` a row is recorded with: the handler's own `actor` field
@@ -47,10 +51,108 @@ pub trait EventSink {
         fields: Vec<(PyStr, PyValue)>,
     ) -> Result<(), PyException>;
 
+    /// Full native exception returned by a concrete store or callback.
+    fn record_event_typed(&mut self, event: Dispatch<'_>) -> Result<(), StoreException> {
+        self.record_event(
+            event.kind,
+            event.session,
+            event.actor,
+            event.best_effort,
+            event.attempts,
+            event.deadline,
+            event.fields,
+        )
+        .map_err(StoreException::from)
+    }
+
     /// The callable's name in CPython's `got multiple values for keyword
     /// argument` text.
     fn call_name(&self) -> String {
         "bettermemory.store_events.record_event".to_owned()
+    }
+}
+
+/// Recorder keywords and any runtime identities needed by `dict(actor)`.
+#[derive(Debug, Default)]
+pub struct RecorderFields {
+    pub fields: Vec<(PyStr, PyValue)>,
+    pub actor_keys: ActorKeyObjects,
+}
+
+impl From<Vec<(PyStr, PyValue)>> for RecorderFields {
+    fn from(fields: Vec<(PyStr, PyValue)>) -> Self {
+        Self {
+            fields,
+            ..Self::default()
+        }
+    }
+}
+
+impl RecorderFields {
+    /// Decode an actual JSON object using the reference decoder's single
+    /// NaN constant. Natively constructed inputs can instead bind individual
+    /// runtime identities in `actor_keys`.
+    pub fn from_json(text: &[u32]) -> Result<Self, PyError> {
+        let mut value = crate::json::loads(text)?;
+        let PyValue::Dict(items) = &mut value else {
+            return Err(PyError::TypeError);
+        };
+        let mut fields = Vec::with_capacity(items.len());
+        for (mut key, value) in std::mem::take(items) {
+            let PyValue::Str(k) = &mut key else {
+                return Err(PyError::TypeError);
+            };
+            fields.push((std::mem::take(k), value));
+        }
+        Ok(Self {
+            fields,
+            actor_keys: ActorKeyObjects::json_constant(),
+        })
+    }
+}
+
+/// The arguments the Python recorder passes to its bound store method.
+pub struct Dispatch<'a> {
+    pub kind: &'a [u32],
+    pub actor_keys: ActorKeyObjects,
+    pub session: PyValue,
+    pub actor: EventActor,
+    pub best_effort: Option<bool>,
+    pub attempts: Option<u32>,
+    pub deadline: Option<f64>,
+    pub fields: Vec<(PyStr, PyValue)>,
+}
+
+pub type RecorderLogger<'a> = dyn FnMut(RecorderWarning<'_>) -> Result<(), StoreException> + 'a;
+
+/// A synchronous `bettermemory.events` warning. The state row template
+/// includes the exception class; both templates pass the exception itself.
+pub struct RecorderWarning<'a> {
+    pub state: bool,
+    pub kind: &'a [u32],
+    pub error: &'a StoreException,
+}
+
+impl RecorderWarning<'_> {
+    pub fn message(&self) -> PyStr {
+        let e = &self.error.exception;
+        if self.state {
+            joined(&[
+                &cps("state row "),
+                self.kind,
+                &cps(" not recorded, the call fails: "),
+                &cps(&e.class),
+                &cps(": "),
+                &e.message,
+            ])
+        } else {
+            joined(&[
+                &cps("event "),
+                self.kind,
+                &cps(" not recorded: "),
+                &e.message,
+            ])
+        }
     }
 }
 
@@ -144,14 +246,55 @@ impl<S: EventSink> Recorder<S> {
         scope: &HookScope,
         published: &Published,
         kind: &[u32],
-        mut fields: Vec<(PyStr, PyValue)>,
+        fields: Vec<(PyStr, PyValue)>,
     ) -> Result<(), PyException> {
+        self.record_impl(scope, published, kind, fields.into(), None)
+            .map_err(|e| e.exception)
+    }
+
+    /// Same recorder policy, with an identity-preserving result and logger.
+    pub fn record_typed(
+        &mut self,
+        scope: &HookScope,
+        published: &Published,
+        kind: &[u32],
+        fields: Vec<(PyStr, PyValue)>,
+        warn: &mut RecorderLogger<'_>,
+    ) -> Result<(), StoreException> {
+        self.record_fields(scope, published, kind, fields.into(), warn)
+    }
+
+    /// Record keywords with the input decoder's original actor key objects.
+    pub fn record_fields(
+        &mut self,
+        scope: &HookScope,
+        published: &Published,
+        kind: &[u32],
+        fields: RecorderFields,
+        warn: &mut RecorderLogger<'_>,
+    ) -> Result<(), StoreException> {
+        self.record_impl(scope, published, kind, fields, Some(warn))
+    }
+
+    fn record_impl(
+        &mut self,
+        scope: &HookScope,
+        published: &Published,
+        kind: &[u32],
+        input: RecorderFields,
+        warn: Option<&mut RecorderLogger<'_>>,
+    ) -> Result<(), StoreException> {
+        let RecorderFields {
+            mut fields,
+            actor_keys,
+        } = input;
         let positional = [(cps("self"), "self"), (cps("kind"), "kind")];
         for (key, _) in &fields {
             if let Some((_, name)) = positional.iter().find(|(bound, _)| bound == key) {
                 return Err(type_error(format!(
                     "Recorder.record() got multiple values for argument '{name}'"
-                )));
+                ))
+                .into());
             }
         }
         if scope.is_suppressed() {
@@ -231,8 +374,10 @@ impl<S: EventSink> Recorder<S> {
             Some(name) => Err(type_error(format!(
                 "{}() got multiple values for keyword argument '{name}'",
                 self.store.call_name()
-            ))),
-            None => self.store.record_event(
+            ))
+            .into()),
+            None => self.store.record_event_typed(Dispatch {
+                actor_keys,
                 kind,
                 session,
                 actor,
@@ -240,23 +385,25 @@ impl<S: EventSink> Recorder<S> {
                 attempts,
                 deadline,
                 fields,
-            ),
+            }),
         };
-        let Err(exc) = outcome else {
-            return Ok(());
-        };
-        if !state {
-            let text = joined(&[&cps("event "), kind, &cps(" not recorded: "), &exc.message]);
-            return (self.warn)(text);
+        let Err(error) = outcome else { return Ok(()) };
+        if error.family == ExceptionFamily::Base {
+            return Err(error);
         }
-        (self.warn)(joined(&[
-            &cps("state row "),
+        let warning = RecorderWarning {
+            state,
             kind,
-            &cps(" not recorded, the call fails: "),
-            &cps(&exc.class),
-            &cps(": "),
-            &exc.message,
-        ]))?;
-        Err(exc)
+            error: &error,
+        };
+        match warn {
+            Some(emit) => emit(warning)?,
+            None => (self.warn)(warning.message())?,
+        }
+        if state {
+            Err(error)
+        } else {
+            Ok(())
+        }
     }
 }

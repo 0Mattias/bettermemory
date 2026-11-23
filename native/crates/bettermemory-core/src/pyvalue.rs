@@ -4,6 +4,8 @@
 //! may hold a lone surrogate. An integer keeps its decimal text, since a
 //! Python `int` has no bound.
 
+pub mod key_objects;
+
 pub(crate) mod list_sort;
 
 use std::cmp::Ordering;

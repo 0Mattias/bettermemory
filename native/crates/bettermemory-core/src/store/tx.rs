@@ -48,6 +48,7 @@ use crate::pyvalue::PyValue;
 enum RowText<'a> {
     Utf8(&'a str),
     Points(&'a [u32]),
+    Value(&'a PyValue),
 }
 
 impl<'a> RowText<'a> {
@@ -55,12 +56,21 @@ impl<'a> RowText<'a> {
         match self {
             Self::Utf8(s) => s.is_empty(),
             Self::Points(s) => s.is_empty(),
+            Self::Value(v) => !super::home::truthy(v),
         }
     }
 
     fn utf8(self) -> Result<Cow<'a, str>, WriteError> {
         match self {
             Self::Utf8(s) => Ok(Cow::Borrowed(s)),
+            Self::Value(PyValue::Str(s)) => Self::Points(s).utf8(),
+            Self::Value(v) => Err(WriteError::Refused {
+                class: "AttributeError",
+                text: Some(format!(
+                    "'{}' object has no attribute 'encode'",
+                    super::home::type_name(v)
+                )),
+            }),
             Self::Points(s) => {
                 crate::unicode::to_string(s)
                     .map(Cow::Owned)
@@ -397,6 +407,7 @@ impl Transaction<'_> {
             payload,
             session.map(RowText::Utf8),
             None,
+            None,
         )
     }
 
@@ -419,6 +430,23 @@ impl Transaction<'_> {
             payload,
             session.map(RowText::Points),
             ts.map(RowText::Points),
+            None,
+        )
+    }
+
+    pub(super) fn append_event(
+        &mut self,
+        kind: &[u32],
+        payload: &PyValue,
+        session: &PyValue,
+        actor_keys: &crate::pyvalue::key_objects::KeyObjects,
+    ) -> Result<LogRow, WriteError> {
+        self.append_fields(
+            RowText::Points(kind),
+            payload,
+            (!matches!(session, PyValue::None)).then_some(RowText::Value(session)),
+            None,
+            Some(actor_keys),
         )
     }
 
@@ -428,6 +456,7 @@ impl Transaction<'_> {
         payload: &PyValue,
         session: Option<RowText<'_>>,
         ts: Option<RowText<'_>>,
+        actor_keys: Option<&crate::pyvalue::key_objects::KeyObjects>,
     ) -> Result<LogRow, WriteError> {
         let conn = &self.store.conn;
         // `str(row[0])`: any stored type, NULL read as "None".
@@ -477,7 +506,10 @@ impl Transaction<'_> {
         // after the timestamp and can raise an earlier error of its own.
         let payload_error = |e: crate::pyvalue::PyError| WriteError::Refused {
             class: e.name(),
-            text: crate::json::payload_error_text(payload),
+            text: crate::json::payload_error_text(
+                payload,
+                actor_keys.and_then(|keys| payload.get("actor").map(|actor| (actor, keys))),
+            ),
         };
         let columns = || {
             Ok((

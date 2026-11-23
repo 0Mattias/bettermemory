@@ -1,7 +1,7 @@
 //! Exceptions crossing a store clock or diagnostic callback. The catch
 //! family is independent of the displayed class name for Python subclasses.
 
-use std::{io, path::Path};
+use std::{any::Any, io, path::Path, sync::Arc};
 
 use crate::pyvalue::repr_str;
 use crate::recall_prompt::PyException;
@@ -14,9 +14,11 @@ pub enum ExceptionFamily {
     Sqlite,
     Operational,
     Other,
+    /// A direct BaseException, outside the Exception hierarchy.
+    Base,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct StoreException {
     pub exception: PyException,
     pub family: ExceptionFamily,
@@ -24,7 +26,22 @@ pub struct StoreException {
     pub errno: Option<i32>,
     pub filename: Option<Box<Path>>,
     pub filename2: Option<Box<Path>>,
+    // Clones used by structured warnings still name the original exception.
+    identity: Arc<Option<Arc<dyn Any + Send + Sync>>>,
 }
+
+// The diagnostic comparison used by existing consumers remains structural.
+impl PartialEq for StoreException {
+    fn eq(&self, other: &Self) -> bool {
+        self.exception == other.exception
+            && self.family == other.family
+            && self.sqlite_code == other.sqlite_code
+            && self.errno == other.errno
+            && self.filename == other.filename
+            && self.filename2 == other.filename2
+    }
+}
+impl Eq for StoreException {}
 
 impl StoreException {
     pub fn new(exception: PyException, family: ExceptionFamily) -> Self {
@@ -35,7 +52,26 @@ impl StoreException {
             errno: None,
             filename: None,
             filename2: None,
+            identity: Arc::new(None),
         }
+    }
+
+    /// Python exception identity, independent of the type spelling and message.
+    pub fn is_same(&self, other: &Self) -> bool {
+        match (&*self.identity, &*other.identity) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => Arc::ptr_eq(&self.identity, &other.identity),
+        }
+    }
+
+    /// Attach the original runtime exception for bindings which can rethrow it.
+    pub fn with_handle<T: Any + Send + Sync>(mut self, handle: Arc<T>) -> Self {
+        self.identity = Arc::new(Some(handle));
+        self
+    }
+
+    pub fn handle<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
+        self.identity.as_ref().as_ref()?.clone().downcast().ok()
     }
 
     pub(crate) fn os(error: &io::Error, filename: Option<&Path>, filename2: Option<&Path>) -> Self {
@@ -112,6 +148,8 @@ impl From<PyException> for StoreException {
             "OperationalError" => Operational,
             "Error" | "DatabaseError" | "DataError" | "IntegrityError" | "InterfaceError"
             | "InternalError" | "NotSupportedError" | "ProgrammingError" => Sqlite,
+            "BaseException" | "KeyboardInterrupt" | "SystemExit" | "GeneratorExit"
+            | "BaseExceptionGroup" => Base,
             _ => Other,
         };
         Self::new(exception, family)

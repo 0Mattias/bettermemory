@@ -199,6 +199,7 @@ from . import (
     gen_store_records_e,
     gen_store_returned,
     gen_store_record_event,
+    gen_recorder_store,
     gen_signed_key_sort,
     gen_store_membership,
     gen_store_rotation,
@@ -463,6 +464,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_returned": gen_store_returned.generate,
     "store_returned_posix": gen_store_returned.generate_posix,
     "store_record_event_posix": gen_store_record_event.generate_posix,
+    "recorder_store_posix": gen_recorder_store.generate_posix,
+    "recorder_store_python_posix": gen_recorder_store.generate_python_posix,
     "signed_key_sort_posix_python": gen_signed_key_sort.generate,
     "store_membership": gen_store_membership.generate,
     "store_rotation": gen_store_rotation.generate,
@@ -920,6 +923,7 @@ PYTHON_GATED = frozenset(
         # CPython's text for a keyword passed twice names the callable as
         # the release spells it (`gen_event_recorder`).
         "event_recorder_python",
+        "recorder_store_python_posix",
         "membership_shared_python",
         "origin_remote_python",
         "claims_python",
@@ -1248,6 +1252,8 @@ POSIX_ONLY = frozenset(
         "store_records_e",
         "store_returned_posix",
         "store_record_event_posix",
+        "recorder_store_posix",
+        "recorder_store_python_posix",
         "store_membership",
         "store_rotation",
         "store_rotation_python",

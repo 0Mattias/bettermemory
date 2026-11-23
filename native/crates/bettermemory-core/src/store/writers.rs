@@ -9,6 +9,8 @@
 //! head's move), or a [`RecordWriteError`] carrying the reference's
 //! exception class and message with nothing written.
 
+use std::{borrow::Cow, collections::HashMap};
+
 use rusqlite::{params, Connection};
 
 use super::create::Provider;
@@ -19,6 +21,7 @@ use super::write::{WriteBoundary, WriteError};
 use super::{sql_value, SqlValue, StoreError};
 use crate::datetime::DateTime;
 use crate::json;
+use crate::pyvalue::key_objects::{KeyIdentity, KeyObjects};
 use crate::pyvalue::{py_int, py_str, repr, repr_str, PyError, PyStr, PyValue};
 use crate::records::rows::{self, Row};
 use crate::records::{Memory, RecordError, RecordFields, Tombstone};
@@ -933,10 +936,18 @@ fn opt_dt_differ(stored: Option<&DateTime>, given: Option<&PyValue>) -> bool {
 
 /// `dict(value)` for the values a caller can pass: a dict as it is, an
 /// iterable of pairs; CPython's TypeError or ValueError otherwise.
-fn py_dict(value: &PyValue) -> Result<PyValue, RecordWriteError> {
+pub(super) fn py_dict(value: &PyValue) -> Result<PyValue, RecordWriteError> {
+    py_dict_with_objects(value, &KeyObjects::default()).map(|(value, _)| value)
+}
+
+pub(super) fn py_dict_with_objects(
+    value: &PyValue,
+    objects: &KeyObjects,
+) -> Result<(PyValue, KeyObjects), RecordWriteError> {
     let items = match value {
-        PyValue::Dict(_) => return Ok(value.clone()),
-        PyValue::List(_) | PyValue::Tuple(_) | PyValue::Str(_) => py_list(value)?,
+        PyValue::Dict(_) => return Ok((value.clone(), objects.clone())),
+        PyValue::List(v) | PyValue::Tuple(v) => Cow::Borrowed(v.as_slice()),
+        PyValue::Str(_) => Cow::Owned(py_list(value)?),
         other => {
             return Err(refused(
                 "TypeError",
@@ -944,12 +955,14 @@ fn py_dict(value: &PyValue) -> Result<PyValue, RecordWriteError> {
             ))
         }
     };
-    let mut out: Vec<(PyValue, PyValue)> = Vec::new();
-    for (i, item) in items.into_iter().enumerate() {
-        let pair = match &item {
-            PyValue::List(v) | PyValue::Tuple(v) => v.clone(),
-            PyValue::Str(s) => s.iter().map(|&c| PyValue::Str(vec![c])).collect(),
-            PyValue::Dict(v) => v.iter().map(|(k, _)| k.clone()).collect(),
+    let mut out: Vec<(PyValue, PyValue)> = Vec::with_capacity(items.len());
+    let mut index: HashMap<DictKey, usize> = HashMap::new();
+    let mut first_rows = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let pair: Cow<'_, [PyValue]> = match item {
+            PyValue::List(v) | PyValue::Tuple(v) => Cow::Borrowed(v.as_slice()),
+            PyValue::Str(s) => Cow::Owned(s.iter().map(|&c| PyValue::Str(vec![c])).collect()),
+            PyValue::Dict(v) => Cow::Owned(v.iter().map(|(k, _)| k.clone()).collect()),
             _ => {
                 return Err(refused(
                     "TypeError",
@@ -957,7 +970,7 @@ fn py_dict(value: &PyValue) -> Result<PyValue, RecordWriteError> {
                 ))
             }
         };
-        if pair.len() != 2 {
+        let [key, value] = &*pair else {
             return Err(refused(
                 "ValueError",
                 format!(
@@ -965,21 +978,61 @@ fn py_dict(value: &PyValue) -> Result<PyValue, RecordWriteError> {
                     pair.len()
                 ),
             ));
-        }
-        let mut pair = pair.into_iter();
-        let (k, v) = (
-            pair.next().unwrap_or(PyValue::None),
-            pair.next().unwrap_or(PyValue::None),
-        );
-        if let Some(kind) = unhashable(&k) {
+        };
+        if let Some(kind) = unhashable(key) {
             return Err(refused("TypeError", format!("unhashable type: '{kind}'")));
         }
-        match out.iter_mut().find(|(old, _)| key_eq(old, &k)) {
-            Some(slot) => slot.1 = v,
-            None => out.push((k, v)),
+        // Duplicate keys overwrite the value in its first insertion position.
+        // Scalar keys cross Python's numeric type boundary (1 == True == 1.0).
+        let slot = if let Some(key) = DictKey::of(key, objects, i) {
+            *index.entry(key).or_insert(out.len())
+        } else if matches!(key, PyValue::Float(n) if n.is_nan()) {
+            out.len()
+        } else {
+            out.iter()
+                .enumerate()
+                .position(|(slot, (old, _))| {
+                    key_eq(old, key, |nan| {
+                        first_rows
+                            .get(slot)
+                            .is_some_and(|&row| objects.same(row, i, nan))
+                    })
+                })
+                .unwrap_or(out.len())
+        };
+        if let Some(previous) = out.get_mut(slot) {
+            previous.1 = value.clone();
+        } else {
+            if !objects.is_empty() {
+                first_rows.push(i);
+            }
+            out.push((key.clone(), value.clone()));
         }
     }
-    Ok(PyValue::Dict(out))
+    Ok((PyValue::Dict(out), objects.retained(&first_rows)))
+}
+
+#[derive(Hash, PartialEq, Eq)]
+enum DictKey {
+    Nan(KeyIdentity),
+    Text(PyStr),
+    Integer(String),
+    Float(u64),
+    None,
+}
+
+impl DictKey {
+    fn of(key: &PyValue, objects: &KeyObjects, row: usize) -> Option<Self> {
+        match key {
+            PyValue::Str(s) => Some(Self::Text(s.clone())),
+            PyValue::None => Some(Self::None),
+            PyValue::Float(f) if f.is_nan() => objects.at(row, 0).cloned().map(Self::Nan),
+            PyValue::Float(f) if !f.is_finite() || f.fract() != 0.0 => {
+                Some(Self::Float(f.to_bits()))
+            }
+            _ => integral(key).map(Self::Integer),
+        }
+    }
 }
 
 /// A number key as Python's `==` (and so `hash`) reads it: the exact
@@ -1002,21 +1055,26 @@ fn integral(value: &PyValue) -> Option<String> {
 /// `1.0` and `True` are one key, as are `0`, `0.0`, `-0.0` and `False`,
 /// and an int too large for a float equals the float only when the float
 /// is exactly that integer. Tuples compare item by item. A NaN equals
-/// nothing: `dict()` also matches by identity first, but each NaN decoded
-/// from data is an object of its own, so two NaN keys stay two. Aware
+/// nothing; `dict()` first matches the identity a decoder or caller supplied. Aware
 /// datetimes compare as instants (by fields where the UTC instant falls
 /// outside the years a datetime holds), naive ones by fields, and a naive
 /// one never equals an aware one. A str never equals a path.
-fn key_eq(a: &PyValue, b: &PyValue) -> bool {
+fn key_eq(a: &PyValue, b: &PyValue, same_nan: impl Fn(usize) -> bool) -> bool {
+    let mut ordinal = 0;
     let mut work = vec![(a, b)];
     while let Some((a, b)) = work.pop() {
         let same = match (a, b) {
+            (PyValue::Float(x), PyValue::Float(y)) if x.is_nan() && y.is_nan() => {
+                let same = same_nan(ordinal);
+                ordinal += 1;
+                same
+            }
             (PyValue::Float(x), PyValue::Float(y)) => x == y,
             (PyValue::Tuple(x), PyValue::Tuple(y)) => {
                 if x.len() != y.len() {
                     return false;
                 }
-                work.extend(x.iter().zip(y.iter()));
+                work.extend(x.iter().zip(y.iter()).rev());
                 true
             }
             (PyValue::DateTime(x), PyValue::DateTime(y)) => match (x.offset_us, y.offset_us) {
@@ -1044,7 +1102,7 @@ fn key_eq(a: &PyValue, b: &PyValue) -> bool {
 }
 
 /// `int + 1` of a canonical non-negative decimal.
-fn plus_one(decimal: &str) -> String {
+pub(super) fn plus_one(decimal: &str) -> String {
     let mut digits: Vec<u8> = decimal.bytes().collect();
     for d in digits.iter_mut().rev() {
         if *d == b'9' {

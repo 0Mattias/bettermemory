@@ -108,6 +108,16 @@ pub trait Provider {
             std::thread::sleep(d);
         }
     }
+    /// Event-only runtime hooks preserve callback failures where the retry catches them.
+    fn event_monotonic(&mut self) -> Result<f64, super::write::WriteError> {
+        self.monotonic().map_err(super::write::WriteError::Clock)
+    }
+
+    fn event_pause(&mut self, seconds: f64) -> Result<(), super::write::WriteError> {
+        self.pause(seconds);
+        Ok(())
+    }
+
     /// The log timestamp for a transactional row or its post-commit head.
     /// Adapters may return a Python exception outside the OS error family.
     fn log_now(&mut self) -> Result<DateTime, super::write::WriteError> {
