@@ -13,7 +13,7 @@ use crate::origin_history::ReachableWalk;
 use crate::pyvalue::PyStr;
 use crate::verify::status::{gated_claims, unreadable, ResolvedCommitDrift};
 use crate::verify::weak::{
-    weak_tier_evaluation, DriftGit, LiteralPathspecs, Place, Set, WeakError,
+    after_read, weak_tier_evaluation, DriftGit, LiteralPathspecs, Place, Set, WeakError,
 };
 use crate::verify_basis::{BASIS_AUTHOR_DATE, BASIS_REACHABILITY};
 
@@ -58,7 +58,7 @@ pub fn claim_legs(
     let keys: BTreeSet<PyStr> = governed.iter().map(|p| path_key(p)).collect();
     let mut specs = Vec::new();
     if !anchors.is_empty() {
-        match r.git.resolve_repo_pathspecs(r.at, anchors) {
+        match after_read(r.git, r.git.resolve_repo_pathspecs(r.at, anchors))? {
             None => return Ok(None),
             Some(resolved) => specs = resolved,
         }
@@ -120,7 +120,10 @@ pub fn resolve_reachable(
         return Ok(conservative);
     }
     let combined: Vec<PyStr> = ungoverned.iter().chain(&governed).cloned().collect();
-    let spell = r.git.spelled(r.at, &combined, Some(&walk.anchor), None);
+    let spell = after_read(
+        r.git,
+        r.git.spelled(r.at, &combined, Some(&walk.anchor), None),
+    )?;
     if spell.declined() {
         return Ok(conservative);
     }
@@ -150,11 +153,13 @@ pub fn resolve_reachable(
         )));
     }
     let specs = (r.literal_pathspecs)(&spell.names(&combined));
-    Ok(match r.git.paths_in_history(r.at, &specs) {
-        None => conservative,
-        Some(false) => None,
-        Some(true) => Some(resolved(0, checked, Vec::new(), BASIS_REACHABILITY)),
-    })
+    Ok(
+        match after_read(r.git, r.git.paths_in_history(r.at, &specs))? {
+            None => conservative,
+            Some(false) => None,
+            Some(true) => Some(resolved(0, checked, Vec::new(), BASIS_REACHABILITY)),
+        },
+    )
 }
 
 /// `ts > since` as Python orders two datetimes.
@@ -186,7 +191,7 @@ pub fn resolve_with_claims(
         since.offset_us = Some(0);
     }
     let combined: Vec<PyStr> = ungoverned.iter().chain(&governed).cloned().collect();
-    let spell = r.git.spelled(r.at, &combined, None, Some(&since));
+    let spell = after_read(r.git, r.git.spelled(r.at, &combined, None, Some(&since)))?;
     if spell.declined() {
         return Ok(conservative);
     }
@@ -198,10 +203,10 @@ pub fn resolve_with_claims(
             continue;
         }
         let specs = (r.literal_pathspecs)(&spell.names(leg));
-        let Some(pairs) = r
+        let pairs = r
             .git
-            .commit_author_sha_pairs_touching_pathspecs(r.at, &specs)
-        else {
+            .commit_author_sha_pairs_touching_pathspecs(r.at, &specs);
+        let Some(pairs) = after_read(r.git, pairs)? else {
             return Ok(conservative);
         };
         if pairs.is_empty() {

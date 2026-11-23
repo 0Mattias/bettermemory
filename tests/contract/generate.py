@@ -250,6 +250,7 @@ from . import (
     gen_response_leaf,
     gen_verify_basis,
     gen_verify_weak,
+    gen_verify_count,
     gen_store_provenance,
     gen_store_bulk,
 )
@@ -510,6 +511,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "response_leaf": gen_response_leaf.generate,
     "verify_basis": gen_verify_basis.generate,
     "verify_weak": gen_verify_weak.generate,
+    "verify_count": gen_verify_count.generate,
     "verify_anchoring_skip": gen_verify_anchoring_sparse.generate_skip,
     "githead": gen_githead.generate,
     "githead_discovery": gen_githead_discovery.generate,
@@ -1194,6 +1196,8 @@ POSIX_ONLY = frozenset(
         "verify_candidates_scan_unicode",
         "verify_anchoring_attest_posix",
         "verify_anchoring_detect",
+        # The anchors' compare form is the host's `Path` (`gen_verify_count`).
+        "verify_count",
         "checkout_token_remint",
         "checkout_token_remint_posix",
         "project_file_parse_posix",

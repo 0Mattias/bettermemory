@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use crate::claim_drift::{build_binding_index, claim_level_drift, Index, LiteralLines};
 use crate::claims::{strip, Claim, IntTooLong, Kind};
 use crate::datetime::DateTime;
+use crate::git_read_budget::ReadDeadline;
 use crate::pysyntax::literal::LiteralError;
 use crate::pyvalue::PyStr;
 use crate::verify::status::index_paths;
@@ -26,13 +27,15 @@ pub type Set = BTreeSet<PyStr>;
 
 /// What stops an answer: what the reference raises (`IntTooLong`, the
 /// `int()` ValueError of `build_binding_index`; `NaiveAware`, the
-/// TypeError of ordering a naive author date against the aware stamp), or
-/// a literal the crate cannot read yet (`Literal`, never `Invalid`).
+/// TypeError of ordering a naive author date against the aware stamp,
+/// and the shared Git-read deadline), or a literal the crate cannot
+/// read yet (`Literal`, never `Invalid`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WeakError {
     IntTooLong,
     NaiveAware,
     Literal(LiteralError),
+    ReadDeadline,
 }
 
 impl From<IntTooLong> for WeakError {
@@ -44,6 +47,12 @@ impl From<IntTooLong> for WeakError {
 impl From<LiteralError> for WeakError {
     fn from(e: LiteralError) -> Self {
         WeakError::Literal(e)
+    }
+}
+
+impl From<ReadDeadline> for WeakError {
+    fn from(_: ReadDeadline) -> Self {
+        WeakError::ReadDeadline
     }
 }
 
@@ -114,6 +123,11 @@ pub struct Place<'a> {
 
 /// Every git read the narrowing makes, one method per reference call.
 pub trait DriftGit {
+    /// Whether a Git read in this call raised the shared read deadline.
+    fn deadline(&self) -> bool {
+        false
+    }
+
     /// `origin.resolve_repo_pathspecs(cwd, paths, toplevel=)`.
     fn resolve_repo_pathspecs(&self, at: Place, paths: &[PyStr]) -> Option<Vec<PyStr>>;
     /// `origin_dates.commit_author_sha_pairs_touching_pathspecs`.
@@ -159,6 +173,15 @@ pub trait DriftGit {
 /// `verify_spelling.literal_pathspecs`, which reads the environment.
 pub type LiteralPathspecs<'a> = &'a dyn Fn(&[PyStr]) -> Vec<PyStr>;
 
+/// Carry a Git read's deadline out before using its fallback value.
+pub(crate) fn after_read<T>(git: &dyn DriftGit, value: T) -> Result<T, ReadDeadline> {
+    if git.deadline() {
+        Err(ReadDeadline)
+    } else {
+        Ok(value)
+    }
+}
+
 /// `_weak_tier_evaluation`: the drifted renders in claim order and the
 /// implicated commits of the window (None where the caller counts every
 /// commit of the window).
@@ -179,13 +202,13 @@ pub fn weak_tier_evaluation(
     }
     let spell = spell.unwrap_or(&Own);
     let pathspecs = literal_pathspecs(&spell.names(specs));
-    if git.too_large(at, shas, &pathspecs) {
+    if after_read(git, git.too_large(at, shas, &pathspecs))? {
         return declined;
     }
     let mut split = None;
-    let stream = match git.commit_patch_stream(at, shas, &pathspecs) {
+    let stream = match after_read(git, git.commit_patch_stream(at, shas, &pathspecs))? {
         Some(stream) => stream,
-        None => match git.local_patch_window(at, shas, &pathspecs) {
+        None => match after_read(git, git.local_patch_window(at, shas, &pathspecs))? {
             None => return declined,
             Some(window) => split.insert(window).stream.clone(),
         },
@@ -201,7 +224,8 @@ pub fn weak_tier_evaluation(
     if let Some(window) = &split {
         window.mark(&mut index);
     }
-    let Some(floor) = git.literal_floor(at, shas, specs, &pathspecs, claims, spell) else {
+    let floor = git.literal_floor(at, shas, specs, &pathspecs, claims, spell);
+    let Some(floor) = after_read(git, floor)? else {
         return declined;
     };
     if index

@@ -163,12 +163,40 @@ pub fn count_since_verify(
     verified_head: Option<&[u32]>,
     dates: impl FnOnce() -> Option<Result<Vec<DateTime>, HistoryUnread>>,
 ) -> Result<Option<Result<SinceVerify, HistoryUnread>>, NaiveAware> {
+    count_since_verify_until(
+        origin,
+        unwalked,
+        cwd,
+        last_verified_at,
+        verified_head,
+        dates,
+        || false,
+    )
+}
+
+/// Stop at the read that raised the shared deadline, before any fallback read.
+pub(crate) fn count_since_verify_until(
+    origin: &mut dyn AnchorWalk,
+    unwalked: &mut Unwalked,
+    cwd: &[u32],
+    last_verified_at: &DateTime,
+    verified_head: Option<&[u32]>,
+    dates: impl FnOnce() -> Option<Result<Vec<DateTime>, HistoryUnread>>,
+    deadline: impl Fn() -> bool,
+) -> Result<Option<Result<SinceVerify, HistoryUnread>>, NaiveAware> {
     let mut walk = None;
     let mut toplevel = None;
     if let Some(anchor) = verified_head {
-        if let Some((top, head)) = origin.toplevel_and_head(cwd) {
+        let located = origin.toplevel_and_head(cwd);
+        if deadline() {
+            return Ok(Some(Err(HistoryUnread::CallBudget)));
+        }
+        if let Some((top, head)) = located {
             let given_up = unwalked.count();
             walk = origin.commits_since_anchor(cwd, anchor, &top, &head, unwalked);
+            if deadline() {
+                return Ok(Some(Err(HistoryUnread::CallBudget)));
+            }
             toplevel = Some(top);
             if walk.is_none() {
                 if let Some(why) = unwalked.given_up_since(given_up) {
@@ -181,6 +209,9 @@ pub fn count_since_verify(
         Some(w) => (w.commits.len(), BASIS_REACHABILITY),
         None => {
             let history = dates();
+            if deadline() {
+                return Ok(Some(Err(HistoryUnread::CallBudget)));
+            }
             let view = history
                 .as_ref()
                 .map(|h| h.as_ref().map(Vec::as_slice).map_err(|w| *w));

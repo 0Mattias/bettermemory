@@ -322,7 +322,8 @@
 //!   (`CommitDriftStatus`, `commit_drift_status`,
 //!   `staleness_verdict_from_report` and the claim gates), and the
 //!   claim-level narrowing (`_weak_tier_evaluation`, `_claim_legs`, both
-//!   resolvers and `resolve_commit_drift`, git and the spelling as traits);
+//!   resolvers and `resolve_commit_drift`, git and the spelling as traits),
+//!   and the claim anchors and `compute_commit_drift` with its count;
 //! - [`hook`]: the hooks of `hook.py`, their first unit (the stdin
 //!   payload reader, the pending-retrieval scan and the Stop's
 //!   attribution settlement);
