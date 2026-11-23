@@ -39,7 +39,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `records::summaries` | unit 3 of `models.py`, the result models: `MemoryHit` (`MemoryHit::new` with the model's defaults), `MemorySummary` and `TombstonedSummary` (`of` a record, as `store_records.list_summaries` and `list_tombstones` build them), and the two listings' scope filters (`summaries`, `tombstone_summaries`) | `models_hits.jsonl` |
 | `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT`, re-exported), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint`; unit 2, the store reads: the body sha memo (`SHA_BOUND`, `clear_shas`), `current`, `answers`, `Backlog`, `backlog`, `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids`, `refusal_rows`, `held_by_removal` over `StandingStore` and `Admission` | `standing.jsonl`, `standing_reads.jsonl` |
-| `review` | unit 1 of `review.py`, the sealed tables: `RELATED_TOP`, `RELATED_CAP`, `RELATED_TEXT_CHARS`, `RELATED_CONSTANTS`, `ROSTER_TEXT_CHARS`, `TAU_UNSAFE`, `TAU_SECRET`, `Tau`, `current_tau`, `tau_override`, `tau_unset` (and `tau_patched`), the labels, `LABEL_CHOICES`, the four statements, `QUESTIONS`, `questions_payload`, `questions_sha256`, `constants_sha256`, `seal_shas`, `ACTION_*`, `DETECTOR_*`, `REVIEW_LINK_NOTE`, `RelatedEntry`, `RelatedSet` (with `CueReport`), `related_text`, `related_entry`, `RosterLine`, `_write_sentences`; unit 2, the answers: `ReviewAnswerError` (`AnswerFault`), `ANSWER_FORMAT`, `NAMED_FORMAT`, `UPDATE_ANSWER_FORMAT`, `ReviewAnswers` with `to_event` and `is_zero_attestation`, `_score`, `_chain_keys`, `parse_answers`, `parse_update_answers`, `check_answered_ids`, `check_named` | `review_tables.jsonl`, `review_tables_unicode.jsonl`, `review_answers.jsonl` |
+| `review` | unit 1 of `review.py`, the sealed tables: `RELATED_TOP`, `RELATED_CAP`, `RELATED_TEXT_CHARS`, `RELATED_CONSTANTS`, `ROSTER_TEXT_CHARS`, `TAU_UNSAFE`, `TAU_SECRET`, `Tau`, `current_tau`, `tau_override`, `tau_unset` (and `tau_patched`), the labels, `LABEL_CHOICES`, the four statements, `QUESTIONS`, `questions_payload`, `questions_sha256`, `constants_sha256`, `seal_shas`, `ACTION_*`, `DETECTOR_*`, `REVIEW_LINK_NOTE`, `RelatedEntry`, `RelatedSet` (with `CueReport`), `related_text`, `related_entry`, `RosterLine`, `_write_sentences`; unit 2, the answers: `ReviewAnswerError` (`AnswerFault`), `ANSWER_FORMAT`, `NAMED_FORMAT`, `UPDATE_ANSWER_FORMAT`, `ReviewAnswers` with `to_event` and `is_zero_attestation`, `_score`, `_chain_keys`, `parse_answers`, `parse_update_answers`, `check_answered_ids`, `check_named`; the pure decision, `ReviewDecision::to_event`, `replaced_ids`, `apply_review` | `review_tables.jsonl`, `review_tables_unicode.jsonl`, `review_answers.jsonl`, `review_decision.jsonl` |
 | `mirror_format` | `mirror_format.py` whole: `TOMBSTONE_DIR`, `EPISODES_DIR`, `TOMBSTONE_SUFFIX`, `_ID_TOMBSTONE_RE` (by hand, `id_tombstone_stem`), `memory_filename`, `tombstone_filename`, `active_filename_for_tombstone`, `is_legacy_tombstone_name`, the four key tables, `memory_metadata`, `episode_metadata` | `mirror_format.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl` |
@@ -10799,7 +10799,8 @@ beside them.
 | `roster_candidates`, `roster_for` | 543-674 | the store, the engine | review-3 |
 | `ReviewAnswerError`, `ANSWER_FORMAT`, `NAMED_FORMAT`, `UPDATE_ANSWER_FORMAT`, `ReviewAnswers` (`to_event`, `is_zero_attestation`), `_score`, `_chain_keys`, `parse_answers`, `parse_update_answers`, `check_answered_ids`, `check_named` | 677-942 | nothing | built (review-2, `review/answers.rs`) |
 | `ACTION_*`, `DETECTOR_*`, `REVIEW_LINK_NOTE` | 949-959 | nothing | built (review-1) |
-| `ReviewDecision`, `apply_review` and what follows | 962- | the store | the decision unit |
+| `ReviewDecision` and `to_event`, `_DISPUTED`, `replaced_ids`, `apply_review` | 963-1167 | nothing | built (`review/decision.rs`) |
+| the review-issued rows and their chains | 1172-1335 | the store | the review chain unit |
 
 What review-1 reproduces, and why it is built as it is:
 
@@ -10930,6 +10931,36 @@ digest row). No module global is patched. Tests:
 null, the check order, the dedup orders, whitespace past ASCII, the int
 bounds), `review_answers_robustness` (200,000 relation ids, 200,000
 unknown keys, millions of spaces, a deep review_id, linear growth).
+
+### The decision a write review makes (`review/decision.rs`)
+
+`apply_review` reads the explicit `Tau`, related entries, answers and write
+options. It checks the inclusive secret and unsafe thresholds in that order.
+A conflict with a standing record refuses even when the writer quotes the
+user. A restatement can refuse before the check for an unsaid replacement.
+On a commit the decision records links, suggestions, filings and dropped cues
+in related-entry order. An extends answer on a cue target both files the
+disagreement and adds an extends link unless the writer declared the target.
+
+`replaced_ids` preserves updated entries in order, then appends distinct
+declarations, then undisputed cue targets absent from those two groups.
+Repeated new cue targets survive the last step, as they do in the reference's
+list comprehension. The implementation borrows code-point strings for lookup.
+`apply_review_iter` and `replaced_ids_iter` accept fallible one-shot inputs.
+A score refusal leaves both inputs untouched. Otherwise the decision consumes
+standing IDs before declared IDs and returns any iteration error unchanged.
+Only distinct IDs are retained while each source is consumed.
+`ReviewDecision::to_event` emits fields in the reference's insertion order and
+omits empty collections and a false `standing_write`.
+
+`gen_review_decision` writes the ungated `review_decision.jsonl` from the pure
+Python functions. Its 48 direct cases, a complete event and a seeded sweep
+of 8,192 cases cover floating-point boundaries, rule order, writing options,
+detector choice, duplicate IDs and lone surrogates. The golden test checks
+the exact replacement list and ASCII JSON spelling. The kills tests pin the
+branches that change a refusal, link or filing. The robustness tests cover
+long code-point IDs, nonfinite scores and growth from 1,500 to 15,000 entries.
+Store-backed review chains and related-set construction belong to later units.
 
 ## The hook mains' argument parser (`argparse`, units argparse-1a and argparse-1b)
 
@@ -24097,8 +24128,9 @@ What the reference has and this build does not, by area:
   (built whole): `durability.py` past
   its quoted spans and sentence helpers (the marker tables with
   `find_transient_markers`, and the capture rules: units 2 and 3), and
-  the review. The dedup's store side reads through a trait not yet wired
-  to `store::digest`.
+  the store-backed review chain and related-set construction. The review
+  tables, answer validation and decision policy are built. The dedup's
+  store side reads through a trait not yet wired to `store::digest`.
 - The regular expression engine (`pyre`) past its case folding and the
   parser (its tree, state, tokenizer, atoms, repeats, widths, groups,
   lookarounds, inline flags, alternatives and `parse`, and the refusal

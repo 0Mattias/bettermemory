@@ -8,8 +8,8 @@
 //! [`answers`] (unit review-2), re-exported here.
 //!
 //! `related_for`, `roster_candidates` and `roster_for` read the store and
-//! the engine and are left for unit review-3; the decision for the unit
-//! that adds `decision.rs` beside this file.
+//! the engine and are left for their store-backed unit. The decision, its
+//! event fields and replacement IDs are in [`decision`].
 
 use std::marker::PhantomData;
 use std::sync::{Condvar, Mutex, MutexGuard, OnceLock};
@@ -22,8 +22,10 @@ use crate::pyvalue::{PyError, PyStr, PyValue};
 use crate::unicode;
 
 mod answers;
+mod decision;
 mod related;
 pub use answers::*;
+pub use decision::*;
 pub use related::*;
 
 /// `RELATED_TOP`: the engine's top hits for the write's content.
