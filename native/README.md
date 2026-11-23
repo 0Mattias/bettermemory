@@ -1655,10 +1655,10 @@ number of attestations).
 
 ## The response layer's leaves (`_response_links.py`, the drift memo, the verdict ladder)
 
-Three leaves the response builder calls that call nothing unbuilt:
-`response_links.rs`, `response_memo.rs` and `verdict_signals.rs` (311
-lines of source). The builder itself, the drift pass and
-`verdict.with_objection` are later units.
+The response builder uses `response_links.rs`, `response_memo.rs` and
+`verdict_signals.rs` (311 lines of source). Its row serializers are in
+`response_rows`, and `response_reason::with_objection` adjusts a verdict
+when a record has an objection. The per-request drift pass is still pending.
 
 ### The map
 
