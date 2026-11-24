@@ -70,6 +70,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `history` | `history.py`'s first two units: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection; `_RowVerifier` and `_set` | `history_rows.jsonl`, `history_rows_python.jsonl`, `history_rows_mac.jsonl` |
 | `history_rows` | `history.py`'s third unit: `HistoryRow` with `to_dict`, `_changed` (with `py_ne`, Python's `!=` over payload values), `_body_diff` (through `difflib::body_diff`), `_set`, `_event_detail`, `_RecordWalk`, `_record_row`, `_link_change_rows` | `history_detail.jsonl` |
+| `history_record` | `history.py`'s fourth unit: `RecordHistory` with `known`, `findings`, `exit_code` and `to_dict`, `record_history`, `_read_history` with its `adjacent`, `_state`, `_table_kind`, `replaced_detail`, and `FORMAT`, `FORMAT_VERSION`, `EVENT`, `STORE`, `ACTOR_FROM_EVENT`, over a store source, its key ring and a provenance reader | `history_record.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `tool_handlers` | `_handlers.py`, unit handlers-2a: `RefusedError`, `_in_the_way`, `RetryableRefusal`, `KeptWriteRefusal`, `store_refusal`, `_ABSENT`, `_kept_or_retryable`, `_refusals_as_tool_errors`, `_read_only`, and `ToolHandlers`' `__init__`, `for_request`, `with_store` and `_run` (the nine forwarders are handlers-2b) | `tool_handlers.jsonl` |
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
@@ -24749,11 +24750,9 @@ What the reference has and this build does not, by area:
   `store_index.py` is built in `store::docfreq`; `_advanced_inputs` and
   the store's `DocFreqSource` are not),
   `ranking_statistics` and `store_orphans` (store-3).
-- A record's history past the rows that name it, their MAC under each
-  chain segment's key (`_RowVerifier`, `_set`) and what each row did
-  (`_changed`, `_body_diff`, `_event_detail`, `_record_row`,
-  `_link_change_rows`, `HistoryRow` and `_RecordWalk` are built):
-  `history.py`'s `record_history` and the renderers.
+- The renderers of a record's history (`history.py`'s `render_text`,
+  `render_json`, `_actor_text`, `_value_text`): the read itself,
+  `record_history`, is built (`history_record`).
 - Checkout capture still requires the orchestration in `origin.py`;
   `origin_match` holds its caller matching, `origin_git` its Git probes and
   `origin_cache` its signature and cache, while registration and lookup
@@ -24910,7 +24909,8 @@ of the read (it catches only ValueError and RecursionError).
 
 `history.py` (1,050 lines) answers `memory history ID`. It needs more
 than 600 lines of Rust, so it is cut into units, leaves first. The
-first two are built (`src/history.rs`); the rest are cut below.
+first four are built (`src/history.rs`, `src/history_rows.rs`,
+`src/history_record.rs`); unit 5 is cut below.
 
 | function | lines | what it needs from the machine | status |
 | --- | --- | --- | --- |
@@ -24921,11 +24921,13 @@ first two are built (`src/history.rs`); the rest are cut below.
 | `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` | 462-518 | nothing | unit 1, built |
 | `_RowVerifier` | 269-318 | the connection, the key ring (`key_for_fingerprint`) | unit 2, built |
 | `_set` | 545-550 | nothing | unit 2, built |
-| `history_replaced`, `replaced_detail` | 415-459 | the connection | built as `Store::history_replaced` (`store/mod.rs`) |
+| `history_replaced` | 415-429 | the connection | built as `Store::history_replaced` (`store/mod.rs`) |
+| `replaced_detail` | 432-459 | nothing | unit 4, built (a copy stays in `store/mod.rs`) |
 | `_changed`, `_body_diff`, `_event_detail` | 521-568 | nothing (`difflib.unified_diff`) | unit 3 |
 | `_record_row`, `_link_change_rows` | 592-778 | nothing | unit 3 |
-| `HistoryRow`, `RecordHistory` | 165-266 | nothing | unit 4 |
-| `record_history`, `_RecordWalk`, `_read_history`, `_table_kind`, `_state` | 571-960 | the store (its tables, `can_verify`, provenance) | unit 4 |
+| `HistoryRow`, `_RecordWalk` | 165-197, 581-590 | nothing | unit 3, built |
+| `RecordHistory` | 200-266 | nothing | unit 4, built |
+| `record_history`, `_read_history`, `_table_kind`, `_state` | 571-577, 780-960 | the store (its tables, meta's key fingerprint, the key ring, `can_verify`, provenance) | unit 4, built |
 | `render_text`, `render_json`, `_actor_text`, `_value_text` | 963-1050 | nothing (`printable`, `quoted`) | unit 5 |
 
 ### Unit 1: the rows that name a record
@@ -25114,3 +25116,113 @@ records comparing in linear time.
 
 Left for unit 4: `RecordHistory`, `record_history`, `_read_history`,
 `_table_kind`, `_state`; for unit 5: `render_text`, `render_json`.
+
+### Unit 4: one record's whole history
+
+Built in `src/history_record.rs`, a file of its own beside units 1 to
+3, which it does not edit. The reference's lines, confirmed against the
+source at e5eb23e3: the constants `FORMAT`, `FORMAT_VERSION`, `EVENT`,
+`STORE`, `ACTOR_FROM_EVENT` 98-110, `RecordHistory` 200-266,
+`replaced_detail` 432-459, `record_history` 571-577, `_read_history`
+with its `adjacent` 780-918, `_table_kind` 921-932, `_state` 935-960.
+
+- The store's sides are arguments: `record_history(source, ring,
+  provenance, record_id)` takes any `store::provenance::Source` (a
+  read-only `StoreFile`, as the command opens it, or a writer's
+  `ConnSource`), the in-memory `log::KeyRing` the row verifier reads,
+  and a `Provenance` reader over that same source, which answers
+  `provenance_for`, `episode_provenance` and `can_verify`. Every
+  statement runs on the source's connection, inside
+  `history::read_snapshot`; its closing ROLLBACK error replaces the
+  body's answer, as the reference's `finally` does.
+- The order of effects is the reference's, and so the order errors
+  surface in: meta's `key_fingerprint` (KeyError when meta lacks it,
+  `HistoryError::NoKeyFingerprint`), the rekey rows, `_rows_naming`
+  (UnicodeEncodeError for an id holding a lone surrogate), the linking
+  versions, the restores, the walk, `_state`, `_table_kind` only when
+  the state is `active` or `tombstoned` and the walk named no kind,
+  then `can_verify`. The id is valid text by the time `_state` binds it
+  again and hands it to the provenance reader, which takes `&str`.
+- `adjacent`: the item next in `found` only when its seq is exactly one
+  apart in the log, its payload is a mapping and its subject is the one
+  asked. A row whose payload is None is skipped by the walk but stays
+  in `found`, so it still stands between two rows.
+- The walk's branches go in the reference's order, first match wins: a
+  `store_restored` or `history_accepted` row is a `store` row whatever
+  it names; the record's own row is `record_row`; a change event or the
+  standing guard is an `event` row, its actor only when the payload's
+  actor mapping is non-empty; a delete of a linking record pops its
+  links into `unlinked` rows, sorted, unless the next row in the log is
+  the put that carries them (then nothing is written and the links
+  stay); a version of a linking record is `link_change_rows`; a
+  `conflict_put` naming the record as `a_id` or `b_id` is a `conflict`
+  row whose `other` is `b_id` when `a_id` is the record, else `a_id`
+  (a self conflict names itself). `verifier.verified(row)` is asked
+  once per row written, as the reference asks it; the ring is in
+  memory, so the answer is a pure function of the row.
+- `state`: memories, then episodes, then tombstones. An active memory's
+  label is `provenance_for([id]).get(id)`, an episode's
+  `episode_provenance`'s; a tombstone reads `unaccounted` unless the
+  walk's last record row is its `tombstone_put`, with no key needed;
+  with no table row the last record kind gives `unknown` (none),
+  `deleted` (`memory_delete`), `pruned` (`tombstone_delete`,
+  `episode_delete`) or `missing`. `table_kind` asks memories,
+  tombstones, episodes, in that order, so a record held as an episode
+  and a tombstone reads `active` from the episode and `memory` as its
+  kind.
+- `replaced_detail(kind, payload)`: a function of its own here.
+  `head_after`, else `log_end_before` for a kind other than
+  `store_restored`; an empty mapping has no seq; `from_seq` is the
+  largest of the seqs that are exactly an `int` (a bool is not),
+  compared at any size by `pyvalue::cmp_int_text`. `Store::history_replaced`
+  keeps its own copy (`store::replaced_entry`) until a later unit joins
+  them.
+- Errors stay typed (`HistoryError`): a SQLite error or a `PyError`
+  (RecursionError from a payload, UnicodeEncodeError) as `StoreError`,
+  the missing key fingerprint, and what the provenance reader raised
+  (`ProvenanceError::Raised`) or declined (`NotPorted`, passed on as a
+  decline). A reader that would verify with no current key in the ring
+  is refused by `Provenance::new` (NotPorted) before this unit runs;
+  the caller passes that on as a decline. The CLI decides what to print.
+
+No regular expression is used. No crate is added.
+
+Pinned by `history_record.jsonl` (`gen_history_record.py`), gated as
+`store_provenance.jsonl` is (Unicode, pydantic-core, POSIX only). Each
+line is one store made by the reference (`Store.create`, rows appended
+with `log.append_row` and applied with `_apply_mutation`, plants by
+SQL), its five tables recorded, and per opening the key ring, the
+fingerprint the read-only open verifies under, `strict_provenance`, and
+per id `to_dict(diff=True)` as `json.dumps` writes it (exact, key order
+included, about a third of `_common.neutral`'s size, which kept the file
+under 150 KB), `exit_code` and `known`, or the exception's class. The
+stores hold every case the unit's brief names: a memory created,
+updated, verified, corroborated, removed, restored, pruned, deleted,
+deleted outside the store; an episode put and pruned; a planted
+tombstone and one whose last record row is not its put; unknown ids,
+an id inside another, the empty id, a NUL, lone surrogates; pairings
+broken by an unrelated row, by rows without a payload and by a gap in
+seq; a delete followed by another record's put; links added, retyped,
+dropped, carried and pruned, a supersedes link, a link whose removal
+is followed by a put rather than its carrier (unlinked, then linked
+again); conflicts; telemetry
+with and without an actor; replaced rows before and after the record's
+first row; a rekey with the old key held, retired and absent, a tampered
+row; a store whose meta names a key this host does not hold; strict
+provenance on. A seeded sweep (writes, updates, removals, restores,
+prunes, links, telemetry, tampering over five records) is pinned by
+count and SHA-256. A store without `key_fingerprint` in meta cannot be
+opened by the reference (`Store.open` refuses it), so that KeyError is
+held by `history_record_kills` only. `golden_history_record_not_posix`
+records the fixture's gap off POSIX. `history_record_kills` holds the
+pairing, branch, state and order hazards; `history_record_robustness`
+a log of 40,000 rows against 20,000, 20,000 versions, a payload nested
+100,000 deep (RecursionError from the port's budget, no stack overflow;
+the reference's answer there follows the Python release and the system:
+CPython 3.13 and macOS raise RecursionError, CPython 3.14 on Linux reads
+the payload and the history continues, so the row matches the reference
+only where it raises and is in no golden file), a megabyte body changed
+by one line and ids at the edges.
+
+Left for unit 5: `render_text`, `render_json`, `_actor_text`,
+`_value_text`, `_VERIFIED_TEXT`, which read `RecordHistory`.

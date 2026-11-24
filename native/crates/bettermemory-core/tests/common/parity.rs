@@ -465,6 +465,7 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // The rows hold the tokenizer's spelling; the records are built
         // through the models.
         "store_provenance.jsonl" => &[Unicode, Pydantic],
+        "history_record.jsonl" => &[Unicode, Pydantic],
         // A loose header's size past `int`'s 4,300 digits (`gen_gitobjects`).
         "gitobjects_python.jsonl" => &[Python],
         // Where the linked zlib's `inflate` stops and what it has consumed
