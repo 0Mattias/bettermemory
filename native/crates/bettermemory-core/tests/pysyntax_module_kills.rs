@@ -164,15 +164,15 @@ fn names_are_checked_by_xid_and_a_bom_is_refused() {
 }
 
 #[test]
-fn only_fstrings_with_braces_or_backslashes_are_declined() {
-    assert_eq!(types("f'a' rf\"b\"\n"), "FSTRING FSTRING NEWLINE ENDMARKER");
-    for s in ["f'{x}'\n", "f'}}'\n", "f'a\\n'\n"] {
-        assert_eq!(
-            module_tokens(&cps(s)),
-            Err(ModuleError::NeedsFString),
-            "{s:?}"
-        );
-    }
+fn fstrings_are_read_into_their_three_kinds() {
+    assert_eq!(
+        types("f'a' rf\"b\"\n"),
+        "FSTRING_START FSTRING_MIDDLE FSTRING_END FSTRING_START FSTRING_MIDDLE FSTRING_END NEWLINE ENDMARKER"
+    );
+    assert_eq!(
+        types("f'{x}'\n"),
+        "FSTRING_START OP NAME OP FSTRING_END NEWLINE ENDMARKER"
+    );
     assert!(refused("f'a\n"));
 }
 

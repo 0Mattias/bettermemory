@@ -1,8 +1,8 @@
 //! Every case of `pysyntax_module.jsonl` (gated on the Python release)
 //! against `pysyntax::module_lex`: a source the tokenizer of 3.13.13
 //! refuses is refused, any other is read into the tokens `tokenize`
-//! reads. A source holding an f-string with a field, or a `\N{...}`
-//! escape, may be declined. The spelling is the generator's
+//! reads. Only a source holding a `\N{...}` escape may be declined (one
+//! row). The spelling is the generator's
 //! (`tests/contract/gen_pysyntax_module.py`).
 
 mod common;
@@ -32,15 +32,22 @@ fn text(v: &Value) -> Vec<u32> {
     }
 }
 
-/// The tokens as the generator spells them (`_spelled_tokens`).
+/// The tokens as the generator spells them (`_spelled_tokens`): an
+/// f-string folded to one `FSTRING` from the last FSTRING_START to each
+/// FSTRING_END, its literal parts left out, as `_tokens` folds them.
 fn spelled(m: &Module) -> Vec<String> {
-    m.tokens
-        .iter()
-        .map(|t| match t.type_name() {
-            n @ ("NEWLINE" | "NL" | "INDENT" | "DEDENT" | "ENDMARKER") => n.to_string(),
-            n => format!("{n}:{}:{}", t.start, t.end),
-        })
-        .collect()
+    let mut fstart = 0;
+    let mut out = Vec::new();
+    for t in &m.tokens {
+        match t.type_name() {
+            n @ ("NEWLINE" | "NL" | "INDENT" | "DEDENT" | "ENDMARKER") => out.push(n.to_string()),
+            "FSTRING_START" => fstart = t.start,
+            "FSTRING_MIDDLE" => {}
+            "FSTRING_END" => out.push(format!("FSTRING:{fstart}:{}", t.end)),
+            n => out.push(format!("{n}:{}:{}", t.start, t.end)),
+        }
+    }
+    out
 }
 
 fn row_tokens(v: &Value) -> Vec<String> {
@@ -60,19 +67,16 @@ fn row_tokens(v: &Value) -> Vec<String> {
         .collect()
 }
 
-/// Whether the reader may decline `t`: it holds an f-string prefix or
-/// a `\N`.
+/// Whether the reader may decline `t`: it holds a `\N`.
 fn may_decline(t: &[u32]) -> bool {
-    t.windows(2)
-        .any(|w| (w[0] | 0x20) == 0x66 && (w[1] == 0x27 || w[1] == 0x22))
-        || t.windows(2).any(|w| w == [0x5C, 0x4E])
+    t.windows(2).any(|w| w == [0x5C, 0x4E])
 }
 
 /// True when the case was checked, false when the reader declined it.
 fn check(row: &Value) -> bool {
     let t = text(&row["t"]);
     let got = module_tokens(&t);
-    if let Err(ModuleError::NeedsFString | ModuleError::NeedsNameTable) = got {
+    if let Err(ModuleError::NeedsNameTable) = got {
         assert!(may_decline(&t), "declined {}: {got:?}", row["t"]);
         return false;
     }
@@ -200,7 +204,7 @@ fn pysyntax_module_every_case() {
     }
     if ledger.strict() {
         assert!(checked > 200, "checked {checked}, declined {declined}");
-        assert!(declined <= 5, "declined {declined}");
+        assert!(declined <= 1, "declined {declined}");
     }
     ledger.finish(rows.len());
 }

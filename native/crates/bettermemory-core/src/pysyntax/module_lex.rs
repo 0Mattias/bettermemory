@@ -5,9 +5,11 @@
 //! read by `tok_get_normal_mode` into logical lines with INDENT and DEDENT
 //! (tabs to multiples of 8, the tab-size-1 consistency check, the
 //! 100-level limit). Numbers, strings and operators are read by
-//! [`super::lex`]'s reader. No function recurses.
+//! [`super::lex`]'s reader, f-strings by [`super::fstring_lex`]. No
+//! function recurses.
 
-use super::lex::{LexError, Lexer, Tok};
+use super::fstring_lex::{self, Mode, Step};
+use super::lex::{LexError, Lexer, Tok, Token};
 use crate::unicode;
 
 /// A token's kind.
@@ -15,9 +17,14 @@ use crate::unicode;
 pub enum Kind {
     /// NAME, NUMBER, STRING or OP, as [`super::lex`] reads it.
     Lex(Tok),
-    /// An f-string without a replacement field, escape or brace: one
-    /// token for `FSTRING_START`, `FSTRING_MIDDLE` and `FSTRING_END`.
-    FString,
+    /// An f-string's prefix and opening quote or three.
+    FStringStart,
+    /// A literal part of an f-string or of a format specification, as
+    /// the source spells it: a doubled brace keeps its first brace and the
+    /// next token starts after the second. It may be empty.
+    FStringMiddle,
+    /// An f-string's closing quote or three.
+    FStringEnd,
     Comment,
     Newline,
     /// A line end inside brackets or after a blank or comment-only line.
@@ -36,13 +43,16 @@ pub struct ModToken {
 }
 
 impl ModToken {
-    /// The token type `tokenize` names (`FSTRING` for the whole f-string).
+    /// The token type `tokenize` names.
     pub fn type_name(&self) -> &'static str {
         match &self.kind {
             Kind::Lex(Tok::Name) => "NAME",
             Kind::Lex(Tok::Int(_) | Tok::Float(_) | Tok::Imag(_)) => "NUMBER",
             Kind::Lex(Tok::Str(_) | Tok::Bytes(_)) => "STRING",
-            Kind::Lex(Tok::FString) | Kind::FString => "FSTRING",
+            Kind::Lex(Tok::FString) => "FSTRING",
+            Kind::FStringStart => "FSTRING_START",
+            Kind::FStringMiddle => "FSTRING_MIDDLE",
+            Kind::FStringEnd => "FSTRING_END",
             Kind::Lex(Tok::Op) => "OP",
             Kind::Comment => "COMMENT",
             Kind::Newline => "NEWLINE",
@@ -76,9 +86,6 @@ pub enum ModuleError {
     /// What CPython raises (SyntaxError, its subclasses, or ValueError),
     /// by a short kind: `check_claim` catches them all alike.
     Syntax(&'static str),
-    /// An f-string holding a brace or a backslash: its fields are read by
-    /// the f-string tokenizer of unit 5b.
-    NeedsFString,
     /// A `\N{...}` escape in a str literal: the name table is not ported.
     NeedsNameTable,
 }
@@ -152,11 +159,25 @@ fn read(s: &[u32]) -> Result<Vec<ModToken>, ModuleError> {
     };
     let mut out: Vec<ModToken> = Vec::new();
     let mut stack: Vec<u32> = Vec::new();
+    // The open f-strings, innermost last.
+    let mut modes: Vec<Mode> = Vec::new();
+    let mut named_escape = false;
     // `indstack` and `altindstack`: columns at tab size 8 and at 1.
     let mut ind: Vec<(usize, usize)> = vec![(0, 0)];
     let mut at_bol = true;
     let mut blank = false;
     loop {
+        if let Some(m) = modes.last_mut().filter(|m| m.literal) {
+            match fstring_lex::literal(&mut lx, m, &mut named_escape)? {
+                Step::Token(t) => out.push(t),
+                Step::End(t) => {
+                    out.push(t);
+                    modes.pop();
+                }
+                Step::Field => {}
+            }
+            continue;
+        }
         if at_bol {
             at_bol = false;
             let (mut col, mut alt, mut cont) = (0usize, 0usize, 0usize);
@@ -216,6 +237,9 @@ fn read(s: &[u32]) -> Result<Vec<ModToken>, ModuleError> {
             if !stack.is_empty() {
                 return err("bracket never closed");
             }
+            if named_escape {
+                return Err(ModuleError::NeedsNameTable);
+            }
             out.push(token(Kind::EndMarker, lx.i, lx.i));
             return Ok(out);
         };
@@ -241,9 +265,10 @@ fn read(s: &[u32]) -> Result<Vec<ModToken>, ModuleError> {
             BS => lx.continuation()?,
             _ => {
                 if c == 0x27 || c == 0x22 {
-                    lx.string(start, false, false, false)?;
+                    string(&mut lx, start, false, false, &mut named_escape)?;
                 } else if is_name_start(c) {
-                    if let Some(t) = name_or_prefix(&mut lx, start)? {
+                    if let Some(t) = name_or_prefix(&mut lx, start, &mut modes, &mut named_escape)?
+                    {
                         out.push(t);
                         continue;
                     }
@@ -251,6 +276,17 @@ fn read(s: &[u32]) -> Result<Vec<ModToken>, ModuleError> {
                     || (c == 0x2E && s.get(lx.i + 1).is_some_and(|d| (0x30..=0x39).contains(d)))
                 {
                     lx.number(start)?;
+                } else if let Some(m) = modes.last_mut() {
+                    if m.spec_colon(c) {
+                        lx.i += 1;
+                        out.push(token(Kind::Lex(Tok::Op), start, lx.i));
+                        continue;
+                    }
+                    m.before_close(c)?;
+                    lx.op(c, start, &mut stack)?;
+                    if lx.i == start + 1 {
+                        m.after_op(c)?;
+                    }
                 } else {
                     lx.op(c, start, &mut stack)?;
                 }
@@ -266,9 +302,39 @@ fn line_start(s: &[u32], at: usize) -> usize {
     s[..at].iter().rposition(|&c| c == NL).map_or(0, |p| p + 1)
 }
 
+/// A string literal, left on the reader's output. One holding `\N{...}`
+/// sets `named_escape` and stands as an empty str: whether it decodes
+/// needs the name table, and the caller declines only when nothing else
+/// refuses, as for an f-string's literal part.
+fn string(
+    lx: &mut Lexer<'_>,
+    start: usize,
+    b: bool,
+    r: bool,
+    named_escape: &mut bool,
+) -> Result<(), ModuleError> {
+    match lx.string(start, b, r, false) {
+        Err(LexError::NeedsNameTable) => {
+            *named_escape = true;
+            lx.out.push(Token {
+                tok: Tok::Str(Vec::new()),
+                start,
+                end: lx.i,
+            });
+            Ok(())
+        }
+        other => Ok(other?),
+    }
+}
+
 /// A name, a string after its prefix, or an f-string. A name or an
 /// f-string is returned; a string is left on the reader's output.
-fn name_or_prefix(lx: &mut Lexer<'_>, start: usize) -> Result<Option<ModToken>, ModuleError> {
+fn name_or_prefix(
+    lx: &mut Lexer<'_>,
+    start: usize,
+    modes: &mut Vec<Mode>,
+    named_escape: &mut bool,
+) -> Result<Option<ModToken>, ModuleError> {
     let (mut b, mut r, mut u, mut f) = (false, false, false, false);
     loop {
         let c = lx.s.get(lx.i).map_or(0, |c| c | 0x20);
@@ -286,10 +352,9 @@ fn name_or_prefix(lx: &mut Lexer<'_>, start: usize) -> Result<Option<ModToken>, 
         lx.i += 1;
         if matches!(lx.s.get(lx.i), Some(0x27) | Some(0x22)) {
             if f {
-                fstring(lx)?;
-                return Ok(Some(token(Kind::FString, start, lx.i)));
+                return fstring_lex::open(lx, start, r, modes).map(Some);
             }
-            lx.string(start, b, r, false)?;
+            string(lx, start, b, r, named_escape)?;
             return Ok(None);
         }
     }
@@ -302,31 +367,4 @@ fn name_or_prefix(lx: &mut Lexer<'_>, start: usize) -> Result<Option<ModToken>, 
         return err("invalid character");
     }
     Ok(Some(token(Kind::Lex(Tok::Name), start, lx.i)))
-}
-
-/// An f-string from its opening quote: its end when no brace or
-/// backslash comes first, else `NeedsFString`.
-fn fstring(lx: &mut Lexer<'_>) -> Result<(), ModuleError> {
-    let quote = lx.s[lx.i];
-    let three = lx.s.get(lx.i + 1) == Some(&quote) && lx.s.get(lx.i + 2) == Some(&quote);
-    let size = if three { 3 } else { 1 };
-    lx.i += size;
-    let mut run = 0;
-    while run < size {
-        let Some(&c) = lx.s.get(lx.i) else {
-            return err("unterminated f-string");
-        };
-        lx.i += 1;
-        if c == quote {
-            run += 1;
-            continue;
-        }
-        run = 0;
-        match c {
-            0x7B | 0x7D | BS => return Err(ModuleError::NeedsFString),
-            NL if size == 1 => return err("unterminated f-string"),
-            _ => {}
-        }
-    }
-    Ok(())
 }

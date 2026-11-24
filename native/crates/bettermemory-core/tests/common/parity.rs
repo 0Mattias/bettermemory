@@ -233,6 +233,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "pysyntax_literal_python.jsonl"
         // The module-mode tokenizer of 3.13.13 (`gen_pysyntax_module`).
         | "pysyntax_module.jsonl"
+        // Its f-string tokens in the parser's mode (`gen_pysyntax_fstring`).
+        | "pysyntax_fstring.jsonl"
         | "machine_identity_python.jsonl"
         | "store_rotation_python.jsonl"
         | "membership_shared_python.jsonl"

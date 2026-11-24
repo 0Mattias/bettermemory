@@ -734,7 +734,7 @@ fn common_escape(c: u32) -> Option<u32> {
 }
 
 /// A non-raw str literal's body, as `_PyUnicode_DecodeUnicodeEscape` reads it.
-fn decode_str(body: &[u32]) -> Result<PyStr, LexError> {
+pub(super) fn decode_str(body: &[u32]) -> Result<PyStr, LexError> {
     let mut out = Vec::with_capacity(body.len());
     let mut i = 0;
     while i < body.len() {
