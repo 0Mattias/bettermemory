@@ -432,6 +432,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // A `KeyUnreadableError` whose reason is the C library's `strerror`
         // (`gen_log_keyfiles`).
         "log_keyfiles_darwin.jsonl" => &[Platform],
+        // The store `Store.create` makes, the gates of `store_tx.jsonl`
+        // (`gen_log_segments`).
+        "log_replaced_store.jsonl" => &[Unicode, Pydantic],
         // The ValueError `os.stat` raises for a NUL in a path: "embedded
         // null byte" in 3.11.15, "stat: embedded null character in path"
         // in 3.12.13, 3.13 and 3.14 (`gen_location_stamps`,

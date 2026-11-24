@@ -107,7 +107,8 @@
 //!   `above_start`, `find`, `_walk`, `_look`) and `write` (its third unit);
 //! - [`log`]: the row MAC, the key ring and `verify_chain`, and the key
 //!   ring's files (`log::ring`: the current key, the origin anchor, the
-//!   binding);
+//!   binding); the segment map with the caller's key (`log::segments`)
+//!   and the rows that say a history was replaced (`log::replaced`);
 //! - [`machine`]: this machine's id, its first three units (the identity
 //!   record, the id minted from given bytes, the clone rule; the hardware
 //!   id, the hostname, the id file's object and the two files read;

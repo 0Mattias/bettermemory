@@ -22,7 +22,9 @@ use crate::lexicon::hex;
 use crate::pyvalue::{py_int, py_str, PyError, PyStr, PyValue};
 use crate::unicode;
 
+pub mod replaced;
 pub mod ring;
+pub mod segments;
 
 /// The `prev_mac` of the first row.
 pub const GENESIS_MAC: &str = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -478,13 +480,6 @@ pub struct ChainReport {
 }
 
 #[derive(Clone, Debug)]
-struct Segment {
-    key_fingerprint: PyStr,
-    key: Option<Key>,
-    foreign: bool,
-}
-
-#[derive(Clone, Debug)]
 pub struct OriginCheck {
     pub status: &'static str,
     pub seq: Option<i64>,
@@ -599,97 +594,31 @@ pub fn origin_status(
     check_origin(origin, row, &ring.held_keys()).status
 }
 
-fn leading_key(ring: &KeyRing, named: &[u32], first_row: &LogRow) -> (PyStr, Option<Key>) {
-    let name = unicode::to_string(named);
-    let key = match &name {
-        Some(n) if !n.is_empty() => ring.key_for_fingerprint(n),
-        _ => None,
-    };
-    if let Some(key) = key {
-        return (named.to_vec(), Some(key));
-    }
-    for candidate in ring.held_keys() {
-        if row_verifies(candidate.bytes(), first_row) {
-            return (
-                unicode::cps(&fingerprint(candidate.bytes())),
-                Some(candidate),
-            );
-        }
-    }
-    (named.to_vec(), None)
-}
-
 /// The segment map by first seq (a later start at the same seq replaces an
-/// earlier one, as the reference's dict does).
+/// earlier one, as the reference's dict does), under the ring's current
+/// key as the caller's. That answers as the reference's `verify_chain`,
+/// which passes `current_key=None`: the ring's current key is first among
+/// the held keys and is what `key_for_fingerprint` returns for its
+/// fingerprint, so the memo seed and the leading-key shortcut find the
+/// key the ring's own lookup would.
 fn segments_from(
     first_row: Option<&LogRow>,
     rekeys: &[LogRow],
     ring: &KeyRing,
     current_fingerprint: &str,
     origin_seq: Option<i64>,
-) -> Result<BTreeMap<i64, Segment>, PyError> {
-    let Some(first_row) = first_row else {
-        return Ok(BTreeMap::new());
-    };
-    let mut starts: Vec<(&LogRow, PyStr)> = Vec::new();
-    let mut leading_name = unicode::cps(current_fingerprint);
-    for (position, row) in rekeys.iter().filter(|r| r.kind == REKEY).enumerate() {
-        let names = rekey_fingerprints(row)?;
-        if position == 0 {
-            if let Some((old, _)) = &names {
-                leading_name = old.clone();
-            }
-        }
-        starts.push((row, names.map_or_else(Vec::new, |(_, new)| new)));
-    }
-    let mut segments: Vec<(i64, Segment)> = Vec::new();
-    let mut held_seen = false;
-    if starts
-        .first()
-        .is_none_or(|(row, _)| row.seq != first_row.seq)
-    {
-        let (name, key) = leading_key(ring, &leading_name, first_row);
-        held_seen = key.is_some();
-        segments.push((
-            first_row.seq,
-            Segment {
-                key_fingerprint: name,
-                key,
-                foreign: false,
-            },
-        ));
-    }
-    let mut keys: BTreeMap<PyStr, Option<Key>> = BTreeMap::new();
-    for (row, name) in starts {
-        let key = keys
-            .entry(name.clone())
-            .or_insert_with(|| match unicode::to_string(&name) {
-                Some(n) if !n.is_empty() => ring.key_for_fingerprint(&n),
-                _ => None,
-            })
-            .clone();
-        let foreign = key.is_none() && held_seen;
-        held_seen = held_seen || key.is_some();
-        segments.push((
-            row.seq,
-            Segment {
-                key_fingerprint: name,
-                key,
-                foreign,
-            },
-        ));
-    }
-    if let Some(origin_seq) = origin_seq {
-        let count = segments.len();
-        for position in 0..count {
-            let ends_before = segments
-                .get(position + 1)
-                .is_some_and(|(first_seq, _)| *first_seq <= origin_seq);
-            let segment = &mut segments[position].1;
-            segment.foreign = segment.key.is_none() && !ends_before;
-        }
-    }
-    Ok(segments.into_iter().collect())
+) -> Result<BTreeMap<i64, segments::Segment>, PyError> {
+    Ok(segments::segments_from(
+        first_row,
+        rekeys,
+        ring,
+        &unicode::cps(current_fingerprint),
+        ring.current.as_ref(),
+        origin_seq,
+    )?
+    .into_iter()
+    .map(|segment| (segment.first_seq, segment))
+    .collect())
 }
 
 fn row_problem(row: &LogRow, name: &str) -> ReportDict {

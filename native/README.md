@@ -49,7 +49,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `attestation_paths` | `attestation_paths.py` whole: `LiteralPaths`/`ReferencePaths` (`Paths` and its `Kind`), `path_mode`, `interpret_path`, `_may_be_literal`, `joined_path`, `_REFERENCE_ROOT`, `absolute_spelling`, `literal_path`, `reference_path`, `placeholder_spelling`, `target_path`, `record_paths`, `commit_paths`, `compile_targets`, `unverifiable_inputs`, with `ntpath.splitdrive` and both `commonpath`s; the host (`os.name`, `expanduser`, `lstat`, `ntpath.normcase` on Windows) a trait | `attestation_paths.jsonl`, `attestation_paths_posix.jsonl` |
 | `project_file` | units 1 and 2 of `project_file.py`: the constants, `ErrorReason`, `ProjectFile`, `ProjectFileError` (`directory`, `line`), `Found`, `Above`, `mint_id`, `render`, `_ID_RE` (`id_text`), `_bad_name`, `_bad_char`, `_toml_string`; `parse`, `_absolute`, `_evicted`, `_parse_stat`, `_read_bounded`, `_from_table`, `_os_text` | `project_file.jsonl`, `project_file_parse.jsonl`, `project_file_parse_python.jsonl`, `project_file_parse_posix.jsonl` |
 | `project_walk` | unit 3 of `project_file.py`: `Walk` and its properties, `above_start`, `find`, `_walk`, `_look`, `write` (`WriteEffects`), with `path_eq` and `is_relative_to` | `project_walk.jsonl` |
-| `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store` | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_posix_python.jsonl`, `log_keyfiles_darwin.jsonl`, `ring_binding_paths.jsonl`, `ring_binding_path_codecs.jsonl` |
+| `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store`; `log::segments` (`Segment`, `chain_trust` with the caller's key, `chain_segments`) and `log::replaced` (`HISTORY_REPLACED`, `history_replaced_kind`, `history_replaced_row`, `append_history_replaced`) | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_posix_python.jsonl`, `log_keyfiles_darwin.jsonl`, `ring_binding_paths.jsonl`, `ring_binding_path_codecs.jsonl`, `log_segments.jsonl`, `log_replaced.jsonl`, `log_replaced_store.jsonl` |
 | `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record`; unit 3 (`machine::open`): `_write_record`, `open_machine`, `StdMachine` (`gethostuuid`, the `ioreg` spawn) | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_python.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl`, `machine_open.jsonl`, `machine_open_platform.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
@@ -2409,9 +2409,9 @@ wt/integ). `KeyFiles` is the ring over a directory; the in-memory
 | `write_origin`, `name_origin_key`, `replace_origin`, `_write_origin_file` | 661-728 | lock, read, atomic write, `unlink` | built |
 | `read_binding` | 730-755 | read | built |
 | `rebind_store`, `_write_binding` | 817-837 | `realpath`, lock, atomic write | built |
-| `chain_segments` | 1269-1283 | nothing | deferred (log-2) |
-| `history_replaced_kind`, `history_replaced_row` | 1456-1481 | nothing | deferred (log-2) |
-| `append_history_replaced` | 1484-1514 | a store transaction | later, with the restore and accept-history writer |
+| `Segment`, `_ring_keys`, `_leading_key`, `_anchored`, `_segments_from`, `chain_trust`, `chain_segments` | 1026-1034, 1099-1283 | nothing | built (`log::segments`, unit log-1 remainder) |
+| `HISTORY_REPLACED`, `history_replaced_kind`, `history_replaced_row` | 202-207, 1456-1481 | nothing | built (`log::replaced`) |
+| `append_history_replaced` | 1484-1514 | a store transaction | built (`log::replaced`, both entries) |
 | `create_key`, `write_head`, `bind_store`, `bound_elsewhere` | | | built in `store/create.rs`, `store/write.rs`, `store/open.rs` |
 
 **What each reproduces.** `KeyFiles::new` refuses an id that is not a
@@ -2499,10 +2499,86 @@ and the system's) and
 errnos otherwise; a Linux runner writes and compares its own). A
 dangling link's message is the module's own and sits in the POSIX file.
 
-**Left for log-2:** `chain_segments` and the two history leaves, cut
-from this unit at 616 lines of source (the bound is 600); then
-`append_history_replaced` with the restore writer, and `open.rs` moved
-onto `log::ring`.
+**The remainder of log-1: the segment map with the caller's key and the
+history-replaced rows.** `log::segments` holds `Segment` (`first_seq`,
+`key_fingerprint` as code points, `key`, `foreign`, `first_row`, and
+`held()`), `chain_trust_with` and `chain_segments` over any `LogSource`
+and the in-memory `KeyRing`, with the meta name and the caller's key
+(`current_key`) as arguments. The reference's order with a caller-held
+key is reproduced: the origin anchor is tried under the caller's key and
+then every held key not equal to it (`_ring_keys`, through
+`check_origin_with_keys`); the leading segment's key is the caller's when
+its fingerprint is the name, else the ring's key of that name, else the
+first of the held keys (the caller's put first when the ring lacks it)
+under which the first row verifies (`_leading_key`); the per-name key memo
+is seeded with the caller's key under its own fingerprint, so a rekey row
+naming that key resolves to it while the ring's current file holds
+another; under an anchor that holds, `_anchored` reads foreign as "not
+held and the next segment does not start at or before the anchor's seq".
+The segments come back as a list in the reference's order: two starts at
+one seq (possible only for a slice source, never for a table whose seq is
+its key) stay two entries, where `verify_chain`'s private map keeps the
+later, as the reference's dict does. A rekey payload nested past the JSON
+depth limit is `VerifyError::Py(RecursionError)`, which
+`_rekey_fingerprints` does not catch either; a source's own failure stays
+`VerifyError::Source`, typed, since the reference's callers catch
+different classes.
+
+The older `log::chain_trust` and `TrustSegment` are kept unchanged for
+`store/provenance.rs`; its segments are now the projection of the whole
+ones with the ring's current key as the caller's key, which is the same
+order (`held_keys` puts the current key first), and the private map of
+`verify_chain` is read off the same function. The golden test checks the
+projection on every case whose caller's key is the ring's current one.
+
+`log::replaced` holds `HISTORY_REPLACED` in its insertion order (the
+sorted kinds stay `history::HISTORY_REPLACED`), `history_replaced_kind`
+(`kind` when a str and one of the two; else `history_accepted` when
+`accepted_history` is the object True, not 1, 1.0 or "true"; else
+`store_restored`) and `history_replaced_row` (a `row` mapping whose `seq`
+is an int and not a bool, with its `mac` when that is a str; else the
+entry's own int `seq`; else None), over a `PyValue` dict found as
+`dict.get` finds a key; a seq past i64 stays a `PyValue::Int`.
+`append_history_replaced` has two entries over one body, as its two
+reference callers enter it: `append_history_replaced(store, provider,
+kind, entry)` with no transaction open (`key_lifecycle.accept_history`)
+begins one of its own (`WritableStore::begin`), appends with
+`Transaction::append_at` (no session) and commits, the head moved once to
+the row; `append_history_replaced_in(tx, engine_version, kind, entry)`
+inside an open transaction (`restore_rows._settle_one`) appends in a
+`Transaction::scope`, the reference's joined `_transaction`, and leaves
+the commit and the head to the owner. Both raise the ValueError (the
+kind through `repr`) before anything is read, then answer None and write
+nothing when `PRAGMA query_only` is truthy. The payload is the entry less
+`row` in its order, then `kind` and `engine_version` set as
+`dict.update` sets them; it is stored in canonical (sorted) text, so the
+order shows only in the in-memory value. The joined entry takes the
+version as an argument: the transaction's provider is not reachable
+from outside `store`, and this unit edits nothing there. A
+`WritableStore` always holds its key, so `_append`'s RuntimeError for a
+keyless store has no native caller yet.
+
+Fixtures (`gen_log_segments`): `log_segments.jsonl` crosses the caller's
+key (none, the ring's current, retired only, not held, the meta's name
+with another key in the current file) with chains holding no rekey row,
+one, several, a rekey at the first row's seq, rekeys naming nothing or a
+name that is not a fingerprint (a lone surrogate among them), the
+leading-key fallback, a first row no key verifies, rows at seq 0 and
+below, seqs at i64's end, an empty log, and anchors that hold before, at
+and after a segment start or that are mismatched or unverifiable;
+`log_replaced.jsonl` pins the two leaves over every JSON type where they
+read (ungated); `log_replaced_store.jsonl` appends on the store
+`store_create.json` pins, in both forms, with a wrong kind and under
+`PRAGMA query_only`, recording the rows byte for byte and the head file
+(the gates of `store_tx.jsonl`: Unicode, pydantic-core, POSIX only;
+`log_replaced_store_not_posix.rs` records the gap). Under `query_only`
+the joined form's owner cannot begin at all (`BEGIN IMMEDIATE` is refused
+with OperationalError), which the fixture pins; a connection that
+`require_current_writer` holds to reading was not exercised.
+
+No regular expression is used. Left: the consumers of `chain_segments`
+(store-1, store_open-1) and of the two entries (restore_rows-1,
+key_lifecycle-2 and -3), and `open.rs` moved onto `log::ring`.
 
 ## The key checks and a rotation's finish (`store_keys.py`)
 

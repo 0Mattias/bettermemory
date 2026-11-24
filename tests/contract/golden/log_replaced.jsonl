@@ -1,0 +1,276 @@
+{"fixture":"log_replaced","result":"kind: history_replaced_kind(json.loads(entry)); row: json.dumps(history_replaced_row(json.loads(entry)))","table":[["store_restored",["a restore","rewound"]],["history_accepted",["an accepted history","accepted"]]]}
+{"entry":"{}","kind":"store_restored","row":"null"}
+{"entry":"{\"accepted_history\": true}","kind":"history_accepted","row":"null"}
+{"entry":"{\"accepted_history\": false}","kind":"store_restored","row":"null"}
+{"entry":"{\"accepted_history\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{\"accepted_history\": 1.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"accepted_history\": \"true\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"accepted_history\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"accepted_history\": [true]}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"store_restored\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"store_restored\", \"accepted_history\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"store_restored\", \"accepted_history\": false}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"store_restored\", \"accepted_history\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"store_restored\", \"accepted_history\": 1.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"store_restored\", \"accepted_history\": \"true\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"store_restored\", \"accepted_history\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"store_restored\", \"accepted_history\": [true]}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"history_accepted\"}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": \"history_accepted\", \"accepted_history\": true}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": \"history_accepted\", \"accepted_history\": false}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": \"history_accepted\", \"accepted_history\": 1}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": \"history_accepted\", \"accepted_history\": 1.0}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": \"history_accepted\", \"accepted_history\": \"true\"}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": \"history_accepted\", \"accepted_history\": null}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": \"history_accepted\", \"accepted_history\": [true]}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": \"rekey\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"rekey\", \"accepted_history\": true}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": \"rekey\", \"accepted_history\": false}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"rekey\", \"accepted_history\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"rekey\", \"accepted_history\": 1.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"rekey\", \"accepted_history\": \"true\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"rekey\", \"accepted_history\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"rekey\", \"accepted_history\": [true]}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"\", \"accepted_history\": true}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": \"\", \"accepted_history\": false}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"\", \"accepted_history\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"\", \"accepted_history\": 1.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"\", \"accepted_history\": \"true\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"\", \"accepted_history\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"\", \"accepted_history\": [true]}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"Store_Restored\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"Store_Restored\", \"accepted_history\": true}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": \"Store_Restored\", \"accepted_history\": false}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"Store_Restored\", \"accepted_history\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"Store_Restored\", \"accepted_history\": 1.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"Store_Restored\", \"accepted_history\": \"true\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"Store_Restored\", \"accepted_history\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"Store_Restored\", \"accepted_history\": [true]}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": 1, \"accepted_history\": true}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": 1, \"accepted_history\": false}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": 1, \"accepted_history\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": 1, \"accepted_history\": 1.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": 1, \"accepted_history\": \"true\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": 1, \"accepted_history\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": 1, \"accepted_history\": [true]}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": null, \"accepted_history\": true}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": null, \"accepted_history\": false}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": null, \"accepted_history\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": null, \"accepted_history\": 1.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": null, \"accepted_history\": \"true\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": null, \"accepted_history\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": null, \"accepted_history\": [true]}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": true, \"accepted_history\": true}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": true, \"accepted_history\": false}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": true, \"accepted_history\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": true, \"accepted_history\": 1.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": true, \"accepted_history\": \"true\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": true, \"accepted_history\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": true, \"accepted_history\": [true]}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": [\"history_accepted\"]}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": [\"history_accepted\"], \"accepted_history\": true}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": [\"history_accepted\"], \"accepted_history\": false}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": [\"history_accepted\"], \"accepted_history\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": [\"history_accepted\"], \"accepted_history\": 1.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": [\"history_accepted\"], \"accepted_history\": \"true\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": [\"history_accepted\"], \"accepted_history\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": [\"history_accepted\"], \"accepted_history\": [true]}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": {\"kind\": \"history_accepted\"}}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": {\"kind\": \"history_accepted\"}, \"accepted_history\": true}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": {\"kind\": \"history_accepted\"}, \"accepted_history\": false}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": {\"kind\": \"history_accepted\"}, \"accepted_history\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": {\"kind\": \"history_accepted\"}, \"accepted_history\": 1.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": {\"kind\": \"history_accepted\"}, \"accepted_history\": \"true\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": {\"kind\": \"history_accepted\"}, \"accepted_history\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": {\"kind\": \"history_accepted\"}, \"accepted_history\": [true]}","kind":"store_restored","row":"null"}
+{"entry":"{}","kind":"store_restored","row":"null"}
+{"entry":"{\"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": null, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"row\": null, \"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": null, \"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": null, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"row\": null, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"row\": null, \"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": null, \"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": null, \"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {}}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"row\": {}, \"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {}, \"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"row\": {}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"row\": {}, \"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {}, \"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {}, \"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": 5}}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5}, \"seq\": true}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5}, \"seq\": 7.0}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5}, \"seq\": null}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5}, \"seq\": \"7\"}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5}, \"seq\": [7]}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": \"ab\"}}","kind":"store_restored","row":"{\"seq\": 5, \"mac\": \"ab\"}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": \"ab\"}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 5, \"mac\": \"ab\"}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": \"ab\"}, \"seq\": true}","kind":"store_restored","row":"{\"seq\": 5, \"mac\": \"ab\"}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": \"ab\"}, \"seq\": 7.0}","kind":"store_restored","row":"{\"seq\": 5, \"mac\": \"ab\"}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": \"ab\"}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 5, \"mac\": \"ab\"}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": \"ab\"}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": 5, \"mac\": \"ab\"}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": \"ab\"}, \"seq\": null}","kind":"store_restored","row":"{\"seq\": 5, \"mac\": \"ab\"}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": \"ab\"}, \"seq\": \"7\"}","kind":"store_restored","row":"{\"seq\": 5, \"mac\": \"ab\"}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": \"ab\"}, \"seq\": [7]}","kind":"store_restored","row":"{\"seq\": 5, \"mac\": \"ab\"}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": null}}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": null}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": null}, \"seq\": true}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": null}, \"seq\": 7.0}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": null}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": null}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": null}, \"seq\": null}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": null}, \"seq\": \"7\"}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": null}, \"seq\": [7]}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": 7}}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": 7}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": 7}, \"seq\": true}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": 7}, \"seq\": 7.0}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": 7}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": 7}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": 7}, \"seq\": null}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": 7}, \"seq\": \"7\"}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"seq\": 5, \"mac\": 7}, \"seq\": [7]}","kind":"store_restored","row":"{\"seq\": 5}"}
+{"entry":"{\"row\": {\"mac\": \"ab\"}}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"mac\": \"ab\"}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"row\": {\"mac\": \"ab\"}, \"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"mac\": \"ab\"}, \"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"mac\": \"ab\"}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"row\": {\"mac\": \"ab\"}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"row\": {\"mac\": \"ab\"}, \"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"mac\": \"ab\"}, \"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"mac\": \"ab\"}, \"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": true, \"mac\": \"ab\"}}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": true, \"mac\": \"ab\"}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"row\": {\"seq\": true, \"mac\": \"ab\"}, \"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": true, \"mac\": \"ab\"}, \"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": true, \"mac\": \"ab\"}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"row\": {\"seq\": true, \"mac\": \"ab\"}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"row\": {\"seq\": true, \"mac\": \"ab\"}, \"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": true, \"mac\": \"ab\"}, \"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": true, \"mac\": \"ab\"}, \"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": false}}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": false}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"row\": {\"seq\": false}, \"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": false}, \"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": false}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"row\": {\"seq\": false}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"row\": {\"seq\": false}, \"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": false}, \"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": false}, \"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": 5.0}}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": 5.0}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"row\": {\"seq\": 5.0}, \"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": 5.0}, \"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": 5.0}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"row\": {\"seq\": 5.0}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"row\": {\"seq\": 5.0}, \"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": 5.0}, \"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": 5.0}, \"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": \"5\"}}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": \"5\"}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"row\": {\"seq\": \"5\"}, \"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": \"5\"}, \"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": \"5\"}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"row\": {\"seq\": \"5\"}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"row\": {\"seq\": \"5\"}, \"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": \"5\"}, \"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": \"5\"}, \"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": null}}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": null}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"row\": {\"seq\": null}, \"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": null}, \"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": null}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"row\": {\"seq\": null}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"row\": {\"seq\": null}, \"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": null}, \"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": null}, \"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": [5]}}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": [5]}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"row\": {\"seq\": [5]}, \"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": [5]}, \"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": [5]}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"row\": {\"seq\": [5]}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"row\": {\"seq\": [5]}, \"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": [5]}, \"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": [5]}, \"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}}","kind":"store_restored","row":"{\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}"}
+{"entry":"{\"row\": {\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}"}
+{"entry":"{\"row\": {\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}, \"seq\": true}","kind":"store_restored","row":"{\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}"}
+{"entry":"{\"row\": {\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}, \"seq\": 7.0}","kind":"store_restored","row":"{\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}"}
+{"entry":"{\"row\": {\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}"}
+{"entry":"{\"row\": {\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}"}
+{"entry":"{\"row\": {\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}, \"seq\": null}","kind":"store_restored","row":"{\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}"}
+{"entry":"{\"row\": {\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}, \"seq\": \"7\"}","kind":"store_restored","row":"{\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}"}
+{"entry":"{\"row\": {\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}, \"seq\": [7]}","kind":"store_restored","row":"{\"seq\": 1180591620717411303424, \"mac\": \"\\udcff\"}"}
+{"entry":"{\"row\": {\"seq\": -9223372036854775809}}","kind":"store_restored","row":"{\"seq\": -9223372036854775809}"}
+{"entry":"{\"row\": {\"seq\": -9223372036854775809}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": -9223372036854775809}"}
+{"entry":"{\"row\": {\"seq\": -9223372036854775809}, \"seq\": true}","kind":"store_restored","row":"{\"seq\": -9223372036854775809}"}
+{"entry":"{\"row\": {\"seq\": -9223372036854775809}, \"seq\": 7.0}","kind":"store_restored","row":"{\"seq\": -9223372036854775809}"}
+{"entry":"{\"row\": {\"seq\": -9223372036854775809}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": -9223372036854775809}"}
+{"entry":"{\"row\": {\"seq\": -9223372036854775809}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -9223372036854775809}"}
+{"entry":"{\"row\": {\"seq\": -9223372036854775809}, \"seq\": null}","kind":"store_restored","row":"{\"seq\": -9223372036854775809}"}
+{"entry":"{\"row\": {\"seq\": -9223372036854775809}, \"seq\": \"7\"}","kind":"store_restored","row":"{\"seq\": -9223372036854775809}"}
+{"entry":"{\"row\": {\"seq\": -9223372036854775809}, \"seq\": [7]}","kind":"store_restored","row":"{\"seq\": -9223372036854775809}"}
+{"entry":"{\"row\": {\"seq\": 0, \"mac\": \"\"}}","kind":"store_restored","row":"{\"seq\": 0, \"mac\": \"\"}"}
+{"entry":"{\"row\": {\"seq\": 0, \"mac\": \"\"}, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 0, \"mac\": \"\"}"}
+{"entry":"{\"row\": {\"seq\": 0, \"mac\": \"\"}, \"seq\": true}","kind":"store_restored","row":"{\"seq\": 0, \"mac\": \"\"}"}
+{"entry":"{\"row\": {\"seq\": 0, \"mac\": \"\"}, \"seq\": 7.0}","kind":"store_restored","row":"{\"seq\": 0, \"mac\": \"\"}"}
+{"entry":"{\"row\": {\"seq\": 0, \"mac\": \"\"}, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 0, \"mac\": \"\"}"}
+{"entry":"{\"row\": {\"seq\": 0, \"mac\": \"\"}, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": 0, \"mac\": \"\"}"}
+{"entry":"{\"row\": {\"seq\": 0, \"mac\": \"\"}, \"seq\": null}","kind":"store_restored","row":"{\"seq\": 0, \"mac\": \"\"}"}
+{"entry":"{\"row\": {\"seq\": 0, \"mac\": \"\"}, \"seq\": \"7\"}","kind":"store_restored","row":"{\"seq\": 0, \"mac\": \"\"}"}
+{"entry":"{\"row\": {\"seq\": 0, \"mac\": \"\"}, \"seq\": [7]}","kind":"store_restored","row":"{\"seq\": 0, \"mac\": \"\"}"}
+{"entry":"{\"row\": [5]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": [5], \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"row\": [5], \"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": [5], \"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": [5], \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"row\": [5], \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"row\": [5], \"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": [5], \"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": [5], \"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": \"row\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": \"row\", \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"row\": \"row\", \"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": \"row\", \"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": \"row\", \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"row\": \"row\", \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"row\": \"row\", \"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": \"row\", \"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": \"row\", \"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": 5}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": 5, \"seq\": 7}","kind":"store_restored","row":"{\"seq\": 7}"}
+{"entry":"{\"row\": 5, \"seq\": true}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": 5, \"seq\": 7.0}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": 5, \"seq\": 18446744073709551616}","kind":"store_restored","row":"{\"seq\": 18446744073709551616}"}
+{"entry":"{\"row\": 5, \"seq\": -1}","kind":"store_restored","row":"{\"seq\": -1}"}
+{"entry":"{\"row\": 5, \"seq\": null}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": 5, \"seq\": \"7\"}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": 5, \"seq\": [7]}","kind":"store_restored","row":"null"}
+{"entry":"{\"kind\": \"rekey\", \"kind\": \"history_accepted\"}","kind":"history_accepted","row":"null"}
+{"entry":"{\"kind\": \"history_accepted\", \"kind\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": 1}, \"row\": null, \"seq\": 3}","kind":"store_restored","row":"{\"seq\": 3}"}
+{"entry":"{\"row\": {\"seq\": \"x\", \"seq\": 4, \"mac\": \"m\", \"mac\": 9}}","kind":"store_restored","row":"{\"seq\": 4}"}
+{"entry":"{\"accepted_history\": true, \"accepted_history\": 1}","kind":"store_restored","row":"null"}
+{"entry":"{}","kind":"store_restored","row":"null"}
+{"entry":"{\"row\": {\"seq\": 1}, \"kind\": \"history_accepted\", \"seq\": 2}","kind":"history_accepted","row":"{\"seq\": 1}"}
