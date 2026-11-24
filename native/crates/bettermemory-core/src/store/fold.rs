@@ -1588,10 +1588,10 @@ impl StoreFile {
             if !is_mutation(&kind) {
                 continue;
             }
-            let payload = match cell(get(4)?)? {
-                Cell::Text(t) => t,
-                _ => return Err(FoldError::Raised("TypeError")),
-            };
+            // `str(raw[4])` (`log._row`): a payload that is not text is
+            // its `str()`, which `json.loads` then refuses or reads as
+            // something that is no object; either is the row's problem.
+            let payload = cell(get(4)?)?.py_str();
             let mac = cell(get(6)?)?.py_str();
             batch.rows.push((seq, kind, payload, mac));
         }
@@ -2043,9 +2043,9 @@ impl OneRead<'_, '_> {
         })
     }
 
-    /// The rows after `after`, at most `batch`, each with whether its
-    /// payload is text.
-    fn read(&self, after: i64) -> Result<Vec<(LogRow, bool)>, StoreError> {
+    /// The rows after `after`, at most `batch`. A payload that is not
+    /// text is its `str()`, as `log._row` reads it.
+    fn read(&self, after: i64) -> Result<Vec<LogRow>, StoreError> {
         self.timed(|| {
             let mut statement = self
                 .store
@@ -2054,8 +2054,7 @@ impl OneRead<'_, '_> {
             let mut rows = statement.query(rusqlite::params![after, self.batch])?;
             let mut out = Vec::new();
             while let Some(row) = rows.next()? {
-                let text = matches!(row.get_ref(4)?, ValueRef::Text(_));
-                out.push((log_row(row)?, text));
+                out.push(log_row(row)?);
             }
             Ok(out)
         })
@@ -2064,15 +2063,9 @@ impl OneRead<'_, '_> {
     /// Hand a row to the fold: a mutation row is kept, and applied with
     /// its batch when the batch is full, unless it was read in the final
     /// snapshot (`defer`: applied after the snapshot ends).
-    fn take(&self, row: &LogRow, text: bool, defer: bool) {
+    fn take(&self, row: &LogRow, defer: bool) {
         let mut feed = self.feed.borrow_mut();
         if feed.raised.is_some() || !is_mutation(&row.kind) {
-            return;
-        }
-        if !text {
-            // A mutation kind whose payload is not text: `json.loads`
-            // of it raises.
-            feed.raised = Some(FoldError::Raised("TypeError"));
             return;
         }
         feed.pending.push((
@@ -2160,7 +2153,7 @@ impl LogSource for OneRead<'_, '_> {
                 // Outside a snapshot this pass holds: a test's edit.
                 (self.between.borrow_mut())();
             }
-            for (row, text) in &rows {
+            for row in &rows {
                 if row.seq > self.cap.get() && row.kind == crate::log::REKEY {
                     return Err(StoreError::Changed);
                 }
@@ -2171,9 +2164,9 @@ impl LogSource for OneRead<'_, '_> {
                 if let Err(e) = visit(row) {
                     return Ok(Err(e));
                 }
-                self.take(row, *text, defer);
+                self.take(row, defer);
             }
-            if let Some((row, _)) = rows.last() {
+            if let Some(row) = rows.last() {
                 after = row.seq;
             }
             if short {
