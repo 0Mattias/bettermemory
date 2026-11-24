@@ -129,16 +129,35 @@ pub(crate) fn rows_of(
     params: &[&dyn ToSql],
 ) -> Result<Vec<Row>, ReadError> {
     let mut statement = conn.prepare_cached(sql)?;
-    prepared_rows(&mut statement, params)
+    Ok(prepared_rows(&mut statement, params)?)
 }
 
 fn prepared_rows(
     statement: &mut Statement<'_>,
     params: &[&dyn ToSql],
-) -> Result<Vec<Row>, ReadError> {
+) -> Result<Vec<Row>, StoreError> {
+    let mut out = Vec::new();
+    each_row::<StoreError>(statement, params, |row| {
+        out.push(row);
+        Ok(())
+    })?;
+    Ok(out)
+}
+
+/// Each row of `statement` over `params` through `each` as it is fetched,
+/// as a loop over a `sqlite3` cursor sees them: a row is decoded, then
+/// handled, before the next one is decoded, so what `each` raises for a
+/// row comes before a later row's text that is not UTF-8.
+fn each_row<E>(
+    statement: &mut Statement<'_>,
+    params: &[&dyn ToSql],
+    mut each: impl FnMut(Row) -> Result<(), E>,
+) -> Result<(), E>
+where
+    E: From<StoreError> + From<rusqlite::Error>,
+{
     let mut rows = statement.query(params)?;
     let mut names = None;
-    let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         // sqlite3_step may have recompiled a cached SELECT * after a schema
         // change. Take the names from the statement that produced this row.
@@ -152,9 +171,9 @@ fn prepared_rows(
         for (i, name) in names.iter().enumerate() {
             columns.push((name.clone(), sql_value(row.get_ref(i)?)?));
         }
-        out.push(Row { columns });
+        each(Row { columns })?;
     }
-    Ok(out)
+    Ok(())
 }
 
 fn first_row(conn: &Connection, sql: &str, key: &str) -> Result<Option<Row>, ReadError> {
@@ -175,13 +194,6 @@ pub(crate) fn py_text(value: &SqlValue) -> Result<String, ReadError> {
 /// `row[name]` of a row whose statement names the column.
 pub(crate) fn col<'r>(row: &'r Row, name: &str) -> &'r SqlValue {
     row.get(name).unwrap_or(&SqlValue::Null)
-}
-
-fn int_of(value: &SqlValue) -> Result<i64, ReadError> {
-    match value {
-        SqlValue::Integer(i) => Ok(*i),
-        _ => Err(ReadError::NotPorted("int() of a value that is not an int")),
-    }
 }
 
 fn to_memory(row: &Row) -> Result<Memory, ReadError> {
@@ -280,6 +292,20 @@ fn marks(n: usize) -> String {
 /// `rowids`, each once, in the order first asked, without the signed
 /// row's fields; unknown row numbers skipped.
 pub fn light_many(conn: &Connection, rowids: &[i64]) -> Result<Vec<Memory>, ReadError> {
+    light_many_with(conn, rowids, to_memory)
+}
+
+/// [`light_many`]'s read, each row through `convert` as it is filed: the
+/// search pool reads its records by the same statements, into the
+/// ranker's record.
+pub(super) fn light_many_with<T, E>(
+    conn: &Connection,
+    rowids: &[i64],
+    mut convert: impl FnMut(&Row) -> Result<T, E>,
+) -> Result<Vec<T>, E>
+where
+    E: From<StoreError> + From<rusqlite::Error>,
+{
     let wanted = dedup(rowids);
     let mut found = std::collections::HashMap::new();
     for chunk in wanted.chunks(BATCH) {
@@ -289,10 +315,21 @@ pub fn light_many(conn: &Connection, rowids: &[i64]) -> Result<Vec<Memory>, Read
             marks(chunk.len())
         );
         let params: Vec<&dyn ToSql> = chunk.iter().map(|r| r as &dyn ToSql).collect();
-        for row in rows_of(conn, &sql, &params)? {
-            let memory = to_memory(&row)?;
-            found.insert(int_of(col(&row, "rid"))?, memory);
-        }
+        let mut statement = conn.prepare_cached(&sql)?;
+        each_row::<E>(&mut statement, &params, |row| {
+            let value = convert(&row)?;
+            // `int(row["rid"])`: the row number, an integer in every row.
+            let SqlValue::Integer(rid) = col(&row, "rid") else {
+                return Err(StoreError::Type {
+                    table: "memories",
+                    column: "rowid",
+                    found: "non-integer",
+                }
+                .into());
+            };
+            found.insert(*rid, value);
+            Ok(())
+        })?;
     }
     Ok(wanted.iter().filter_map(|r| found.remove(r)).collect())
 }

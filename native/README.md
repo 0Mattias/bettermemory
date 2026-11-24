@@ -6422,9 +6422,10 @@ never trusted. The reader keeps the rows' admission inputs keyed by the
 memory head and that fingerprint, and reads each term's hits from the
 index on every call. The reference reads pool records with
 `seed_tokens=index_spelled_here()` (token streams split from `body_fts`
-where the log's tokenizer stamp is this build's); this port tokenizes the
-body, which agrees wherever `body_fts` is the stamped tokenizer's
-spelling of the body, as on every row the reference writes. `rank`'s
+where the log's tokenizer stamp is this build's); this port reads the
+stamp as the reference does and tokenizes the body, which agrees wherever
+`body_fts` is the stamped tokenizer's spelling of the body, as on every
+row the reference writes. `rank`'s
 half-life (30 days) and lane (on) are constants because
 `config.FIXED_SETTINGS` fixes both. A scope list holding anything but
 strings is refused (TypeError); `int()` of a digest row's number or
@@ -23287,6 +23288,152 @@ that git dies on, or that git reads as another path:
 `golden_gitfile_leaves_posix.rs` (`gitfile_leaves_posix.jsonl`, 32 trees,
 through `MemFs` and `StdFs`, class i on unix; `gitfile_leaves_not_posix.rs`
 records the gap as os), `gitfile_leaves_robustness.rs` (9 tests).
+
+## The store connection's statement cache, by reader (ENG-407)
+
+The reference's `sqlite3` connection keeps the statements it prepared, by
+SQL text: 128 of them (`sqlite3.connect`'s default, which `_connect` and
+`connect_read_only` leave as it is), the least recently used one dropped
+for a new one. Every `self._conn.execute` goes through it. A caller sees
+it in one place: SQLite clears a connection's last error when it prepares
+a statement, and `sqlite3` reads that error when a bound value fails to
+convert. A full-record lookup whose statement is still held and whose id
+does not encode raises the connection's last database error with the
+UnicodeEncodeError as its context; one whose statement was dropped is
+prepared again and raises the UnicodeEncodeError alone
+(`store::record_reads`, "Search request arguments and full records"). So
+the reads a connection served since the lookup, counted by their distinct
+SQL texts, decide the class of a later request's exception: the lookup is
+dropped by the 128th.
+
+An owned store's connection holds 128 statements (`StoreFile::open`,
+`open_for_writing`), and a connection the caller lends keeps the capacity
+the caller gave it. The readers below take their statements from it
+(`Connection::prepare_cached`), each with the text the reference sends,
+so each counts as it does there:
+
+| Reader | Reference | Distinct texts a call sends |
+|---|---|---|
+| `Provenance::provenance_for`, `episode_provenance` | `store_provenance.py:27-63`, `244-265` | one per batch size (`IN (?,...)`) |
+| `Provenance::pointer_verified` | `store_provenance.py:98-170` | the log row by MAC, for a pointer with no verdict yet |
+| `Provenance::trust_rows` | `store_provenance.py:173-198` | `provenance_for`'s, and the stamps' per batch size |
+| `Provenance::unaccounted_ids`, `provenance_counts`, `links_for` | `store_provenance.py:201-241`, `store_index.py:309-336` | the scan; the scan and the labels; the two link texts |
+| `reads::scope_counts` | `store.py:1853-1874` | one |
+| `event_reads::iter_events`, `iter_events_backward`, `capture_rows`, `session_events_of_kinds` | `store_events.py:242`, `488`, `312`, `395` | one (per number of kinds) |
+| `event_reads::window_floor`, `events_since`, `events_of_kinds` | `store_events.py:459-485`, `429-456`, `342-392` | the window's floor, then the rows from it |
+| `PoolReader::resolve_search_pool` | `handlers/search.py:187-321` | the memory head, the ranking (or the newest rows), the stored tokenizer's read and the records' `IN (?,...)` text, which is `light_many`'s; before the ranking, when the reader does not hold the store's admission inputs, the digest's state, the log row at its mark, its head and its rows (the differences from the reference's count are listed below) |
+
+A statement is put back in the cache when its rows have been read, before
+the reader sends another: `select` collects its rows, and the log row a
+pointer names is read before the segment map is. A reader called while a
+cursor on the same text is open prepares a second statement, as
+`sqlite3`'s `execute` does for a statement in use. A statement prepared
+before a transaction began reads the transaction's rows, and one prepared
+before the schema changed is compiled again by SQLite when it is next
+stepped; the readers name their columns, and the record reads take theirs
+from the row.
+
+The pool reader kept its own statements (a map in `PoolReader`); they are
+the connection's now. For one request on one connection a pool sends as
+many texts as the reference's does where this unit measured it: three
+when the reader holds the admission inputs (the memory head, the ranking,
+the stored tokenizer), seven when it reads them (the digest's state, the
+log row at its mark, its head and its rows besides), and its records by
+the text `light_many` sends for as many rows. It does not count as the
+reference's does across requests and connections: the differences are
+listed below. Two reads changed. The tokenizer the log names is read
+where the reference reads it, before a pool's records and for an empty
+pool too (`index_spelled_here`, `handlers/search.py:321`,
+`store_index.py:301-306`): it is `fold::stored_fingerprint`, whose
+statements are cached for the fold as well, and what it raises a pool
+raises, before anything a record raises; its answer is still not used
+(the pool's notes). And a pool's records are read by `record_reads`'
+batch statement in place of one statement per row. Each row is decoded
+and converted before the next one is decoded, as a loop over a `sqlite3`
+cursor does, so a pool (and `light_many`) raises for the first row that
+fails: a record the model refuses before a later row that is not UTF-8.
+
+`fold::stored_fingerprint` (`pub(super)`, `Result<Option<PyStr>,
+StoreError>`) reads a payload as `_load_json` does (`store_rows.py:98-105`,
+`store_index.py:1090-1096`): NULL names no tokenizer; text is parsed; bytes
+are decoded as `json.loads` decodes them (`json.detect_encoding`: UTF-8
+with or without a BOM, UTF-16 and UTF-32 with a BOM or by their zero
+bytes; `provenance::decode_json_bytes`) and parsed; bytes that do not
+decode and text that is not JSON are a ValueError there and name none
+(meta's copy is read); an integer or a real is TypeError; a payload
+nested past the parser's depth is RecursionError. The reference reads the
+stamp when it opens a store (read only too), so a stamp it cannot read
+fails its open with that exception; `StoreFile::open` does not read it,
+and the first pool or fold raises it. The writer's open has its own read
+of the stamp (`open::stored_tokenizer`), not changed here: it refuses a
+payload in bytes as not ported, and reads a payload nested too deep as
+one that names none, where the reference raises RecursionError.
+
+What a pool sends that is not what the reference sends. Each line gives
+the number of distinct light reads after which a warmed full-record
+lookup is dropped. None of these is changed by this unit.
+
+- A connection opened after another connection of the process drew a
+  pool: native 121, reference 125. The reference keeps a store's
+  admission inputs for the process (`_DOC_FREQS`,
+  `store_index.py:114-169`, `436-455`) and sends three texts;
+  `PoolReader` keeps them in the reader and reads them again, seven.
+  `store::docfreq` ports that memo; the pool does not read through it.
+- A pool for a request that admits much of the store, then one for a
+  request that admits little: native 121, reference 120. The reference
+  sends `... LIMIT ?` for the first and the unlimited ranking for the
+  second (`handlers/search.py:311-320`); the port sends one text.
+- The digest behind the log on a read-only open: native 121, reference
+  113. The reference tries to bring it forward (`BEGIN IMMEDIATE`,
+  `INSERT INTO digest_records`, `ROLLBACK`) and falls back to the memory
+  rows; the port brings it forward in memory.
+- An empty query on a store with no memory row: native 121, reference
+  126. `admitted_rows([])` returns before `_current_inputs`
+  (`store_index.py:698-701`); the port reads the inputs first.
+- A pool ranked with its statistics: native 124, reference 125. The
+  reference memoises each term's hits; the port reads the index for each
+  term.
+- A pool drawn inside a transaction: native 121, reference 125. The
+  reference consults no memo there and decides each row from its own
+  columns (`store_index.py:711-712`).
+
+The first is held on both sides by `store_provenance_cache.rs` (the two
+differ after 122, 123 and 124 light reads). The other five were measured
+in the review of this unit; no test in the tree holds them. Also not the
+reference's, with the same count for the requests measured: the text of
+the digest's head (`MAX(seq) ... IN (?, ?, ?, ?)` for the reference's
+read per kind), of the digest's rows (with `d.id`) and of the newest rows
+(without `LIMIT ? OFFSET ?`). Not measured: rows the inputs do not hold
+(the reference reads them by one `IN (...)` text per batch, the port one
+by one) and an entry the reference brings forward from the log
+(`_advanced_inputs`).
+
+Not from the cache, as before, and not measured by this unit: the segment
+map's reads (`StoreFile::meta`, and its `first`, `rekeys` and `at_seq`,
+which `log::chain_trust` asks once per `Provenance`; the reference asks
+them once per connection, through its cache: four texts), the
+probe of the `log_by_session` hint, and the readers of `store::reads`
+other than `scope_counts`, of `store::digest`, `store::fold` (but for the
+stored tokenizer, above) and the writers.
+
+Tests: `store_provenance_cache.rs`. Each case warms the lookup on a fresh
+connection, sends `n` distinct `light_many` (or provenance) texts, calls
+one reader, fails a read and asks for an id that does not encode, for
+five `n` around the reader's boundary, on `store_files.jsonl`'s signed
+``intact`` base. `each_reader_counts_its_statements` holds each reader to
+its count; `the_reference_evicts_at_the_same_reads` runs the same plan
+through the reference's public `Store` on the same file
+(`BM_REFERENCE_PYTHON`) and compares every answer. Both hold the pool
+after another connection's to its two counts, as the one known
+difference. The other tests hold a lent connection's capacity, a store
+opened for writing to the same count, a read under an open cursor, a read
+inside a transaction and after the schema changed. On stores edited
+after their digest was made current, each natively and against the
+reference: the `store_created` payload as bytes in seven spellings (a
+pool's count, a pool's records and the fold's report); a stored tokenizer
+that cannot be read, with a record the model refuses (the pool raises the
+stamp's exception, which the reference's open raises); and two records
+that fail differently, in both orders.
 
 ## A record's provenance, read
 

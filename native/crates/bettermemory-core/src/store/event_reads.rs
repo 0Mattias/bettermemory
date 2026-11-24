@@ -121,7 +121,7 @@ fn walk<T>(
 ) -> Read<T> {
     let mut out = Read::empty();
     let run = (|| -> Result<(), EventReadError> {
-        let mut stmt = conn.prepare(sql)?;
+        let mut stmt = conn.prepare_cached(sql)?;
         let mut rows = stmt.query(params)?;
         while let Some(row) = rows.next()? {
             if let Some(item) = each(row)? {
@@ -239,7 +239,7 @@ pub fn window_floor(
         params.push(head);
     }
     let ask = |sql: &str| -> rusqlite::Result<SqlValue> {
-        conn.query_row(sql, params.as_slice(), |r| {
+        conn.prepare_cached(sql)?.query_row(params.as_slice(), |r| {
             sql_value(r.get_ref(0)?).map_err(|_| rusqlite::Error::InvalidQuery)
         })
     };

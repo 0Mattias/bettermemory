@@ -350,7 +350,7 @@ impl<'a> Provenance<'a> {
             return Ok(Some(*cached));
         }
         let conn = self.file.connection();
-        let mut statement = conn.prepare(
+        let mut statement = conn.prepare_cached(
             "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log WHERE mac = ?",
         )?;
         let mut rows = statement.query([log_mac.as_str()])?;
@@ -365,6 +365,9 @@ impl<'a> Provenance<'a> {
             None => None,
         };
         drop(rows);
+        // Back in the connection's cache before the segment map is read, as
+        // the reference's cursor is spent by `fetchone` before `_segment_for`.
+        drop(statement);
         let mut verdict = false;
         if let Some(raw) = raw {
             if raw[3].py_str() == kind {
@@ -497,7 +500,7 @@ impl<'a> Provenance<'a> {
         width: usize,
     ) -> Result<Vec<Vec<SqlValue>>, ProvenanceError> {
         let conn = self.file.connection();
-        let mut statement = conn.prepare(sql)?;
+        let mut statement = conn.prepare_cached(sql)?;
         let mut rows = statement.query(rusqlite::params_from_iter(params.iter()))?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {

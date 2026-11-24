@@ -40,7 +40,8 @@ use super::rows::{
     SPECS, VERIFICATION_LISTS,
 };
 use super::{
-    bytes_repr, log_row, KeyLoader, StoreError, StoreFile, LOAD_TRIES, LOG_SELECT, VERIFY_BATCH,
+    bytes_repr, log_row, sql_value, KeyLoader, SqlValue, StoreError, StoreFile, LOAD_TRIES,
+    LOG_SELECT, VERIFY_BATCH,
 };
 use crate::json::{self, LoadError};
 use crate::lexicon;
@@ -1396,32 +1397,43 @@ fn sorted(mut labels: Vec<Label>) -> Vec<Label> {
     labels
 }
 
-/// `store_index.stored_fingerprint`.
-fn stored_fingerprint(conn: &Connection) -> Result<Option<PyStr>, FoldError> {
+/// `store_index.stored_fingerprint`. Its two statements are the
+/// connection's cached ones, as the reference's are its `sqlite3`
+/// connection's: the fold and a search pool (`index_spelled_here`) send
+/// the same texts.
+pub(super) fn stored_fingerprint(conn: &Connection) -> Result<Option<PyStr>, StoreError> {
     let mut named: Option<(i64, PyStr)> = None;
     for (kind, key) in [
         ("index_rebuilt", "new_fingerprint"),
         ("store_created", "tokenizer_fingerprint"),
     ] {
-        let mut statement = conn
-            .prepare("SELECT seq, payload FROM log WHERE kind = ? ORDER BY seq DESC LIMIT 1")
-            .map_err(StoreError::from)?;
-        let mut rows = statement.query([kind]).map_err(StoreError::from)?;
-        let Some(row) = rows.next().map_err(StoreError::from)? else {
+        let mut statement = conn.prepare_cached(
+            "SELECT seq, payload FROM log WHERE kind = ? ORDER BY seq DESC LIMIT 1",
+        )?;
+        let mut rows = statement.query([kind])?;
+        let Some(row) = rows.next()? else {
             continue;
         };
-        let seq = match cell(row.get_ref(0).map_err(StoreError::from)?)? {
-            Cell::Int(i) => i,
-            _ => return Err(FoldError::Raised("TypeError")),
+        let seq = match sql_value(row.get_ref(0)?)? {
+            SqlValue::Integer(i) => i,
+            _ => return Err(PyError::TypeError.into()),
         };
-        let payload = match cell(row.get_ref(1).map_err(StoreError::from)?)? {
-            Cell::Null => None,
-            Cell::Text(t) => match json::loads_detailed(&unicode::cps(&t)) {
-                Ok(v) => Some(v),
-                Err(LoadError::Recursion) => return Err(FoldError::Raised("RecursionError")),
-                Err(_) => None,
-            },
-            _ => return Err(FoldError::Raised("TypeError")),
+        // `_load_json(row[1], None)`: None for NULL, else `json.loads`,
+        // which takes a str, or bytes in the encoding it detects
+        // (`json.detect_encoding`: UTF-8 with or without a BOM, UTF-16,
+        // UTF-32), and raises TypeError for a number. Bytes that do not
+        // decode are a ValueError, read as a payload that names none.
+        let text = match sql_value(row.get_ref(1)?)? {
+            SqlValue::Null => None,
+            SqlValue::Text(t) => Some(unicode::cps(&t)),
+            SqlValue::Blob(b) => super::provenance::decode_json_bytes(&b),
+            SqlValue::Integer(_) | SqlValue::Real(_) => return Err(PyError::TypeError.into()),
+        };
+        let payload = match text.as_deref().map(json::loads_detailed) {
+            None => None,
+            Some(Ok(v)) => Some(v),
+            Some(Err(LoadError::Recursion)) => return Err(PyError::RecursionError.into()),
+            Some(Err(_)) => None,
         };
         if let Some(PyValue::Str(value)) = payload.as_ref().and_then(|p| p.get(key)) {
             if named.as_ref().is_none_or(|(s, _)| seq > *s) {
@@ -1432,16 +1444,10 @@ fn stored_fingerprint(conn: &Connection) -> Result<Option<PyStr>, FoldError> {
     if let Some((_, value)) = named {
         return Ok(Some(value));
     }
-    let mut statement = conn
-        .prepare("SELECT value FROM meta WHERE key = ?")
-        .map_err(StoreError::from)?;
-    let mut rows = statement
-        .query(["tokenizer_fingerprint"])
-        .map_err(StoreError::from)?;
-    match rows.next().map_err(StoreError::from)? {
-        Some(row) => Ok(Some(unicode::cps(
-            &cell(row.get_ref(0).map_err(StoreError::from)?)?.py_str(),
-        ))),
+    let mut statement = conn.prepare_cached("SELECT value FROM meta WHERE key = ?")?;
+    let mut rows = statement.query(["tokenizer_fingerprint"])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(unicode::cps(&sql_value(row.get_ref(0)?)?.py_str()))),
         None => Ok(None),
     }
 }
@@ -1603,7 +1609,7 @@ impl StoreFile {
         } else {
             read_shape(conn)?
         };
-        let fingerprint = stored_fingerprint(conn);
+        let fingerprint = stored_fingerprint(conn).map_err(FoldError::from);
         let drift = match &fingerprint {
             Ok(f) => *f != Some(unicode::cps(&lexicon::python_tokenizer_fingerprint())),
             Err(_) => false,

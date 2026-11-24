@@ -42,8 +42,9 @@
 //! - The reference reads a pool's records with `seed_tokens` set to
 //!   `index_spelled_here()`: where the tokenizer stamp the log names is
 //!   this build's, each record's token streams are split from its row's
-//!   `body_fts` instead of tokenizing its body. This port tokenizes the
-//!   body always. The two agree wherever `body_fts` is
+//!   `body_fts` instead of tokenizing its body. This port reads the stamp
+//!   where the reference does (its statements, and what they raise) and
+//!   tokenizes the body always. The two agree wherever `body_fts` is
 //!   `fts_index_text(body)` under the stamped tokenizer, which every row
 //!   the reference writes is; a row whose `body_fts` was spelled otherwise
 //!   under a matching stamp would rank differently. Where the stamp names
@@ -65,7 +66,7 @@ use super::digest::{self, DIGEST_KINDS};
 use super::{sql_value, SqlValue, StoreError, StoreFile};
 use crate::datetime::DateTime;
 use crate::pyvalue::{PyError, PyValue};
-use crate::records::rows::{self, Row};
+use crate::records::rows;
 use crate::records::RecordError;
 use crate::search::num::int_true_div;
 use crate::search::{Corpus, CorpusStats, Hit, Mode, Options, Record, SearchError};
@@ -238,13 +239,16 @@ type Memo = (MemoryHead, Option<String>, Rc<Inputs>);
 /// What a ranking's statistics calls are shown: the terms and the answer.
 pub type StatsSeen<'a> = &'a mut dyn FnMut(&[String], &Option<CorpusStats>);
 
-/// Reads pools from one open store. It keeps the statements it prepares
+/// Reads pools from one open store. Its statements are the connection's:
+/// each is prepared once and kept in the store's statement cache
 /// (preparing one costs about ten microseconds against this schema, more
-/// than most of a pool's reads), so a caller that draws many pools from a
-/// store holds one reader, as the reference holds one connection.
+/// than most of a pool's reads), where the reference's `sqlite3`
+/// connection keeps its own, so a pool's reads and the store's other
+/// reads share the 128 statements the connection holds. A caller that
+/// draws many pools from a store holds one reader, which keeps the
+/// admission inputs.
 pub struct PoolReader<'s> {
     store: &'s StoreFile,
-    statements: RefCell<HashMap<&'static str, Statement<'s>>>,
     /// The document frequency memo's inputs, the memory head they were
     /// read at (`store_index._current_inputs`) and the digest fingerprint
     /// they were read under: read again after the log's last memory, home
@@ -256,25 +260,20 @@ impl<'s> PoolReader<'s> {
     pub fn new(store: &'s StoreFile) -> PoolReader<'s> {
         PoolReader {
             store,
-            statements: RefCell::new(HashMap::new()),
             memo: RefCell::new(None),
         }
     }
 
-    /// Runs `body` on the statement for `sql`, prepared once.
+    /// Runs `body` on the statement for `sql`, taken from the connection's
+    /// statement cache (prepared when it holds none) and put back when
+    /// `body` returns.
     fn with<T>(
         &self,
         sql: &'static str,
         body: impl FnOnce(&mut Statement<'s>) -> Result<T, rusqlite::Error>,
     ) -> Result<T, rusqlite::Error> {
-        let taken = self.statements.borrow_mut().remove(sql);
-        let mut statement = match taken {
-            Some(s) => s,
-            None => self.store.connection().prepare(sql)?,
-        };
-        let out = body(&mut statement);
-        self.statements.borrow_mut().insert(sql, statement);
-        out
+        let mut statement = self.store.connection().prepare_cached(sql)?;
+        body(&mut statement)
     }
 
     /// `store_digest._mark`: whether the digest has seen the log's last
@@ -547,43 +546,20 @@ impl<'s> PoolReader<'s> {
         )?)
     }
 
-    /// `light_many(rowids)`: each row read into the model (with no
-    /// attestation payload), then into the ranker's record, in the order
-    /// asked; unknown row numbers skipped.
+    /// `light_many(rowids)`: the rows read by the store's light read (one
+    /// statement per batch, the text `Store.light_many` sends for as many
+    /// rows, with no attestation payload), each into the model and then
+    /// into the ranker's record, in the order asked; unknown row numbers
+    /// skipped.
     fn light_many(&self, rowids: &[i64]) -> Result<Vec<Record>, PoolError> {
-        let mut out = Vec::with_capacity(rowids.len());
-        for &rid in rowids {
-            let row = self.with(
-                "SELECT memories.rowid AS rid, memories.*, NULL AS attestation_payload \
-                 FROM memories WHERE rowid = ?",
-                |statement| {
-                    let names: Vec<String> = statement.column_names().map(str::to_owned).collect();
-                    let mut rows = statement.query([rid])?;
-                    let Some(row) = rows.next()? else {
-                        return Ok(None);
-                    };
-                    let mut columns = Vec::with_capacity(names.len());
-                    for (i, name) in names.into_iter().enumerate() {
-                        columns.push((name, sql_value(row.get_ref(i)?)));
-                    }
-                    Ok(Some(columns))
-                },
-            )?;
-            let Some(raw) = row else { continue };
-            let columns = raw
-                .into_iter()
-                .map(|(name, v)| Ok((name, v?)))
-                .collect::<Result<Vec<_>, StoreError>>()?;
-            let memory = rows::memory(&Row { columns }).map_err(PoolError::Record)?;
-            out.push(
-                memory
-                    .to_search_record()
-                    .ok_or(PoolError::Store(StoreError::Py(
-                        PyError::UnicodeEncodeError,
-                    )))?,
-            );
-        }
-        Ok(out)
+        super::record_reads::light_many_with(self.store.connection(), rowids, |row| {
+            let memory = rows::memory(row).map_err(PoolError::Record)?;
+            memory
+                .to_search_record()
+                .ok_or(PoolError::Store(StoreError::Py(
+                    PyError::UnicodeEncodeError,
+                )))
+        })
     }
 
     /// The rows of the inputs `match_expr` matches, as a mask over
@@ -636,6 +612,10 @@ impl<'s> PoolReader<'s> {
                 rowids.push(rid);
             }
         }
+        // `index_spelled_here()`, which the reference asks before it reads
+        // a pool's records, an empty pool's too: the tokenizer the log
+        // names. Its answer is not used here (the module's notes).
+        super::fold::stored_fingerprint(self.store.connection())?;
         let records = self.light_many(&rowids)?;
         Ok(SearchPool {
             reader: self,

@@ -454,7 +454,7 @@ pub fn scope_counts(
     conn: &Connection,
     admit: &mut dyn FnMut(&[PyValue], &SqlValue) -> bool,
 ) -> Result<(usize, Vec<(PyValue, usize)>), ReadError> {
-    let mut statement = conn.prepare(
+    let mut statement = conn.prepare_cached(
         "SELECT m.scopes_json AS scopes_json, h.project AS home_project \
          FROM memories m LEFT JOIN homes h ON h.record_id = m.id",
     )?;
