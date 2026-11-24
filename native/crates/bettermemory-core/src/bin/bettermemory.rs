@@ -2,12 +2,14 @@
 
 use std::io::{self, Write};
 
-use bettermemory_core::argparse::{HelpText, Outcome};
-use bettermemory_core::cli::root::{self, Ended, Fault};
+use bettermemory_core::argparse::help::DefaultHelp;
+use bettermemory_core::argparse::Outcome;
+use bettermemory_core::cli::log_cmd::VerifyArgs;
+use bettermemory_core::cli::root::{self, Fault, Formatted, ProductEnded};
 use bettermemory_core::cli::Exit;
 use bettermemory_core::fsutil::fsdecode;
 use bettermemory_core::json::utf8_text;
-use bettermemory_core::pyvalue::{int_from_str, PyStr, PyValue};
+use bettermemory_core::pyvalue::{int_from_str, PyValue};
 use bettermemory_core::unicode::cps;
 
 fn formatter_width() -> i64 {
@@ -28,46 +30,28 @@ fn formatter_width() -> i64 {
     columns - 2
 }
 
-struct VersionText;
-
-impl HelpText for VersionText {
-    // The canonical product version and program name are single words.
-    // textwrap moves a whole word to the next line if it fits there. For
-    // a word longer than a full line it uses any space left on this line.
-    fn fill(&self, text: &[u32], width: i64) -> Option<PyStr> {
-        let width = usize::try_from(width).ok().filter(|&w| w > 0)?;
-        let mut out = Vec::new();
-        let mut used = 0;
-        for mut word in text.split(|&cp| cp == u32::from(b' ')) {
-            if used > 0 {
-                if used + 1 >= width || (word.len() <= width && used + 1 + word.len() > width) {
-                    out.push(u32::from(b'\n'));
-                    used = 0;
-                } else {
-                    out.push(u32::from(b' '));
-                    used += 1;
-                }
-            }
-            while word.len() > width - used {
-                let (part, rest) = word.split_at(width - used);
-                out.extend_from_slice(part);
-                out.push(u32::from(b'\n'));
-                word = rest;
-                used = 0;
-            }
-            out.extend_from_slice(word);
-            used += word.len();
-        }
-        Some(out)
-    }
-}
-
 fn unavailable(feature: &str) -> Exit {
     Exit {
         code: 2,
         stderr: cps(&format!(
             "bettermemory: {feature} is unavailable in this native build\n"
         )),
+    }
+}
+
+/// `bettermemory log verify`, where this build has the command.
+#[cfg(unix)]
+fn log_verify(args: VerifyArgs, parser: &Formatted<'_>) -> Outcome {
+    bettermemory_core::cli::log_verify::verify(&args, parser, env!("BETTERMEMORY_VERSION"))
+}
+
+#[cfg(not(unix))]
+fn log_verify(_: VerifyArgs, _: &Formatted<'_>) -> Outcome {
+    let Exit { code, stderr } = unavailable("log verify");
+    Outcome {
+        code,
+        stdout: Vec::new(),
+        stderr,
     }
 }
 
@@ -87,17 +71,17 @@ fn run() -> io::Result<i32> {
         .skip(1)
         .map(|arg| fsdecode(&arg))
         .collect();
-    let result = root::main(
+    let result = root::product_main(
         &argv,
         env!("BETTERMEMORY_VERSION"),
-        &[],
         formatter_width(),
-        &VersionText,
+        &DefaultHelp,
         |_| 2,
         || unavailable("the stdio shim"),
+        log_verify,
     );
     let exit = match result {
-        Ok(Ended::Parser(Outcome {
+        Ok(ProductEnded::Parser(Outcome {
             code,
             stdout,
             stderr,
@@ -105,8 +89,25 @@ fn run() -> io::Result<i32> {
             write_text(io::stdout().lock(), &stdout)?;
             Exit { code, stderr }
         }
-        Ok(Ended::Shim(exit) | Ended::Ran { exit, .. }) => exit,
-        Ok(Ended::Hook(code)) => Exit {
+        // A command's stderr is what it logged while it worked, and the
+        // line it ended on when it wrote no report: both are written
+        // before the report, as the reference writes them, so the two
+        // streams read in that order where they share a terminal or a
+        // file, and a report nobody reads does not lose the warnings.
+        Ok(ProductEnded::Log(Outcome {
+            code,
+            stdout,
+            stderr,
+        })) => {
+            write_text(io::stderr().lock(), &stderr)?;
+            write_text(io::stdout().lock(), &stdout)?;
+            Exit {
+                code,
+                stderr: Vec::new(),
+            }
+        }
+        Ok(ProductEnded::Shim(exit)) => exit,
+        Ok(ProductEnded::Hook(code)) => Exit {
             code,
             ..unavailable("the hook client")
         },

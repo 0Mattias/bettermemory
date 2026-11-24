@@ -18,7 +18,7 @@
 //!   same on the same file; the store file and the `-wal` are unchanged;
 //! - a WAL-mode file without both (a closed store), or a `-wal` without its
 //!   `-shm`, is copied first into a private directory (owner-only, under
-//!   `std::env::temp_dir()`), file and `-wal` together, taken again when
+//!   the directory `tempfile.gettempdir()` chooses), file and `-wal` together, taken again when
 //!   either changed while it was copied (inode, size, mtime), at most three
 //!   times; the copy is read `mode=ro&immutable=1`, or `mode=ro` when a
 //!   `-wal` came with it. On POSIX the copy's names are removed once the
@@ -357,14 +357,132 @@ struct Scratch {
 /// An I/O error with the step that failed and what it touched named, never
 /// a host path: a failure on a platform no one runs here says which call.
 fn step<T>(what: &str, result: io::Result<T>) -> io::Result<T> {
-    result.map_err(|e| io::Error::new(e.kind(), format!("{what}: {e}")))
+    step_at(what, None, result)
+}
+
+/// [`step`] for a call on a named file: the failure keeps the file and the
+/// system's error number beside the step, for a caller that words it as
+/// the reference's OSError does. Its text is [`step`]'s.
+fn step_at<T>(what: &str, path: Option<&Path>, result: io::Result<T>) -> io::Result<T> {
+    result.map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            Stepped {
+                what: what.to_owned(),
+                errno: e.raw_os_error(),
+                path: path.map(Path::to_path_buf),
+                text: e.to_string(),
+            },
+        )
+    })
+}
+
+/// What [`step`] keeps of a failed call: the step, the system's error
+/// number where the call gave one, and the file it was made on where the
+/// reference's own error names that file.
+// Read by the command that words a failed open (`cli::log_verify`), which
+// is POSIX's until the store's selection is ported for Windows.
+#[cfg_attr(not(unix), allow(dead_code))]
+#[derive(Debug)]
+pub(crate) struct Stepped {
+    pub(crate) what: String,
+    pub(crate) errno: Option<i32>,
+    pub(crate) path: Option<PathBuf>,
+    text: String,
+}
+
+impl std::fmt::Display for Stepped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.what, self.text)
+    }
+}
+
+impl std::error::Error for Stepped {}
+
+/// `store_index.stored_fingerprint` for a caller outside the store: the
+/// tokenizer the store's index text is spelled by, as its log names it.
+// Called by the command's read-only open (`cli::log_verify`), POSIX's
+// until the store's selection is ported for Windows.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) fn stored_tokenizer(conn: &Connection) -> Result<Option<PyStr>, StoreError> {
+    fold::stored_fingerprint(conn)
+}
+
+/// The step whose failure means the store file is not there.
+pub(crate) const RESOLVE_STEP: &str = "resolve the store's path";
+
+/// `tempfile.gettempdir()`: the first of `TMPDIR`, `TEMP` and `TMP` (each
+/// when set and not empty), `/tmp`, `/var/tmp`, `/usr/tmp` and the working
+/// directory in which a file can be created, written and removed; chosen
+/// once a process, as the reference keeps `tempfile.tempdir`. With none
+/// usable the system's own answer stands, and the step that needs it says
+/// why it failed.
+#[cfg(unix)]
+fn temp_base() -> PathBuf {
+    static BASE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BASE.get_or_init(|| {
+        let cwd = std::env::current_dir().ok();
+        let absolute = |dir: PathBuf| match (&cwd, dir.is_absolute()) {
+            (_, true) => Some(dir),
+            (Some(cwd), false) => Some(cwd.join(dir)),
+            (None, false) => None,
+        };
+        let named = ["TMPDIR", "TEMP", "TMP"]
+            .into_iter()
+            .filter_map(std::env::var_os)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let fixed = ["/tmp", "/var/tmp", "/usr/tmp"]
+            .into_iter()
+            .map(PathBuf::from);
+        named
+            .chain(fixed)
+            .filter_map(absolute)
+            .chain(cwd.clone())
+            .find(|dir| usable_temp(dir))
+            .unwrap_or_else(std::env::temp_dir)
+    })
+    .clone()
+}
+
+#[cfg(not(unix))]
+fn temp_base() -> PathBuf {
+    std::env::temp_dir()
+}
+
+/// `tempfile._get_default_tempdir`'s probe of one candidate: a new file
+/// made there owner-only, written and removed.
+#[cfg(unix)]
+fn usable_temp(dir: &Path) -> bool {
+    use std::io::Write;
+    for _ in 0..100 {
+        let n = SCRATCH_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
+        let probe = dir.join(format!(
+            "bettermemory-native-probe-{}-{nanos:x}-{n}",
+            std::process::id()
+        ));
+        match owner_only().open(&probe) {
+            Ok(mut file) => {
+                let written = file.write_all(b"blat");
+                drop(file);
+                let _ = fs::remove_file(&probe);
+                return written.is_ok();
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 /// A new 0700 directory under the temp dir named with `prefix`, made with
 /// `mkdir`, which fails when the name exists: never a directory another
 /// user made first.
 fn exclusive_dir(prefix: &str) -> io::Result<PathBuf> {
-    let base = std::env::temp_dir();
+    let base = temp_base();
     for _ in 0..100 {
         let n = SCRATCH_COUNTER.fetch_add(1, Ordering::Relaxed);
         let nanos = std::time::SystemTime::now()
@@ -471,7 +589,7 @@ fn private_dir() -> io::Result<Scratch> {
 /// that have no lock file and are over an hour old; and this user's
 /// [`UNLOCKED_PREFIX`] directories over an hour old. Returns how many.
 pub fn sweep_private_copies() -> usize {
-    let base = std::env::temp_dir();
+    let base = temp_base();
     let Ok(entries) = fs::read_dir(&base) else {
         return 0;
     };
@@ -546,8 +664,16 @@ fn copy_owner_only(what: &str, source: &Path, target: &Path) -> io::Result<()> {
         &format!("create the {what} copy"),
         owner_only().open(target),
     )?;
-    let mut input = step(&format!("open the {what} to copy"), fs::File::open(source))?;
-    step(&format!("copy the {what}"), io::copy(&mut input, &mut out))?;
+    let mut input = step_at(
+        &format!("open the {what} to copy"),
+        Some(source),
+        fs::File::open(source),
+    )?;
+    step_at(
+        &format!("copy the {what}"),
+        Some(source),
+        io::copy(&mut input, &mut out),
+    )?;
     Ok(())
 }
 
@@ -567,8 +693,16 @@ fn copy_unnamed(source: &Path, dir: &Path) -> io::Result<(PathBuf, fs::File)> {
     let named = dir.join("copy");
     let mut out = step("create the unnamed copy", owner_only().open(&named))?;
     step("remove the unnamed copy's name", fs::remove_file(&named))?;
-    let mut input = step("open the store to copy", fs::File::open(source))?;
-    step("copy the store", io::copy(&mut input, &mut out))?;
+    let mut input = step_at(
+        "open the store to copy",
+        Some(source),
+        fs::File::open(source),
+    )?;
+    step_at(
+        "copy the store",
+        Some(source),
+        io::copy(&mut input, &mut out),
+    )?;
     let path = PathBuf::from(format!("/dev/fd/{}", out.as_raw_fd()));
     Ok((path, out))
 }
@@ -731,7 +865,7 @@ impl StoreFile {
     /// (`admission::admit`); a refused file is [`StoreError::Admission`].
     pub fn open(path: &Path) -> Result<StoreFile, StoreError> {
         sweep_private_copies();
-        let resolved = step("resolve the store's path", fs::canonicalize(path))?;
+        let resolved = step_at(RESOLVE_STEP, Some(path), fs::canonicalize(path))?;
         if !resolved.is_file() {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no store file").into());
         }

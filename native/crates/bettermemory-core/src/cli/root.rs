@@ -3,6 +3,7 @@
 //! modules are trait objects ([`Command`]); the hook client, the shim and
 //! the version are arguments.
 
+use super::log_cmd::{self, VerifyArgs};
 use super::{Exit, UsageError};
 use crate::argparse::{
     Arg, ArgumentParser, HelpText, Kind, Namespace, NotPorted, Outcome, Parsed, SpecError,
@@ -210,6 +211,62 @@ pub fn main(
     let mut message = cps("unknown subcommand: ");
     message.extend(repr_str(&cmd));
     Ok(Ended::Parser(parser.error(&message, width)))
+}
+
+/// How the product process ended.
+#[derive(Debug, PartialEq)]
+pub enum ProductEnded {
+    /// `route_hook_word` exited with `hook_main`'s code.
+    Hook(i32),
+    /// The parser exited: help, version, a parse error or the unknown
+    /// subcommand error.
+    Parser(Outcome),
+    /// No subcommand: the shim ran.
+    Shim(Exit),
+    /// `log_cmd.run` ended: what it wrote to each stream and its status.
+    Log(Outcome),
+}
+
+/// `main()` (178-298) over `argv` with the product's own parser
+/// ([`build_product_parser`]): every command is listed, and the ones
+/// whose parser is ported run. `verify` is `_cli_log_verify`.
+///
+/// A hook word first in `argv` goes to `hook_main` before any parser is
+/// built. `hook` reached through the parser (after a `--`) has no arm in
+/// the reference's `main` and ends in its unknown-subcommand error.
+pub fn product_main(
+    argv: &[PyStr],
+    version: &str,
+    width: i64,
+    help: &dyn HelpText,
+    hook_main: impl FnOnce(&[PyStr]) -> i32,
+    shim: impl FnOnce() -> Exit,
+    verify: impl FnOnce(VerifyArgs, &Formatted<'_>) -> Outcome,
+) -> Result<ProductEnded, Fault> {
+    if let Some(code) = route_hook_word(argv, hook_main) {
+        return Ok(ProductEnded::Hook(code));
+    }
+    let parser = build_product_parser(version, width)?;
+    let args = match parser.parse_args(argv, width, help)? {
+        Parsed::Namespace(ns) => ns,
+        Parsed::Exit(o) => return Ok(ProductEnded::Parser(o)),
+    };
+    let cmd = match args.iter().find(|(k, _)| *k == cps("cmd")).map(|(_, v)| v) {
+        Some(PyValue::None) => return Ok(ProductEnded::Shim(shim())),
+        Some(PyValue::Str(c)) => c.clone(),
+        _ => return Err(Fault::NotPorted),
+    };
+    if cmd == cps("log") {
+        let sub = subparser(&parser, &cmd).ok_or(Fault::NotPorted)?;
+        let sub = Formatted { parser: sub, width };
+        return Ok(ProductEnded::Log(log_cmd::run(&args, &sub, help, verify)?));
+    }
+    if cmd == cps("hook") {
+        let mut message = cps("unknown subcommand: ");
+        message.extend(repr_str(&cmd));
+        return Ok(ProductEnded::Parser(parser.error(&message, width)));
+    }
+    Err(Fault::NotPorted)
 }
 
 /// A parser as `main` hands it to a command: its formatter at the width

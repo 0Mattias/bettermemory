@@ -199,6 +199,12 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "argparse_python.jsonl"
         | "argparse_subparsers_python.jsonl"
         | "argparse_help_python.jsonl"
+        // The CLI's help pages and parser errors, as a process (`gen_native_process_menu`).
+        | "native_process_menu_python.jsonl"
+        // `log verify` as a process: its usage errors are `argparse`'s
+        // texts, which 3.11 and 3.12 word otherwise
+        // (`gen_cli_log_verify_process`).
+        | "cli_log_verify_process_posix.jsonl"
         | "json_edges.jsonl"
         | "toml.jsonl"
         // The TypeError's text of an unhashable set element (`gen_use_tokens`).

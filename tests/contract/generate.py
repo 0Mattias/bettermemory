@@ -50,6 +50,7 @@ from . import (
     gen_cli,
     gen_cli_common,
     gen_cli_log_args,
+    gen_cli_log_verify_process,
     gen_cli_registry,
     gen_cli_log_report,
     gen_cli_membership_health,
@@ -59,6 +60,7 @@ from . import (
     gen_key_directory_windows,
     gen_cli_root,
     gen_native_process_entry,
+    gen_native_process_menu,
     gen_config,
     gen_difflib,
     gen_credentials_prefixed,
@@ -439,6 +441,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "cli_root": gen_cli_root.generate,
     "cli_root_python": gen_cli_root.generate_python,
     "native_process_entry": gen_native_process_entry.generate,
+    "native_process_menu_python": gen_native_process_menu.generate,
+    "cli_log_verify_process_posix": gen_cli_log_verify_process.generate,
     "credentials_prefixed": gen_credentials_prefixed.generate,
     "credentials_prefixed_unicode": gen_credentials_prefixed.generate_unicode,
     "credentials_gate": gen_credentials_gate.generate,
@@ -910,8 +914,15 @@ PYTHON_VERSION = "3.13.13"
 #: `Path.resolve` raises RuntimeError out of the checker (`gen_symbols`).
 #: ``project_file_parse_python`` holds `tomllib`'s refusals, whose messages
 #: and `int()` digit limit are the release's (`gen_project_file`).
+#: ``native_process_menu_python`` holds the CLI's help pages and parser
+#: errors as a process prints them, which `argparse` words and wraps by
+#: the release (`gen_native_process_menu`).
 PYTHON_GATED = frozenset(
     {
+        "native_process_menu_python",
+        # Its usage errors are `argparse`'s texts, which 3.11 and 3.12
+        # word otherwise (battery of 2026-11-24: three rows differ).
+        "cli_log_verify_process_posix",
         "argparse_python",
         "argparse_subparsers_python",
         "argparse_help_python",
@@ -1251,6 +1262,8 @@ PLATFORM_GATED = frozenset(
 #: (`gen_store_event_reads`).
 POSIX_ONLY = frozenset(
     {
+        # Real stores, key files and modes under a scratch home.
+        "cli_log_verify_process_posix",
         "store_key_read_paths_posix",
         "external_anchor_files_posix",
         # Real project symlinks and surrogateescaped environment bytes.

@@ -20636,10 +20636,74 @@ The process supplies the CLI root with decoded OS arguments and the
 formatter width from `COLUMNS`, the stdout terminal, or the 80-column
 fallback. `native_process_entry.jsonl` compares the version action on
 the real executable with the shipped Python entry point, including
-abbreviations, narrow widths and option order. The native registry currently
-contains the hook parser. The help formatter, command handlers, hook client
-and stdio shim still await their process bindings. Use the shipped Python
-console script for those operations.
+abbreviations, narrow widths and option order.
+
+The executable parses with the product's own parser
+(`cli::root::build_product_parser`) and formats with
+`argparse::help::DefaultHelp` (`cli::root::product_main`). Root, `log` and
+`log verify` help, the bare `log` menu (the `log` help on stdout, status
+2), every parser error and the hook parser reached past `--` are the
+reference's, compared on the real executable by
+`native_process_menu_python.jsonl` (56 cases, gated on the Python release:
+the texts are `argparse`'s). A hook word first in the arguments still goes
+to the hook route before any parser is built.
+
+`bettermemory log verify [--json] [--anchor FILE]...` runs on POSIX
+(`cli::log_cmd`, `cli::log_verify`). It reads every anchor file first,
+selects the store by the configuration the daemon loads without creating
+one (`cli::common::read_only_store_path`), opens it as `Store.open(path,
+read_only=True)` does (`StoreFile::open`, the meta and version checks, the
+keys directory, the reader's key state with its warnings), runs the chain
+and the fold in one pass (`StoreFile::log_verify_loading`), adds the
+replaced-history rows and the anchors' answers, closes the store and
+writes the report. What the reference writes through `logging` (a store a
+later writer owns, a key that cannot be read, a key ring bound to another
+file) reaches stderr first, one line a record, as the reference's handler
+of last resort writes it, and before the report, so the two read in
+that order where the streams share a destination.
+`cli_log_verify_process_posix.jsonl` (gated on the Python release: its
+usage errors are `argparse`'s) holds 122
+runs of the reference as a child process over real stores (every case of
+`store_files.jsonl` but one, key and binding states, anchors, config and
+directory selection, usage errors) with its status, both streams and the
+names left under its root; `golden_cli_log_verify_process` replays each on
+the executable.
+
+These differences from the reference stand, each on purpose or named
+for a later unit:
+
+- Where the reference ends in an exception nobody catches, Python prints
+  a traceback and exits 1; this build prints one line, `bettermemory: log
+  verify stopped: <what>`, and exits 1
+  (`an_ending_the_reference_leaves_to_a_traceback_is_one_line_and_status_1`).
+- The store of `store_files.jsonl` whose schema text is a BLOB
+  (`blob_sql`) makes the reference raise TypeError out of
+  `store_admission.schema_refusal` (ENG-410); this build refuses the file
+  as it refuses any other store it did not write, with the same status.
+- Both streams are written as UTF-8 whatever the locale or
+  `PYTHONIOENCODING` says (ENG-405), and a closed stdout does not change
+  the status (ENG-406): the reference's status 1 there is a traceback's.
+- Before it opens a store this build removes the private read copies its
+  own earlier runs left under the temp directory when their reader is
+  gone (`store::sweep_private_copies`: this user's
+  `bettermemory-native-read-*` directories). The reference leaves a killed
+  reader's copy where it is.
+- The reference's warning for a directory `flock` cannot lock
+  (`restore_lock.py` 394) is not ported (`store/restore_lock.rs`), so it
+  is missing from stderr on such a filesystem.
+
+The private copy of a closed WAL store is made under the directory
+`tempfile.gettempdir()` would choose (`TMPDIR`, `TEMP`, `TMP`, `/tmp`,
+`/var/tmp`, `/usr/tmp`, the working directory: the first a file can be
+written in), so an unusable `TMPDIR` does not make a healthy store read as
+unreadable. A failure of that copy is worded as the reference's OSError
+is, with the file it happened on.
+
+On Windows `log verify` reports that it is unavailable (the read-only
+store selection is POSIX's). The other commands are listed in the menus
+and report that they are unavailable until their parsers are ported; the
+hook client and the stdio shim still await their process bindings. Use
+the shipped Python console script for those operations.
 
 Read at origin/v9 (7be0e20e); the file is the same in the tree.
 `cli/__init__.py` is 298 lines: imports and the module text (1-70), and
@@ -20738,9 +20802,8 @@ tests are `golden_cli_root` (the same stand-ins in
 
 ### Left for later
 
-The process entry still needs to use the product parser and formatter
-for normal command help. Individual command handlers and the stdio shim
-have their own units.
+Individual command handlers, the hook client and the stdio shim have
+their own units.
 
 ## The credential detectors
 

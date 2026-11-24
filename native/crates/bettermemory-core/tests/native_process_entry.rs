@@ -35,12 +35,13 @@ fn stream_bytes(text: &str) -> Vec<u8> {
     }
 }
 
-#[test]
-fn native_process_entry_every_case() {
-    let name = "native_process_entry.jsonl";
+/// Every row of `name` through the real executable: its status and both
+/// streams, and nothing written under its home, config, store, keys or
+/// state directories.
+fn every_case(test: &str, name: &str, scratch_name: &str) {
     let rows = common::jsonl(name);
-    let dir = scratch("native-process-entry");
-    let mut ledger = Ledger::new("native_process_entry_every_case", name);
+    let dir = scratch(scratch_name);
+    let mut ledger = Ledger::new(test, name);
     ledger.case("header", || {
         assert_eq!(rows[0]["cases"].as_u64(), Some(rows.len() as u64 - 1));
         assert!(rows.len() > 1);
@@ -64,6 +65,27 @@ fn native_process_entry_every_case() {
     }
     assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 0);
     ledger.finish(rows.len());
+}
+
+#[test]
+fn native_process_entry_every_case() {
+    every_case(
+        "native_process_entry_every_case",
+        "native_process_entry.jsonl",
+        "native-process-entry",
+    );
+}
+
+/// The product parser and the default formatter behind the executable:
+/// root, `log` and `log verify` help, the bare `log` menu on stdout with
+/// status 2, parser errors, and `hook` reached through the parser.
+#[test]
+fn native_process_menu_every_case() {
+    every_case(
+        "native_process_menu_every_case",
+        "native_process_menu_python.jsonl",
+        "native-process-menu",
+    );
 }
 
 #[cfg(any(unix, windows))]
@@ -98,8 +120,14 @@ fn reports_unavailable_process_routes() {
     let dir = scratch("native-process-routes");
     for (argv, message) in [
         (vec!["hook", "--version"], "hook client"),
+        (vec!["hook", "--help"], "hook client"),
+        (vec!["session-start"], "hook client"),
         (vec![], "stdio shim"),
-        (vec!["--help", "--version"], "help text"),
+        // Listed in the menus; their parsers are not in this build yet.
+        (vec!["health"], "requested command"),
+        (vec!["log", "export"], "requested command"),
+        (vec!["log", "anchor", "--help"], "requested command"),
+        (vec!["key", "show"], "requested command"),
     ] {
         let out = process(&dir.0).args(argv).output().unwrap();
         assert_eq!(out.status.code(), Some(2));
