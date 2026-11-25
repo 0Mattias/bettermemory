@@ -152,6 +152,9 @@
 //!   `in_batch`, `wrote_record` and the store id);
 //!   `store.py`'s connection leaves and its admitted reads (`store::reads`);
 //!   the finish of a committed key rotation (`store::rotation`); the
+//!   keys a store opened without writing keeps
+//!   (`store::key_read::open_reader`: `_open_connected`'s dispatch,
+//!   `_open_reader`'s read key, `Store.can_verify`); the
 //!   episode journal's reads (`store::journal`); the upgrade's proof
 //!   that no other connection holds the store (`store::upgrade`); the
 //!   document frequency memo with the store's side as a trait

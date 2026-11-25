@@ -209,6 +209,7 @@ from . import (
     gen_store_digest_query,
     gen_store_files,
     gen_store_key_read,
+    gen_store_open_reader,
     gen_store_key_state,
     gen_store_open,
     gen_store_open_upkeep,
@@ -466,6 +467,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_key_read": gen_store_key_read.generate,
     "store_key_read_signed": gen_store_key_read.signed,
     "store_key_read_paths_posix": gen_store_key_read.posix_paths,
+    "store_open_reader": gen_store_open_reader.generate,
+    "store_open_reader_python": gen_store_open_reader.generate_python,
     "store_key_state": gen_store_key_state.generate,
     "store_key_state_signed": gen_store_key_state.signed,
     "store_key_state_warnings": gen_store_key_state.warning_process,
@@ -925,6 +928,10 @@ PYTHON_VERSION = "3.13.13"
 #: 100,000 arrays deep: `json.loads` raises RecursionError where the
 #: interpreter stops recursing, which 3.14 on Linux does not reach
 #: (`gen_store_rotation`).
+#: ``store_open_reader_python`` opens a store as a reader whose origin
+#: anchor or rekey payload is nested 100,000 arrays deep, or whose origin
+#: anchor over 1 MiB is nested 600,000 deep, for the same reason
+#: (`gen_store_open_reader`).
 #: ``argparse_subparsers_python`` is the same for subparsers: the invalid
 #: choice text and the choice listing are worded otherwise before 3.12.
 #: ``log_keyfiles_posix_python``, ``machine_facts_python`` and
@@ -1038,6 +1045,7 @@ PYTHON_GATED = frozenset(
         "location_probe_python",
         "ntrealpath_python",
         "store_rotation_python",
+        "store_open_reader_python",
         "ring_binding_paths",
         "log_keyfiles_posix_python",
         "machine_facts_python",

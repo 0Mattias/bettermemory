@@ -1,5 +1,6 @@
 //! The key ring as observed through an already opened SQLite connection.
 mod diagnostic;
+pub mod open_reader;
 use super::key_state::{
     first_log_row, head_status, KeyState, KeyStateView, KeyStatus, RingFit, StateError,
     WarningError,

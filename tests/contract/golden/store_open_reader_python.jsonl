@@ -1,0 +1,3 @@
+{"case":"anchor-deep-foreign","result":{"raised":"RecursionError"}}
+{"case":"rekey-deep-payload","result":{"raised":"RecursionError"}}
+{"case":"foreign-big-deep-anchor","result":{"raised":"RecursionError"}}
