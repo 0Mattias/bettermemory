@@ -2,8 +2,8 @@
 
 Each family is a pattern of the reference, a method and a text recipe
 under which plain backtracking costs time that grows faster than the
-text: the 33 families of the decision record (pyre-design 2026-11-19,
-``proto_hostile.py``) and three shapes outside the inventory. A row holds
+text: the 33 families of the engine's decision record of 2026-11-19
+(``proto_hostile.py``) and three shapes outside the inventory. A row holds
 the pattern's text and flags as the reference holds them (found anew at
 each generation by the inventory's site scan, ``_pyre_sites``; a family
 whose site is gone fails the generation), the method, the recipe by rule
