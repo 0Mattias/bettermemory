@@ -13,6 +13,7 @@ pub mod cli_root;
 pub mod created;
 pub mod dedup;
 pub mod docfreq_source;
+pub mod docfreq_store;
 pub mod event_reads;
 pub mod gitconfig_file;
 pub mod gitconfig_tree;

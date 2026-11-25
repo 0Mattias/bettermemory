@@ -43,6 +43,7 @@ pub mod create;
 pub mod digest;
 pub mod digest_query;
 pub mod docfreq;
+pub mod docfreq_store;
 pub mod event_reads;
 pub mod exception;
 pub mod fold;
