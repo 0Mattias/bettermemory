@@ -341,6 +341,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store": gen_store.generate,
     "store_docfreq": gen_store_docfreq.generate,
     "store_docfreq_store": gen_store_docfreq_store.generate,
+    "store_docfreq_store_b": gen_store_docfreq_store.generate_b,
+    "store_docfreq_advance": gen_store_docfreq_store.generate_advance,
     "store_schema_steps": gen_store_schema.generate,
     "store_schema_posix": gen_store_schema.generate_posix,
     "store_journal": gen_store_journal.generate,
@@ -777,6 +779,8 @@ UNICODE_GATED = frozenset(
         # append_history_replaced on the created store (`gen_log_segments`).
         "log_replaced_store",
         "store_docfreq_store",
+        "store_docfreq_store_b",
+        "store_docfreq_advance",
         "store_records",
         "store_records_b",
         "store_records_c",
@@ -1095,6 +1099,8 @@ PYDANTIC_GATED = frozenset(
         # append_history_replaced on the created store (`gen_log_segments`).
         "log_replaced_store",
         "store_docfreq_store",
+        "store_docfreq_store_b",
+        "store_docfreq_advance",
         "store_records",
         "store_reads_seams",
         "store_reads_seams_platform",
@@ -1361,6 +1367,8 @@ POSIX_ONLY = frozenset(
         # append_history_replaced on the created store (`gen_log_segments`).
         "log_replaced_store",
         "store_docfreq_store",
+        "store_docfreq_store_b",
+        "store_docfreq_advance",
         "store_records",
         "store_records_b",
         "store_records_c",

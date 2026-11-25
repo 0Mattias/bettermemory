@@ -361,6 +361,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "store_write.jsonl"
         | "store_tx.jsonl"
         | "store_docfreq_store.jsonl"
+        | "store_docfreq_store_b.jsonl"
+        | "store_docfreq_advance.jsonl"
         | "store_records.jsonl"
         | "store_records_b.jsonl"
         | "store_records_c.jsonl"

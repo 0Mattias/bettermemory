@@ -1,6 +1,9 @@
 //! The store's document frequency source against
-//! `store_docfreq_store.jsonl`: every case opened natively from the store
-//! `store_create.json` pins, then each step's tables laid into the file,
+//! `store_docfreq_store.jsonl`, `store_docfreq_store_b.jsonl` and
+//! `store_docfreq_advance.jsonl`: every case opened natively from the store
+//! `store_create.json` pins (each table's columns checked against the
+//! file's header, since a step's rows are laid by position), then each
+//! step's tables laid into the file,
 //! and each question asked through `store::docfreq_store` on the
 //! connection the step names (the owner's; a transaction of its own, one
 //! whose connection rolled back; `query_only`; a second connection holding
@@ -8,9 +11,11 @@
 //! spelling of it; one left inside a transaction no call owns), with one
 //! memo per case. A transaction that commits in the reference commits
 //! here. Compared exactly: every answer (the digest's own `mark`, `rows`
-//! and `head` among them), the memo's keys and terms kept, the digest's
-//! state and rows after, the head checkpoint unchanged, and the warnings
-//! with their classes, codes and messages. POSIX only, as the fixture is;
+//! and `head` among them), the memo's keys and terms kept, each memo
+//! entry's inputs (an entry carried over a moved head by
+//! `_advanced_inputs` among them), the digest's state and rows after, the
+//! head checkpoint unchanged, and the warnings with their classes, codes
+//! and messages. POSIX only, as the fixture is;
 //! `golden_store_docfreq_store_not_posix.rs` records the gap elsewhere.
 
 #![cfg(unix)]
@@ -22,7 +27,8 @@ use bettermemory_core::store::docfreq_store::StoreDocFreq;
 use bettermemory_core::store::open::open_for_writing;
 use bettermemory_core::store::reads::set_busy_timeout;
 use common::docfreq_store::{
-    answers, digest_after, files, head_bytes, lay_step, memo_view, want_warnings, warnings_view,
+    answers, columns_checked, digest_after, entries_as_keyed_here, entries_view, file_cases, files,
+    head_bytes, lay_step, memo_view, want_warnings, warnings_view, FILES,
 };
 use common::opened;
 use common::parity::Ledger;
@@ -41,6 +47,7 @@ fn run(case: &Value, header: &Value) -> Result<usize, String> {
     let provider = opened::provider(header);
     let mut store = open_for_writing(&file, &keys, &provider)
         .map_err(|e| format!("{name}: the open refused: {e}"))?;
+    columns_checked(&file, header).map_err(|e| format!("{name}: the opened tables: {e}"))?;
     let memo = DocFreqMemo::new();
     let mut checked = 0;
     for step in case["steps"].as_array().expect("steps") {
@@ -128,23 +135,17 @@ fn run(case: &Value, header: &Value) -> Result<usize, String> {
         if got != *asks {
             differs.push(format!("answers {got} want {asks}"));
         }
-        // Where the reference carried a memo entry over a moved head
-        // (`_advanced_inputs`, not ported), the native build reads the
-        // inputs again: the entry keeps only the terms asked since, and the
-        // reference's second `digest_mark` warning is not logged. The
-        // fixture holds what the reference answers with that step off
-        // (`memo_fresh`, `warnings_fresh`) where it differs.
-        let fresh = |field: &str| {
-            let again = &step[format!("{field}_fresh").as_str()];
-            if again.is_null() {
-                step[field].clone()
-            } else {
-                again.clone()
-            }
-        };
         let memo_got = memo_view(&memo, &root);
-        if memo_got != fresh("memo") {
-            differs.push(format!("memo {memo_got} want {}", fresh("memo")));
+        if memo_got != step["memo"] {
+            differs.push(format!("memo {memo_got} want {}", step["memo"]));
+        }
+        // Each entry's inputs, field for field (an entry carried over a
+        // moved head among them); a group key's bytes client or model is
+        // its text here, the one stated difference.
+        let entries = entries_view(&memo);
+        let want_entries = entries_as_keyed_here(&step["entries"]);
+        if entries != want_entries {
+            differs.push(format!("entries {entries} want {want_entries}"));
         }
         let digest = digest_after(&file);
         if digest != step["digest"] {
@@ -155,7 +156,7 @@ fn run(case: &Value, header: &Value) -> Result<usize, String> {
         }
         let (w, want) = (
             warnings_view(&warnings, &root),
-            want_warnings(&fresh("warnings")),
+            want_warnings(&step["warnings"]),
         );
         if w != want {
             differs.push(format!("warnings {w} want {want}"));
@@ -168,9 +169,8 @@ fn run(case: &Value, header: &Value) -> Result<usize, String> {
     Ok(checked)
 }
 
-#[test]
-fn every_question_answers_as_the_reference() {
-    let (header, cases) = common::docfreq_store::cases();
+fn check(test: &str, file: &str) {
+    let (header, cases) = file_cases(file);
     let mut failures = Vec::new();
     let mut checked = 0;
     for case in &cases {
@@ -189,13 +189,24 @@ fn every_question_answers_as_the_reference() {
         !failures.is_empty() || checked == want,
         "checked {checked} of {want}"
     );
-    eprintln!(
-        "store_docfreq_store.jsonl: {} cases, {checked} questions checked",
-        cases.len()
+    eprintln!("{file}: {} cases, {checked} questions checked", cases.len());
+    Ledger::new(test, file).settle(cases.len(), &failures);
+}
+
+#[test]
+fn every_question_answers_as_the_reference() {
+    check("every_question_answers_as_the_reference", FILES[0]);
+}
+
+#[test]
+fn every_question_of_the_second_file_answers_as_the_reference() {
+    check(
+        "every_question_of_the_second_file_answers_as_the_reference",
+        FILES[1],
     );
-    let ledger = Ledger::new(
-        "every_question_answers_as_the_reference",
-        "store_docfreq_store.jsonl",
-    );
-    ledger.settle(cases.len(), &failures);
+}
+
+#[test]
+fn every_advanced_entry_answers_as_the_reference() {
+    check("every_advanced_entry_answers_as_the_reference", FILES[2]);
 }

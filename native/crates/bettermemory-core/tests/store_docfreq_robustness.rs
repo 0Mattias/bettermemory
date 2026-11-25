@@ -11,7 +11,7 @@ use std::sync::Arc;
 use bettermemory_core::pyvalue::PyValue;
 use bettermemory_core::store::docfreq::{
     load_scopes, row_mask, AdmissionRow, DocActor, DocFreqError, DocFreqInputs, DocFreqMemo,
-    DocFreqSource, Head, Mask, Ranked,
+    DocFreqSource, Head, Mask, PyInt, Ranked,
 };
 
 struct Rows {
@@ -36,7 +36,7 @@ impl DocFreqSource for Rows {
         let p: Vec<usize> = self
             .hits
             .iter()
-            .filter_map(|r| inputs.index.get(r).copied())
+            .filter_map(|r| inputs.index.get(&PyInt::Small(*r)).copied())
             .collect();
         let m = row_mask(&p, inputs.index.len())?;
         Ok((m.clone(), m))
@@ -50,7 +50,7 @@ fn rows(n: usize, length: i64) -> Rows {
     Rows {
         rows: (0..n)
             .map(|i| AdmissionRow {
-                rid: i as i64,
+                rid: PyInt::Small(i as i64),
                 scopes_text: format!("[\"s{}\"]", i % 7),
                 home_project: None,
                 client: None,
@@ -77,7 +77,7 @@ fn row_numbers_at_the_ends_of_i64() {
     let mut r = rows(0, 1);
     for rid in [i64::MIN, -1, 0, i64::MAX] {
         r.rows.push(AdmissionRow {
-            rid,
+            rid: rid.into(),
             scopes_text: "[]".into(),
             home_project: None,
             client: None,

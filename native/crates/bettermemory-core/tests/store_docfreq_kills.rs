@@ -12,7 +12,8 @@ use std::rc::Rc;
 use bettermemory_core::pyvalue::PyValue;
 use bettermemory_core::store::docfreq::{
     admitted_mask, int_div, patched_masks, row_mask, AdmissionRow, DocActor, DocFreqError,
-    DocFreqInputs, DocFreqMemo, DocFreqSource, Group, Head, Mask, Ranked, PATCH_ROWS, PATCH_WINDOW,
+    DocFreqInputs, DocFreqMemo, DocFreqSource, Group, Head, Mask, PyInt, Ranked, PATCH_ROWS,
+    PATCH_WINDOW,
 };
 
 /// A scripted store: its rows, each term's body and scopes hits by row
@@ -37,7 +38,7 @@ struct Script {
 impl Script {
     fn row(&mut self, rid: i64, scopes: &str) {
         self.rows.push(AdmissionRow {
-            rid,
+            rid: rid.into(),
             scopes_text: scopes.into(),
             home_project: None,
             client: None,
@@ -79,7 +80,7 @@ impl DocFreqSource for Script {
         let pos = |rids: Option<&Vec<i64>>| -> Vec<usize> {
             rids.into_iter()
                 .flatten()
-                .filter_map(|r| inputs.index.get(r).copied())
+                .filter_map(|r| inputs.index.get(&PyInt::Small(*r)).copied())
                 .collect()
         };
         let body = row_mask(&pos(self.body.get(term)), inputs.index.len())?;
@@ -135,7 +136,7 @@ fn a_duplicate_row_number_reuses_a_position() {
     let rows: Vec<AdmissionRow> = [(5, "[]"), (5, "[]"), (6, "[]")]
         .iter()
         .map(|&(rid, s)| AdmissionRow {
-            rid,
+            rid: PyInt::Small(rid),
             scopes_text: s.into(),
             home_project: None,
             client: None,
@@ -192,7 +193,7 @@ fn admit_runs_for_an_empty_group() {
 fn patch_inputs(changed: usize) -> DocFreqInputs {
     let mut index = HashMap::new();
     for rid in 0..200 {
-        index.insert(rid, rid as usize);
+        index.insert(PyInt::Small(rid), rid as usize);
     }
     DocFreqInputs {
         head: (1, "m".into()),
@@ -203,7 +204,9 @@ fn patch_inputs(changed: usize) -> DocFreqInputs {
         group_of: None,
         length_of: None,
         version: 1,
-        changed: (0..changed).map(|i| (1, 100 + i as i64, 100 + i)).collect(),
+        changed: (0..changed)
+            .map(|i| (1, PyInt::Small(100 + i as i64), 100 + i))
+            .collect(),
     }
 }
 
@@ -329,7 +332,10 @@ fn at_version(
 ) -> DocFreqInputs {
     let mut inputs = DocFreqInputs::from_rows((head, "m".into()), &s.rows, s.digest).unwrap();
     inputs.version = version;
-    inputs.changed = changed;
+    inputs.changed = changed
+        .into_iter()
+        .map(|(v, rid, p)| (v, PyInt::Small(rid), p))
+        .collect();
     inputs
 }
 

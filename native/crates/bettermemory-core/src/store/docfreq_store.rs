@@ -21,7 +21,7 @@ use rusqlite::Connection;
 use super::digest::{self, DigestError};
 use super::docfreq::{
     load_scopes, row_mask, AdmissionRow, DocActor, DocFreqError, DocFreqMemo, DocFreqSource, Head,
-    Mask, Ranked, Statistics,
+    Mask, PyInt, Ranked, Statistics,
 };
 use super::open::{require_current_writer, WritableStore};
 use super::provenance;
@@ -34,6 +34,8 @@ use crate::json;
 use crate::pyvalue::{PyError, PyValue};
 use crate::records::rows::{self, Row};
 use crate::unicode;
+
+mod advance;
 
 /// `_memory_head`'s statement: five probes of `log_by_kind`.
 const MEMORY_HEAD: &str = "SELECT seq, mac FROM log WHERE seq = (SELECT MAX(s) FROM (\
@@ -319,31 +321,32 @@ fn value(v: ValueRef<'_>) -> Result<SqlValue, DocFreqError> {
     sql_value(v).map_err(from_store)
 }
 
-/// `int()` of a column sqlite3 gave, as pool.rs reads it: an integer as
-/// it is, a real truncated, a numeral's text; TypeError for NULL,
-/// ValueError for what does not read, OverflowError past 64 bits.
-fn py_int(v: &SqlValue) -> Result<i64, DocFreqError> {
-    let text = match v {
-        SqlValue::Integer(i) => return Ok(*i),
+/// `int()` of a column sqlite3 gave: an integer as it is, a real
+/// truncated, a numeral's text, each of any size (a Python `int`);
+/// TypeError for NULL, ValueError for NaN and what does not read,
+/// OverflowError for an infinite real. A value past 64 bits is refused
+/// only where it is used: bound (`_patched_masks`) or held in
+/// `array('q')` (the grouping).
+fn py_int(v: &SqlValue) -> Result<PyInt, DocFreqError> {
+    let decimal = match v {
+        SqlValue::Integer(i) => return Ok(PyInt::Small(*i)),
         SqlValue::Real(f) if f.is_nan() => return Err(source("ValueError")),
         SqlValue::Real(f) => {
-            let t = f.trunc();
-            if !(-9.223_372_036_854_776e18..9.223_372_036_854_776e18).contains(&t) {
-                return Err(DocFreqError::Py(PyError::OverflowError));
-            }
-            return Ok(t as i64);
+            crate::pyvalue::py_int(&PyValue::Float(*f)).map_err(DocFreqError::Py)?
         }
         SqlValue::Null => return Err(DocFreqError::Py(PyError::TypeError)),
-        SqlValue::Text(t) => unicode::cps(t),
+        SqlValue::Text(t) => {
+            crate::pyvalue::int_from_str(&unicode::cps(t)).map_err(|p| source(p.name()))?
+        }
         SqlValue::Blob(b) => match std::str::from_utf8(b) {
-            Ok(t) if t.is_ascii() => unicode::cps(t),
+            Ok(t) if t.is_ascii() => {
+                crate::pyvalue::int_from_str(&unicode::cps(t)).map_err(|p| source(p.name()))?
+            }
             _ => return Err(source("ValueError")),
         },
     };
-    match &crate::pyvalue::int_from_str(&text).map_err(|p| source(p.name()))? {
-        PyValue::Int(decimal) => decimal
-            .parse::<i64>()
-            .map_err(|_| DocFreqError::Py(PyError::OverflowError)),
+    match &decimal {
+        PyValue::Int(text) => PyInt::from_decimal(text).ok_or_else(|| source("ValueError")),
         _ => Err(source("ValueError")),
     }
 }
@@ -561,8 +564,9 @@ impl<'c> StoreDocFreq<'c> {
 
 /// One row of `digest_admission_rows`: the row number, the scopes as
 /// `str()` spells them, the home project, client and model columns as
-/// they are, and the BM25 length.
-pub type DigestRow = (i64, String, SqlValue, SqlValue, SqlValue, i64);
+/// they are, and the BM25 length, each number as `int()` reads it (past
+/// 64 bits where the column holds one).
+pub type DigestRow = (PyInt, String, SqlValue, SqlValue, SqlValue, PyInt);
 
 fn cells(row: &rusqlite::Row<'_>) -> Result<Vec<SqlValue>, StoreError> {
     (0..6)
@@ -576,7 +580,7 @@ fn cells(row: &rusqlite::Row<'_>) -> Result<Vec<SqlValue>, StoreError> {
 
 /// `(int(rid), str(scopes), home, client, model, int(length))`, the
 /// length 0 where `length` names it (`_ADMISSION_INPUTS`' rows).
-fn digest_row(c: Vec<SqlValue>, length: Option<i64>) -> Result<DigestRow, DocFreqError> {
+fn digest_row(c: Vec<SqlValue>, length: Option<PyInt>) -> Result<DigestRow, DocFreqError> {
     let rid = py_int(&c[0])?;
     let length = match length {
         Some(n) => n,
@@ -589,30 +593,42 @@ fn digest_row(c: Vec<SqlValue>, length: Option<i64>) -> Result<DigestRow, DocFre
 
 /// The grouping's own failures over `rows` in their order, as
 /// `_read_doc_freq_inputs` meets them: a scopes text that is not JSON,
-/// then, for a row whose scopes are a list, an actor pydantic refuses.
+/// then, for a row whose scopes are a list, an actor pydantic refuses
+/// (ValidationError) and a length past 64 bits, which `array('q')`
+/// refuses (OverflowError).
 fn grouped(rows: &[DigestRow]) -> Result<(), DocFreqError> {
-    for (_, text, _, client, model, _) in rows {
-        let refused = actor_of(client).is_none() || actor_of(model).is_none();
-        if scopes(text)?.is_some() && refused {
+    for (_, text, _, client, model, length) in rows {
+        if scopes(text)?.is_none() {
+            continue;
+        }
+        if actor_of(client).is_none() || actor_of(model).is_none() {
             return Err(source("ValidationError"));
+        }
+        if length.small().is_none() {
+            return Err(DocFreqError::Py(PyError::OverflowError));
         }
     }
     Ok(())
 }
 
-/// The rows as `AdmissionRow`s, the grouping's failures raised first; the
-/// home as `home_key` spells it, an actor column as pydantic reads it.
-fn typed(rows: Vec<DigestRow>) -> Result<Vec<AdmissionRow>, DocFreqError> {
-    grouped(&rows)?;
-    let row = |(rid, scopes_text, home, client, model, length): DigestRow| AdmissionRow {
+/// One row as an `AdmissionRow`: the home as `home_key` spells it, an
+/// actor column as pydantic reads it, a length past 64 bits (on a row the
+/// grouping skips: `grouped` raised for any other) as 0.
+fn admission_row((rid, scopes_text, home, client, model, length): DigestRow) -> AdmissionRow {
+    AdmissionRow {
         rid,
         scopes_text,
         home_project: home_key(&home),
         client: actor_of(&client).flatten(),
         model: actor_of(&model).flatten(),
-        length,
-    };
-    Ok(rows.into_iter().map(row).collect())
+        length: length.small().unwrap_or(0),
+    }
+}
+
+/// The rows as `AdmissionRow`s, the grouping's failures raised first.
+fn typed(rows: Vec<DigestRow>) -> Result<Vec<AdmissionRow>, DocFreqError> {
+    grouped(&rows)?;
+    Ok(rows.into_iter().map(admission_row).collect())
 }
 
 impl DocFreqSource for StoreDocFreq<'_> {
@@ -658,7 +674,7 @@ impl DocFreqSource for StoreDocFreq<'_> {
         loop {
             let row = rows.next();
             if let (Ok(_), Some(c)) = (&row, ahead.take()) {
-                raw.push(digest_row(c, Some(0))?);
+                raw.push(digest_row(c, Some(PyInt::Small(0)))?);
             }
             let row = match row {
                 Ok(Some(row)) => row,
@@ -684,6 +700,14 @@ impl DocFreqSource for StoreDocFreq<'_> {
         Ok((typed(raw)?, false))
     }
 
+    fn advanced_inputs(
+        &self,
+        entry: &super::docfreq::DocFreqInputs,
+        head: &Head,
+    ) -> Result<Option<super::docfreq::DocFreqInputs>, DocFreqError> {
+        advance::advanced_inputs(self, entry, head)
+    }
+
     fn term_masks(
         &self,
         term: &str,
@@ -696,8 +720,9 @@ impl DocFreqSource for StoreDocFreq<'_> {
         // does (IndexError past its bytes).
         let width = inputs.index.len();
         let span = inputs.index.values().max().map_or(0, |p| p + 1);
-        let (body, either) = reads::term_masks(self.conn, term, &inputs.index, span.max(width))
-            .map_err(from_read)?;
+        let position = |rid: i64| inputs.index.get(&PyInt::Small(rid)).copied();
+        let (body, either) =
+            reads::term_masks_by(self.conn, term, &position, span.max(width)).map_err(from_read)?;
         let mask = |bits: &[bool]| {
             let positions: Vec<usize> = (0..bits.len()).filter(|&p| bits[p]).collect();
             row_mask(&positions, width)
@@ -714,7 +739,11 @@ impl DocFreqSource for StoreDocFreq<'_> {
             .map_err(sqlite)?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().map_err(sqlite)? {
-            out.push(py_int(&value(row.get_ref(0).map_err(sqlite)?)?)?);
+            let rid = py_int(&value(row.get_ref(0).map_err(sqlite)?)?)?;
+            out.push(
+                rid.small()
+                    .ok_or(DocFreqError::Py(PyError::OverflowError))?,
+            );
         }
         Ok(out)
     }

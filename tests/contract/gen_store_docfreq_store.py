@@ -1,5 +1,7 @@
 """Fixture: the store's document frequencies and ranking statistics over
-a real store (``store_docfreq_store.jsonl``).
+a real store (``store_docfreq_store.jsonl``, ``store_docfreq_store_b.jsonl``
+and, for an entry carried over a moved head, ``store_docfreq_advance.jsonl``;
+`FILES` names the cases each holds).
 
 The native build ports the store's side of the document frequency memo
 (``native/``, `store::docfreq_store`) and is held to this file. Each case
@@ -16,10 +18,15 @@ against a second connection holding the write lock, or a second store
 opened ``read_only=True`` (under another spelling of the path).
 
 Recorded per step: the tables the step changed since the last step's
-end, in full (``memories`` with its row numbers, ``homes``, ``log``,
+end (``memories`` with its row numbers, ``homes``, ``log``,
 ``tombstones`` and the three digest tables), so a replay lays them into
-its own store before it asks; each answer (dicts as pairs, the average
-as ``repr``); the memo's keys (the path under the case's root as
+its own store before it asks: the log as the rows appended, ``memories``
+and ``digest_records`` as the rows new or changed and the keys gone,
+any other table in full, and none with its column list, which a replay
+reads from its own file (the header holds each table's columns in the
+opened store, which the replay's open must match); each answer (dicts as pairs, the average
+as ``repr``, an integer past 64 bits as its decimal text under
+``$int``); the memo's keys (the path under the case's root as
 ``<root>``) and each one's terms kept; the digest's state and active
 rows after the step; whether the head checkpoint file is unchanged; and
 each warning the ``bettermemory.store`` logger took, as its format, the
@@ -36,13 +43,16 @@ left inside a transaction no call owns (``residue``). A step's ``sql``
 holds statements a replay runs before laying the tables, for what the
 tables do not carry (a view, ``meta``, a table's constraints).
 
-Each case runs twice, the second time with `store_index._advanced_inputs`
-answering None, as the native build has it (not ported: the memo reads
-its inputs again where the reference carries an entry over a moved
-head). Where a step's memo or warnings differ between the runs, the
-second run's are recorded beside them (``memo_fresh``,
-``warnings_fresh``): the entry carried over keeps the terms asked before
-the head moved, and its own `digest_mark` call logs a second warning.
+A step's ``plant`` holds log rows planted after the step's tables were
+taken, as the statements that insert them (a run of ``home_delete`` rows
+naming records no store holds, a payload that does not read): a replay
+runs them after it lays the tables. Each memo entry's inputs are recorded
+after the step (``entries``, in the memo's order): head, groups (scopes
+as JSON text, home, actor, the positions set in the mask), lengths,
+index, group keys, ``group_of``, ``length_of``, version and ``changed``,
+in full up to ``ENTRY_INLINE`` bytes of JSON text and as that text's
+SHA-256 past it. An entry the memo carried over a moved head
+(`_advanced_inputs`) is compared with the reference's field for field.
 
 Gates, ``store_tx.jsonl``'s and for the same reasons. Unicode: the index
 text is the tokenizer's spelling and the digest's rows its tokens.
@@ -54,6 +64,7 @@ interpreter's or SQLite's.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sqlite3
@@ -197,6 +208,10 @@ def _cell(value: Any) -> Any:
         return {"$bytes": value.hex()}
     if isinstance(value, float):
         return {"$float": repr(value)}
+    if type(value) is int and not -(2**63) <= value < 2**63:
+        # `int()` of a digest column past 64 bits, which a JSON reader
+        # holds only as a float.
+        return {"$int": str(value)}
     return value
 
 
@@ -263,6 +278,51 @@ class Taken(logging.Handler):
                 spelled,
             ]
         )
+
+
+#: The longest canonical entry text written out in full.
+ENTRY_INLINE = 500
+
+
+def _entry(inputs: Any) -> Any:
+    """A memo entry's inputs in canonical form, or the SHA-256 of its JSON
+    text where that is longer than `ENTRY_INLINE`."""
+
+    def bits(mask: int) -> list[int]:
+        return [p for p in range(mask.bit_length()) if mask >> p & 1]
+
+    def listed(values: Any) -> Any:
+        return None if values is None else list(values)
+
+    groups = [
+        [
+            json.dumps(scopes, ensure_ascii=True, separators=(",", ":")),
+            _cell(home),
+            None if actor is None else [actor.client, actor.model],
+            bits(mask),
+        ]
+        for scopes, home, actor, mask in inputs.groups
+    ]
+    form = [
+        list(inputs.head),
+        groups,
+        # A group's total is a Python int, past 64 bits as `_cell` spells it.
+        None if inputs.lengths is None else [_cell(n) for n in inputs.lengths],
+        [[_cell(rid), position] for rid, position in sorted(inputs.index.items())],
+        [[_cell(v) for v in key] for key in inputs.keys],
+        listed(inputs.group_of),
+        listed(inputs.length_of),
+        inputs.version,
+        [[version, _cell(rid), position] for version, rid, position in inputs.changed],
+    ]
+    text = json.dumps(form, ensure_ascii=True, separators=(",", ":"))
+    if len(text) <= ENTRY_INLINE:
+        return form
+    return {"sha256": hashlib.sha256(text.encode("ascii")).hexdigest()}
+
+
+def entries_view() -> list[Any]:
+    return [_entry(entry) for entry in store_index._DOC_FREQS.values()]
 
 
 def memo_view(root: Path) -> list[Any]:
@@ -591,6 +651,53 @@ def cases() -> list[dict[str, Any]]:
             ],
         },
         {
+            # Numbers past 64 bits in the digest (planted: an INTEGER
+            # column holds a REAL past 2**63, a numeral text with
+            # underscores stays text). `int()` reads them whole: `rows`
+            # hands them on, the grouping keys a row number past 64 bits
+            # and skips a length past them on a row whose scopes are not a
+            # list, and `array('q')` refuses one on a row whose scopes are
+            # (OverflowError), after an earlier row's refused actor
+            # (ValidationError) and before a later row's scopes that are
+            # not JSON. The step asked on another spelling reads afresh.
+            "name": "digest_big_numbers",
+            "steps": [
+                {"writes": [put(n) for n in range(1, 6)], "asks": DIGEST[:1]},
+                {
+                    "sql": [
+                        f"UPDATE digest_records SET rid = 1e20 WHERE id = '{ulid(1)}'",
+                        "UPDATE digest_records SET rid = '18_446_744_073_709_551_617' "
+                        f"WHERE id = '{ulid(2)}'",
+                        "UPDATE digest_records SET scopes = '\"g\"', dl = -1e20 "
+                        f"WHERE id = '{ulid(3)}'",
+                    ],
+                    "asks": DIGEST[1:] + ask("record"),
+                },
+                {
+                    "conn": "spelled",
+                    "sql": [
+                        f"UPDATE digest_records SET dl = 1e20 WHERE id = '{ulid(4)}'"
+                    ],
+                    "asks": DIGEST[1:] + ask("record"),
+                },
+                {
+                    "conn": "spelled",
+                    "sql": [
+                        f"UPDATE digest_records SET client = X'FF' WHERE id = '{ulid(2)}'"
+                    ],
+                    "asks": ask("record"),
+                },
+                {
+                    "conn": "spelled",
+                    "sql": [
+                        f"UPDATE digest_records SET client = NULL WHERE id = '{ulid(2)}'",
+                        f"UPDATE digest_records SET scopes = 'no' WHERE id = '{ulid(5)}'",
+                    ],
+                    "asks": DIGEST[1:] + ask("record"),
+                },
+            ],
+        },
+        {
             # The memory rows read without the digest. sqlite3 steps to the
             # next row before it hands one on: a step that fails (a view
             # whose project overflows at one record) raises before the row
@@ -784,6 +891,261 @@ def cases() -> list[dict[str, Any]]:
                 {"asks": ask("sqlite")},
             ],
         },
+        *advance_cases(),
+    ]
+
+
+def _names(count: int, spread: int | None = None) -> list[Any]:
+    """A run of planted ``home_delete`` rows naming records no store
+    holds: `count` rows, the names repeating every `spread` rows."""
+    number = "i" if spread is None else f"(i % {spread})"
+    return [["home_delete", f"'{{\"record_id\": \"p' || {number} || '\"}}'", count]]
+
+
+def _one(kind: str, payload: str) -> list[Any]:
+    return [[kind, payload, 1]]
+
+
+def advance_cases() -> list[dict[str, Any]]:
+    """An entry kept at an older head, brought to the new one by the
+    record rows the log names (`_advanced_inputs`), or read again."""
+    three = [put(1), put(2, body="second record body"), put(3, scopes=["alpha"])]
+    rid4 = f"'{ulid(4)}'"
+    home_row = "(SELECT MAX(seq) FROM log WHERE kind = 'home_put')"
+    return [
+        {
+            # Each write moves a row: in place, to a new position, to a
+            # new group at the end (scopes, actor client and model, home),
+            # back to a group the entry holds; the kept terms are patched.
+            # Then the digest cannot be brought current on a reader and
+            # under `query_only`: the advance's own `digest_mark` and the
+            # read's both warn.
+            "name": "advance_moves",
+            "steps": [
+                {"writes": three, "asks": ask("sqlite", "record")},
+                {
+                    "writes": [put(2, body="second record sqlite")],
+                    "asks": ask("sqlite", "record"),
+                },
+                {"writes": [put(4)], "asks": ask("record")[:2]},
+                {
+                    "writes": [put(1, scopes=["beta"])],
+                    "asks": ask("record", admit="scope:beta")[:2],
+                },
+                {
+                    "writes": [put(2, actor={"client": "c9"})],
+                    "asks": ask("record", admit="client:c9")[:2],
+                },
+                {
+                    "writes": [put(3, actor={"model": "m9"}), put(4, scopes=["beta"])],
+                    "asks": ask("record", "sqlite", admit="noactor")[:2],
+                },
+                {
+                    "writes": [home(1, "proj")],
+                    "asks": ask("record", admit="project:proj")[:2],
+                },
+                {"writes": [home_delete(1)], "asks": ask("record", admit="nohome")[:2]},
+                {"writes": [put(5), put(5, body="fifth")], "asks": ask("fifth")[:2]},
+                {"writes": [put(6)], "conn": "read_only", "asks": ask("record")[:2]},
+                {"writes": [put(7)], "conn": "query_only", "asks": ask("record")[:2]},
+            ],
+        },
+        {
+            # A digest row's scopes stop being a list (planted, named by a
+            # home row the digest does not follow): the row leaves every
+            # group and stays in `changed`; a new row whose scopes are not
+            # a list takes no position; then a list again.
+            "name": "advance_scopes_not_list",
+            "steps": [
+                {"writes": three, "asks": ask("record")[:2]},
+                {
+                    "writes": [home(1, "proj")],
+                    "edit": "sql:UPDATE digest_records SET scopes = '\"g\"' WHERE id = ?",
+                    "asks": ask("record")[:2],
+                },
+                {"writes": [put(4)], "asks": DIGEST[:1]},
+                {
+                    "sql": [
+                        f"UPDATE digest_records SET scopes = '{{}}' WHERE id = {rid4}"
+                    ],
+                    "asks": ask("record")[:2],
+                },
+                {"writes": [put(1, scopes=["gamma"])], "asks": ask("record")[:2]},
+            ],
+        },
+        {
+            # A memory_delete, then a rebuild row, in the span: read again.
+            # Then the digest stops answering: an entry read without it
+            # carries no lengths and is read again at the next head.
+            "name": "advance_not_followed",
+            "steps": [
+                {"writes": three, "asks": ask("record")[:2]},
+                {"writes": [delete(1)], "asks": ask("record")[:2]},
+                {"writes": [put(4)], "edit": "rebuilt_row", "asks": ask("record")[:2]},
+                {"writes": [put(5)], "asks": ask("record")[:2]},
+                {"writes": [put(6)], "edit": "fingerprint", "asks": ask("record")[:2]},
+                {"writes": [put(7)], "asks": ask("record")[:2]},
+            ],
+        },
+        {
+            # `_ADVANCE_ROWS`: the ids named and the entry's `changed`
+            # together, 256 followed and 257 read again; a name repeated
+            # counts once.
+            "name": "advance_bound",
+            "steps": [
+                {"writes": three, "asks": ask("record")[:1]},
+                {"writes": [put(1), put(2), put(3)], "asks": ask("record")[:1]},
+                {"plant": _names(253), "asks": ask("record")[:1]},
+                {"plant": _names(254), "asks": ask("record")[:1]},
+                {"plant": _names(256), "asks": ask("record")[:1]},
+                {"plant": _names(257), "asks": ask("record")[:1]},
+                {"plant": _names(600, 256), "asks": ask("record")[:1]},
+                {"plant": _names(600, 257), "asks": ask("record")[:1]},
+            ],
+        },
+        {
+            # The log's row at the entry's head (a home row, so the
+            # digest's own row stays) carries another MAC, then is gone:
+            # another history, read again.
+            "name": "advance_head_row",
+            "steps": [
+                {"writes": [*three, home(1, "p")], "asks": ask("record")[:1]},
+                {
+                    "writes": [put(4)],
+                    "plant": [f"UPDATE log SET mac = 'remade' WHERE seq = {home_row}"],
+                    "asks": ask("record")[:1],
+                },
+                {"writes": [home(2, "q")], "asks": ask("record")[:1]},
+                {
+                    "writes": [put(5)],
+                    "plant": [f"DELETE FROM log WHERE seq = {home_row}"],
+                    "asks": ask("record")[:1],
+                },
+                {"writes": [put(6)], "asks": ask("record")[:1]},
+            ],
+        },
+        {
+            # Planted home rows whose payloads read or do not: an id that
+            # is a number, a list, bytes of JSON, the record of a real row
+            # named again; not JSON, no key, a value that is not a dict;
+            # then an id holding a lone surrogate (UnicodeEncodeError) and
+            # a payload that is not UTF-8 (OperationalError), both raised.
+            "name": "advance_payloads",
+            "steps": [
+                {"writes": three, "asks": ask("record")[:1]},
+                {
+                    "plant": _one("home_delete", "'{\"record_id\": 7}'"),
+                    "asks": ask("record")[:1],
+                },
+                {
+                    "plant": _one("home_put", '\'{"home": {"record_id": [1, "a"]}}\''),
+                    "asks": ask("record")[:1],
+                },
+                {
+                    "plant": _one(
+                        "home_delete", f'CAST(\'{{"record_id": "{ulid(2)}"}}\' AS BLOB)'
+                    ),
+                    "asks": ask("record")[:1],
+                },
+                {"plant": _one("home_put", "'no'"), "asks": ask("record")[:1]},
+                {
+                    "plant": _one("home_put", "'{\"home\": {}}'"),
+                    "asks": ask("record")[:1],
+                },
+                {
+                    "plant": _one("home_put", "'{\"home\": [1]}'"),
+                    "asks": ask("record")[:1],
+                },
+                {"plant": _one("home_delete", "'[]'"), "asks": ask("record")[:1]},
+                {"plant": _one("home_delete", "X'FF'"), "asks": ask("record")[:1]},
+                {
+                    "plant": _one("home_delete", '\'{"record_id": "\\ud800"}\''),
+                    "asks": ask("record")[:1],
+                },
+                {"writes": [put(4)], "asks": ask("record")[:1]},
+                {
+                    "plant": _one("home_delete", "CAST(X'FF' AS TEXT)"),
+                    "asks": ask("record")[:1],
+                },
+            ],
+        },
+        {
+            # Numbers past 64 bits in the rows the log names (planted).
+            # A length past them on a row whose scopes are not a list is
+            # not read; a row number past them is a new key, so the record
+            # counts at its old position and its new one, and a kept term
+            # patched from it alone binds it (OverflowError), from it and
+            # a lower row number does not. A length past them on a row
+            # whose scopes are a list is OverflowError, after an earlier
+            # row's refused actor (ValidationError). The row number past
+            # 64 bits then named again keeps its position.
+            "name": "advance_big_numbers",
+            "steps": [
+                {"writes": three, "asks": ask("record")[:2]},
+                {
+                    "writes": [home(1, "proj")],
+                    "sql": [
+                        "UPDATE digest_records SET scopes = '\"g\"', dl = 1e20 "
+                        f"WHERE id = '{ulid(1)}'"
+                    ],
+                    "asks": ask("record")[:2],
+                },
+                {
+                    "writes": [home(2, "proj")],
+                    "sql": [
+                        "UPDATE digest_records SET rid = '18_446_744_073_709_551_617' "
+                        f"WHERE id = '{ulid(2)}'"
+                    ],
+                    "asks": ask("record")[:2],
+                },
+                {"writes": [home(3, "proj")], "asks": ask("record")[:2]},
+                {"writes": [put(4)], "asks": ask("record")[:2]},
+                {
+                    "writes": [home(4, "q")],
+                    "sql": [f"UPDATE digest_records SET dl = 1e20 WHERE id = {rid4}"],
+                    "asks": ask("record")[:2],
+                },
+                {
+                    "writes": [home(3, "q")],
+                    "sql": [
+                        f"UPDATE digest_records SET client = X'FF' WHERE id = '{ulid(3)}'"
+                    ],
+                    "asks": ask("record")[:2],
+                },
+                {
+                    "writes": [home_delete(2)],
+                    "sql": [
+                        f"UPDATE digest_records SET client = NULL WHERE id = '{ulid(3)}'",
+                        f"UPDATE digest_records SET dl = 5 WHERE id = {rid4}",
+                    ],
+                    "asks": ask("record")[:2],
+                },
+            ],
+        },
+        {
+            # A digest row changed with no log row is not read by the
+            # advance: it keeps its old group; a new memo key reads it.
+            # Then the digest's join fails after the advance's
+            # `digest_mark`: None with no warning, then the read's warning.
+            "name": "advance_digest_unread",
+            "steps": [
+                {"writes": three, "asks": ask("record", admit="noactor")},
+                {
+                    "writes": [put(4)],
+                    "edit": "sql:UPDATE digest_records SET client = 'zz' WHERE id = ?",
+                    "asks": ask("record", admit="noactor"),
+                },
+                {"conn": "spelled", "asks": ask("record", admit="noactor")[:2]},
+                {
+                    "writes": [put(5)],
+                    "sql": [
+                        "DROP TABLE homes",
+                        "CREATE VIEW homes AS SELECT * FROM nothing_here",
+                    ],
+                    "asks": ask("record")[:2],
+                },
+            ],
+        },
     ]
 
 
@@ -921,24 +1283,21 @@ def _step(store: Store, step: dict[str, Any], case: Path, root: Path) -> list[An
     raise AssertionError(conn)
 
 
+def _planted(conn: sqlite3.Connection, kind: str, payload: str, count: int) -> str:
+    """The statement that appends `count` log rows of `kind` after the
+    log's last row, each payload the SQL expression `payload` of the row's
+    number ``i`` (1 up)."""
+    base = conn.execute("SELECT MAX(seq) FROM log").fetchone()[0]
+    return (
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n "
+        f"WHERE i < {count}) INSERT INTO log (seq, ts, session, kind, payload, "
+        f"prev_mac, mac) SELECT {base} + i, l.ts, l.session, '{kind}', {payload}, "
+        f"l.mac, 'planted-' || ({base} + i) FROM n, log l WHERE l.seq = {base}"
+    )
+
+
 def run_case(case_def: dict[str, Any]) -> dict[str, Any]:
-    """The case as the reference answers it, with ``memo_fresh`` and
-    ``warnings_fresh`` where the run without `_advanced_inputs` differs."""
-    out = _run(case_def)
-    advanced = store_index._advanced_inputs
-    store_index._advanced_inputs = lambda *_a, **_k: None
-    try:
-        fresh = _run(case_def)
-    finally:
-        store_index._advanced_inputs = advanced
-    for step, again in zip(out["steps"], fresh["steps"], strict=True):
-        for field in ("memo", "warnings"):
-            if again[field] != step[field]:
-                step[f"{field}_fresh"] = again[field]
-    return out
-
-
-def _run(case_def: dict[str, Any]) -> dict[str, Any]:
+    """The case as the reference answers it."""
     steps_out: list[dict[str, Any]] = []
     store_index._clear_doc_freqs()
     taken = Taken()
@@ -976,6 +1335,15 @@ def _run(case_def: dict[str, Any]) -> dict[str, Any]:
                     now = tables(file)
                     seen_before = last
                     changed = {t: v for t, v in now.items() if last.get(t) != v}
+                    planted = []
+                    for item in step.get("plant", []):
+                        if isinstance(item, str):
+                            planted.append(item)
+                        else:
+                            planted.append(_planted(store.conn, *item))
+                        store.conn.execute(planted[-1])
+                    if planted:
+                        store.conn.commit()
                     before = head.read_bytes() if head.exists() else None
                     taken.lines.clear()
                     if batch:
@@ -986,7 +1354,14 @@ def _run(case_def: dict[str, Any]) -> dict[str, Any]:
                         answers = _step(store, step, case, root)
                     after = head.read_bytes() if head.exists() else None
                 last = tables(file)
+                if batch:
+                    # The replay holds the log as the batch saw it when it
+                    # asked: rows the batch wrote after (the `returned` rows
+                    # its end writes) are laid with the next step.
+                    last["log"] = changed.get("log", seen_before["log"])
                 extra = {"sql": step["sql"]} if "sql" in step else {}
+                if planted:
+                    extra["plant"] = planted
                 steps_out.append(
                     {
                         **extra,
@@ -995,6 +1370,7 @@ def _run(case_def: dict[str, Any]) -> dict[str, Any]:
                         "tables": _appended(changed, seen_before),
                         "answers": answers,
                         "memo": memo_view(root),
+                        "entries": entries_view(),
                         "digest": digest_after(file),
                         # A batch's commit moves the head; the replay's
                         # transaction commits nothing.
@@ -1008,9 +1384,36 @@ def _run(case_def: dict[str, Any]) -> dict[str, Any]:
     return {"case": case_def["name"], "steps": steps_out}
 
 
+#: Tables whose first column is a unique key a row is laid by: recorded
+#: as the rows new or changed since the last step's (``upsert``) and the
+#: keys gone (``delete``).
+KEYED = ("memories", "digest_records")
+
+
 def _appended(changed: dict[str, Any], last: dict[str, Any]) -> dict[str, Any]:
+    """The log, which only grows, as the rows after the last step's; a
+    keyed table as the rows it changed."""
+    out = _log_appended(dict(changed), last)
+    for table in KEYED:
+        now, was = out.get(table), last.get(table)
+        if now is None or was is None or now["columns"] != was["columns"]:
+            continue
+        old = {row[0]: row for row in was["rows"]}
+        new = {row[0]: row for row in now["rows"]}
+        if len(old) != len(was["rows"]) or len(new) != len(now["rows"]):
+            continue
+        out[table] = {
+            "columns": now["columns"],
+            "delete": [key for key in old if key not in new],
+            "upsert": [row for row in now["rows"] if old.get(row[0]) != row],
+        }
+    # A replay reads a table's columns from its own file, whose schema is
+    # this one's (a step's ``sql`` runs there first).
+    return {t: {k: v for k, v in c.items() if k != "columns"} for t, c in out.items()}
+
+
+def _log_appended(out: dict[str, Any], last: dict[str, Any]) -> dict[str, Any]:
     """The log, which only grows, as the rows after the last step's."""
-    out = dict(changed)
     log = out.get("log")
     if log is not None:
         before = last["log"]["rows"]
@@ -1043,7 +1446,9 @@ def _batch_step(
         answers = _step(store, step, file.parent, file.parent.parent)
     finally:
         globals()["_ask_all"] = real
-    view = {t: v for t, v in seen.items() if last.get(t) != v}
+    # A table a step's edit changed is recorded as the batch saw it, even
+    # where the batch's writes put it back as the last step left it.
+    view = {t: v for t, v in seen.items() if last.get(t) != v or t in changed}
     return answers, {**changed, **view}
 
 
@@ -1058,19 +1463,58 @@ def _conn_tables(conn: sqlite3.Connection) -> dict[str, Any]:
     return out
 
 
-def generate() -> dict[str, bytes]:
-    lines: list[dict[str, Any]] = [
-        {
-            "fixture": "store_docfreq_store",
-            "engine_version": ENGINE,
-            "store_id": STORE_ID,
-        }
-    ]
+def opened_columns() -> dict[str, list[str]]:
+    """Each table's columns in the store every case opens, which a replay
+    checks its own open against: a step's rows are laid by position."""
+    with tempfile.TemporaryDirectory() as raw:
+        case = Path(raw) / "c"
+        _made("created", {}, case)
+        file = case / "memory.sqlite"
+        with _engine():
+            Store.open(file, keys_dir=case / "keys", allow_rekey=True).close()
+        return {table: content["columns"] for table, content in tables(file).items()}
+
+
+#: The fixture's files and the first and last case each holds, in the
+#: order `cases` lists them (each file under the 150 KB a golden file
+#: keeps to).
+FILES = {
+    "store_docfreq_store": ("empty_store", "digest_client_bytes"),
+    "store_docfreq_store_b": ("digest_rid_twice", "read_only"),
+    "store_docfreq_advance": ("advance_moves", "advance_digest_unread"),
+}
+
+
+def _file(name: str) -> dict[str, bytes]:
+    every = cases()
+    names = [c["name"] for c in every]
+    first, last = FILES[name]
+    chosen = every[names.index(first) : names.index(last) + 1]
     with world():
-        lines += [run_case(c) for c in cases()]
+        lines: list[dict[str, Any]] = [
+            {
+                "fixture": name,
+                "engine_version": ENGINE,
+                "store_id": STORE_ID,
+                "columns": opened_columns(),
+            }
+        ]
+        lines += [run_case(c) for c in chosen]
     text = "".join(
         json.dumps(line, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
         + "\n"
         for line in lines
     )
-    return {"store_docfreq_store.jsonl": text.encode("ascii")}
+    return {f"{name}.jsonl": text.encode("ascii")}
+
+
+def generate() -> dict[str, bytes]:
+    return _file("store_docfreq_store")
+
+
+def generate_b() -> dict[str, bytes]:
+    return _file("store_docfreq_store_b")
+
+
+def generate_advance() -> dict[str, bytes]:
+    return _file("store_docfreq_advance")

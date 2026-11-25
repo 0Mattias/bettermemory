@@ -123,7 +123,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `standing_guard` | `handlers/_guard.py` whole: `read_words`, `record`, `Held`, `check`, `guard` and the hints, over `GuardDeps` | `standing_guard.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); the event reads (`store::event_reads`: `iter_events`, `iter_events_backward`, `capture_rows`, `events_of_kinds`, `session_events_of_kinds`, `events_since`, `_window_floor`, `NAMING_BOUND`, `log.CAPTURE_KINDS`); the event writes (`store::record_event`: `record_event` with `_primary_code`, `_busy`, `_time_left`, `_waiting_until` and `EVENT_RETRY_PAUSE_SECONDS`, `import_event`, `imported_event_keys`, `_named_payload`, `record_migration`, `record_capture`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build, and the upkeep with the key present: `_close_foreign_tail`, `_settle_origin`, `_record_origin`, `_name_origin_key`, `_forget_segments`); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the keys a store opened without writing keeps (`store::key_read::open_reader`: `_open_connected`'s dispatch (82-116), `_open_reader`'s read key (146-203), `Store.has_key`, `Store._verify_key`, `Store.can_verify`); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_event_reads.jsonl`, `store_event_reads_naive.jsonl`, `store_record_event_posix.jsonl` (POSIX only), `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `store_open_upkeep.jsonl` (POSIX only), `store_open_upkeep_python.jsonl` (POSIX only), `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_open_reader.jsonl`, `store_open_reader_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
-| `store::docfreq` | the document frequency memo of `store_index.py`: `_memoised_document_frequencies`, `_current_inputs`, `_patched_masks`, `_admitted_mask`, `_keep_doc_freqs`, `_row_mask`, `_DocFreqInputs` and the grouping of `Store._read_doc_freq_inputs`, the memoised half of `Store.ranking_statistics`; the store's side is the trait `DocFreqSource`, implemented over a store connection by `store::docfreq_store` (`_memory_head`, `digest_mark(build=False)`, `digest_admission_rows`, `Store._read_doc_freq_inputs`'s reads, `Store._term_masks`, `Store.document_frequencies`, `Store.ranking_statistics`) | `store_docfreq.jsonl`, `store_docfreq_store.jsonl` |
+| `store::docfreq` | the document frequency memo of `store_index.py`: `_memoised_document_frequencies`, `_current_inputs`, `_patched_masks`, `_admitted_mask`, `_keep_doc_freqs`, `_row_mask`, `_DocFreqInputs` and the grouping of `Store._read_doc_freq_inputs`, the memoised half of `Store.ranking_statistics`; the store's side is the trait `DocFreqSource`, implemented over a store connection by `store::docfreq_store` (`_memory_head`, `digest_mark(build=False)`, `digest_admission_rows`, `Store._read_doc_freq_inputs`'s reads, `Store._term_masks`, `Store.document_frequencies`, `Store.ranking_statistics`, and `_advanced_inputs` with `_HEAD_KINDS` and `_ADVANCE_ROWS`, which carries an entry over a moved head) | `store_docfreq.jsonl`, `store_docfreq_store.jsonl`, `store_docfreq_store_b.jsonl`, `store_docfreq_advance.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token`; unit 4 in `identity`: `_strings`, `_flag`, `_FULL_SHA`, `PortableIdentity` (`to_json`, `from_json`, `digest`), `ImportedProject` and the bounds and import words, and in `outcomes`: `Declaration`, `Declared`, `Why`, `UnresolvedProject`, `Health`, `EpisodeRef`, `Handoff`, `RecallAdmission` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl`, `membership_records_identity.jsonl`, `membership_records_identity_python.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks`; unit 2a in `membership::shared_heal`: `_carriers`, `_restamped`, `_healed`, `_chosen`, `retired_into`, `_folded`, and the `MembershipLog` trait; unit 2b in `membership::shared_ask`: `_ask_which`, `_retire_into`, `_asked_at`, `_asked_here`, `_unseen`, `_asked_plan` | `membership_shared.jsonl`, `membership_shared_python.jsonl`, `membership_shared_heal.jsonl`, `membership_shared_ask.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
@@ -4110,9 +4110,9 @@ legs with. `store_index.py` as it is now holds it at these lines:
 | `_DOC_FREQS`, its lock, `_clear_doc_freqs` | 162-169 | a process-wide lock | built: `memo()`, `DocFreqMemo::clear` |
 | `_memoised_document_frequencies` | 388-433 | the store's side | built: `DocFreqMemo::document_frequencies` |
 | `_current_inputs` | 436-456 | the store's side | built |
-| `_HEAD_KINDS`, `_ADVANCE_ROWS` | 459-464 | nothing | store_index-2 |
+| `_HEAD_KINDS`, `_ADVANCE_ROWS` | 459-464 | nothing | built: `HEAD_KINDS`, `ADVANCE_ROWS` in `docfreq_store::advance` (store_index-advance) |
 | `_PATCH_ROWS`, `_PATCH_WINDOW` | 467-471 | nothing | built |
-| `_advanced_inputs` | 474-602 | the log and the digest | store_index-2: the trait's `advanced_inputs`, None by default |
+| `_advanced_inputs` | 474-602 | the log and the digest | built: `StoreDocFreq`'s `advanced_inputs` (`docfreq_store::advance`, store_index-advance); the trait's default stays None |
 | `_patched_masks` | 605-661 | the FTS table | built: `patched_masks` |
 | `_admitted_mask` | 664-677 | nothing | built: `admitted_mask` |
 | `_keep_doc_freqs` | 814-839 | the lock | built: `DocFreqMemo::keep` |
@@ -4127,8 +4127,10 @@ The store's side is the trait `DocFreqSource`: `memory_head`,
 `store_key` (the store's path text and id), `in_transaction`,
 `admission_rows` (the rows and whether the digest answered),
 `read_inputs` (by default the grouping of those rows), `advanced_inputs`
-(by default None, so every changed head reads the inputs again until
-store_index-2), `term_masks` and `fts_rowids` (the patch's statement).
+(by default None, so a source that does not override it reads the inputs
+again at every changed head; the store's source overrides it, unit
+store_index-advance below), `term_masks` and `fts_rowids` (the patch's
+statement).
 The store's implementation is `store::docfreq_store::StoreDocFreq`
 (unit store-2, below). The test double
 `tests/common/docfreq_source.rs` runs the reference's statements over an
@@ -4275,7 +4277,17 @@ Reference lines as they are now: `store_index._memory_head` 369-385,
   second warning and None before the row ahead of it is converted, a
   conversion that fails (a text that is not UTF-8) is the second warning
   and None, and `int()` of a row number or length that does not read
-  raises and is not caught. `_read_doc_freq_inputs`' fallback is a
+  raises and is not caught. `int()` is a Python int: a number past 64
+  bits (a REAL past 2**63 or a numeral text with underscores, planted in
+  an INTEGER column; no writer writes one) is read whole as
+  `docfreq::PyInt` and handed on as it is. It is refused only where the
+  reference refuses it: the grouping's `array('q')` takes a length
+  past 64 bits on a row whose scopes are a list as OverflowError (in row
+  order, after that row's refused actor; a row whose scopes are not a
+  list is skipped and its length never read), and the patch's statement
+  binds the lowest changed row number, OverflowError past 64 bits. A
+  row number past 64 bits is an index key of its own, which no FTS row
+  matches (`digest_big_numbers` in the fixture). `_read_doc_freq_inputs`' fallback is a
   generator over the same steps: a row is grouped once the step to the
   next one succeeded, so a step that fails raises after the rows before
   the one ahead of it were grouped (their scopes parsed, their `Actor`
@@ -4307,36 +4319,13 @@ Reference lines as they are now: `store_index._memory_head` 369-385,
   last byte the memo answers, past it IndexError (`digest_rid_twice`,
   `digest_rid_past_bytes`). `fts_rowids` runs the
   patch's statement; a limit past `i64` binds as `i64::MAX`.
-- `advanced_inputs` stays the trait's default (None):
-  `store_index._advanced_inputs` (474-602, with `_HEAD_KINDS` and
-  `_ADVANCE_ROWS` 459-464) is not ported, so every moved head reads the
-  inputs again. Known differences, all from that step and none in this
-  unit's code:
-  - The memo's terms kept: the reference carries an advanced entry's
-    terms over, the port starts the entry read again with none.
-  - The warnings where the head moved and the digest cannot be brought
-    current (a read-only connection, a busy writer, `query_only`): the
-    reference logs `the digest could not be brought current` twice (once
-    in `_advanced_inputs`' own `digest_mark`, once in
-    `digest_admission_rows`), the port once. Answers are equal.
-  - A digest row changed without a log row (planted) is carried over
-    unread by the reference's advance, so its memoised answer is the
-    row's old group's, where its own fresh read and the port read the row
-    again. Smallest input: a record with no actor, its `digest_records`
-    row's `client` set to `X'6331'`, then another record written so the
-    head moves; `admit` taking rows with no actor: the reference's
-    memoised answer is 2 (the planted row kept in its old group), the
-    port's is 1, as is the reference's own memoised answer with the
-    inputs read again (the digest row read as it now stands); the
-    uncached read, over the memory rows, is 2. Where the planted value
-    does not read, the port raises (ValidationError, ValueError) where
-    the reference's memo answers. This is the reference's memo
-    disagreeing with its own fresh read of the same digest.
-  The fixture runs each case a second time with `_advanced_inputs`
-  answering None and records that run's memo and warnings beside the
-  step's where they differ (`memo_fresh`, `warnings_fresh`); the golden
-  test compares the port's exactly with those, and with the reference's
-  own everywhere else.
+- `advanced_inputs` is `_advanced_inputs`, built by unit
+  store_index-advance (below): an entry kept at an older head is carried
+  over by the log's record rows, its terms kept, as the reference does.
+  The differences the store-2 part listed from not porting it (the terms
+  started again, one `could not be brought current` warning where the
+  reference logs two, a digest row changed without a log row read again)
+  are gone; the last is the reference's own behaviour and is reproduced.
 - A difference this unit keeps: on a read-only connection, a log
   payload id holding a lone surrogate that comes after an existing
   record's id is named UnicodeEncodeError (or a later unloadable
@@ -4368,8 +4357,8 @@ Reference lines as they are now: `store_index._memory_head` 369-385,
 Not in this part, with owners: `Store.reopen` (store.py 1965-2002) waits
 for log-1 (`chain_segments`) and store_open-1 (`_open_reader`), and the
 crate has no non-owner writing open to return yet: it is left as its own
-unit, store-2b. `_advanced_inputs` is in no unit. `store_orphans` is
-store-1's. The read-only search pool (`store/pool.rs`) keeps its own
+unit, store-2b. `_advanced_inputs` is unit store_index-advance's
+(below). `store_orphans` is store-1's. The read-only search pool (`store/pool.rs`) keeps its own
 inputs memo and statistics; routing it through `DocFreqMemo` over a
 `StoreDocFreq` is a later unit's. A `StoreFile` has no constructor of
 its own: `over` takes its connection where a caller has one.
@@ -4391,7 +4380,8 @@ raises, after the connection's ROLLBACK and on a connection left inside a
 transaction no call owns; a home stored as a BLOB; a log with no memory
 row and a planted `index_rebuilt` row; memory rows whose scopes are not
 JSON read under a new memo key; a digest seq past 64 bits; a digest
-client planted as bytes (UTF-8 and not); the memory rows read past a
+client planted as bytes (UTF-8 and not); digest row numbers and lengths
+past 64 bits (`digest_big_numbers`); the memory rows read past a
 step that fails at the second and at the third row (a view in place of
 `homes` whose project overflows there); log payloads planted past the
 digest's seq that do not read (a list, a dict without the key, a text
@@ -4407,7 +4397,12 @@ replay before it lays them. Recorded per step: the tables the step
 changed (the log as the rows appended), every answer, the memo's keys
 (`<root>` for the case's directory) and terms kept, the digest's state,
 admission columns and token count after, whether the head checkpoint
-moved, and each warning's format, class, code and arguments. Gates:
+moved, each memo entry's inputs (`entries`), and each warning's format,
+class, code and arguments. The cases are in three files of under 150 KB
+each (`gen_store_docfreq_store.FILES`): `store_docfreq_store.jsonl`
+(`empty_store` to `digest_client_bytes`), `store_docfreq_store_b.jsonl`
+(`digest_rid_twice` to `read_only`) and `store_docfreq_advance.jsonl`
+(the `advance_` cases below). Gates, each file's:
 `store_tx.jsonl`'s (Unicode, pydantic-core, POSIX only). Tests:
 `golden_store_docfreq_store` (with `golden_store_docfreq_store_not_posix`
 recording the Windows gap), `store_docfreq_store_kills` and
@@ -4415,6 +4410,175 @@ recording the Windows gap), `store_docfreq_store_kills` and
 `TENFOLD` of 2,000, eight threads on one memo over one file, scopes
 nested 100,000 deep, row numbers at the ends of `i64`; it runs
 everywhere, over a store of the admission columns made by hand).
+
+No regular expression is used.
+
+### An entry advanced over the log (unit store_index-advance)
+
+`store::docfreq_store::advance` (a child module of `docfreq_store`, so it
+uses the parent's private `digest_row`, `cells`, `value`, `scopes`,
+`actor_of`, `home_key` and the source's connection as they are) is `store_index._advanced_inputs`
+(store_index.py 474-602) with `_HEAD_KINDS` (459) and `_ADVANCE_ROWS`
+(463); `StoreDocFreq`'s `advanced_inputs` calls it, and
+`DocFreqMemo::current_inputs` calls that for an entry kept at an older
+head and copies the entry's terms on `Some`. Step by step, as the
+reference:
+
+- None when the entry carries no lengths (read without the digest), no
+  `group_of` or no `length_of`, or when the head's seq is not past the
+  entry's.
+- `SELECT mac FROM log WHERE seq = ?` at the entry's seq: None when the
+  row is gone or `str()` of its MAC differs (another history). A failure
+  of this statement is raised, uncaught, as there.
+- The log's rows of `_HEAD_KINDS` after the entry's seq and up to the
+  head's, in seq order, read as sqlite3 hands them on (a row converted,
+  the step to the next taken, then the row used; a text that is not UTF-8
+  is OperationalError, raised). `memory_put` names
+  `json.loads(payload)['memory']['id']`, `home_put`
+  `['home']['record_id']`, `home_delete` `['record_id']`: a text payload
+  is read with `json::loads_detailed`, a BLOB with `json::loads_bytes`
+  (`json.detect_encoding`), anything else is TypeError. A `memory_delete`
+  or `index_rebuilt` row, or a payload whose reading or indexing fails
+  (KeyError, TypeError, ValueError, all caught), is None. RecursionError
+  is not caught: past `json::MAX_DEPTH` it is raised. That limit is
+  CPython 3.13.13's at the shallowest call site, a script's top level
+  (9,999 containers); the reference's C decoder counts against the C
+  stack its callers have already used, so inside the advance, reached
+  through `Store.document_frequencies`, it raises from 9,981 containers
+  (measured in a pytest run), while the port raises from 9,999 wherever
+  it is called. No fixture row holds a depth within 30 levels of 10,000. The id is `str()` of the value (`pyvalue::py_str`: a number's
+  digits, a list's `repr`), kept first seen first without repeats; as
+  soon as the ids and the entry's `changed` together pass 256, None.
+- `digest_mark(build=False)`: None when it answers None. Its warning is
+  the advance's own, so on a read-only connection, under `query_only` or
+  a busy writer, after a moved head, the reference's two `could not be
+  brought current` warnings are both logged here.
+- The digest's active rows of those ids, `provenance::BATCH` (500) per
+  statement, with `digest_admission_rows`' typing (`int()` of the row
+  number and length raised where it does not read, ValueError or
+  TypeError, and for an infinite REAL OverflowError; a number past 64
+  bits read whole, as store-2 above says). The statement is
+  prepared before the ids are bound, so a statement that fails is None
+  and an id holding a lone surrogate is then UnicodeEncodeError, raised
+  (the reference's `sqlite3` binds after it prepares and does not catch
+  it). An SQLite error in the read (a step, a text that is not UTF-8, a
+  table that is not there) is None with no warning. Each row is typed in
+  the fold, its failures in the reference's order: a scopes text that is
+  not JSON (JSONDecodeError), an index past an array of the entry
+  (IndexError), an actor pydantic refuses on a new group (a row whose
+  scopes are a list), a length past 64 bits `array('q')` refuses
+  (OverflowError). A group key made here equals one `from_rows` makes.
+- The fold: a row number not in the index takes the index's length as a
+  new position only when its scopes are a list (else the row is
+  skipped); a known one is taken out of its group (the bit cleared, the
+  group's length reduced) and left in none; `(version, rid, position)`
+  is appended to `changed` for a position that exists; then a row whose
+  scopes are a list joins the group of its key (a new group at the end,
+  with its `Actor`, where none has that key) and takes its length. The
+  version is the entry's plus one. A row number past 64 bits is a key
+  like any other: a new one takes a new position, one the entry holds
+  (read so by a full read) its old one. Index, `group_of`, `length_of`,
+  groups and keys are copied once (the reference's own `dict(...)` and
+  array copies), and the work past that is per row read.
+
+Decisions:
+
+- The chunked read is reproduced though it cannot be reached: 256 ids is
+  the most an advance reads, and a chunk holds 500. 500 and 501 ids in
+  one span are None at the bound (robustness).
+- Only rows the log names are read. A digest row changed with no log
+  row keeps its old group in the advanced entry, where a fresh read
+  would see it as it now stands. This is the reference's behaviour,
+  reproduced (`advance_digest_unread` in the fixture). Linear ENG-413
+  records it as a reference finding (the memo disagrees with the
+  reference's own fresh read); until the reference changes, the port
+  answers as it does now.
+- An index past any array of the entry (`group_of`, `length_of`,
+  `groups`, `lengths`), which no entry the grouping makes holds, is
+  `DocFreqError::IndexError`, the reference's IndexError (each array
+  shortened by one, a new row's position past a shorter `group_of`, a
+  new group's total past a shorter `lengths`: robustness), rather than a
+  panic.
+- An entry at version `u64::MAX` is read again (None) where the
+  reference answers an advanced entry at version 2**64, which a u64
+  does not hold. The reference cannot reach that version (2**64
+  advances); None is the answer closest to it, since the entry read
+  again answers as the advanced one would, and debug and release answer
+  alike.
+- A reference finding, reproduced and not corrected: a digest row whose
+  row number was changed under the digest (planted), then named by the
+  log, is a new key, so the record counts at its old position and at a
+  new one (the reference's `index.get(rid)` is None for the new number).
+  A row number changed within 64 bits does the same in both;
+  `advance_big_numbers` holds it for one past 64 bits. Related to Linear
+  ENG-413.
+
+Fixture: `gen_store_docfreq_store.py` no longer runs each case a second
+time without `_advanced_inputs`; the golden test compares every step's
+answers, memo keys and terms, warnings and memo entries with the
+reference's one run, with the one allowance below. Each step records every memo
+entry's inputs in canonical form (head; groups with scopes as JSON text,
+home, actor and the positions their mask holds; lengths; the index as
+sorted pairs; keys; `group_of`; `length_of`; version; `changed`), or the
+SHA-256 of that JSON text past 500 bytes; the test builds the same form
+from the port's entry. The one stated difference is a group key's client
+or model the reference holds as bytes, which the port holds as its UTF-8
+text (store-2's bytes client; `digest_client_bytes`): the test reads
+such a fixture key as that text. Cases added: `advance_moves` (a row in
+place, a new position, a new group at the end by scopes, client, model
+and home, a group the entry holds, two puts of one record, then a reader
+and `query_only` after a moved head), `advance_scopes_not_list` (a
+digest row whose scopes stop being a list and become one again; a new
+row whose scopes are not a list), `advance_not_followed` (a
+`memory_delete`, an `index_rebuilt` row, then an entry read without the
+digest), `advance_bound` (253 and 254 ids after three changed rows, 256
+and 257 after none, 600 rows naming 256 and 257 ids), `advance_head_row`
+(the MAC at the entry's head changed, then the row gone),
+`advance_payloads` (an id that is a number, a list, bytes of JSON, a
+real record named again; a payload that is not JSON, without the key,
+not a dict, not text; an id holding a lone surrogate and a payload that
+is not UTF-8, both raised), `advance_big_numbers` (a length past 64 bits
+on a named row whose scopes are not a list, then on one whose scopes are
+a list after an earlier row's refused actor; a row number past 64 bits
+named, counted at both positions, a kept term patched from it alone and
+with a lower row number, then named again) and `advance_digest_unread`
+(a digest row changed with no log row, a new memo key reading it, then
+the digest's join failing after the advance's mark). A step's `plant` holds log rows
+planted after the step's tables were taken (a run of `home_delete` rows
+naming records no store holds, a changed or deleted log row), which the
+replay runs after it lays the tables. To keep the files small the tables
+are recorded without their column lists and `memories` and
+`digest_records` as the rows changed since the last step; each file's
+header holds each table's columns in the opened store once, and the
+replay checks its own open against them before it lays a step by
+position (a column order that drifted fails there). An integer past 64
+bits is recorded as its decimal text under `$int`. The advance's cases
+are `store_docfreq_advance.jsonl` (128 KB); the store's cases are split
+over `store_docfreq_store.jsonl` (107 KB) and
+`store_docfreq_store_b.jsonl` (116 KB). Tests:
+`golden_store_docfreq_store`, `store_docfreq_advance_kills` (a moved
+row's bit and length left behind, a new non-list row given a position,
+a row that left every group missing from `changed`, the bound off by
+one or without `changed`, a `memory_delete` or rebuild followed, the MAC
+check dropped, `digest_mark` not called, a digest row the log did not
+name read, the id not `str()` of the value, payloads that do not read,
+a digest text that is not UTF-8 read again with no warning, a head at
+the entry's own seq) and `store_docfreq_advance_robustness` (256 rows on
+an entry of 200,000 within four times a copy of the entry plus the
+timing module's 50 ms of slack: in release the advance takes 0.8 ms
+against 0.12 ms for the copy, so the test holds the advance to no copy
+per row, hundreds of milliseconds, not to the factor; payloads nested
+at `json::MAX_DEPTH` and 100,000 deep, 500 and 501 ids, row numbers at
+the ends of `i64` with lengths past it, numbers past 64 bits, an entry
+at the last version, entries whose arrays disagree, eight threads each
+held inside its advance until all eight advanced);
+both run everywhere, over a store made by hand
+(`common::docfreq_store::HandStore`).
+
+A payload nested past the JSON limit is pinned in the robustness test
+and not in the fixture: where the decoder stops follows the release and
+the system (CPython 3.14 on Linux reads it), and the fixture has no
+Python-gated sibling.
 
 No regular expression is used.
 
@@ -25832,8 +25996,7 @@ What the reference has and this build does not, by area:
   backfill, built in `store::returned`) into the writing open (store-3c)
   and `run_steps`, rekey,
   reclaim, a restore's rows, re-spelling the index. Of `store.py`'s
-  reads, `store_orphans` (store-3); of `store_index.py`,
-  `_advanced_inputs` (store_index-advance).
+  reads, `store_orphans` (store-3).
 - Checkout capture still requires the orchestration in `origin.py`;
   `origin_match` holds its caller matching, `origin_git` its Git probes and
   `origin_cache` its signature and cache, while registration and lookup

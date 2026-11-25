@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use bettermemory_core::store::docfreq::{
     load_scopes, row_mask, AdmissionRow, DocActor, DocFreqError, DocFreqInputs, DocFreqSource,
-    Group, GroupKey, Head, Mask,
+    Group, GroupKey, Head, Mask, PyInt,
 };
 use rusqlite::{params, Connection};
 use serde_json::Value;
@@ -328,7 +328,7 @@ impl Double {
                         continue;
                     }
                     let position = index.len();
-                    index.insert(row.rid, position);
+                    index.insert(row.rid.clone(), position);
                     group_of.push(-1);
                     length_of.push(0);
                     position
@@ -344,7 +344,7 @@ impl Double {
                     position
                 }
             };
-            changed.push((version, row.rid, position));
+            changed.push((version, row.rid.clone(), position));
             let Some(scopes) = scopes else { continue };
             let key: GroupKey = (
                 row.scopes_text.clone(),
@@ -390,7 +390,7 @@ impl Double {
 fn admission_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<AdmissionRow> {
     let scopes: Option<String> = r.get(1)?;
     Ok(AdmissionRow {
-        rid: r.get(0)?,
+        rid: PyInt::Small(r.get(0)?),
         scopes_text: scopes.unwrap_or_else(|| "None".into()),
         home_project: r.get(2)?,
         client: r.get(3)?,
@@ -505,7 +505,7 @@ impl DocFreqSource for Double {
             )?;
             let positions: Vec<usize> = found
                 .iter()
-                .filter_map(|r| inputs.index.get(r).copied())
+                .filter_map(|r| inputs.index.get(&PyInt::Small(*r)).copied())
                 .collect();
             row_mask(&positions, inputs.index.len())
         };

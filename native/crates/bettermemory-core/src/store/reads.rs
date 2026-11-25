@@ -405,6 +405,16 @@ pub fn term_masks(
     index: &HashMap<i64, usize>,
     width: usize,
 ) -> Result<(Vec<bool>, Vec<bool>), ReadError> {
+    term_masks_by(conn, term, &|rid| index.get(&rid).copied(), width)
+}
+
+/// [`term_masks`] with the position of a row number given by `index`.
+pub fn term_masks_by(
+    conn: &Connection,
+    term: &str,
+    index: &dyn Fn(i64) -> Option<usize>,
+    width: usize,
+) -> Result<(Vec<bool>, Vec<bool>), ReadError> {
     let mut statement =
         conn.prepare("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?")?;
     let mut rows_matching = |expr: &str| -> Result<Vec<bool>, ReadError> {
@@ -415,7 +425,7 @@ pub fn term_masks(
                 SqlValue::Integer(i) => i,
                 _ => return Err(ReadError::Raised("TypeError")),
             };
-            if let Some(&p) = index.get(&rid) {
+            if let Some(p) = index(rid) {
                 mask[p] = true;
             }
         }

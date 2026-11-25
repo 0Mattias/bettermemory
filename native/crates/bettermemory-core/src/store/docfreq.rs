@@ -124,14 +124,82 @@ impl DocActor {
     }
 }
 
+/// A Python `int` as `int()` of a digest column reads it: within 64 bits,
+/// or past them (a REAL past 2**63, or a numeral text, planted in an
+/// INTEGER column) as its decimal text. Each value has one spelling, so
+/// equal ints are equal here and hash alike.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PyInt {
+    /// One within 64 bits.
+    Small(i64),
+    /// One past them: an optional `-` and digits with no leading zero.
+    Big(String),
+}
+
+impl PyInt {
+    /// The int a decimal text (an optional `-` and digits) spells; None
+    /// for a text that is not one.
+    pub fn from_decimal(text: &str) -> Option<PyInt> {
+        match &PyValue::int_from_decimal(text)? {
+            PyValue::Int(canonical) => Some(match canonical.parse::<i64>() {
+                Ok(n) => PyInt::Small(n),
+                Err(_) => PyInt::Big(canonical.clone()),
+            }),
+            _ => None,
+        }
+    }
+
+    /// The value within 64 bits; None past them, where sqlite3 refuses to
+    /// bind it and `array('q')` to hold it (OverflowError).
+    pub fn small(&self) -> Option<i64> {
+        match self {
+            PyInt::Small(n) => Some(*n),
+            PyInt::Big(_) => None,
+        }
+    }
+}
+
+impl From<i64> for PyInt {
+    fn from(n: i64) -> PyInt {
+        PyInt::Small(n)
+    }
+}
+
+impl std::fmt::Display for PyInt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PyInt::Small(n) => write!(f, "{n}"),
+            PyInt::Big(text) => f.write_str(text),
+        }
+    }
+}
+
+impl Ord for PyInt {
+    fn cmp(&self, other: &PyInt) -> std::cmp::Ordering {
+        match (self, other) {
+            (PyInt::Small(a), PyInt::Small(b)) => a.cmp(b),
+            (a, b) => crate::pyvalue::cmp_int_text(&a.to_string(), &b.to_string()),
+        }
+    }
+}
+
+impl PartialOrd for PyInt {
+    fn partial_cmp(&self, other: &PyInt) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 /// One row's admission inputs as `digest_admission_rows` or
 /// `_ADMISSION_INPUTS` reads them: its row number, its scopes text (as
 /// `str()` spells the column: `"None"` for NULL), the project its
 /// `homes` row names, its writer's client and model, its BM25 length (0
-/// where the digest did not answer).
+/// where the digest did not answer). A row the grouping takes (its scopes
+/// a list) holds a length within 64 bits (`array('q')` refuses another:
+/// the reader raises OverflowError first); one it skips, whose length
+/// past them is never read, holds 0.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdmissionRow {
-    pub rid: i64,
+    pub rid: PyInt,
     pub scopes_text: String,
     pub home_project: Option<String>,
     pub client: Option<String>,
@@ -168,13 +236,13 @@ pub type TermMasks = (Mask, Mask, u64);
 pub struct DocFreqInputs {
     pub head: Head,
     pub groups: Vec<Group>,
-    pub index: HashMap<i64, usize>,
+    pub index: HashMap<PyInt, usize>,
     pub lengths: Option<Vec<i128>>,
     pub keys: Vec<GroupKey>,
     pub group_of: Option<Vec<i32>>,
     pub length_of: Option<Vec<i64>>,
     pub version: u64,
-    pub changed: Vec<(u64, i64, usize)>,
+    pub changed: Vec<(u64, PyInt, usize)>,
 }
 
 /// `_load_json(text, None)`: the scopes a text parses to, `Ok(None)` for
@@ -195,7 +263,7 @@ impl DocFreqInputs {
         rows: &[AdmissionRow],
         from_digest: bool,
     ) -> Result<DocFreqInputs, DocFreqError> {
-        let mut index: HashMap<i64, usize> = HashMap::new();
+        let mut index: HashMap<PyInt, usize> = HashMap::new();
         let mut numbers: HashMap<GroupKey, usize> = HashMap::new();
         let mut keys: Vec<GroupKey> = Vec::new();
         let mut made: Vec<Made> = Vec::new();
@@ -207,7 +275,7 @@ impl DocFreqInputs {
                 continue;
             };
             let position = index.len();
-            index.insert(row.rid, position);
+            index.insert(row.rid.clone(), position);
             let key: GroupKey = (
                 row.scopes_text.clone(),
                 row.home_project.clone(),
@@ -668,10 +736,10 @@ pub fn patched_masks(
     inputs: &DocFreqInputs,
 ) -> Result<TermMasks, DocFreqError> {
     let (mut body, mut either, seen) = masks.clone();
-    let mut rows: Vec<(i64, usize)> = Vec::new();
-    for &(version, rid, position) in &inputs.changed {
-        if version > seen && !rows.contains(&(rid, position)) {
-            rows.push((rid, position));
+    let mut rows: Vec<(&PyInt, usize)> = Vec::new();
+    for (version, rid, position) in &inputs.changed {
+        if *version > seen && !rows.contains(&(rid, *position)) {
+            rows.push((rid, *position));
         }
     }
     let whole = || -> Result<TermMasks, DocFreqError> {
@@ -684,9 +752,13 @@ pub fn patched_masks(
     if rows.len() > PATCH_ROWS {
         return whole();
     }
-    let low = rows.iter().map(|r| r.0).min().unwrap_or(0);
+    let low = rows.iter().map(|r| r.0).min();
     let quoted = quoted(term);
     let matching = |expr: &str| -> Result<Option<Vec<i64>>, DocFreqError> {
+        // sqlite3 binds the lowest row number when the statement runs: one
+        // past 64 bits (planted in the digest) is OverflowError.
+        let low = low.map_or(Some(0), PyInt::small);
+        let low = low.ok_or(DocFreqError::Py(PyError::OverflowError))?;
         let found = source.fts_rowids(expr, low, PATCH_WINDOW + 1)?;
         Ok((found.len() <= PATCH_WINDOW).then_some(found))
     };
@@ -694,19 +766,20 @@ pub fn patched_masks(
         return whole();
     };
     let mut in_body = Vec::new();
-    if rows.iter().any(|(rid, _)| in_either.contains(rid)) {
+    let found = |rows: &[i64], rid: &PyInt| rid.small().is_some_and(|r| rows.contains(&r));
+    if rows.iter().any(|(rid, _)| found(&in_either, rid)) {
         match matching(&format!("body_fts : {quoted}"))? {
             Some(found) => in_body = found,
             None => return whole(),
         }
     }
     for &(rid, position) in &rows {
-        if in_body.contains(&rid) {
+        if found(&in_body, rid) {
             body.set(position);
         } else {
             body.clear(position);
         }
-        if in_either.contains(&rid) {
+        if found(&in_either, rid) {
             either.set(position);
         } else {
             either.clear(position);

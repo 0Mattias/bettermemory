@@ -163,7 +163,8 @@
 //!   that no other connection holds the store (`store::upgrade`); the
 //!   document frequency memo with the store's side as a trait
 //!   (`store::docfreq`) and that side over a store connection with
-//!   `document_frequencies` and `ranking_statistics`
+//!   `document_frequencies`, `ranking_statistics` and an entry carried
+//!   over a moved head by the log's record rows
 //!   (`store::docfreq_store`); the event and capture readers and the window
 //!   floor (`store::event_reads`); the plain reads of the index and the
 //!   records over a connection (`store::index_reads`,
