@@ -4,6 +4,7 @@
 
 mod timing;
 
+use bettermemory_core::pyre::memo::Setting;
 use bettermemory_core::pyre::regex::{CallError, Item, Regex, RegexError};
 
 fn cp(s: &str) -> Vec<u32> {
@@ -50,7 +51,9 @@ fn every_window_bound_is_answered() {
 /// refusal, and never by a panic.
 #[test]
 fn a_pathological_pattern_is_bounded_by_its_budget() {
-    let r = re("(?:a|aa)*c");
+    // Plain backtracking: as shipped the memo (unit pyre-9) ends this
+    // search in linear steps, under the budget.
+    let r = re("(?:a|aa)*c").with_memo(Setting::OFF);
     let t = vec![97u32; 60];
     assert_eq!(
         r.try_findall(t.as_slice(), 0, isize::MAX, Some(1_000_000))

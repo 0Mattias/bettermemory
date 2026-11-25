@@ -22,8 +22,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::charset::{compile_class, Charset};
-use super::exec::{exec, supports, ClassTest, Found, MatchError, Mode, Text};
+use super::exec::{exec_with, supports, ClassTest, Found, MatchError, Mode, Text};
 use super::lower::{lower, Class, Inst, LowerError, Op, Program, Unit};
+use super::memo::{Memo, Setting};
 use super::parse::parse;
 use super::tree::{BuildError, Feature, Member};
 
@@ -142,6 +143,8 @@ pub struct Regex {
     prog: Program,
     advance: Program,
     classes: Classes,
+    /// The memo's switches for every call (unit pyre-9).
+    memo: Setting,
 }
 
 /// A span `(start, end)` in code units.
@@ -344,7 +347,16 @@ impl Regex {
             advance: advance(&prog),
             prog,
             classes: Classes(classes),
+            memo: Setting::SHIPPED,
         })
+    }
+
+    /// The pattern with the memo run another way than as shipped: for the
+    /// tests that hold every way to one answer.
+    #[doc(hidden)]
+    pub fn with_memo(mut self, memo: Setting) -> Regex {
+        self.memo = memo;
+        self
     }
 
     /// `Pattern.pattern`.
@@ -408,16 +420,31 @@ impl Regex {
         mode: Mode,
         budget: Option<u64>,
     ) -> Result<Option<Match>, CallError> {
-        self.check::<T>()?;
-        let len = isize::try_from(text.len()).map_err(|_| CallError::Memory)?;
-        let found = exec(&self.prog, &self.classes, text, pos, endpos, mode, budget)?;
-        Ok(found.map(|f| self.wrap(&f, len, pos, endpos)))
+        // The memo is made before the type check, so a refused call records
+        // its zeros for `last_call` as a refused scan does.
+        let mut memo = Memo::new(self.memo, text.len());
+        let answer = self.check::<T>().and_then(|()| {
+            let len = isize::try_from(text.len()).map_err(|_| CallError::Memory)?;
+            let n = self.prog.insts.len();
+            let found = exec_with(
+                &self.prog,
+                &self.classes,
+                text,
+                pos,
+                endpos,
+                mode,
+                budget,
+                &mut memo,
+                n,
+            )?;
+            Ok(found.map(|f| self.wrap(&f, len, pos, endpos)))
+        });
+        memo.finish();
+        answer
     }
 
-    /// The matches of `scanner_search` and `pattern_findall`, in order,
-    /// each handed to `each` as it is found, at most `limit` of them: the
-    /// loop of `pattern_subx` and `pattern_split` checks its count before
-    /// each search, so no search runs once `limit` matches are found.
+    /// The matches of `scanner_search`, with one memo for the whole call
+    /// (see [`Regex::scan_runs`]).
     pub(super) fn scan<T: Subject + ?Sized>(
         &self,
         text: &T,
@@ -425,6 +452,27 @@ impl Regex {
         endpos: isize,
         budget: Option<u64>,
         limit: usize,
+        each: impl FnMut(Found),
+    ) -> Result<(), CallError> {
+        let mut memo = Memo::new(self.memo, text.len());
+        let answer = self.scan_runs(text, pos, endpos, budget, limit, &mut memo, each);
+        memo.finish();
+        answer
+    }
+
+    /// The matches of `scanner_search` and `pattern_findall`, in order,
+    /// each handed to `each` as it is found, at most `limit` of them: the
+    /// loop of `pattern_subx` and `pattern_split` checks its count before
+    /// each search, so no search runs once `limit` matches are found.
+    #[allow(clippy::too_many_arguments)]
+    fn scan_runs<T: Subject + ?Sized>(
+        &self,
+        text: &T,
+        pos: isize,
+        endpos: isize,
+        budget: Option<u64>,
+        limit: usize,
+        memo: &mut Memo,
         mut each: impl FnMut(Found),
     ) -> Result<(), CallError> {
         self.check::<T>()?;
@@ -433,8 +481,14 @@ impl Regex {
         let mut start = pos.clamp(0, len);
         let mut must_advance = false;
         let mut found_so_far = 0usize;
-        let run = |prog: &Program, at: isize, mode: Mode| {
-            exec(prog, &self.classes, text, at, endpos, mode, budget)
+        // The bits of the plain program's nodes hold for both programs:
+        // copy B of the advance program is the plain one, with the plain
+        // acceptance, so the attempt that must advance reads and records
+        // them as every search does. Copy A (nodes `n` and above) has no
+        // bit and no interval.
+        let n = self.prog.insts.len();
+        let mut run = |prog: &Program, at: isize, mode: Mode| {
+            exec_with(prog, &self.classes, text, at, endpos, mode, budget, memo, n)
         };
         while found_so_far < limit && start <= end {
             let found = if must_advance {

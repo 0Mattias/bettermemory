@@ -26,6 +26,7 @@
 
 use super::fold::Lit;
 use super::lower::{Anchor, Class, Inst, Op, Program, Unit};
+use super::memo::{Memo, Setting};
 use super::tree::MAXREPEAT;
 use crate::unicode::is_word;
 
@@ -129,6 +130,11 @@ enum Frame {
     /// The lookaround at node `pc`, entered at `pos`: popped by its
     /// [`Op::LookEnd`] when the body matches, by backtracking when not.
     Look { pc: usize, pos: isize, trail: usize },
+    /// The memo's marker for the Split or Rep1 at `pc` entered at `pos`
+    /// (a greedy Rep1's ends reach `top`, else -1): popped by
+    /// backtracking, every way on from there has failed. A marker cut by
+    /// [`Op::LookEnd`] or left under an accepted match records nothing.
+    Memo { pc: usize, pos: isize, top: isize },
 }
 
 /// The one fallible push of every buffer.
@@ -155,6 +161,10 @@ struct Run<'a, C: ?Sized, T: ?Sized> {
     steps: u64,
     budget: Option<u64>,
     peak: usize,
+    memo: &'a mut Memo,
+    /// The nodes the memo covers: the plain program's, which are copy B
+    /// of the program of the attempt that must advance.
+    nodes: usize,
 }
 
 impl<C: ClassTest + ?Sized, T: Text + ?Sized> Run<'_, C, T> {
@@ -243,6 +253,58 @@ impl<C: ClassTest + ?Sized, T: Text + ?Sized> Run<'_, C, T> {
         Ok(k)
     }
 
+    /// At a Split or Rep1: wakes the memo, and answers whether its bit
+    /// says the rest fails from here.
+    fn memo_hit(&mut self, pc: usize, pos: isize) -> bool {
+        self.memo.wake(self.steps);
+        self.memo.active && pc < self.nodes && self.memo.failed(pc, pos)
+    }
+
+    fn mark(&mut self, pc: usize, pos: isize, top: isize) -> Result<(), MatchError> {
+        if self.memo.active && pc < self.nodes {
+            self.push(Frame::Memo { pc, pos, top })?;
+        }
+        Ok(())
+    }
+
+    fn ivs(&self, pc: usize) -> bool {
+        self.memo.intervals() && pc < self.nodes
+    }
+
+    /// [`Self::count`] through the repeat's known run: an entry inside it
+    /// reads nothing more, and reading into its start jumps to its end.
+    fn count_run(
+        &mut self,
+        pc: usize,
+        unit: &Unit,
+        pos: isize,
+        limit: isize,
+    ) -> Result<isize, MatchError> {
+        let (rs, re) = self.memo.rep(pc).run;
+        if rs >= 0 && rs <= pos && pos <= re {
+            return Ok((re - pos).min(limit));
+        }
+        let mut k = 0;
+        while k < limit && self.unit(unit, pos + k) {
+            k += 1;
+            self.step()?;
+            if pos + k == rs {
+                k = (re - pos).min(limit);
+                break;
+            }
+        }
+        if k < limit || pos + k == self.end {
+            self.memo.rep_mut(pc)?.run = (pos, pos + k);
+        }
+        Ok(k)
+    }
+
+    /// Whether `e` lies in the failed ends of the Rep1 at `pc`.
+    fn known_failed(&self, pc: usize, e: isize) -> Option<isize> {
+        let r = self.memo.rep(pc);
+        (self.ivs(pc) && r.lo <= e && e <= r.hi).then_some(r.lo)
+    }
+
     /// One attempt at `start`: the end of the match, or `None`.
     fn attempt(
         &mut self,
@@ -277,6 +339,10 @@ impl<C: ClassTest + ?Sized, T: Text + ?Sized> Run<'_, C, T> {
                         }
                     }
                     Op::Split(second) => {
+                        if self.memo_hit(pc, pos) {
+                            break;
+                        }
+                        self.mark(pc, pos, -1)?;
                         let trail = self.trail.len();
                         self.push(Frame::Alt {
                             pc: *second,
@@ -291,6 +357,9 @@ impl<C: ClassTest + ?Sized, T: Text + ?Sized> Run<'_, C, T> {
                         greedy,
                     } => {
                         let (min, max) = (*min as isize, *max);
+                        if self.memo_hit(pc, pos) {
+                            break;
+                        }
                         let room = self.end - pos;
                         // A minimum past the room fails, even a minimum of
                         // zero when `pos` lies past `endpos`.
@@ -304,24 +373,45 @@ impl<C: ClassTest + ?Sized, T: Text + ?Sized> Run<'_, C, T> {
                         };
                         let trail = self.trail.len();
                         if *greedy {
-                            let k = self.count(unit, pos, limit)?;
+                            let k = if self.ivs(pc) {
+                                self.count_run(pc, unit, pos, limit)?
+                            } else {
+                                self.count(unit, pos, limit)?
+                            };
                             if k < min {
                                 break;
                             }
-                            if k > min {
+                            // Skip the ends known to fail.
+                            let c = self.known_failed(pc, pos + k).map_or(k, |lo| lo - 1 - pos);
+                            if c < min {
+                                break;
+                            }
+                            self.mark(pc, pos, pos + k)?;
+                            if c > min {
                                 self.push(Frame::Greedy {
                                     pc,
                                     start: pos,
-                                    count: k,
+                                    count: c,
                                     trail,
                                 })?;
                             }
-                            pos += k;
+                            pos += c;
                         } else {
                             let k = self.count(unit, pos, min)?;
                             if k < min {
                                 break;
                             }
+                            let (rs, re) = self.memo.rep(pc).run;
+                            if self.ivs(pc) && rs >= 0 && rs <= pos && pos <= re {
+                                // Every end this repeat can reach is known
+                                // to fail.
+                                let top = pos + (re - pos).min(limit);
+                                let r = self.memo.rep(pc);
+                                if r.lo <= pos + min && top <= r.hi {
+                                    break;
+                                }
+                            }
+                            self.mark(pc, pos, -1)?;
                             if k < limit {
                                 self.push(Frame::Lazy {
                                     pc,
@@ -417,7 +507,13 @@ impl<C: ClassTest + ?Sized, T: Text + ?Sized> Run<'_, C, T> {
                         let Op::Rep1 { min, .. } = insts[node].op else {
                             return Ok(None);
                         };
-                        let count = count - 1;
+                        let mut count = count - 1;
+                        if let Some(lo) = self.known_failed(node, from + count) {
+                            count = lo - 1 - from;
+                            if count < min as isize {
+                                continue;
+                            }
+                        }
                         if count > min as isize {
                             self.push(Frame::Greedy {
                                 pc: node,
@@ -437,13 +533,19 @@ impl<C: ClassTest + ?Sized, T: Text + ?Sized> Run<'_, C, T> {
                         trail,
                     } => {
                         self.unwind(trail);
-                        let Op::Rep1 { unit, max, .. } = &insts[node].op else {
+                        let Op::Rep1 { unit, max, min, .. } = &insts[node].op else {
                             return Ok(None);
                         };
                         let at = from + count;
                         // A lazy frame is pushed only while `count` is below
                         // the maximum, so one more unit is always allowed.
                         if !self.unit(unit, at) {
+                            // Stopped by the text: every end was tried, and
+                            // the run's true end is known.
+                            if self.ivs(node) {
+                                self.memo.failed_ends(node, from + *min as isize, at)?;
+                                self.memo.rep_mut(node)?.run = (from, at);
+                            }
                             continue;
                         }
                         let count = count + 1;
@@ -458,6 +560,18 @@ impl<C: ClassTest + ?Sized, T: Text + ?Sized> Run<'_, C, T> {
                         pc = insts[node].next;
                         pos = at + 1;
                         break;
+                    }
+                    Frame::Memo {
+                        pc: node,
+                        pos: at,
+                        top,
+                    } => {
+                        self.memo.set(node, at)?;
+                        if top >= 0 && self.memo.intervals() {
+                            if let Op::Rep1 { min, .. } = insts[node].op {
+                                self.memo.failed_ends(node, at + min as isize, top)?;
+                            }
+                        }
                     }
                     Frame::Look {
                         pc: look,
@@ -491,6 +605,27 @@ pub fn exec<C: ClassTest + ?Sized, T: Text + ?Sized>(
     mode: Mode,
     budget: Option<u64>,
 ) -> Result<Option<Found>, MatchError> {
+    let mut memo = Memo::new(Setting::OFF, text.len());
+    let n = prog.insts.len();
+    exec_with(prog, classes, text, pos, endpos, mode, budget, &mut memo, n)
+}
+
+/// [`exec`] as one run of a call that owns `memo` (unit pyre-9): the memo
+/// covers the nodes below `nodes`, and every run of the call reads and
+/// records them. `Found::steps` and `peak` are this run's; the call's are
+/// added to the memo.
+#[allow(clippy::too_many_arguments)]
+pub fn exec_with<C: ClassTest + ?Sized, T: Text + ?Sized>(
+    prog: &Program,
+    classes: &C,
+    text: &T,
+    pos: isize,
+    endpos: isize,
+    mode: Mode,
+    budget: Option<u64>,
+    memo: &mut Memo,
+    nodes: usize,
+) -> Result<Option<Found>, MatchError> {
     let len = isize::try_from(text.len()).map_err(|_| MatchError::Memory)?;
     let pos = pos.clamp(0, len);
     let end = endpos.clamp(0, len);
@@ -522,25 +657,36 @@ pub fn exec<C: ClassTest + ?Sized, T: Text + ?Sized>(
         steps: 0,
         budget,
         peak: 0,
+        memo,
+        nodes,
     };
     let starts = match mode {
         Mode::Match | Mode::Fullmatch => pos..=pos,
         // `search` finds nothing in a reversed window: the range is empty.
         Mode::Search => pos..=end,
     };
+    let mut found = None;
     for start in starts {
         // A failed attempt unwinds the whole trail before it returns, so
         // every start begins with no mark set and no lastindex.
-        if let Some(stop) = run.attempt(prog.start, start, mode == Mode::Fullmatch)? {
-            return Ok(Some(Found {
-                start,
-                end: stop,
-                marks: run.marks,
-                lastindex: run.lastindex,
-                steps: run.steps,
-                peak: run.peak,
-            }));
+        let stop = run.attempt(prog.start, start, mode == Mode::Fullmatch);
+        if !matches!(stop, Ok(None)) {
+            found = Some((start, stop));
+            break;
         }
     }
-    Ok(None)
+    run.memo.spent += run.steps;
+    run.memo.peak = run.memo.peak.max(run.peak);
+    match found {
+        None => Ok(None),
+        Some((_, Err(e))) => Err(e),
+        Some((start, stop)) => Ok(Some(Found {
+            start,
+            end: stop.ok().flatten().unwrap_or(start),
+            marks: run.marks,
+            lastindex: run.lastindex,
+            steps: run.steps,
+            peak: run.peak,
+        })),
+    }
 }

@@ -4,6 +4,7 @@
 
 mod timing;
 
+use bettermemory_core::pyre::memo::Setting;
 use bettermemory_core::pyre::regex::{CallError, Regex};
 use bettermemory_core::pyre::replace::ReplaceError;
 
@@ -40,7 +41,9 @@ fn counts_at_their_bounds() {
 
 #[test]
 fn a_pathological_pattern_is_bounded_by_its_budget() {
-    let r = re("(?:a|aa)*c");
+    // Plain backtracking: as shipped the memo (unit pyre-9) ends this
+    // scan in linear steps, under the budget.
+    let r = re("(?:a|aa)*c").with_memo(Setting::OFF);
     let t = vec![97u32; 60];
     assert_eq!(
         r.try_subn(&[45], &t, 0, Some(1_000_000)),

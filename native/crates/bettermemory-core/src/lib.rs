@@ -73,7 +73,8 @@
 //!   `fullmatch`, `search`, `finditer` and `findall` and `re.Match`;
 //!   `sub`, `subn` and `split` with a count, a literal or a function
 //!   replacement; every pattern of the reference proven against `re`
-//!   (tests only);
+//!   (tests only); the call-owned memo that keeps the hostile texts of
+//!   the reference's patterns linear in steps, and the steps of a call;
 //! - [`models_text`]: the text helpers of `models.py`: a memory's slug
 //!   and file name, its summary line, the truncation heuristic and the
 //!   search snippets;

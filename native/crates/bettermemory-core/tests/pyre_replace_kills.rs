@@ -4,6 +4,7 @@
 //! type check, and the scan stopped at the count. Each answer is
 //! `re`'s, as CPython 3.13.13 gives it.
 
+use bettermemory_core::pyre::memo::Setting;
 use bettermemory_core::pyre::regex::{CallError, Regex};
 use bettermemory_core::pyre::replace::ReplaceError;
 
@@ -138,7 +139,9 @@ fn a_backslash_is_a_template_refused() {
 /// search would pass is not met with a count of 1.
 #[test]
 fn the_scan_stops_at_the_count() {
-    let r = re("c|(?:a|aa)*b");
+    // Plain backtracking: as shipped the memo (unit pyre-9) ends the
+    // second search in linear steps, under the budget.
+    let r = re("c|(?:a|aa)*b").with_memo(Setting::OFF);
     let mut t = cp("c");
     t.extend(std::iter::repeat_n(97, 40));
     assert_eq!(

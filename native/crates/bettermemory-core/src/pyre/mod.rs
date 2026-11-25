@@ -23,6 +23,9 @@
 //! - [`exec`]: a lowered program run on a text at one start and over
 //!   starts, as `_sre` answers `match`, `fullmatch` and `search` (unit
 //!   pyre-5a).
+//! - [`memo`]: what one call remembers of where the rest failed (bits per
+//!   node and position, runs and failed ends per repeat), its switch and
+//!   the steps of a whole call (unit pyre-9).
 //! - [`regex`]: `re.Pattern` and `re.Match`: a pattern built from its text
 //!   and flags, and `match`, `fullmatch`, `search`, `finditer` and
 //!   `findall` with `pos` and `endpos` (unit pyre-6a).
@@ -35,6 +38,7 @@ pub mod charset;
 pub mod exec;
 pub mod fold;
 pub mod lower;
+pub mod memo;
 pub mod parse;
 pub mod regex;
 pub mod replace;

@@ -36,7 +36,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_git` | The Git process and repository identity probes in `origin.py`. `OriginRunner` implements `origin_dates::OriginGit` and shares the calling thread’s counts with its other Git readers. |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
 | `use_tokens` | the per-turn use-token bookkeeping of `handlers/_shared.py`: `_drain_expired_use_tokens`, `_emit_expired_use_tokens`, `_advance_turn`, `_event_ts_epoch`, `_scan_settled_use_events`, `_already_recorded_pending_ids` and its alias `_hook_attributed_pending_ids`, `_attach_use_tokens`; the recorder and its log are a trait (`UseLog`) | `use_tokens.jsonl`, `use_tokens_python.jsonl` |
-| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth. Unit pyre-5b: `_sre`'s ASSERT and ASSERT_NOT (`Op::Look`, `Op::LookEnd`) run in `exec` as sub-attempts on the same stack; `supports` refuses nothing. Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`). Unit pyre-6b: `Pattern.sub`, `subn` and `split` with a count, a literal or a function replacement, a literal holding a backslash refused as a template (`replace::ReplaceError::Template`). Unit pyre-7 (tests only): every pattern of the reference the engine runs, built from its own text and flags, against `re` over texts that tell its mutants apart, the four data-built families, the tripwire on the reference's sites | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl`, `pyre_inventory.jsonl` |
+| `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth. Unit pyre-5b: `_sre`'s ASSERT and ASSERT_NOT (`Op::Look`, `Op::LookEnd`) run in `exec` as sub-attempts on the same stack; `supports` refuses nothing. Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`). Unit pyre-6b: `Pattern.sub`, `subn` and `split` with a count, a literal or a function replacement, a literal holding a backslash refused as a template (`replace::ReplaceError::Template`). Unit pyre-7 (tests only): every pattern of the reference the engine runs, built from its own text and flags, against `re` over texts that tell its mutants apart, the four data-built families, the tripwire on the reference's sites. Unit pyre-9: the call-owned memo (`memo::Memo`, `Setting`, `Way`, `Stats`, `last_call`, `premises`; `exec::exec_with`), failure bits per node and position, runs and failed ends per repeat, the steps of a whole call | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl`, `pyre_inventory.jsonl`, `pyre_memo.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `records::summaries` | unit 3 of `models.py`, the result models: `MemoryHit` (`MemoryHit::new` with the model's defaults), `MemorySummary` and `TombstonedSummary` (`of` a record, as `store_records.list_summaries` and `list_tombstones` build them), and the two listings' scope filters (`summaries`, `tombstone_summaries`) | `models_hits.jsonl` |
 | `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT`, re-exported), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint`; unit 2, the store reads: the body sha memo (`SHA_BOUND`, `clear_shas`), `current`, `answers`, `Backlog`, `backlog`, `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids`, `refusal_rows`, `held_by_removal` over `StandingStore` and `Admission` | `standing.jsonl`, `standing_reads.jsonl` |
@@ -8961,8 +8961,8 @@ directly.
 
 The engine is designed as a small backtracking matcher behind a parser
 that follows `re/_parser.py` function by function and is held to the
-tree `re` itself prints (units pyre-2 to pyre-6; of the engine pyre-1
-and pyre-2 are built). The parser is to accept the syntax the
+tree `re` itself prints (units pyre-2 to pyre-6; pyre-1 to pyre-7 and
+pyre-9 are built, pyre-8, pyre-9b and pyre-10 are not). The parser is to accept the syntax the
 reference's patterns use and to refuse everything else by name when a
 pattern is built, so that a refusal is a failed build and never a
 different answer. sre's compiler and matcher are not ported.
@@ -8985,7 +8985,8 @@ Leaves first. A unit's lines are Rust source outside tests.
 | pyre-6 | `pyre/regex.rs` | `Regex`, `Match`, `finditer`, `findall`, `sub`, `subn`, `split`, `pos` and `endpos`, literal and function replacement | `_sre` (by differential) | pyre-5, pyre-2 | pyre-6a built (`Regex`, `Match`, `match`, `fullmatch`, `search`, `finditer`, `findall`, the attempt that must advance), 497 lines; pyre-6b built (`sub`, `subn`, `split`, in `pyre/replace.rs`), 228 lines |
 | pyre-7 | tests only | every remaining pattern of the reference built from its own text; mutants; the inventory tripwire | the reference's patterns | pyre-6 | built, 0 lines (642 of tests) |
 | pyre-8 | tests only | the 94 hand-written matchers against the engine | the built units | pyre-6 | not built |
-| pyre-9 | `pyre/memo.rs` | failure bits, the run and failed ends per repeat; megabyte pins by steps | none (changes no answer) | pyre-6, pyre-7 | not built |
+| pyre-9 | `pyre/memo.rs` | failure bits, the run and failed ends per repeat; megabyte pins by steps | none (changes no answer) | pyre-6, pyre-7 | built, 448 lines with `exec.rs` and `regex.rs` (the first-character filter left as pyre-9b) |
+| pyre-9b | `pyre/exec.rs` | the first-character scan filter | none (changes no answer) | pyre-9 | not built |
 | pyre-10 | not scheduled | replacement templates | `_parser.py` 997-1081 | pyre-6 | not built |
 
 The line ranges were confirmed against the 3.13.13 sources (their
@@ -10742,6 +10743,181 @@ it names.
 | `pyre_exec_robustness` | 9 | pyre-5a's, and thirty nested lookaheads over 100,000 code points on a 64 KiB thread with at most 31 choice points held, a tempered `(?:(?!b)a)*b` over 50,000, and failing searches with lookarounds linear in steps |
 
 Left for later units: `sub`, `subn` and `split` (pyre-6b).
+
+### Unit pyre-9, built (`pyre::memo`)
+
+The memo: what one call of a pattern remembers of where the rest of the
+pattern has already failed, so that the hostile texts of the reference's
+patterns cost steps in proportion to their length. It ports no function
+of `src/bettermemory` and changes no answer of the engine. Its reference
+is the decision record of 2026-11-19 (section 4, conditions 4 to 8;
+section 5 rule 6; section 8 risks 3 and 4), the design's section "The
+three devices, and why none changes an answer" and the prototype
+`proto_small_backtracker.py` (`_run`, `_failed_ends`, `_prepare`, the
+drivers).
+
+| function | reference | what it does |
+| --- | --- | --- |
+| `memo::Memo` (`new`, `wake`, `failed`, `set`, `rep`, `failed_ends`, `finish`) | `_prepare`, `_failed_ends`, the `failed` set and `ivs` of `_run` | one bit per (Split or Rep1 node, position), a row allocated on its first bit through `try_reserve`; per Rep1 node the run of its unit read last and one interval of failed ends; the switch |
+| `memo::Way`, `Setting` | `memo_mode` (`off`, `on`, `auto`), `use_iv` | off, on from the first step, as shipped (`Auto`, the switch at `64 * (len + 64)` steps), and `After(b)` for a forced budget; the intervals on or off |
+| `memo::Stats`, `last_call` | `Regex.steps` of the prototype | the steps and peak stack of a whole call (every run it made), whether the memo started and the bytes it held, for the last call of a `Regex` method on the thread |
+| `memo::premises` | decision condition 6 | an exhaustive match over `Op` with no wildcard: an op added to the arena stops the build until the memo is argued sound for it |
+| `exec::exec_with`, `Frame::Memo` | `_run`'s `F_MEMO` frames and reads | one run of a call that owns the memo; `exec` runs it with the memo off, so its callers and step counts are unchanged |
+| `Regex::with_memo` (hidden), `Regex::scan` with one memo per call | the drivers | every public method runs as shipped; the tests set the other ways |
+
+Decisions, with their reasons:
+
+- The memo is owned by the call (`Regex::one` for `match`, `fullmatch`
+  and `search`; `Regex::scan` for `finditer`, `findall`, `sub`, `subn`
+  and `split`) and handed to each run of the matcher. The switch counts
+  the call's steps across its searches: counted per search, a text with
+  many matches would spend the switch once per match, which is
+  quadratic (`pyre_memo_kills`: `the_switch_counts_the_whole_call`).
+- Soundness. After lowering no op reads a mark and there is no counter,
+  backreference or conditional (`parse::refusal`; a loop over a nullable
+  body is `lower`'s `NullableLoop`), so whether the rest reaches an
+  accepted end from (node, position) is a function of that pair for one
+  text, one `endpos` and one acceptance rule. A bit is written only when
+  its marker frame is popped by backtracking: a marker cut by
+  `Op::LookEnd` (a lookaround's body matched) or left under an accepted
+  match records nothing. A body's bit says the body cannot reach its
+  `LookEnd` from there, which does not depend on where the lookaround was
+  entered.
+- The attempt that must advance runs `advance`'s program, whose nodes
+  below `n` (copy B) are the plain program with the plain acceptance,
+  entered only once a unit is consumed or as a lookaround's body. It
+  reads and records the bits and intervals of those nodes as every
+  search of the call does; copy A (nodes `n` and above) has no bit and
+  no interval. This departs from the prototype's `nowrite`: with the
+  attempt reading only, `(?:a|aa)*?(?<!a)` with `finditer` over a run of
+  `a` stays exponential as shipped (the attempt after the empty match at
+  0 tries every way to split the run; 1,542,985 steps at 24 characters,
+  10,574,084 at 28), and recording copy B makes it linear, 80 steps per
+  character at a megabyte (`pyre_memo_robustness`:
+  `the_attempt_that_must_advance_is_linear`, and a family of
+  `pyre_memo.jsonl`). The review's random differential of the recording
+  attempt against `re` and against the memo off, 1,850,520 short-text
+  calls under on and under a forced switch, found no difference.
+  Writing copy A's bits would be sound as well (a node of copy A is only
+  ever at the attempt's own start, and no later attempt of the call
+  starts there) and would save nothing.
+- One memo never outlives a call, so `fullmatch` and the others never
+  share bits.
+- Unlike the prototype, the intervals and runs also wait for the switch:
+  below it a call runs exactly as before this unit, step for step, so no
+  step count pinned by an earlier unit moved. Above it the memo costs a
+  call that had nothing to save as well (see the stated limits).
+- `last_call` holds the stats of the last call of a method on the
+  thread, a call refused by the type check included: every method makes
+  its memo before the check, so a refused call records zeros.
+- A greedy repeat's ends are written as failed when its marker is popped
+  (every count from the minimum to the run was tried or known failed); a
+  lazy repeat's when it is popped stopped by the text. A lazy repeat that
+  reaches its maximum writes nothing (sound, only less remembered).
+- What a step is. The steps of `exec` are unchanged (node visits, units
+  read by a repeat, frames popped). A bit test and an interval skip are
+  made inside a node visit or a frame pop, which counts one step, and a
+  marker frame popped counts one step like any frame; a run read before
+  costs the visit's step and nothing per unit skipped. No bit test or
+  skip is made without a step, so a pin in steps bounds the work done.
+- The first-character scan filter (decision risk 4) is not built: it is
+  pyre-9b. Without it a megabyte with no match as shipped took the steps
+  pinned in `pyre_memo_robustness` (for example 5 steps per character
+  for a backtick never closed).
+
+The hostile families (`gen_pyre_memo`, `pyre_memo.jsonl`): the 33 of the
+decision record and three shapes outside the inventory, `(?:a|aa)+b` over
+a run of `a`, `(?:\w+\s?)+$` over a word and `!`, and `(?:a|aa)*?(?<!a)`
+with `finditer` over a run of `a`. The record names a site by file and
+line at 3a26051a; the generator maps each to the inventory's file and
+bound name (the mapping is in its module text) and fails when a site is
+gone. A family's row holds both: `record`, the record's `file:line`
+written in the generator as a fixed string (never read from the source,
+so an edit of the reference does not move the file's bytes), and `site`,
+the inventory's id, from which the pattern is read anew. Every engine
+site builds from the reference's text, the hand-matched `_BACKTICK_RE`
+included; none is refused. The reference's answer is pinned at 250 to
+2,000 characters for the 33 families and at 12, 16 and 20 for the three
+shapes, which are exponential for `re`; at a megabyte
+the reference takes minutes to hours (the record measured `re` at 32,000
+characters: 9.2 s for `_DRIFTING_COUNT_RE` on `1.` repeated, 5.5 s for
+`_PROPER_NOUN_RE`, 2.7 s for `_TEST_TOTAL_RE`, 1.5 s for the `state` field
+of `_LAUNCHCTL_FIELDS`, the rest under half a second), so there the port
+is held to linear steps with the ways agreeing at 4,000. Every family is
+linear as shipped: growth 2.000 from half a megabyte to a megabyte, with
+at most 119 steps per character (`_DRIFTING_COUNT_RE`, 118.5). The
+reference-quadratic families are recorded as reference findings, not
+reproduced in time. The most memory the memo held at 16 KiB was 45,848
+bytes (`_GENERIC_KEYWORD_RE`, prefix words); at a megabyte 2.5 MB for the
+same family.
+
+Stated limits. Only failures are remembered, so a lookaround that
+succeeds after a scan is run again at every start: `(?=[^b]*?b)a` with
+`finditer` over `a * n + b` takes 1,007,010 steps at 1,000 and 4,014,010
+at 2,000 (pinned). The census of condition 8 over the inventory flags
+four sites whose lookaround bodies hold an unbounded repeat:
+`_COMMIT_HASH_RE`, the third and fourth `_PATTERN_OVERRIDES` of
+`durability.py`, and `_PREFERENCE_RE`. Each body is entered only at a
+word boundary after a fixed literal or at the boundary that opens a hex
+run, so the scans of two entries do not overlap; that is a reading of
+the patterns, not a measurement. One interval per repeat is a heuristic.
+Every node of the plain program (and of copy B) is recorded by every run
+of the call, and copy A is entered only at an attempt's start and left at
+its first unit, so its cost depends on the pattern alone; the worst case
+argued is then polynomial, not exponential: a lookaround that succeeds is
+run again at each entry, so one holding an unbounded repeat is quadratic
+(above), and each lookaround that succeeds nested inside a repeat of one
+that succeeds adds a factor of the length: `(?=(?:a(?=[^b]*?b))*)c` with
+`finditer` over `a * n + b` is cubic in steps in every way, as plain
+backtracking and `re` are (364,212 steps at 100, 2,788,412 at 200,
+pinned in `pyre_memo_kills`: `a_nested_successful_lookaround_is_cubic`).
+Until the attempt that must advance recorded copy B no such bound held
+(the case above); no other exponential case is known, and the review's
+differential with a budget of 2,000,000 steps per run was cut only by
+that one.
+
+The switch does not tell a hostile call from a merely long one. Once a
+call has spent `64 * (len + 64)` steps the memo starts, even where plain
+backtracking had nothing to repeat: a wide alternation fails at every
+position after trying each alternative, so it reaches the switch, writes
+a full row for each of its Split nodes, and only adds marker frames. The
+memo's memory is at most one row of `len / 64 + 1` words per Split or
+Rep1 node, about `nodes * len / 8` bytes, which at the 4,096-node cap is
+512 bytes per character. Measured in review in a release build (neither
+call makes an attempt that must advance, so recording copy B moves
+neither): an alternation of
+300 three-letter literals with `search` over a megabyte of `a` took
+1,233,872,830 steps and held 39,192,920 bytes, against 942,669,825 steps
+with the memo off; 300 alternatives of a two-member class and a digit
+with `finditer` over a megabyte of `z` held 39 MB and took 9.6 s against
+6.0 s off, and 1,300 such alternatives 170,272,920 bytes, 43.6 s against
+36.9 s (`re` held 20 MB and took 2.96 s at 256 KiB). The answers are the same and the
+steps linear. No pattern of the reference comes near: the inventory's
+largest has 59 Split and Rep1 nodes (at most about 7.4 bytes per
+character), and none of its eight largest woke on a megabyte of prose.
+There is no cap on the bits beyond `MAX_NODES`.
+
+Pins of earlier units that moved: three tests held a budget against an
+exponential blow-up, `(?:a|aa)*c` over 60 `a` (`pyre_api_robustness` and
+`pyre_replace_robustness`: `a_pathological_pattern_is_bounded_by_its_budget`)
+and `c|(?:a|aa)*b` over `c` and 40 `a` (`pyre_replace_kills`:
+`the_scan_stops_at_the_count`). As shipped the memo ends those calls in
+linear steps under the budget, so they now build the pattern with the
+memo off, which is what they test: the budget cuts plain backtracking.
+The budget after the memo has woken is pinned here instead
+(`pyre_memo_robustness`: `the_budget_cuts_a_call_after_the_memo_woke`,
+`(?=[^b]*?b)c` with `try_search` over 1,000 `a` and a `b` and a budget of
+1,000,000 steps, which as shipped wakes the memo and is cut). No step
+count of an earlier unit moved.
+
+#### Fixtures and tests of pyre-9
+
+| test | what |
+| --- | --- |
+| `golden_pyre_memo` | every family at 250 to 2,000 characters (the three shapes at 12, 16 and 20) against `re`'s count and SHA-256, under every way (off, on with and without the intervals, as shipped, switched on after 0 to 40 steps) |
+| `pyre_memo_three_ways` | every text of `pyre_exec.jsonl`, `pyre_api.jsonl`, `pyre_inventory.jsonl` and their rows in `pyre_unicode.jsonl` and `pyre_python.jsonl` through the five methods (and `subn`, `subn` with a function and `split` for the replacing rows) under every way, held to the answer with the memo off; a sweep or fuzz row's texts run over three windows (`(0, n)`, `(1, n)`, `(0, n - 1)`), not every window, and a sweep row keeps its 300 shortest texts and an even sample of about 300 of the rest, so the file ends within the battery's bounds in a debug build; the inventory rows run every text |
+| `pyre_memo_kills` | the unsound writes (a marker cut inside a positive and a negative lookaround, bits across calls, an interval written with counts left, the switch per search), the attempt that must advance recording copy B, failed ends that start at the minimum and merge only when they touch, a known run read to its true end, over every text of a small alphabet under every way; the memo off never waking; a refused call's zeros in `last_call`; the premises of condition 6; the census of condition 8; the stated quadratic limit and its cubic nesting |
+| `pyre_memo_robustness` | each family at a megabyte as shipped (64 KiB in a debug build): steps at most `c * (len + 64)` with `c` per family (also the budget of each run, so a broken memo fails the pin instead of running for ever), growth under 2.2, peak stack pinned; the ways agreeing at 4,000; the exponential shapes, the attempt that must advance linear at a megabyte; the budget cutting a call after the memo woke; the steps of every family with the memo on from the first step, with and without the intervals, pinned exactly as two sums (a skip that saves less changes no answer, only these); a 64 KiB thread; the memo's memory; `MatchError::Memory` when growth is refused |
 
 ### Left for later units
 
@@ -25179,10 +25355,10 @@ What the reference has and this build does not, by area:
   the class compiler, the lowering and the matcher's match, fullmatch and
   search with its lookarounds (pyre-5a and pyre-5b), and the pattern
   api (pyre-6a: `Regex`, `Match`, `finditer`, `findall` and the attempt
-  that must advance), with `sub`, `subn` and `split` (pyre-6b): the
-  inventory proof, the cross-check of the
-  hand-written matchers and the memo (pyre-7 to pyre-9), and replacement
-  templates (pyre-10).
+  that must advance), with `sub`, `subn` and `split` (pyre-6b), the
+  inventory proof (pyre-7) and the failure memo (pyre-9): the
+  cross-check of the hand-written matchers (pyre-8), the first-character
+  scan filter (pyre-9b) and replacement templates (pyre-10).
 - This machine's id past its record, clone rule, facts, file reads and
   open: `machine.py`'s `check_import_fork`.
 - Wiring the telemetry recorder and its signed store adapter into
