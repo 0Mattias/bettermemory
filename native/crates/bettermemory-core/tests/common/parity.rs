@@ -344,7 +344,11 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "store_digest_query_sqlite.jsonl" => &[Sqlite],
         // The tokenizer's fingerprint decides a re-spelling; the digest's
         // rows are its tokens.
-        "store_open.jsonl" => &[Unicode],
+        "store_open.jsonl" | "store_open_upkeep.jsonl" => &[Unicode],
+        // A rekey payload or an anchor nested past where `json.loads` stops,
+        // and `sqlite3`'s OverflowError text
+        // (`gen_store_open_upkeep.python_cases`).
+        "store_open_upkeep_python.jsonl" => &[Python, Unicode],
         "fold.jsonl" => &[Unicode, Pydantic],
         // The cases of `fold.jsonl` whose payload is nested past where
         // `json.loads` stops recursing (`gen_fold.PYTHON_CASES`).

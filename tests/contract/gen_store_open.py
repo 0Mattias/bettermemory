@@ -226,7 +226,6 @@ def cases(bases: dict[str, Any]) -> list[dict[str, Any]]:
             "origin_missing",
             "intact",
             [{"unlink": ".origin"}, bind],
-            "not_ported:settle_origin",
         ),
         case(
             "origin_unnamed",
@@ -238,7 +237,6 @@ def cases(bases: dict[str, Any]) -> list[dict[str, Any]]:
                 },
                 bind,
             ],
-            "not_ported:name_origin_key",
         ),
         case("binding_junk", "intact", [{"write": ".path", "hex": _hex("junk")}]),
         case(

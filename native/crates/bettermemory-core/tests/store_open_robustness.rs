@@ -176,8 +176,9 @@ fn junk_in_the_ring_files_is_read_as_the_reference_reads_it() {
         &[json!({"write": ".head", "hex": "7b7b7b"})],
     );
     open(&c).expect("opens");
-    // An origin with junk: an anchor that does not read is settled by the
-    // reference, which this unit does not port.
+    // An origin with junk: an anchor that does not read is settled as the
+    // reference settles it (`_settle_origin`): written over, on seq 1,
+    // naming the key that verifies it.
     let (_d, c) = set_up(
         "open-junk-origin",
         "intact",
@@ -186,7 +187,12 @@ fn junk_in_the_ring_files_is_read_as_the_reference_reads_it() {
             json!({"bind": "memory.sqlite"}),
         ],
     );
-    refuses_untouched(&c, "NotPorted");
+    open(&c).expect("opens");
+    let anchor = fs::read_to_string(c.join("keys").join(format!("{id}.origin"))).expect("anchor");
+    assert!(
+        anchor.starts_with("{\"seq\": 1, ") && anchor.contains("\"key_fingerprint\""),
+        "{anchor}"
+    );
 }
 
 #[cfg(unix)]

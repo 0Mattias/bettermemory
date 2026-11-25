@@ -48,7 +48,7 @@ pub struct SegmentTrust {
 
 /// `log._ring_keys`: the caller's key first, then every held key that is
 /// not equal to it.
-fn ring_keys(ring: &KeyRing, current_key: Option<&Key>) -> Vec<Key> {
+pub(crate) fn ring_keys(ring: &KeyRing, current_key: Option<&Key>) -> Vec<Key> {
     let mut keys: Vec<Key> = current_key.into_iter().cloned().collect();
     keys.extend(
         ring.held_keys()

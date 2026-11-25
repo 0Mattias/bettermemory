@@ -210,6 +210,7 @@ from . import (
     gen_store_key_read,
     gen_store_key_state,
     gen_store_open,
+    gen_store_open_upkeep,
     gen_store_records,
     gen_store_reads_seams,
     gen_store_records_b,
@@ -501,6 +502,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_digest_query": gen_store_digest_query.generate,
     "store_digest_query_sqlite": gen_store_digest_query.generate_sqlite,
     "store_open": gen_store_open.generate,
+    "store_open_upkeep": gen_store_open_upkeep.generate,
+    "store_open_upkeep_python": gen_store_open_upkeep.generate_python,
     "store_write": gen_store_write.generate,
     "store_tx": gen_store_tx.generate,
     "store_records": gen_store_records.generate,
@@ -758,6 +761,8 @@ UNICODE_GATED = frozenset(
         "fold_python",
         "store_create",
         "store_open",
+        "store_open_upkeep",
+        "store_open_upkeep_python",
         "store_write",
         "store_tx",
         # append_history_replaced on the created store (`gen_log_segments`).
@@ -1032,6 +1037,10 @@ PYTHON_GATED = frozenset(
         "log_keyfiles_posix_python",
         "machine_facts_python",
         "fold_python",
+        # A rekey payload or an anchor nested past where `json.loads`
+        # stops, and `sqlite3`'s OverflowError text
+        # (`gen_store_open_upkeep.python_cases`).
+        "store_open_upkeep_python",
         "store_restore_lock_python",
         "store_restore_lock_hold_python",
     }
@@ -1170,7 +1179,8 @@ PLATFORM_GATED = frozenset(
 #: first-run write fail over a file parent and a mode-0600 parent
 #: (`gen_config.generate_create_posix`), which Windows answers otherwise.
 #: ``store_open`` reads modes and writes the key ring's binding as a
-#: resolved POSIX path under a POSIX ``flock``; ``store_write`` records the
+#: resolved POSIX path under a POSIX ``flock`` (``store_open_upkeep`` and
+#: its Python-gated sibling record the same state after the upkeep); ``store_write`` records the
 #: same state after each write, ``store_tx`` after each transaction,
 #: ``store_records`` after each writer call, ``store_returned_posix`` after
 #: each backfill step; ``store_record_event_posix`` opens such stores to
@@ -1328,6 +1338,8 @@ POSIX_ONLY = frozenset(
         "settings_paths_python",
         "settings_create_posix",
         "store_open",
+        "store_open_upkeep",
+        "store_open_upkeep_python",
         "store_write",
         "store_tx",
         # append_history_replaced on the created store (`gen_log_segments`).

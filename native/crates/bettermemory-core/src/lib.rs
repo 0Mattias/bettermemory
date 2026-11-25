@@ -159,7 +159,9 @@
 //!   records over a connection (`store::index_reads`,
 //!   `store::record_reads`); the event writes with their retry and
 //!   deadline, the v8 import, the migration and capture rows
-//!   (`store::record_event`); and the returned marks' backfill on the
+//!   (`store::record_event`); the owner's writing open's upkeep with its
+//!   key present, a foreign tail closed and the origin anchor settled
+//!   (`store::open`, `open/upkeep.rs`); and the returned marks' backfill on the
 //!   writable store (`store::returned`: `missing_links`,
 //!   `returned_rows`, `backfill`, `ensure_backfilled`);
 //! - [`store_refusal`]: the stores a hook refuses before it starts a

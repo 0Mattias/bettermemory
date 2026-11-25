@@ -25,11 +25,12 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use zeroize::Zeroizing;
 
 use super::create::{with_suffix, Provider};
 use super::open::{replace_atomic, WritableStore};
+use super::{log_row, sqlite_text_error, StoreError, LOG_SELECT};
 use crate::log::{fingerprint, head_file_text, Key, KeyRing, LogRow};
 use crate::pyvalue::{PyError, PyValue};
 use crate::unicode;
@@ -394,23 +395,33 @@ pub(super) fn native_origin(kind: &str, payload: &PyValue) -> bool {
     }
 }
 
-pub(super) fn last_row(conn: &Connection) -> rusqlite::Result<Option<LogRow>> {
-    conn.prepare(
-        "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log \
-         ORDER BY seq DESC LIMIT 1",
-    )?
-    .query_row([], |r| {
-        Ok(LogRow {
-            seq: r.get(0)?,
-            ts: r.get(1)?,
-            session: r.get(2)?,
-            kind: r.get(3)?,
-            payload: r.get(4)?,
-            prev_mac: r.get(5)?,
-            mac: r.get(6)?,
-        })
-    })
-    .optional()
+/// `log.last_row` as `append_row` reads it: every column as `log._row`
+/// reads it (`str()` of a BLOB or a number); a text that is not UTF-8 is
+/// the OperationalError sqlite3's fetch raises.
+pub(super) fn last_row(conn: &Connection) -> Result<Option<LogRow>, WriteError> {
+    const COLUMNS: [&str; 7] = ["seq", "ts", "session", "kind", "payload", "prev_mac", "mac"];
+    let mut statement = conn.prepare(&format!("{LOG_SELECT} ORDER BY seq DESC LIMIT 1"))?;
+    let mut rows = statement.query([])?;
+    let Some(row) = rows.next()? else {
+        return Ok(None);
+    };
+    match log_row(row) {
+        Ok(read) => Ok(Some(read)),
+        Err(StoreError::Sqlite(e)) => Err(e.into()),
+        Err(StoreError::NotUtf8 { column, .. }) => {
+            let at = COLUMNS.iter().position(|c| *c == column).unwrap_or(0);
+            let raw = row.get_ref(at)?.as_bytes().unwrap_or_default();
+            Err(WriteError::Refused {
+                class: "OperationalError",
+                text: Some(sqlite_text_error(column, raw)),
+            })
+        }
+        // `int(raw[0])` of the rowid alias: no other error is read.
+        Err(_) => Err(WriteError::Refused {
+            class: "TypeError",
+            text: None,
+        }),
+    }
 }
 
 /// `KeyRing.load_current` as `_signing_key` reads it: None when there is

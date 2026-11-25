@@ -189,13 +189,21 @@ pub fn setup(recipe: &[Value], case: &Path, store_id: &str) {
     }
 }
 
-fn cell(v: ValueRef<'_>) -> String {
+/// `gen_store_open_upkeep.NOT_UTF8`: how that fixture's state spells a
+/// text that is not UTF-8, before its bytes in hex and a closing `>`.
+pub const NOT_UTF8: &str = "<not UTF-8: ";
+
+fn cell(v: ValueRef<'_>, spell_not_utf8: bool) -> String {
     match v {
         ValueRef::Null => "N".to_owned(),
         ValueRef::Integer(i) => format!("i{i}"),
         ValueRef::Real(f) => format!("r{}", bettermemory_core::float_repr::repr(f)),
         ValueRef::Text(t) => {
-            let t = std::str::from_utf8(t).expect("UTF-8");
+            let t = match std::str::from_utf8(t) {
+                Ok(t) => t.to_owned(),
+                Err(_) if spell_not_utf8 => format!("{NOT_UTF8}{}>", hex(t)),
+                Err(e) => panic!("a text that is not UTF-8: {e}"),
+            };
             format!("t{}:{t}", t.len())
         }
         ValueRef::Blob(b) => format!("b{}", hex(b)),
@@ -224,8 +232,26 @@ fn mode(path: &Path) -> String {
     created::mode_of(path, "0600")
 }
 
-/// `gen_store_open.state`.
+/// `gen_store_open.state`: a text that is not UTF-8 panics, as the
+/// reference's reader raises on one.
 pub fn state(case: &Path, root: &Path, store_id: &str, pragmas: &[Value]) -> Value {
+    state_reading(case, root, store_id, pragmas, false)
+}
+
+/// [`state`] as `gen_store_open_upkeep.state` reads it: a text that is
+/// not UTF-8 (a case there leaves one in the log) spelled exactly, as
+/// [`NOT_UTF8`] and its bytes in hex.
+pub fn state_not_utf8(case: &Path, root: &Path, store_id: &str, pragmas: &[Value]) -> Value {
+    state_reading(case, root, store_id, pragmas, true)
+}
+
+fn state_reading(
+    case: &Path,
+    root: &Path,
+    store_id: &str,
+    pragmas: &[Value],
+    spell: bool,
+) -> Value {
     let mut out = Map::new();
     let mut names: Vec<String> = fs::read_dir(case)
         .expect("case")
@@ -273,10 +299,10 @@ pub fn state(case: &Path, root: &Path, store_id: &str, pragmas: &[Value]) -> Val
         Ok(mut s) => s
             .query_map([], |r| {
                 Ok([
-                    cell(r.get_ref(0)?),
-                    cell(r.get_ref(1)?),
-                    cell(r.get_ref(2)?),
-                    cell(r.get_ref(3)?),
+                    cell(r.get_ref(0)?, spell),
+                    cell(r.get_ref(1)?, spell),
+                    cell(r.get_ref(2)?, spell),
+                    cell(r.get_ref(3)?, spell),
                 ])
             })
             .expect("master")
@@ -354,7 +380,7 @@ pub fn state(case: &Path, root: &Path, store_id: &str, pragmas: &[Value]) -> Val
             ))
             .expect("select")
             .query_map([], |r| {
-                Ok((0..n).map(|i| cell(r.get_ref(i).unwrap())).collect())
+                Ok((0..n).map(|i| cell(r.get_ref(i).unwrap(), spell)).collect())
             })
             .expect("rows")
             .collect::<Result<_, _>>()
