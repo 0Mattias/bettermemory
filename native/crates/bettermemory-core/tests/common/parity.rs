@@ -359,10 +359,19 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // The tokenizer's fingerprint decides a re-spelling; the digest's
         // rows are its tokens.
         "store_open.jsonl" | "store_open_upkeep.jsonl" | "store_open_rekey.jsonl" => &[Unicode],
+        // The created store's open and a second connection to it: the
+        // tokenizer's fingerprint in a drift's warning, the digest's rows
+        // (`gen_store_open_restore`, `gen_store_reopen`).
+        "store_open_restore.jsonl" | "store_reopen.jsonl" => &[Unicode],
         // A rekey payload or an anchor nested past where `json.loads` stops,
         // and `sqlite3`'s OverflowError text
         // (`gen_store_open_upkeep.python_cases`).
         "store_open_upkeep_python.jsonl" => &[Python, Unicode],
+        // `sqlite3`'s OverflowError text, and a payload nested past where
+        // `json.loads` stops, read by the owner's open and by a reopen
+        // (`gen_store_open_restore.python_cases`,
+        // `gen_store_reopen.python_cases`).
+        "store_open_restore_python.jsonl" | "store_reopen_python.jsonl" => &[Python, Unicode],
         // The same, and `sqlite3`'s text for a log row that is not UTF-8
         // (`gen_store_open_rekey.python_cases`).
         "store_open_rekey_python.jsonl" => &[Python, Unicode],

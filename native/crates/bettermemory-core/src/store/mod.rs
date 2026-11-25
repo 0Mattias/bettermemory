@@ -401,11 +401,10 @@ impl std::fmt::Display for Stepped {
 
 impl std::error::Error for Stepped {}
 
-/// `store_index.stored_fingerprint` for a caller outside the store: the
+/// `store_index.stored_fingerprint` for a caller outside the fold: the
 /// tokenizer the store's index text is spelled by, as its log names it.
-// Called by the command's read-only open (`cli::log_verify`), POSIX's
-// until the store's selection is ported for Windows.
-#[cfg_attr(not(unix), allow(dead_code))]
+/// Read by the writing open and a reopen (`store::open`) and by the
+/// command's read-only open (`cli::log_verify`).
 pub(crate) fn stored_tokenizer(conn: &Connection) -> Result<Option<PyStr>, StoreError> {
     fold::stored_fingerprint(conn)
 }

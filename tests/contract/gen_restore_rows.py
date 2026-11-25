@@ -11,8 +11,8 @@ its restore record written beside the head, as `backup._append_record`
 writes one (``json.dumps(document, indent=2, sort_keys=True)`` and a line
 feed, its ``.lock`` beside it), or as a hostile file. The record comes
 after the open, so the open's own `restore_rows.settle` finds none: that
-call is not this fixture's (the native writing open still refuses a
-pending record).
+call is not this fixture's (`gen_store_open_restore` holds the writing
+open's settle).
 
 Each step may first change the store (SQL, the record, the keys
 directory's mode), then calls `restore_rows.settle`, `append_missing`

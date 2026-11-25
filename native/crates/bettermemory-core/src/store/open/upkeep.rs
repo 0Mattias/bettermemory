@@ -26,6 +26,7 @@ use crate::store::create::Provider;
 use crate::store::exception::{ExceptionFamily, StoreException};
 use crate::store::keys::load_key_ring;
 use crate::store::provenance::ConnSource;
+use crate::store::restore_rows::Arg as RestoreArg;
 use crate::store::write::WriteError;
 use crate::store::{log_row, StoreError, LOG_SELECT};
 use crate::unicode;
@@ -75,8 +76,9 @@ impl Cause {
     }
 }
 
-/// One warning the upkeep logged (`log.warning` on `bettermemory.store`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One warning the upkeep logged (`log.warning` on `bettermemory.store`),
+/// or `restore_rows.settle` after it (on `bettermemory.restore_rows`).
+#[derive(Clone, Debug, PartialEq)]
 pub enum Warning {
     /// The tail's transaction failed: `named` is the last name read.
     TailNotClosed {
@@ -113,6 +115,9 @@ pub enum Warning {
     },
     /// `_open_rekeyed` wrote the key `new` over `previous`'s segment.
     Rekeyed { previous: PyStr, new: String },
+    /// What `restore_rows.settle` logged; its own arguments are
+    /// `restore_rows::Warning::args`.
+    Restore(crate::store::restore_rows::Warning),
 }
 
 /// One argument of a warning, as the logger receives it.
@@ -170,6 +175,7 @@ impl Warning {
                 "store %s was opened without its key (fingerprint %s); a new key %s was written \
                  and the log rekeyed"
             }
+            Warning::Restore(w) => w.format(),
         }
     }
 
@@ -224,6 +230,21 @@ impl Warning {
                 Arg::Text(head16(previous)),
                 Arg::Text(head16(&unicode::cps(new))),
             ],
+            // The record's path and a value as the text `%s` makes of them.
+            Warning::Restore(w) => w
+                .args()
+                .into_iter()
+                .map(|a| match a {
+                    RestoreArg::Store => Arg::Path,
+                    RestoreArg::Path(p) => Arg::Text(crate::fsutil::fsdecode(p.as_os_str())),
+                    RestoreArg::Value(v) => {
+                        Arg::Text(crate::pyvalue::py_str(v).unwrap_or_default())
+                    }
+                    RestoreArg::Text(t) => Arg::Text(unicode::cps(&t)),
+                    RestoreArg::Int(n) => Arg::Int(n),
+                    RestoreArg::Cause(c) => Arg::Cause(c),
+                })
+                .collect(),
         }
     }
 }

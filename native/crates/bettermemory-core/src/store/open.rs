@@ -14,12 +14,14 @@
 //! order: `_connect`'s pragmas and modes, `engine_version`
 //! (`_record_engine`), the key ring's binding (`_claim_key_ring`), the
 //! upkeep with the key present (`upkeep`: `_close_foreign_tail`, then
-//! `_settle_origin`), and the digest brought current (`digest_mark`: the record mutations after its
-//! mark applied, or the digest built from the records).
+//! `_settle_origin`), a restore's late rows (`restore_rows.settle`, by
+//! [`open_for_writing_mut`]), and the digest brought current
+//! (`digest_mark`: the record mutations after its mark applied, or the
+//! digest built from the records).
 //!
 //! [`WritableStore`] holds the connection, the key and what the open
-//! established; appending log rows and applying mutations are the next
-//! unit's, which add methods to it.
+//! established; `WritableStore::reopen` (`open/reopen.rs`) opens another
+//! connection to the same file as `Store.reopen` does.
 
 use std::fs;
 use std::io::{self, Write};
@@ -37,6 +39,7 @@ use super::create::{
 };
 use super::digest::{self, DigestError};
 use super::restore_lock;
+use super::restore_rows::{self, RestoreError};
 use super::schema;
 use super::versions::{self, DiagnosticError, VersionDiagnostic};
 use super::write::WriteError;
@@ -47,12 +50,14 @@ use crate::lexicon;
 use crate::log::ring::binding_path::{self, BindingError, BindingPath};
 use crate::log::ring::KeyFiles;
 use crate::log::{self, fingerprint, HistoryOrigin, Key, KeyRing, LogRow};
-use crate::pyvalue::{self, PyStr, PyValue};
+use crate::pyvalue::{self, PyError, PyStr, PyValue};
 use crate::unicode;
 
 mod rekey;
+mod reopen;
 mod upkeep;
 
+pub use reopen::{Reopened, ReopenedReader, TOKENIZER_DRIFT};
 pub use upkeep::{Arg as UpkeepArg, Cause as UpkeepCause, Warning as UpkeepWarning};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -109,7 +114,10 @@ pub enum NotPorted {
     /// appends a `rekey` row, stamped by the log's clock): refused by the
     /// entries that share the provider, closed by [`open_for_writing_mut`].
     ForeignTail,
-    /// A restore record lies in the keys directory (`restore_rows.settle`).
+    /// The restore record holds a `store_restored` entry for this store
+    /// whose row is null (`restore_rows.pending`): `restore_rows.settle`
+    /// appends its row, stamped by the log's clock. Refused by the entries
+    /// that share the provider; settled by [`open_for_writing_mut`].
     RestoreRecord,
     /// The index is spelled by another tokenizer (`settle_tokenizer`
     /// re-spells it and appends `index_rebuilt`).
@@ -260,6 +268,11 @@ pub enum OpenError {
     /// is not UTF-8 (`chain_segments` in the dispatch for a missing or
     /// foreign key, which nothing catches), in the module's words.
     Decode(String),
+    /// An exception of the reference's that no other variant names: its
+    /// class and text (a key state or log read `_open_reader` lets
+    /// through, `set_busy_timeout`'s ValueError, what `restore_rows.settle`
+    /// does not catch).
+    Raised { class: &'static str, message: PyStr },
     /// Any other error, raised after the upkeep logged `logged` (a tail
     /// closed, a store reclaimed or rekeyed): `error` is the error itself.
     Logged {
@@ -334,6 +347,7 @@ impl OpenError {
             OpenError::Overflow => "OverflowError",
             OpenError::Recursion { .. } => "RecursionError",
             OpenError::Decode(_) => "OperationalError",
+            OpenError::Raised { class, .. } => class,
             OpenError::Logged { error, .. } => error.class(),
             OpenError::Write(e) => match &**e {
                 WriteError::Version(_) => "StoreVersionError",
@@ -370,6 +384,7 @@ impl std::fmt::Display for OpenError {
             OpenError::Overflow => write!(f, "{}", digest::OVERFLOW_TEXT),
             OpenError::Recursion { text, .. } => f.write_str(text),
             OpenError::Decode(text) => f.write_str(text),
+            OpenError::Raised { message, .. } => f.write_str(&json::utf8_text(message)),
             OpenError::Logged { error, .. } => write!(f, "{error}"),
             OpenError::Write(e) => write!(f, "{e}"),
         }
@@ -414,6 +429,59 @@ fn not_ported(n: NotPorted) -> OpenError {
     OpenError::NotPorted(n)
 }
 
+/// What `restore_rows.settle` raised past its own `except`: OverflowError
+/// (a seq past SQLite's INTEGER), a write this build refuses, an SQLite
+/// error it does not catch (MemoryError).
+///
+/// Nothing else reaches here: both callers ask `RestoreError::cause`
+/// first, which catches a text that is not UTF-8, the record's lock and
+/// every Python class but OverflowError and TypeError; and the TypeErrors
+/// of `append_missing` (an entry that is not a dict, a head whose seq is
+/// not an int) are filtered out by `pending` and `_seq_mac` before they
+/// could raise. The fallback names what it met, for a build in which that
+/// stopped holding.
+fn restore_failure(error: RestoreError) -> OpenError {
+    match error {
+        RestoreError::Write(e) => OpenError::Write(Box::new(e)),
+        RestoreError::Sqlite(e) => OpenError::Sqlite(e),
+        RestoreError::Py(PyError::OverflowError) => OpenError::Overflow,
+        other => {
+            debug_assert!(false, "restore_rows.settle let through {other:?}");
+            let class = match &other {
+                RestoreError::Py(e) => e.name(),
+                _ => "OperationalError",
+            };
+            OpenError::Raised {
+                class,
+                message: unicode::cps(&format!(
+                    "restore_rows.settle raised {class}, which it never lets through \
+                     ({other:?})"
+                )),
+            }
+        }
+    }
+}
+
+/// `_connect`'s owner-only modes on the file and its WAL siblings, which
+/// the reference sets after its pragmas and before `confirm` and the
+/// reads of meta: an open refused by `confirm` or by the reference's own
+/// checks after `_connect` (a meta without a key fingerprint, a later
+/// reader, an unreadable key) leaves the file 0600 as the reference's
+/// does. A not-ported refusal leaves it as it was, and so does a refusal
+/// of a store whose header does not say WAL: there the reference's
+/// `PRAGMA journal_mode = WAL` comes first and needs the file's exclusive
+/// lock, so another connection reading it fails the open ("database is
+/// locked") before the modes change. This port runs no pragma before it
+/// decides, so it cannot tell whether that switch would have been taken,
+/// and leaves both the journal mode and the modes as they were (the
+/// README's "Not built yet").
+fn owner_only(file: &Path, error: OpenError) -> OpenError {
+    if !matches!(error, OpenError::NotPorted(_)) && super::says_wal(file).unwrap_or(false) {
+        owner_only_modes(file);
+    }
+    error
+}
+
 /// A point between two of the open's steps (the kill test stops the
 /// process there).
 #[doc(hidden)]
@@ -449,6 +517,10 @@ pub enum Boundary {
     OriginTaken,
     /// `_settle_origin` done: an anchor written, or its key named.
     OriginSettled,
+    /// `restore_rows.settle` done after the upkeep, on each of the owner's
+    /// three paths: a pending restore's `store_restored` row appended and
+    /// named in the record, or kept off the log (`row_withheld`).
+    RestoreSettled,
     /// The digest's record mutations after its mark applied (one
     /// transaction).
     DigestIngested,
@@ -467,7 +539,7 @@ impl Boundary {
     /// Every boundary, in the order an open passes them (a build's batch
     /// once per batch; a store whose digest is current passes none of the
     /// digest's).
-    pub const ALL: [Boundary; 17] = [
+    pub const ALL: [Boundary; 18] = [
         Boundary::Swept,
         Boundary::Checked,
         Boundary::Connected,
@@ -480,6 +552,7 @@ impl Boundary {
         Boundary::Rekeyed,
         Boundary::OriginTaken,
         Boundary::OriginSettled,
+        Boundary::RestoreSettled,
         Boundary::BuildBegun,
         Boundary::BuildBatch,
         Boundary::BuildEnded,
@@ -497,6 +570,9 @@ pub enum DigestOutcome {
     Ingested,
     /// Built from the records, then brought to the log's head.
     Built,
+    /// Not asked: a reopen leaves the digest as it stands (`keeps_digest`
+    /// brings it current for the owner's open only).
+    Untouched,
     /// Left as it stood: the reference's `digest_mark` answers None
     /// (another build took it over, a busy store, a record that does not
     /// read). The text says why.
@@ -588,7 +664,8 @@ impl WritableStore {
         self.bound
     }
     /// What the open's upkeep logged (`_close_foreign_tail`,
-    /// `_settle_origin`), in order.
+    /// `_settle_origin`, `_reclaim`, `_open_rekeyed`, then
+    /// `restore_rows.settle`), in order.
     pub fn upkeep(&self) -> &[UpkeepWarning] {
         &self.upkeep
     }
@@ -748,34 +825,25 @@ fn open_writer(
     // checkpoints nothing and removes the `-wal` and `-shm` (an empty pair
     // a reader left, or the pair this connection made).
     let had_wal = fs::metadata(super::beside(&file, "-wal")).is_ok_and(|m| m.len() > 0);
-    let mut conn = Connection::open_with_flags(
-        &file,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    conn.set_prepared_statement_cache_capacity(super::STATEMENT_CACHE_CAPACITY);
-    conn.busy_timeout(BUSY_TIMEOUT)?;
-    if had_wal {
-        conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
-    }
-    let deadline = admission::install(&mut conn)?;
-    match admission::admit(&conn, &deadline) {
-        Ok(()) => {}
-        Err(AdmitError::Refused(r)) => return Err(OpenError::Admission(r)),
-        Err(AdmitError::Sqlite(e)) => return Err(e.into()),
-        Err(AdmitError::Store(e)) => return Err((*e).into()),
-    }
+    let (conn, deadline) = admitted(&file, had_wal)?;
     // `_connect`'s `held.confirm()`: the connection has read the store,
-    // and nothing of its meta or keys is read yet.
-    held.confirm()?;
-    let plan = decide(
-        &conn,
-        &deadline,
-        &file,
-        keys_dir,
-        provider.engine(),
-        matches!(provider, Given::Owned(_)),
-        diagnostics,
-    )?;
+    // and nothing of its meta or keys is read yet. Either refusal comes
+    // after `_connect`'s modes in the reference's order.
+    let plan = held
+        .confirm()
+        .map_err(OpenError::from)
+        .and_then(|()| {
+            decide(
+                &conn,
+                &deadline,
+                &file,
+                keys_dir,
+                provider.engine(),
+                matches!(provider, Given::Owned(_)),
+                diagnostics,
+            )
+        })
+        .map_err(|e| owner_only(&file, e))?;
     if had_wal {
         // Decided to write: the close checkpoints as the reference's does.
         conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
@@ -827,8 +895,7 @@ fn open_writer(
     let mut log = Vec::new();
     let upkept = match path {
         // KEY_PRESENT with ``allow_rekey``: `_close_foreign_tail`, then
-        // `_settle_origin` (`restore_rows.settle` is refused by the
-        // decision).
+        // `_settle_origin`; `restore_rows.settle` below.
         rekey::Dispatch::Present => {
             upkeep::close_foreign_tail(&mut store, provider.clock(), hook, &mut log)
                 .and_then(|()| {
@@ -863,9 +930,13 @@ fn open_writer(
             .and_then(|clock| rekey::rekeyed(&mut store, clock, previous, hook, &mut log)),
         rekey::Dispatch::Raise(error) => Err(error),
     };
-    if let Err(e) = upkept {
+    // `restore_rows.settle` after the upkeep on each path
+    // (`store_open.py` 98, 131, 248).
+    let settled = upkept.and_then(|()| settle(&mut store, provider.clock(), &mut log));
+    if let Err(e) = settled {
         return Err(e.after(log));
     }
+    hook(Boundary::RestoreSettled);
     store.upkeep = log;
     // A refusal the decision held back because it read the upkeep as
     // raising first, when it did not (another opener changed the log or
@@ -889,6 +960,30 @@ fn open_writer(
     store.digest = outcome;
     store.digest_reason = digest_reason;
     Ok(store)
+}
+
+/// `_connect`'s `sqlite3.connect` (the 5 s busy timeout) and
+/// `admit_store`; with `keep_wal`, a close that checkpoints nothing.
+fn admitted(
+    file: &Path,
+    keep_wal: bool,
+) -> Result<(Connection, std::sync::Arc<admission::Deadline>), OpenError> {
+    let mut conn = Connection::open_with_flags(
+        file,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.set_prepared_statement_cache_capacity(super::STATEMENT_CACHE_CAPACITY);
+    conn.busy_timeout(BUSY_TIMEOUT)?;
+    if keep_wal {
+        conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
+    }
+    let deadline = admission::install(&mut conn)?;
+    match admission::admit(&conn, &deadline) {
+        Ok(()) => Ok((conn, deadline)),
+        Err(AdmitError::Refused(r)) => Err(OpenError::Admission(r)),
+        Err(AdmitError::Sqlite(e)) => Err(e.into()),
+        Err(AdmitError::Store(e)) => Err((*e).into()),
+    }
 }
 
 /// What the open decided before writing anything.
@@ -939,6 +1034,62 @@ fn read_meta(
     }
 }
 
+/// What `_open_connected` reads before the key ring: meta, the opening
+/// checks, `check_versions` and `_add_membership_tables`' question.
+struct Checked {
+    meta: Vec<(String, String)>,
+    store_id: String,
+    expected: String,
+    /// A later minimum writer, for an open that may not rekey: the
+    /// reason as `check_versions` words it, and that minimum.
+    read_only: Option<(PyStr, i64)>,
+}
+
+/// [`decide`]'s first steps, shared with a reopen (``allow_rekey`` False):
+/// a later minimum writer refuses the owner's open (a reader's open, not
+/// ported) and is the reopen's `read_only`.
+fn checks(
+    conn: &Connection,
+    deadline: &admission::Deadline,
+    file: &Path,
+    version: &str,
+    allow_rekey: bool,
+    diagnostics: &mut OpenDiagnostics,
+) -> Result<Checked, OpenError> {
+    let meta = read_meta(conn, deadline)?;
+    let shown = versions::path_text(file);
+    let checked = super::open_checks_points(&meta, &shown, version).map_err(|e| {
+        diagnostics.version = e.version;
+        e.error
+    })?;
+    let opened = checked.opened;
+    let mut read_only = None;
+    if let Some(reason) = opened.verdict.read_only {
+        if allow_rekey {
+            diagnostics.read_only_reason = checked.read_only_reason;
+            return Err(not_ported(NotPorted::LaterWriter(reason)));
+        }
+        let points = checked
+            .read_only_reason
+            .unwrap_or_else(|| unicode::cps(&reason));
+        read_only = Some((points, opened.verdict.min_writer));
+    } else if opened.verdict.revision < SCHEMA_REVISION {
+        return Err(not_ported(NotPorted::SchemaSteps {
+            revision: opened.verdict.revision,
+        }));
+    }
+    let wanted = membership_wanted(conn, &meta)?;
+    if !wanted.is_empty() {
+        return Err(not_ported(NotPorted::MembershipStep(wanted)));
+    }
+    Ok(Checked {
+        meta,
+        store_id: opened.store_id,
+        expected: opened.key_fingerprint,
+        read_only,
+    })
+}
+
 /// Every decision `_open_connected` and its wrappers make, read with
 /// nothing written, refusing what this unit does not port.
 fn decide(
@@ -950,30 +1101,14 @@ fn decide(
     may_draw: bool,
     diagnostics: &mut OpenDiagnostics,
 ) -> Result<Plan, OpenError> {
-    let meta = read_meta(conn, deadline)?;
-    let shown = versions::path_text(file);
     let version = provider.engine_version();
-    let checked = super::open_checks_points(&meta, &shown, &version).map_err(|e| {
-        diagnostics.version = e.version;
-        e.error
-    })?;
-    let opened = checked.opened;
-    if let Some(reason) = opened.verdict.read_only {
-        diagnostics.read_only_reason = checked.read_only_reason;
-        return Err(not_ported(NotPorted::LaterWriter(reason)));
-    }
-    if opened.verdict.revision < SCHEMA_REVISION {
-        return Err(not_ported(NotPorted::SchemaSteps {
-            revision: opened.verdict.revision,
-        }));
-    }
-    let wanted = membership_wanted(conn, &meta)?;
-    if !wanted.is_empty() {
-        return Err(not_ported(NotPorted::MembershipStep(wanted)));
-    }
+    let Checked {
+        meta,
+        store_id,
+        expected,
+        ..
+    } = checks(conn, deadline, file, &version, true, diagnostics)?;
     let record_engine = newer_engine(meta_get(&meta, "engine_version"), &version);
-    let store_id = opened.store_id;
-    let expected = opened.key_fingerprint;
 
     // `key_state(claim=True)`: `finish_rotation`, `load_current`, the
     // unclaimed check, the claim, the key's state.
@@ -1016,8 +1151,12 @@ fn decide(
             let files = KeyFiles::new(keys_dir, &PyValue::str(&store_id))
                 .map_err(|_| not_ported(NotPorted::Unreadable("the key ring")))?;
             let path = rekey::decide(conn, &ring, &files, &expected, key.as_ref());
-            let later = match after_upkeep(conn, &meta, keys_dir, &store_id) {
-                Err(e) if !matches!(path, rekey::Dispatch::Raise(_)) => return Err(e),
+            let later = match after_upkeep(conn, keys_dir, &store_id, may_draw) {
+                Err(e)
+                    if !matches!(path, rekey::Dispatch::Raise(_)) && !raised_after_writes(&e) =>
+                {
+                    return Err(e)
+                }
                 later => later,
             };
             return Ok(Plan {
@@ -1047,9 +1186,11 @@ fn decide(
         }
         _ => {}
     }
-    let later = match after_upkeep(conn, &meta, keys_dir, &store_id) {
+    let later = match after_upkeep(conn, keys_dir, &store_id, may_draw) {
         Err(e)
-            if named.is_ok() && !upkeep::settle_raises(conn, keys_dir, &store_id, &ring, &key) =>
+            if named.is_ok()
+                && !raised_after_writes(&e)
+                && !upkeep::settle_raises(conn, keys_dir, &store_id, &ring, &key) =>
         {
             return Err(e)
         }
@@ -1067,22 +1208,39 @@ fn decide(
 }
 
 /// The refusals of the steps after the upkeep: a restore record to settle
-/// (`restore_rows.settle`), an index another tokenizer spelled
-/// (`reconciles_tokenizer`).
+/// (`restore_rows.settle`), by the entries that cannot draw on the log's
+/// clock; an index another tokenizer spelled (`reconciles_tokenizer`).
+/// What the tokenizer's read raises is the reference's own exception,
+/// raised once the open's writes are done ([`raised_after_writes`]).
 fn after_upkeep(
     conn: &Connection,
-    meta: &[(String, String)],
     keys_dir: &Path,
     store_id: &str,
+    may_draw: bool,
 ) -> Result<(), OpenError> {
-    if restore_to_settle(keys_dir, store_id) {
+    if !may_draw && restore_to_settle(keys_dir, store_id) {
         return Err(not_ported(NotPorted::RestoreRecord));
     }
-    let stored = stored_tokenizer(conn, meta)?;
-    if stored.as_deref() != Some(lexicon::python_tokenizer_fingerprint().as_str()) {
-        return Err(not_ported(NotPorted::TokenizerDrift { stored }));
+    let stored = stored_tokenizer(conn)?;
+    if stored.as_deref() != Some(unicode::cps(&lexicon::python_tokenizer_fingerprint()).as_slice())
+    {
+        return Err(not_ported(NotPorted::TokenizerDrift {
+            stored: stored.map(|s| json::utf8_text(&s)),
+        }));
     }
     Ok(())
+}
+
+/// Whether `error` is the reference's own exception out of
+/// `reconciles_tokenizer` (the tokenizer's read: RecursionError,
+/// TypeError), which the reference raises after `_open_connected`'s
+/// writes (the engine's, the binding, the upkeep, a restore's rows) and
+/// before `keeps_digest`: held back to that point, not refused first.
+fn raised_after_writes(error: &OpenError) -> bool {
+    matches!(
+        error,
+        OpenError::Recursion { .. } | OpenError::Raised { .. }
+    )
 }
 
 /// `store_keys.finish_rotation`'s question: whether it would rename a
@@ -1102,46 +1260,56 @@ fn rotation_to_finish(keys_dir: &Path, store_id: &str, recorded: &str) -> bool {
     }
 }
 
-/// `restore_rows.pending`'s question, widened: whether the restore record
-/// (`<id>.backup_restore.json`) holds an entry for this store whose row is
-/// still null, which `restore_rows.settle` would append. A record that is
-/// absent, over its cap or does not read names none (the reference logs
-/// it and appends nothing). Every such entry is taken as pending, whatever
-/// its kind, so a state the reference may write in is always refused.
+/// `restore_rows.pending`'s question: whether the restore record
+/// (`<id>.backup_restore.json`) holds a `store_restored` entry for this
+/// store whose row is there and null, which `restore_rows.settle` would
+/// append. A record that is absent, over its cap or does not read names
+/// none (the reference logs it and appends nothing).
 fn restore_to_settle(keys_dir: &Path, store_id: &str) -> bool {
-    const RECORD_CAP_BYTES: u64 = 1 << 20;
-    let path = keys_dir.join(format!("{store_id}.backup_restore.json"));
-    match fs::metadata(&path) {
-        Ok(m) if m.len() <= RECORD_CAP_BYTES => {}
-        _ => return false,
-    }
-    let Ok(bytes) = fs::read(&path) else {
+    let path = restore_rows::restore_record_path(keys_dir, store_id);
+    let Ok(document) = restore_rows::read_record(&path) else {
         return false;
     };
-    let Ok(text) = std::str::from_utf8(&bytes) else {
+    let Some(PyValue::List(restores)) = document.get("restores") else {
         return false;
     };
-    let Ok(document) = json::loads(&unicode::cps(text.trim_start_matches('\u{feff}'))) else {
-        return false;
-    };
-    let field = |v: &PyValue, name: &str| -> Option<PyValue> {
-        match v {
-            PyValue::Dict(items) => items
-                .iter()
-                .rev()
-                .find(|(k, _)| matches!(k, PyValue::Str(k) if k == &unicode::cps(name)))
-                .map(|(_, v)| v.clone()),
-            _ => None,
-        }
-    };
-    let restores = field(&document, "restores");
-    let Some(PyValue::List(restores)) = &restores else {
-        return false;
-    };
+    let id = PyValue::str(store_id);
     restores.iter().any(|entry| {
-        matches!(field(entry, "row"), Some(PyValue::None))
-            && matches!(&field(entry, "store_id"), Some(PyValue::Str(s)) if *s == unicode::cps(store_id))
+        matches!(entry, PyValue::Dict(_))
+            && crate::log::replaced::history_replaced_kind(entry)
+                == crate::log::replaced::STORE_RESTORED
+            && matches!(entry.get("row"), Some(PyValue::None))
+            && !crate::history_rows::py_ne(entry.get("store_id").unwrap_or(&PyValue::None), &id)
     })
+}
+
+/// `restore_rows.settle(store)` on the owner's open, its warnings after
+/// the upkeep's. The entries that share the provider (no clock) refused
+/// any pending entry when they decided; they read the record as `pending`
+/// does, saying what it says, and refuse an entry another process wrote
+/// since.
+fn settle(
+    store: &mut WritableStore,
+    clock: Option<&mut dyn Provider>,
+    log: &mut Vec<UpkeepWarning>,
+) -> Result<(), OpenError> {
+    let mut said = Vec::new();
+    let out = match clock {
+        Some(clock) => restore_rows::settle(store, clock, &mut said).map_err(restore_failure),
+        None => match restore_rows::pending(store, &mut said) {
+            Ok(entries) if entries.is_empty() => Ok(()),
+            Ok(_) => Err(not_ported(NotPorted::RestoreRecord)),
+            Err(e) => match e.cause() {
+                Some(cause) => {
+                    said.push(restore_rows::Warning::NotAppended(cause));
+                    Ok(())
+                }
+                None => Err(restore_failure(e)),
+            },
+        },
+    };
+    log.extend(said.into_iter().map(UpkeepWarning::Restore));
+    out
 }
 
 /// `_add_membership_tables`' `wanted` (`schema::wanted`) over this
@@ -1342,56 +1510,67 @@ fn fits(
     Ok(named.is_some_and(|n| n.seq == seq && log::same_mac(&head.mac, &unicode::cps(&n.mac))))
 }
 
-/// `store_index.stored_fingerprint`: the tokenizer the newest
-/// `index_rebuilt` row (`new_fingerprint`) or the `store_created` row
-/// names, whichever is later; meta's copy for a log that names none.
-fn stored_tokenizer(
-    conn: &Connection,
-    meta: &[(String, String)],
-) -> Result<Option<String>, OpenError> {
-    let mut named: Option<(i64, String)> = None;
-    for (kind, key) in [
-        ("index_rebuilt", "new_fingerprint"),
-        ("store_created", "tokenizer_fingerprint"),
-    ] {
-        let row = conn
+/// `store_index.stored_fingerprint` as the open reads it
+/// (`store::stored_tokenizer`): the tokenizer the newest `index_rebuilt`
+/// row (`new_fingerprint`) or the `store_created` row names, whichever is
+/// later; meta's copy for a log that names none. What the read raises
+/// (`_load_json` catches only ValueError) fails the open, worded as the
+/// reference's exception: RecursionError for a payload nested past the
+/// JSON limit, TypeError for a number. A text column that is not UTF-8
+/// is a state this unit does not port.
+pub(super) fn stored_tokenizer(conn: &Connection) -> Result<Option<PyStr>, OpenError> {
+    super::stored_tokenizer(conn).map_err(|e| match e {
+        StoreError::Py(PyError::RecursionError) => upkeep::recursion(tokenizer_raised(conn).0),
+        StoreError::Py(PyError::TypeError) => OpenError::Raised {
+            class: "TypeError",
+            message: unicode::cps(&format!(
+                "the JSON object must be str, bytes or bytearray, not {}",
+                tokenizer_raised(conn).1
+            )),
+        },
+        StoreError::Sqlite(e) => OpenError::Sqlite(e),
+        _ => not_ported(NotPorted::Unreadable("a log payload")),
+    })
+}
+
+/// Which payload `stored_fingerprint` raised for, read again in its
+/// order (the newest `index_rebuilt` row, then `store_created`): the
+/// RecursionError's text for the first that nests past the limit, and
+/// the type name of the first that is a number.
+fn tokenizer_raised(conn: &Connection) -> (&'static str, &'static str) {
+    let mut nested = None;
+    let mut number = None;
+    for kind in ["index_rebuilt", "store_created"] {
+        let payload = conn
             .query_row(
-                "SELECT seq, payload FROM log WHERE kind = ? ORDER BY seq DESC LIMIT 1",
+                "SELECT payload FROM log WHERE kind = ? ORDER BY seq DESC LIMIT 1",
                 [kind],
-                |r| Ok((sql_value(r.get_ref(0)?), sql_value(r.get_ref(1)?))),
+                |r| Ok(sql_value(r.get_ref(0)?)),
             )
-            .optional()?;
-        let Some((seq, payload)) = row else {
-            continue;
-        };
-        let seq = match seq.map_err(|_| not_ported(NotPorted::Unreadable("a log seq")))? {
-            SqlValue::Integer(s) => s,
-            _ => return Err(not_ported(NotPorted::Unreadable("a log seq"))),
-        };
-        // `_load_json(row[1], None)`; a payload that is not JSON names none.
-        let payload = match payload {
-            Ok(SqlValue::Text(t)) => json::loads(&unicode::cps(&t)).ok(),
-            Ok(SqlValue::Null) => None,
-            _ => return Err(not_ported(NotPorted::Unreadable("a log payload"))),
-        };
-        let value = match &payload {
-            Some(PyValue::Dict(items)) => items
-                .iter()
-                .rev()
-                .find(|(k, _)| matches!(k, PyValue::Str(k) if k == &unicode::cps(key)))
-                .map(|(_, v)| v),
+            .optional();
+        let points = match payload {
+            Ok(Some(Ok(SqlValue::Text(t)))) => Some(unicode::cps(&t)),
+            Ok(Some(Ok(SqlValue::Blob(b)))) => super::provenance::decode_json_bytes(&b),
+            Ok(Some(Ok(SqlValue::Integer(_)))) => {
+                number.get_or_insert("int");
+                None
+            }
+            Ok(Some(Ok(SqlValue::Real(_)))) => {
+                number.get_or_insert("float");
+                None
+            }
             _ => None,
         };
-        if let Some(PyValue::Str(value)) = value {
-            if named.as_ref().is_none_or(|(s, _)| seq > *s) {
-                named = Some((seq, json::utf8_text(value)));
+        if let Some(points) = points {
+            if nested.is_none() && matches!(json::loads(&points), Err(PyError::RecursionError)) {
+                nested = Some(json::reading_recursion_message(&points));
             }
         }
     }
-    if let Some((_, value)) = named {
-        return Ok(Some(value));
-    }
-    Ok(meta_get(meta, "tokenizer_fingerprint").map(str::to_owned))
+    (
+        nested.unwrap_or("maximum recursion depth exceeded"),
+        number.unwrap_or("int"),
+    )
 }
 
 /// `_connect`'s pragmas, in its order, then owner-only modes on the file
@@ -1404,6 +1583,13 @@ fn connect_pragmas(conn: &Connection, file: &Path) -> Result<(), OpenError> {
     // FULL: every COMMIT syncs the WAL before the head that names it is
     // written (ENG-328); NORMAL left the WAL to the next checkpoint.
     conn.execute_batch("PRAGMA synchronous = FULL")?;
+    owner_only_modes(file);
+    Ok(())
+}
+
+/// `_connect`'s chmod 0600 of the file and its WAL siblings that exist,
+/// each failure suppressed.
+fn owner_only_modes(file: &Path) {
     #[cfg(unix)]
     for sibling in [
         file.to_path_buf(),
@@ -1417,7 +1603,6 @@ fn connect_pragmas(conn: &Connection, file: &Path) -> Result<(), OpenError> {
     }
     #[cfg(not(unix))]
     let _ = file;
-    Ok(())
 }
 
 /// `_record_engine`: name `version` in meta when it is newer than the
@@ -1710,12 +1895,24 @@ pub(super) fn replace_atomic_with<E>(
     data: &[u8],
     failure: impl Fn(io::Error, Option<&Path>, Option<&Path>) -> E,
 ) -> Result<(), E> {
+    replace_atomic_synced(path, data, bettermemory_sys::fsync, failure)
+}
+
+/// [`replace_atomic_with`] with the file's sync given: `fsync_file`
+/// suppresses its OSError, so a sync that fails still writes.
+fn replace_atomic_synced<E>(
+    path: &Path,
+    data: &[u8],
+    sync: impl Fn(&fs::File) -> io::Result<()>,
+    failure: impl Fn(io::Error, Option<&Path>, Option<&Path>) -> E,
+) -> Result<(), E> {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let tmp = with_suffix(path, &format!(".{}x{n}.tmp", std::process::id()));
     let mut file = new_private_file(&tmp).map_err(|e| failure(e, Some(&tmp), None))?;
-    let staged = file
-        .write_all(data)
-        .and_then(|()| bettermemory_sys::fsync(&file));
+    let staged = file.write_all(data);
+    if staged.is_ok() {
+        let _ = sync(&file);
+    }
     drop(file);
     let written = staged
         .map_err(|e| failure(e, None, None))
@@ -2001,6 +2198,35 @@ mod tests {
             );
             fs::remove_file(&document).unwrap();
         }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_sync_still_writes() {
+        let mut nonce = [0; 12];
+        getrandom::fill(&mut nonce).unwrap();
+        let dir = std::env::temp_dir().join(format!("bm-sync-{nonce:x?}"));
+        fs::create_dir(&dir).unwrap();
+        let target = dir.join("binding.path");
+        fs::write(&target, b"old").unwrap();
+        let synced = std::cell::Cell::new(0);
+        let out: io::Result<()> = replace_atomic_synced(
+            &target,
+            b"new",
+            |_| {
+                synced.set(synced.get() + 1);
+                Err(io::Error::from_raw_os_error(5))
+            },
+            |e, _, _| e,
+        );
+        assert!(out.is_ok(), "{out:?}");
+        assert_eq!(synced.get(), 1);
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            1,
+            "no temporary file left"
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 

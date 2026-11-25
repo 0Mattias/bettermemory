@@ -218,6 +218,8 @@ from . import (
     gen_store_open,
     gen_store_open_upkeep,
     gen_store_open_rekey,
+    gen_store_open_restore,
+    gen_store_reopen,
     gen_store_records,
     gen_store_reads_seams,
     gen_store_records_b,
@@ -531,6 +533,10 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_open_rekey": gen_store_open_rekey.generate,
     "store_open_rekey_python": gen_store_open_rekey.generate_python,
     "store_orphans": gen_store_open_rekey.generate_orphans,
+    "store_open_restore": gen_store_open_restore.generate,
+    "store_open_restore_python": gen_store_open_restore.generate_python,
+    "store_reopen": gen_store_reopen.generate,
+    "store_reopen_python": gen_store_reopen.generate_python,
     "store_write": gen_store_write.generate,
     "store_tx": gen_store_tx.generate,
     "store_records": gen_store_records.generate,
@@ -795,6 +801,12 @@ UNICODE_GATED = frozenset(
         "store_open",
         "store_open_upkeep",
         "store_open_upkeep_python",
+        # The owner's open settling a restore, a second connection
+        # (`gen_store_open_restore`, `gen_store_reopen`).
+        "store_open_restore",
+        "store_open_restore_python",
+        "store_reopen",
+        "store_reopen_python",
         # The created store and its open (`gen_restore_rows`).
         "restore_rows",
         "restore_rows_python",
@@ -1093,6 +1105,14 @@ PYTHON_GATED = frozenset(
         # The same, and `sqlite3`'s text for a log row that is not UTF-8
         # (`gen_store_open_rekey.python_cases`).
         "store_open_rekey_python",
+        # `sqlite3`'s OverflowError text, and an index_rebuilt payload
+        # nested past where `json.loads` stops
+        # (`gen_store_open_restore.python_cases`).
+        "store_open_restore_python",
+        # An anchor, a rekey or an index_rebuilt payload nested past where
+        # `json.loads` stops, read by a reopen
+        # (`gen_store_reopen.python_cases`).
+        "store_reopen_python",
         "store_restore_lock_python",
         "store_restore_lock_hold_python",
         # A record and a log payload nested past where `json.loads` stops
@@ -1238,7 +1258,9 @@ PLATFORM_GATED = frozenset(
 #: (`gen_config.generate_create_posix`), which Windows answers otherwise.
 #: ``store_open`` reads modes and writes the key ring's binding as a
 #: resolved POSIX path under a POSIX ``flock`` (``store_open_upkeep`` and
-#: its Python-gated sibling record the same state after the upkeep;
+#: its Python-gated sibling record the same state after the upkeep,
+#: ``store_open_restore`` and its sibling after a restore's rows settled,
+#: ``store_reopen`` and its sibling after a second connection opened;
 #: ``store_open_rekey`` and its sibling after a reclaim or a rekey, and
 #: ``store_orphans`` names files by POSIX rules); ``store_write`` records the
 #: same state after each write, ``store_tx`` after each transaction,
@@ -1403,6 +1425,10 @@ POSIX_ONLY = frozenset(
         "store_open",
         "store_open_upkeep",
         "store_open_upkeep_python",
+        "store_open_restore",
+        "store_open_restore_python",
+        "store_reopen",
+        "store_reopen_python",
         "store_open_rekey",
         "store_open_rekey_python",
         "store_orphans",

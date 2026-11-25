@@ -185,7 +185,10 @@
 //!   key present, a foreign tail closed and the origin anchor settled
 //!   (`store::open`, `open/upkeep.rs`), and with its key missing or
 //!   foreign, the store reclaimed for the key in hand or rekeyed under a
-//!   new one (`open/rekey.rs`); the saved orphans a store was created
+//!   new one (`open/rekey.rs`), each path settling a restore's late rows
+//!   after its upkeep; another connection to it, opened without a claim or
+//!   an upkeep (`WritableStore::reopen`, `open/reopen.rs`: `Store.reopen`);
+//!   the saved orphans a store was created
 //!   after (`store::create::store_orphans`); a restore's late
 //!   `store_restored` row, appended or withheld and named in the restore
 //!   record (`store::restore_rows`: `pending`, `append_missing`,

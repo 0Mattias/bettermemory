@@ -7,7 +7,9 @@
 //!   (all tables as one hash, `log` and the digest's tables on their own,
 //!   meta and `digest_state` row by row, `sqlite_master`, the pragmas, the
 //!   store and keys directories' names, the key ring's texts, the modes);
-//! - `refused`: the reference's class and text;
+//! - `refused`: the reference's class and text, with the parts the
+//!   reference's refusal changed changed (`reference_changed`: the modes
+//!   `_connect` sets before meta is read);
 //! - `not_ported:<state>`: refused as that state, with every compared part
 //!   as it was before (nothing written; the reference's own writes are in
 //!   the fixture as the parts it changed), or, beside a hot journal, as
@@ -26,7 +28,7 @@ use bettermemory_core::store::open::{open_for_writing, OpenError};
 use common::opened::{self, differing, scrub, state};
 use common::parity::Ledger;
 use common::stores::scratch;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 fn run(case: &Value, header: &Value) -> Result<(), String> {
     let name = case["case"].as_str().expect("name");
@@ -95,9 +97,14 @@ fn run(case: &Value, header: &Value) -> Result<(), String> {
                     e.class()
                 ));
             }
+            // `_connect`'s modes, set before meta is read: what the
+            // reference's refusal changed (`reference_changed`).
             let parts = differing(&before, &after);
-            if !parts.is_empty() {
-                return Err(format!("{name}: a refusal wrote {parts:?}"));
+            let want = case.get("reference_changed").cloned().unwrap_or(json!([]));
+            if json!(parts) != want {
+                return Err(format!(
+                    "{name}: a refusal wrote {parts:?}, the reference {want}"
+                ));
             }
         }
         ("raises", Err(e)) => {

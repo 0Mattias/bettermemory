@@ -67,7 +67,7 @@ fn states() -> Vec<(&'static str, &'static str, Vec<Value>)> {
 fn index(b: Boundary) -> usize {
     assert_eq!(
         Boundary::ALL.len(),
-        17,
+        18,
         "a boundary added: name what a kill there leaves"
     );
     Boundary::ALL
@@ -420,5 +420,53 @@ fn a_killed_writing_open_leaves_a_whole_store() {
                 &[],
             );
         }
+    }
+}
+
+/// A refusal of meta sets `_connect`'s owner-only modes only where the
+/// reference's do: on a WAL store, whose `PRAGMA journal_mode = WAL` is a
+/// no-op the reference passes before its chmod. A rollback-journal store
+/// that another connection is reading keeps its modes and its journal: the
+/// reference's switch to WAL needs the exclusive lock and fails the open
+/// ("database is locked") before the chmod.
+#[test]
+fn a_refusal_sets_the_modes_only_past_the_wal_switch() {
+    use std::os::unix::fs::PermissionsExt;
+    let id = common::stores::store_id();
+    for (name, journal, want) in [("wal", "WAL", 0o600), ("delete", "DELETE", 0o644)] {
+        let dir = scratch(&format!("open-refused-modes-{name}"));
+        let c = dir.0.join("c");
+        opened::made("intact", &c);
+        opened::setup(
+            &[
+                json!({"bind": "memory.sqlite"}),
+                json!({"sql": format!(
+                    "PRAGMA journal_mode = {journal}; \
+                     UPDATE meta SET value = 'NOT-AN-ID' WHERE key = 'store_id';"
+                )}),
+            ],
+            &c,
+            &id,
+        );
+        let file = c.join("memory.sqlite");
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).expect("chmod");
+        let reader = rusqlite::Connection::open(&file).expect("reader");
+        reader
+            .execute_batch("BEGIN; SELECT count(*) FROM meta;")
+            .expect("a read lock");
+        let got = open_for_writing(&file, &c.join("keys"), &opened::engine_provider());
+        assert_eq!(
+            got.as_ref().map(|_| ()).map_err(|e| e.class().to_owned()),
+            Err("ValueError".to_owned()),
+            "{name}"
+        );
+        drop(got);
+        reader.execute_batch("ROLLBACK").expect("rollback");
+        let mode = fs::metadata(&file).expect("stat").permissions().mode() & 0o777;
+        assert_eq!(mode, want, "{name}: mode {mode:o}");
+        let mode_now: String = reader
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .expect("journal");
+        assert_eq!(mode_now.to_uppercase(), journal, "{name}");
     }
 }

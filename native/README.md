@@ -124,7 +124,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns; unit 2: `_first_file_root` (with `unquote(errors="surrogateescape")`), `workspace_declaration` | `identity_caller.jsonl`, `identity_caller_unicode.jsonl`, `identity_roots.jsonl`, `identity_roots_python.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `standing_guard` | `handlers/_guard.py` whole: `read_words`, `record`, `Held`, `check`, `guard` and the hints, over `GuardDeps` | `standing_guard.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); the event reads (`store::event_reads`: `iter_events`, `iter_events_backward`, `capture_rows`, `events_of_kinds`, `session_events_of_kinds`, `events_since`, `_window_floor`, `NAMING_BOUND`, `log.CAPTURE_KINDS`); the event writes (`store::record_event`: `record_event` with `_primary_code`, `_busy`, `_time_left`, `_waiting_until` and `EVENT_RETRY_PAUSE_SECONDS`, `import_event`, `imported_event_keys`, `_named_payload`, `record_migration`, `record_capture`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build, and the upkeep with the key present: `_close_foreign_tail`, `_settle_origin`, `_record_origin`, `_name_origin_key`, `_forget_segments`; and with the key missing or foreign: `_open_connected`'s dispatch (117-143), `_reclaim`, `_open_rekeyed`, `_take_over_origin`, `KeyRing.create_key`; `Store.store_orphans` as `store::create::store_orphans`); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the keys a store opened without writing keeps (`store::key_read::open_reader`: `_open_connected`'s dispatch (82-116), `_open_reader`'s read key (146-203), `Store.has_key`, `Store._verify_key`, `Store.can_verify`); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`); a restore's late `store_restored` row (`store::restore_rows`, unit restore_rows-1a: `restore_record_path`, `pending`, `record_row`, `append_missing`, `append_for`, `settle`, with `_fill`, `_standing`, `_decide`, `_logged`, `_still_stands`, `_settle_one`, `_report_withheld`, `_said`, `_clock_reading`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_event_reads.jsonl`, `store_event_reads_naive.jsonl`, `store_record_event_posix.jsonl` (POSIX only), `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `store_open_upkeep.jsonl` (POSIX only), `store_open_upkeep_python.jsonl` (POSIX only), `store_open_rekey.jsonl` (POSIX only), `store_open_rekey_python.jsonl` (POSIX only), `store_orphans.jsonl` (POSIX only), `restore_rows.jsonl` (POSIX only), `restore_rows_python.jsonl` (POSIX only), `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_open_reader.jsonl`, `store_open_reader_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); the event reads (`store::event_reads`: `iter_events`, `iter_events_backward`, `capture_rows`, `events_of_kinds`, `session_events_of_kinds`, `events_since`, `_window_floor`, `NAMING_BOUND`, `log.CAPTURE_KINDS`); the event writes (`store::record_event`: `record_event` with `_primary_code`, `_busy`, `_time_left`, `_waiting_until` and `EVENT_RETRY_PAUSE_SECONDS`, `import_event`, `imported_event_keys`, `_named_payload`, `record_migration`, `record_capture`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build, and the upkeep with the key present: `_close_foreign_tail`, `_settle_origin`, `_record_origin`, `_name_origin_key`, `_forget_segments`; and with the key missing or foreign: `_open_connected`'s dispatch (117-143), `_reclaim`, `_open_rekeyed`, `_take_over_origin`, `KeyRing.create_key`; `restore_rows.settle` after each path's upkeep; another connection, `Store.reopen` as `WritableStore::reopen` with `Store.open(allow_rekey=False)` on a writing connection, `_tell_drift` and `_first_told`; `Store.store_orphans` as `store::create::store_orphans`); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the keys a store opened without writing keeps (`store::key_read::open_reader`: `_open_connected`'s dispatch (82-116), `_open_reader`'s read key (146-203), `Store.has_key`, `Store._verify_key`, `Store.can_verify`); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`); a restore's late `store_restored` row (`store::restore_rows`, unit restore_rows-1a: `restore_record_path`, `pending`, `record_row`, `append_missing`, `append_for`, `settle`, with `_fill`, `_standing`, `_decide`, `_logged`, `_still_stands`, `_settle_one`, `_report_withheld`, `_said`, `_clock_reading`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_event_reads.jsonl`, `store_event_reads_naive.jsonl`, `store_record_event_posix.jsonl` (POSIX only), `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `store_open_upkeep.jsonl` (POSIX only), `store_open_upkeep_python.jsonl` (POSIX only), `store_open_rekey.jsonl` (POSIX only), `store_open_rekey_python.jsonl` (POSIX only), `store_orphans.jsonl` (POSIX only), `store_open_restore.jsonl` (POSIX only), `store_reopen.jsonl` (POSIX only), `restore_rows.jsonl` (POSIX only), `restore_rows_python.jsonl` (POSIX only), `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_open_reader.jsonl`, `store_open_reader_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
 | `store::docfreq` | the document frequency memo of `store_index.py`: `_memoised_document_frequencies`, `_current_inputs`, `_patched_masks`, `_admitted_mask`, `_keep_doc_freqs`, `_row_mask`, `_DocFreqInputs` and the grouping of `Store._read_doc_freq_inputs`, the memoised half of `Store.ranking_statistics`; the store's side is the trait `DocFreqSource`, implemented over a store connection by `store::docfreq_store` (`_memory_head`, `digest_mark(build=False)`, `digest_admission_rows`, `Store._read_doc_freq_inputs`'s reads, `Store._term_masks`, `Store.document_frequencies`, `Store.ranking_statistics`, and `_advanced_inputs` with `_HEAD_KINDS` and `_ADVANCE_ROWS`, which carries an entry over a moved head) | `store_docfreq.jsonl`, `store_docfreq_store.jsonl`, `store_docfreq_store_b.jsonl`, `store_docfreq_advance.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token`; unit 4 in `identity`: `_strings`, `_flag`, `_FULL_SHA`, `PortableIdentity` (`to_json`, `from_json`, `digest`), `ImportedProject` and the bounds and import words, and in `outcomes`: `Declaration`, `Declared`, `Why`, `UnresolvedProject`, `Health`, `EpisodeRef`, `Handoff`, `RecallAdmission` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl`, `membership_records_identity.jsonl`, `membership_records_identity_python.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks`; unit 2a in `membership::shared_heal`: `_carriers`, `_restamped`, `_healed`, `_chosen`, `retired_into`, `_folded`, and the `MembershipLog` trait; unit 2b in `membership::shared_ask`: `_ask_which`, `_retire_into`, `_asked_at`, `_asked_here`, `_unseen`, `_asked_plan` | `membership_shared.jsonl`, `membership_shared_python.jsonl`, `membership_shared_heal.jsonl`, `membership_shared_ask.jsonl` |
@@ -4816,10 +4816,10 @@ Reference lines as they are now: `store_index._memory_head` 369-385,
   changed under the digest answers differently on the two
   (`scopes_not_list` in the fixture).
 
-Not in this part, with owners: `Store.reopen` (store.py 1965-2002) waits
-for log-1 (`chain_segments`) and store_open-1 (`_open_reader`), and the
-crate has no non-owner writing open to return yet: it is left as its own
-unit, store-2b. `_advanced_inputs` is unit store_index-advance's
+Not in this part, with owners: `Store.reopen` (store.py 1965-2002) is
+unit store-2b, built as `WritableStore::reopen` ("Opening a store for
+writing", "Another connection"); the unaccounted-id set it shares is the
+caller's `store::provenance::Provenance`. `_advanced_inputs` is unit store_index-advance's
 (below). `store_orphans` is store-1's. The read-only search pool (`store/pool.rs`) keeps its own
 inputs memo and statistics; routing it through `DocFreqMemo` over a
 `StoreDocFreq` is a later unit's. A `StoreFile` has no constructor of
@@ -5320,7 +5320,7 @@ engine version for its payload). The cut:
 | `_seq_mac`, `_mac_at`, `_written_before`, `_row_at`, `_replaced_head`, `_withheld`, `_standing`, `_still_stands`, `_payload`, `_logged`, `_decide` | 306-469 | the connection, `datetime::parse_event_ts`, `store::rows::CONTROL_KINDS` | restore_rows-1a, built |
 | `_settle_one` | 472-492 | `WritableStore::begin`, `log::replaced::append_history_replaced_in` | restore_rows-1a, built |
 | `append_missing`, `_SAID`, `_SAID_BY_CLOCK`, `_clock_reading`, `_said`, `_report_withheld`, `append_for`, `settle` | 495-711 | all of the above | restore_rows-1a, built |
-| the owner's writing open's calls of `settle` | `store_open.py` 98, 131, 248 | `store::open` | restore_rows-1b, lane storereopen: the open still refuses a pending record (`NotPorted::RestoreRecord`) |
+| the owner's writing open's calls of `settle` | `store_open.py` 98, 131, 248 | `store::open` | restore_rows-1b, built ("Opening a store for writing", "A restore's rows at the owner's open") |
 | `backup._apply_restore`'s call of `append_for` | `backup.py` 1683 | the backup units | not built |
 
 What restore_rows-1a reproduces, and the decisions:
@@ -5427,8 +5427,8 @@ under `store_create.json`'s values, opened as the owner, then the case's
 log rows inserted on the connection (raw rows: kinds, stamps and MACs of
 the case's choosing, a blob among them) and its record written as
 `backup._append_record` writes one, or as a hostile file. The record is
-written after the open, so the open's own `settle` finds none (the
-native open refuses a pending record). Each step calls `settle`,
+written after the open, so the open's own `settle` finds none (that
+call is pinned by `store_open_restore.jsonl`). Each step calls `settle`,
 `append_missing` or `append_for` under fixed clocks and an optional hook
 (`PRAGMA query_only`; a second connection holding the write lock with a
 100 ms busy timeout; the keys directory 0500, skipped as root), and
@@ -13552,9 +13552,23 @@ modes, `_record_engine`, the binding, step 7's upkeep with the key present
 missing or foreign, `_reclaim` then `_settle_origin`, or the key retired,
 a new one written, the `rekey` row and `_take_over_origin` (below), the
 digest. A refusal of the reference's own (steps 1 to 4) is its
-class and text; the reference has by then switched the file to WAL and
-made it 0600, native has not (a difference, on purpose: a refusal writes
-nothing).
+class and text. The reference has by then switched the file to WAL and
+made it and its WAL siblings 0600 (`_connect` does both before meta is
+read). Native sets the same modes before such a refusal (a meta with no
+store id or key fingerprint, a later minimum reader, a key that cannot
+be read, a restore lock's `confirm`: `owner_only` in `open.rs`, Linear
+ENG-414) when the file's header says WAL, as every store this build or
+the reference made does, and never the WAL switch (the modes on a
+`confirm` refusal are held by reading only: no test can make `confirm`
+refuse without a race); a not-ported refusal
+sets neither. A store in another journal mode (set by hand, or a copy) is
+left with its journal mode and its modes: the reference's switch there
+needs the file's exclusive lock, and with another connection reading the
+file it fails the open with OperationalError "database is locked" before
+any mode changes, which this port, running no pragma before it decides,
+cannot tell from a switch that goes through (the refusal's class then
+differs as well: the reference's OperationalError, this build's ValueError
+or other refusal of meta; "Not built yet").
 
 ### Refused states (`NotPorted`), and why
 
@@ -13568,7 +13582,7 @@ nothing).
 | `bound_elsewhere` (the binding names another file that still holds this store id, or cannot be read to tell) | open a reader |
 | `key_missing`, `key_foreign`, by the entries that share the provider only | write a new key and a `rekey` row, or reclaim (performed by `open_for_writing_mut`: "The open without a usable key") |
 | `foreign_tail` (the last `rekey` row names another key), by the entries that share the provider only | append a `rekey` row (performed by `open_for_writing_mut`) |
-| `restore_record` (a restore record entry for this store with a null row) | append `store_restored` rows |
+| `restore_record` (a `store_restored` entry of the restore record for this store whose row is null: `restore_rows.pending`'s rule), by the entries that share the provider only | append `store_restored` rows (performed by `open_for_writing_mut`: "A restore's rows at the owner's open") |
 | `tokenizer_drift` | re-spell the index, append `index_rebuilt` |
 | `unreadable` (a log row, head or payload that does not read here) | (varies) |
 
@@ -13601,14 +13615,20 @@ Python build, whose writing open settles the state (a later writer: open
 it with a build at least as new as its last writer; a ring bound
 elsewhere: the reference's remedy above).
 
-One refusal is wider than the reference's writes, on purpose: every
-restore-record entry with a null row is taken as pending, whatever its
-kind.
-
 A state the reference repairs in step 7 and then refuses later (a restore
 record or tokenizer drift beside a foreign tail or a missing anchor) is
 refused whole, before anything is written: the port does not perform this
-unit's repair and then stop at a step it does not port.
+unit's repair and then stop at a step it does not port. What the
+tokenizer's read raises is not such a refusal but the reference's own
+exception (`stored_fingerprint`'s `_load_json` catches only ValueError,
+so an `index_rebuilt` or `store_created` payload nested past where
+`json.loads` stops is RecursionError out of `reconciles_tokenizer`): it
+is held back and raised where the reference raises it, after the
+engine's write, the binding, the upkeep and a restore's rows, before the
+digest. The tokenizer is read through the crate's
+`store::stored_tokenizer` (`fold::stored_fingerprint`, as `log verify`
+reads it), which also reads a payload stored as bytes as `json.loads`
+reads bytes.
 
 ### The upkeep with the key present (`open/upkeep.rs`)
 
@@ -13616,8 +13636,9 @@ unit's repair and then stop at a step it does not port.
 store whose key is present and, for the owner's opener (`allow_rekey`),
 runs `_close_foreign_tail`, `_settle_origin` and `restore_rows.settle`.
 The first two are ported in `src/store/open/upkeep.rs`, a child module of
-`open.rs` that sees its private items; `restore_rows.settle` stays refused
-(`restore_record`, unit restore_rows-1).
+`open.rs` that sees its private items; `restore_rows.settle` is called by
+`open.rs` after them (unit restore_rows-1b: "A restore's rows at the
+owner's open").
 
 | function (`store.py` at 6330bd5f) | lines | needs | status |
 | --- | --- | --- | --- |
@@ -13764,7 +13785,7 @@ store-1b, `src/store/open/rekey.rs`, a child module of `open.rs`.
 | `_take_over_origin` | 1024-1042 | the anchor's lock and file | built |
 | `KeyRing.create_key` | `log.py` 530-535 | the keys directory | built (`KeyFiles::create_key`, the directory made and the key drawn by the caller, in that order) |
 | `store_orphans` | 1163-1181 | meta, the store's directory | built (`store::create::store_orphans`) |
-| `restore_rows.settle` after either | `restore_rows.py` | a restore record | refused (`restore_record`, lane restorerows) |
+| `restore_rows.settle` after either | `store_open.py` 131, 248 | a restore record, the log's clock | built (restore_rows-1b) |
 
 What each reproduces:
 
@@ -13838,9 +13859,9 @@ Entries. `open_for_writing`, `open_for_writing_with` and
 refusing `key_missing` and `key_foreign` with nothing written;
 `open_for_writing_mut` and `open_for_writing_mut_with` perform them (the
 decision's flag is whether the entry may draw on the provider). The later
-refusals (`restore_record`, `tokenizer_drift`) still refuse the whole
-open before anything is written, held back only when `chain_segments`
-raises first. What is logged comes back as `UpkeepWarning`s
+refusals (`tokenizer_drift`, and `restore_record` by the entries that
+share the provider) still refuse the whole open before anything is
+written, held back only when `chain_segments` raises first. What is logged comes back as `UpkeepWarning`s
 (`MetaNotSetBack`, `Reclaimed`, `Rekeyed`) in order; an error raised after
 something was logged carries it (`OpenError::Logged`, or `Recursion`'s
 own list), so no warning is lost to a later error. `Logged` keeps the
@@ -13949,6 +13970,167 @@ a second open's changes, rows, warnings and draws. Gates: those of
 `store_orphans.jsonl` (20 cases) is POSIX only: a name is plain by the
 host's path rules.
 
+### A restore's rows at the owner's open (unit restore_rows-1b)
+
+`_open_connected` calls `restore_rows.settle(store)` on each of the
+owner's three paths, after the anchor's upkeep: with the key present
+after `_close_foreign_tail` and `_settle_origin` (`store_open.py` 98),
+after `_reclaim` and `_settle_origin` (131), and after `_open_rekeyed`'s
+row and `_take_over_origin` (248). `open_for_writing_mut` makes the same
+call (`settle` in `open.rs`, over `store::restore_rows::settle` with the
+caller's provider, whose log clock stamps the row and the head) and then
+passes `Boundary::RestoreSettled`. What it logs joins the upkeep's
+warnings in order (`UpkeepWarning::Restore`, whose own arguments are
+`restore_rows::Warning::args`); `settle` logs and opens past what its four
+bases catch (a busy store, a lock it cannot take, a record it cannot
+write), and lets the rest through as the reference does: a head past an
+SQLite INTEGER is OverflowError out of the open, after the upkeep wrote
+(`OpenError::Overflow`, with what was logged). Nothing else `settle` lets
+through reaches the open: `restore_failure` names any other class it
+meets in its text (a debug assertion), never with an empty one.
+
+Two channels carry the open's warnings: the head checkpoint's reaches the
+provider when it is written (`Provider::checkpoint_warning`), while the
+upkeep's, the reclaim's, the rekey's and a restore's come back in
+`WritableStore::upkeep()` after the open. The reference logs them all to
+one logger in the order they happen, so a caller that logs both channels
+says the head checkpoint's first where the reference may say an upkeep
+warning before it; within each channel the order is the reference's
+(`golden_store_open_restore` compares the head checkpoint's apart).
+
+The entries that share the provider draw no clock: they keep refusing a
+pending entry (`NotPorted::RestoreRecord`, decided with nothing written),
+by `restore_rows.pending`'s rule (`restore_to_settle` reads the record
+through `restore_rows::read_record`, now `pub(super)`, and asks of each
+entry what `pending` asks), so a record whose entries are another kind's
+or another store's opens as the reference opens it. After the upkeep they
+read the record as `pending` does, so a record that does not read is said
+(`RecordUnread`) as the reference's `settle` says it; an entry another
+process wrote since the decision is refused there.
+
+Fixture: `store_open_restore.jsonl` (16 cases) and its Python-gated
+sibling `store_open_restore_python.jsonl` (6 cases,
+`tests/contract/gen_store_open_restore.py`): `intact` and `rekeyed` bases
+with a record as `backup` writes one, opened as `gen_store_open_rekey`
+opens a case, with the warnings of `bettermemory.store` and
+`bettermemory.restore_rows` in the order logged. Cases: a row appended,
+two, withheld (a later row stands), elsewhere (the head's MAC differs),
+a record that does not read, another store's entry, another kind's,
+after a foreign tail closed, after an anchor written, the record's lock a
+directory (the row appended, the record not named: logged), the keys
+directory 0500 (POSIX, not as root), a reclaim, a reclaim of a middle
+segment, a rekey, a rekey with no anchor, a rekey whose entry is
+withheld; and a second open of each. The sibling holds the answers an
+interpreter words: a head past an INTEGER (the open raises CPython
+`sqlite3`'s OverflowError text), and an `index_rebuilt` payload nested
+past where `json.loads` stops, arrays or objects, alone and after a
+restore's row was appended (RecursionError after the writes), and a
+rekey payload so nested, the key missing or present (RecursionError out
+of the upkeep's `chain_segments`, before `settle`: no row). Gates:
+Unicode and POSIX only, as `store_open_rekey.jsonl`; the sibling also
+Python.
+
+### Another connection (`Store.reopen`, `open/reopen.rs`)
+
+`Store.reopen(busy_timeout=None)` (`store.py` 1965-2002, at 3b5a43a6)
+opens the store's file again for another thread: `Store.open(path,
+keys_dir, allow_rekey=False, strict_provenance, read_only)`, then
+`set_busy_timeout` (the new store closed if it raises), the
+unaccounted-id set shared. Unit store-2b, `src/store/open/reopen.rs`, a
+child module of `open.rs`:
+`WritableStore::reopen(&self, provider, busy_timeout, logged) ->
+Result<Reopened, OpenError>`, with `enum Reopened { Writer(WritableStore),
+Reader(ReopenedReader) }`.
+
+| function | lines | needs | status |
+| --- | --- | --- | --- |
+| `Store.reopen` | `store.py` 1965-2002 | the owner's path, keys directory and busy timeout | built; the `_bound_elsewhere` branch unreachable (below) |
+| `Store.open` with ``allow_rekey`` False | `store.py` 666-776 | `_connect`, `_open_connected` | built (`open_not_owning`) |
+| `_connect` | `store.py` 375-411 | `restore_lock::admit`, the admission, the pragmas and modes | built, in its own order: admitted, pragmas and modes, `confirm` |
+| `_open_connected` with ``allow_rekey`` False | `store_open.py` 40-114 | `checks` (shared with the owner's `decide`), `key_read::key_state_on`, `open_reader::binding` | built |
+| `check_versions(writing=False)` | `store_versions.py` 187-247 | meta | built: a later minimum writer sets `query_only` and says the reason once a process (`_READ_ONLY_TOLD`); no `_record_engine` |
+| `_open_reader` | `store_open.py` 146-203 | `open_reader::reader_keys` (lane sopenreader) | built |
+| `settle_tokenizer(owner=False)`, `_tell_drift`, `_first_told`, `cannot_write` | `store_index.py` 1131-1225 | `store::stored_tokenizer` (`fold::stored_fingerprint`), the live fingerprint | built (the drift said, nothing re-spelled; what the read raises fails the reopen) |
+| `keeps_digest` without ``allow_rekey`` | `store_digest.py` 520-537 | nothing | built (`DigestOutcome::Untouched`) |
+| `Store.set_busy_timeout` | `store.py` 1074-1085 | `store::reads::set_busy_timeout` | built (already) |
+
+What it reproduces:
+
+- No claim: the key's state is `key_state(claim=False)` (`key_state_on`:
+  `finish_rotation`, the key loaded, the unclaimed check, the binding read
+  by `_key_ring_elsewhere`), and nothing writes a binding. A present key
+  binds a `Reopened::Writer` with that key (`bound` false, no upkeep, the
+  digest untouched); an unreadable, missing or foreign key, an unclaimed
+  ring or one bound elsewhere opens a `Reopened::Reader` holding the
+  connection and `_open_reader`'s keys (`ReaderKeys`: the read key kept
+  where the key matches meta, the ring holds an anchor or the key signs a
+  segment). A reader has no writes: the reference's refuse for want of
+  the key.
+- No upkeep: no foreign tail closed, no anchor, no restore row, no
+  `engine_version`, no digest step. `_connect`'s pragmas and modes are
+  the only writes, as the reference's.
+- A later minimum writer: `PRAGMA query_only` on the new connection and
+  the reason said once a process per (path, minimum), the key still bound
+  when present (`has_key` true; its writes fail at the writer check).
+- A drift: `cannot_write`'s reason (no key; `query_only`; else "not the
+  owner's writing open") in `TOKENIZER_DRIFT`, now in `open/reopen.rs` and
+  read by `cli/log_verify.rs`, said once a process per (path, stored,
+  live) (`_DRIFT_TOLD`): both told sets are process-wide statics behind a
+  mutex, as the reference's module sets are. The stored name is the
+  log's text as it is (a lone surrogate included); none named, by the log
+  or meta, is said as "none".
+- What the open raises: the tokenizer's read nested past where
+  `json.loads` stops (RecursionError, the new connection closed), and
+  `_open_reader`'s RecursionError out of the anchor (`read_origin`) or a
+  rekey payload (`chain_segments`), each worded as `json.loads` words it
+  for the text that raised (`upkeep::anchor_recursion`,
+  `upkeep::segments_recursion`, as the owner's dispatch words them).
+- What the open logs (the read-only reason, the key state's warnings,
+  the drift) is pushed onto the caller's `logged` as `KeyLog`s in the
+  reference's order, and kept when the reopen fails. A busy timeout that
+  is not finite or is negative is ValueError, past a float's range
+  OverflowError, as `set_busy_timeout` words them; the new connection is
+  dropped (closed).
+
+Decisions. The type: an enum of the writer and a reader, not a
+`WritableStore` with an optional key, so no writing method can reach a
+connection without its key. The once-a-process memory: process-wide, as
+the reference's. `Store.reopen`'s branch for an owner whose ring was
+bound elsewhere (`_bound_elsewhere`) has no native counterpart: the
+owner's open refuses that state (`NotPorted::BoundElsewhere`), so no
+`WritableStore` is ever bound elsewhere (`store_reopen_kills` holds the
+refusal). `strict_provenance` and the unaccounted-id set are the caller's
+(`store::provenance::Provenance`, handed to both connections). Not here:
+a read-only store's reopen (`StoreFile` has no reopen; no reader calls
+one), the daemon's worker threads.
+
+Fixture: `store_reopen.jsonl` (23 cases, 28 reopens) and its
+Python-gated sibling `store_reopen_python.jsonl` (7 cases,
+`tests/contract/gen_store_reopen.py`): the `intact` base bound and opened
+by its owner, then edits, then reopens, all held open until the last.
+Cases: plain (busy timeouts None, 0, 2.5), under a writer holding the
+lock, a negative timeout, a fraction of a millisecond, the key replaced
+(with and without the anchor), removed, the ring bound to a copy, bound
+to a store gone, unbound, unclaimed, a later writer (twice), a drift
+(twice), a drift without the key, a drift beside a later writer, both
+without the key, a stored name with a lone surrogate, a payload stored
+as bytes, no tokenizer named (twice), a pending restore, a foreign tail,
+no anchor, a pending key meta does not name. The sibling: a reader's
+anchor or rekey payload nested past where `json.loads` stops (arrays and
+objects), an `index_rebuilt` payload so nested (arrays, objects, and
+under a reader). Recorded per reopen: the outcome, `has_key`,
+`can_verify`, the fingerprints of the key and the read key, the key
+state's name, the busy timeout and SQLite's, `query_only`, whether in a
+transaction, the warnings; then the parts changed (none). Gates: Unicode
+(a drift names the tokenizer's fingerprint) and POSIX only; the sibling
+also Python (where `json.loads` stops is the release's and the
+system's).
+
+Two parity fixes on this file (Linear ENG-414): `replace_atomic_with`
+ignores a failed `fsync` of the temporary file and writes, as
+`_fsutil.fsync_file` suppresses its OSError (`open::tests`, an injected
+failure); and the modes above.
+
 ### What a refusal can change
 
 The decision reads through the read-write connection the open then
@@ -14020,7 +14202,7 @@ connection holds the write lock for 1.5 s (the reference waits, about
 
 | test | class | what |
 | --- | --- | --- |
-| `golden_store_open` | ii (Unicode), POSIX | 74 cases of `store_open.jsonl`: same, refused, raises, not ported |
+| `golden_store_open` | ii (Unicode), POSIX | 74 cases of `store_open.jsonl`: same, refused (with the parts the reference's refusal changed: the modes), raises, not ported |
 | `golden_store_open_upkeep` | ii (Unicode; the nested and overflow cases also Python), POSIX | 38 cases of `store_open_upkeep.jsonl` and 12 of `store_open_upkeep_python.jsonl`: after-state (a text that is not UTF-8 spelled as its bytes), appended rows, warnings (on a raise too), the second open |
 | `store_open_upkeep_not_posix` | os | records those fixtures' gap off POSIX |
 | `golden_store_open_rekey` | ii (Unicode; the Python cases also Python), POSIX | 30 cases of `store_open_rekey.jsonl` and 12 of `store_open_rekey_python.jsonl`: after-state, appended rows, warnings (the head checkpoint's apart), keys drawn, the second open |
@@ -14032,6 +14214,12 @@ connection holds the write lock for 1.5 s (the reference waits, about
 | `store_open_upkeep_robustness` | i, POSIX | two owners at once, a writer past the busy timeout, 20,000 rekey rows in linear time, payloads and anchors nested 100,000 and 1,000,000 deep, a megabyte name, a clock or warning callback that raises, a rekey row that stops reading before the lock, a held-back refusal |
 | `store_open_not_posix` | os | records the fixture's gap off POSIX |
 | `store_open_cross` | i, reference | both directions; the native digest equals the reference's |
+| `golden_store_open_restore` | ii (Unicode; the Python cases also Python), POSIX | 16 cases of `store_open_restore.jsonl` and 6 of `store_open_restore_python.jsonl`: after-state with the record, appended rows, warnings of both modules in order, keys drawn, the second open |
+| `store_open_restore_kills` | i, POSIX | kills at every boundary of two key-present states and from the anchor's step of a rekey and a reclaim, each settled as if never killed; the settle after the anchor's step on each path; a shared entry's refusal with nothing written; a caught failure opens, an uncaught one raises; a shared entry's second read (an entry written since the decision refuses, a nested record is said); a restore warning's arguments through `UpkeepWarning::args` |
+| `golden_store_reopen` | ii (Unicode; the nested cases also Python), POSIX | 23 cases, 28 reopens of `store_reopen.jsonl` and 7 of `store_reopen_python.jsonl` |
+| `store_reopen_kills` | i, POSIX | no binding, no upkeep, the key withheld, no read key on the file alone, told once a process, said again for another minimum writer or another stored tokenizer, the owner's refusal of a ring bound elsewhere, a file gone, a NaN timeout, this connection's busy timeout taken by a reopen without one, the WAL checkpointed by the last close |
+| `store_reopen_robustness` | i, POSIX | eight reopened writers and the owner (one chain, every row verifies, one head), a reopen under a held lock, busy timeouts at 0, 1e9, 2^31 ms and past a float, the time against a log ten times as long |
+| `store_open_restore_not_posix`, `store_reopen_not_posix` | os | record those fixtures' gap off POSIX |
 | `store_open_kills` | i, reference, POSIX | 108 kills |
 | `store_open_spellings` | i, reference, POSIX | 504 binding spellings onto this file, a copy, another store and nothing: outcome and `.path` bytes equal the reference's |
 | `store_open_robustness` | i (two need the reference) | hostile files, refusals unchanged byte for byte, two openers, a binding race lost to a copy |
@@ -26994,8 +27182,10 @@ What the reference has and this build does not, by area:
   the membership log and the store id reissue (store_membership-2),
   wiring the schema steps and `ensure_backfilled` (the returned marks'
   backfill, built in `store::returned`) into the writing open (store-3c)
-  and `run_steps`, wiring a restore's rows into the writing open
-  (restore_rows-1b), re-spelling the index.
+  and `run_steps`, re-spelling the index, and `_connect`'s WAL switch and
+  modes before a refusal of a store whose journal mode is not WAL (the
+  writing open decides before any pragma, so such a store refused keeps
+  its rollback journal and its modes).
 - Checkout capture still requires the orchestration in `origin.py`;
   `origin_match` holds its caller matching, `origin_git` its Git probes and
   `origin_cache` its signature and cache, while registration and lookup

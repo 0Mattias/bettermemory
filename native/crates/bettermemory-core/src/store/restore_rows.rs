@@ -9,8 +9,7 @@
 //! reference logs is returned as data ([`Warning`]), pushed onto the
 //! caller's list in the order the reference logs it, so a call that
 //! raises keeps what it said first. The open's own call of `settle`
-//! (`store_open.py` 98, 131, 248) is not made here: the writing open
-//! still refuses a store with a pending entry (`NotPorted::RestoreRecord`).
+//! (`store_open.py` 98, 131, 248) is the writing open's (`store::open`).
 
 use std::path::{Path, PathBuf};
 
@@ -345,7 +344,7 @@ pub fn restore_record_path(keys_dir: &Path, store_id: &str) -> PathBuf {
 }
 
 /// Why the record gave no document.
-enum Unread {
+pub(super) enum Unread {
     /// FileNotFoundError.
     Missing,
     /// Another OSError or a ValueError, by class.
@@ -356,7 +355,7 @@ enum Unread {
 /// `json.loads(bounded_read(path, RECORD_CAP_BYTES))`: the bytes read
 /// as `json.loads` reads bytes (`json.detect_encoding`: UTF-8 with or
 /// without its BOM, UTF-16 and UTF-32).
-fn read_record(path: &Path) -> Result<PyValue, Unread> {
+pub(super) fn read_record(path: &Path) -> Result<PyValue, Unread> {
     let bytes = bounded_read(path, RECORD_CAP_BYTES).map_err(|e| match e {
         BoundedReadError::Open(e) | BoundedReadError::Io(e) => {
             match Numbered::of_io(&e).error.class {

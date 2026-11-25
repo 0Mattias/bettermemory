@@ -34,6 +34,7 @@ use crate::store::key_directory;
 use crate::store::key_read::{KeyLog, LogLevel, ReadError, ReaderRing};
 use crate::store::key_state::StateError;
 use crate::store::keys::load_key_ring;
+use crate::store::open::TOKENIZER_DRIFT;
 use crate::store::restore_lock::RESTORE_RUNNING_WHY;
 use crate::store::{
     sqlite_text_error, stored_tokenizer, upgrade, OpenCheckError, Stepped, StoreError, StoreFile,
@@ -183,13 +184,6 @@ fn io_exception(error: &std::io::Error, path: &Path, name: &[u32]) -> ReaderFail
         None => ReaderFailure::Unreadable(exception("OSError", cps(&error.to_string()))),
     }
 }
-
-/// `store_index._tell_drift`'s record for an open that does not re-spell
-/// the index: the store, the tokenizer its log names, this build's, why.
-const TOKENIZER_DRIFT: &str = "store %s: its search index is spelled by tokenizer %s and this \
-build's is %s; this open does not re-spell it (%s), so a search may miss memories until the \
-owner's next writing open does (the daemon's start, any writing command, or `bettermemory index \
-rebuild`)";
 
 /// pysqlite's OperationalError for the text `stored_fingerprint` fetched
 /// that is not UTF-8, in the order it reads: the newest `index_rebuilt`
