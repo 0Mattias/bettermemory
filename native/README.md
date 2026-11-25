@@ -24,7 +24,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `in_force` | `in_force.py` whole: `InForce` (with `history`), `in_force` and its inner `newest`, `newest_head`, `admitted_sources`, `head`; the store's reads and the admission are traits (`LinkReader`, `RecordView`) | `in_force.jsonl` |
 | `admission` | `admission.py` 59-127 beside `store::caller`'s `Admission` and `NO_RESOLUTION` (re-exported): `DriftScope`, `CountedRecords`, `EveryRecord` (with `admits_row`), `EVERY_RECORD`, `admitted_nothing` | unit tests |
 | `health_summary` | `health_summary.py` whole: `section_names`, `health_summary` (with `_empty`, `_attention`), `health_section`, `SUMMARY_IDS`, `HEADLINE_KEYS` | `health_summary.jsonl` |
-| `health_model` | unit health_model-1 of `health_model.py`: `_ENDORSEMENT_GRACE_DAYS`, `_freshest_touch_ts`, `_has_unresolved_contradiction`, `_is_dead_weight`, `is_hook_telemetry_event`, `applied_tier`, `endorsement_tier`, `TelemetryCoverage`, `_HOOKLESS_REASON`, `MemoryStats`, `MarkerStats`, `ScopeHealth`, `ActorSlice` (each `to_dict`), `explicit_ratio`, `_iso`; `round(x, 3)` through `search::num::round_digits` | `health_model.jsonl` |
+| `health_model` | units health_model-1 and health_model-2 of `health_model.py`: `_ENDORSEMENT_GRACE_DAYS`, `_freshest_touch_ts`, `_has_unresolved_contradiction`, `_is_dead_weight`, `is_hook_telemetry_event`, `applied_tier`, `endorsement_tier`, `TelemetryCoverage`, `_HOOKLESS_REASON`, `MemoryStats`, `MarkerStats`, `ScopeHealth`, `ActorSlice` (each `to_dict`), `explicit_ratio`, `_iso`; `round(x, 3)` through `search::num::round_digits`; unit 2 (`health_model::debt`): `ActorSlices`, `VerificationDebt`, `CommitDriftRow`, `CommitDriftDebt`, `CrossRepoDriftGroup`, `CrossRepoDrift`, `ColdEndorsementMemories`, `SilentMissStats`, `RecentSilentMiss` (each `to_dict`), `clamp_ratio_threshold`, `weakly_endorsed`, `_is_weakly_endorsed`, `unread_fields`, `_unread_dict` and the six caps | `health_model.jsonl`, `health_model_debt.jsonl` |
 | `health_roots` | `health_roots.py` 21-73: `EstateProgress` (`ordered`, `attempt`), `_LAST_CHECKED_CAP`; `progress_for_store` is the open Store's own `EstateProgress` | `health_roots.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
@@ -3338,7 +3338,10 @@ fills: its dataclasses, caps and shared predicates. It imports
 `verify.BASIS_AUTHOR_DATE`, all built. Nothing in it asks the machine: the
 datetimes, counts and events are arguments. It is cut into three units,
 leaves first; unit health_model-1 is built (`src/health_model.rs`, 571
-lines of Rust outside tests, and `round(x, ndigits)` in `search::num`).
+lines of Rust outside tests, and `round(x, ndigits)` in `search::num`),
+and unit health_model-2 (`src/health_model/debt.rs`, a child module
+re-exported from `health_model`, 493 lines, and the module line and its
+`pub use` in `src/health_model.rs`, 9 lines).
 
 | function | reference lines | needs | unit, status |
 | --- | --- | --- | --- |
@@ -3357,11 +3360,11 @@ lines of Rust outside tests, and `round(x, ndigits)` in `search::num`).
 | `ActorSlice` | 610-659 | nothing | 1, built |
 | `explicit_ratio` | 780-788 | nothing | 1, built |
 | `_iso` (`iso`) | 1570-1571 | nothing | 1, built |
-| `ActorSlices`, `VerificationDebt`, `_VERIFICATION_DEBT_CAP` | 662-751 | nothing | 2 |
-| `_COLD_ENDORSEMENT_MIN_RETRIEVALS`, `_COLD_ENDORSEMENT_CAP`, `clamp_ratio_threshold`, `weakly_endorsed`, `_is_weakly_endorsed` | 772-777, 791-872 | nothing | 2 |
-| `CommitDriftRow`, `CommitDriftDebt`, `unread_fields`, `_unread_dict` | 875-999 | `verify.BASIS_AUTHOR_DATE` | 2 |
-| `_CROSS_REPO_MAX_ROOTS`, `CrossRepoDriftGroup`, `CrossRepoDrift`, `_COMMIT_DRIFT_DEBT_CAP`, `_RECENT_SILENT_MISSES_CAP` | 1002-1082 | nothing | 2 |
-| `ColdEndorsementMemories`, `SilentMissStats`, `RecentSilentMiss` | 1086-1241 | nothing | 2 |
+| `ActorSlices`, `VerificationDebt`, `_VERIFICATION_DEBT_CAP` (`VERIFICATION_DEBT_CAP`) | 662-751 | nothing | 2, built |
+| `_COLD_ENDORSEMENT_MIN_RETRIEVALS`, `_COLD_ENDORSEMENT_CAP`, `clamp_ratio_threshold`, `weakly_endorsed`, `_is_weakly_endorsed` (`is_weakly_endorsed`) | 772-777, 791-872 | nothing | 2, built |
+| `CommitDriftRow`, `CommitDriftDebt`, `unread_fields` (with `UnreadFields`), `_unread_dict` (`unread_dict`) | 875-999 | `verify.BASIS_AUTHOR_DATE`, `origin_history.HistoryUnread` | 2, built |
+| `_CROSS_REPO_MAX_ROOTS`, `CrossRepoDriftGroup`, `CrossRepoDrift`, `_COMMIT_DRIFT_DEBT_CAP`, `_RECENT_SILENT_MISSES_CAP` | 1002-1082 | nothing | 2, built |
+| `ColdEndorsementMemories`, `SilentMissStats`, `RecentSilentMiss` | 1086-1241 | nothing | 2, built |
 | `Recommendation`, `_RECOMMENDATION_ROW_CAP`, `_RECOMMENDATION_SIZE_FLOOR` | 1244-1303 | nothing | 3 |
 | `_PROVENANCE_ROW_CAP`, `ProvenanceRow`, `ProvenanceDebt` | 1322-1368 | nothing | 3 |
 | `HealthReport` | 1371-1567 | `store.EpisodeVolume` | 3 |
@@ -3442,6 +3445,82 @@ What unit 1 reproduces, and why:
   reaches the second.
 - No regular expression is involved.
 
+What unit 2 reproduces, and why:
+
+- The rollups hold Rust values as unit 1's types do: text as `PyStr`,
+  counts as `i64`, `unread_causes` and the `ActorSlice` censuses as
+  `(key, count)` pairs in insertion order, `CrossRepoDrift.skipped` (a
+  `list[dict[str, Any]]`) as a `Vec<PyValue>` copied as given, and
+  `CommitDriftRow.basis` as a `PyStr` (any text the caller sets is
+  written back). Each type has the dataclass's defaults: `new` takes the
+  fields without one (`VerificationDebt::new(stale_after_days)`,
+  `CommitDriftRow::new` with `basis` at `BASIS_AUTHOR_DATE`,
+  `CommitDriftDebt::new(current_repo, current_cwd)`,
+  `CrossRepoDriftGroup::new(repo, worktree_root)`,
+  `ColdEndorsementMemories::new(min_retrievals)`), and the types with no
+  required field are `Default` (`ActorSlices`' `undeclared` is
+  `ActorSlice(client=None)` at zero). The caps are constants
+  (`VERIFICATION_DEBT_CAP`, `COLD_ENDORSEMENT_MIN_RETRIEVALS`,
+  `COLD_ENDORSEMENT_CAP`, `CROSS_REPO_MAX_ROOTS`, `COMMIT_DRIFT_DEBT_CAP`,
+  `RECENT_SILENT_MISSES_CAP`); the callers that apply them are the health
+  units'.
+- `to_dict` keeps the reference's key order, which is not the
+  declaration order: `VerificationDebt` writes its six counts first
+  (`never_verified_checkable` after `never_verified_total`, `fresh_count`
+  last) and then its two row lists, `CommitDriftDebt` and
+  `CrossRepoDriftGroup` write `total_drifted` before `rows`, and
+  `CrossRepoDrift` writes `total_drifted` first. `VerificationDebt` and
+  `ColdEndorsementMemories` hold `MemoryStats` rows, whose `to_dict`
+  raises TypeError on a naive datetime ordered against an aware one, so
+  theirs answers `Answer` and raises at the first such row: the scalars
+  are built first, then `never_verified`'s rows, then `stale`'s.
+- `CommitDriftDebt.to_dict` writes `unconfirmed` when it is not zero (a
+  negative count is truthy and is written), and `_unread_dict`'s keys
+  when `unread` is not zero, even with no causes or ids, and none at zero
+  whatever the causes and ids hold. `CrossRepoDriftGroup` has no
+  `unconfirmed` and writes its unread keys after `last_checked_at`.
+  `_unread_dict` copies the causes in the order given (`dict(causes)`)
+  and every id given, uncapped, a repeated id included (`list(ids)`);
+  `unread_fields` (`Counter` of each
+  cause's `str(value)`) sorts the causes by their text, code point order,
+  and keeps the first `COMMIT_DRIFT_DEBT_CAP` (20) ids in the mapping's
+  insertion order, capped before anything else. The keys of every
+  `unread_causes` (`CommitDriftDebt`'s, `CrossRepoDriftGroup`'s,
+  `UnreadFields`' and `_unread_dict`'s argument) are distinct, as a
+  dict's are: a repeated key is refused by a `debug_assert` (a release
+  build writes both pairs, a value no reference dict holds), so a port
+  that kept one of them could not be told apart on any value the
+  reference makes. `unread_fields` takes the
+  mapping as its items, ids distinct as a dict's keys are (a repeated id
+  is refused the same way), the causes as
+  `origin_history::HistoryUnread` (`verify_basis.CommitDriftUnread` is
+  that enum), and answers `UnreadFields`, the three fields by name, which
+  a caller assigns where the reference spreads the dict into a
+  constructor.
+- `CommitDriftRow.to_dict`'s `_iso(x) if x else None` is None only for
+  None (a datetime is never falsy), and `CrossRepoDriftGroup`'s
+  `last_checked_at` is `isoformat_utc_optional`: an offset of 30 seconds
+  spells `Z:30`, and a naive datetime is written without a zone.
+- `clamp_ratio_threshold` is `float(value)`, NaN to 0.0, then `min(1.0,
+  max(0.0, value))` as Python's `max` and `min` choose: the first
+  argument is kept unless the second compares strictly beyond it, so
+  `-0.0` becomes `0.0`, `5e-324` stays, and `inf` is 1.0. `f64::clamp`
+  keeps `-0.0` and passes NaN through, and `f64::max` and `f64::min` may
+  answer either zero, so none of them is used. The port takes an `f64`:
+  `float()` of an int past the double range (OverflowError) or of
+  another type is the caller's conversion, and `BehaviorConfig` holds a
+  float.
+- `weakly_endorsed` is the reference's four steps: `explicit_ratio` None
+  (no applies, or a negative count) is not weakly endorsed, even with no
+  explicit apply; `explicit_applied == 0` is; a threshold `<= 0.0`
+  (`-0.0` included) is off; else `ratio < ratio_threshold`, strictly, so
+  a ratio equal to the threshold (1/10 at 0.1) is not. A NaN threshold is
+  not `<= 0.0` and fails `ratio < NaN`: never weakly endorsed past the
+  `explicit_applied == 0` step. A negative explicit count is a negative
+  ratio, below any positive threshold. `_is_weakly_endorsed` reads
+  `applied_count` and `explicit_applied_count`, not the auto count.
+- No regular expression is involved.
+
 Fixtures and tests: `tests/contract/gen_health_model.py` writes
 `health_model.jsonl`: 238 rows (round to three places at ties and their
 neighbours, timestamps at years 1 and 9999 and past 2**53 microseconds,
@@ -3491,7 +3570,55 @@ needs a shared or hashed `PyValue`, which `pyvalue.rs` does not have.
 `health_model_robustness.rs` holds the predicates and `to_dict` linear
 in their input.
 
-Left for later: units health_model-2 and health_model-3 as mapped above.
+Unit 2's fixtures: `gen_health_model.py`'s `generate_debt` writes
+`health_model_debt.jsonl`, not gated for unit 1's reasons: 103 rows
+(`clamp_ratio_threshold` over both infinities, both zeros, both smallest
+subnormals, the double below 1.0 and three NaNs (quiet, negative and
+signalling); `weakly_endorsed` and
+`_is_weakly_endorsed` at each branch, applied zero and negative,
+thresholds 0.0, -0.0, NaN, the ratio equal to the threshold and one unit
+above it, counts at both ends of `i64`; `unread_fields` over 0, 1, 20, 21
+and 25 ids counting down with the causes out of order, and ids holding a
+surrogate; `_unread_dict` at zero with causes, at negative counts and
+with 25 ids; and every report type, defaults first, with surrogates,
+offsets of seconds and microseconds, naive datetimes, extreme counts and
+`MemoryStats` rows that raise TypeError in either list) and two digest
+rows: 20,000 drawn report values, the kind by `pick(9)`, their
+`MemoryStats` rows by unit 1's `draw_memory` (93 of them raise
+TypeError), by the SHA-256 of their `json.dumps(to_dict())`; and 20,000
+drawn counts and thresholds (unit 1's `draw_float`) through
+`clamp_ratio_threshold` and `weakly_endorsed`. `golden_health_model_debt.rs`
+checks every row and both digests, drawing the inputs by the generator's
+rule; `health_model_debt_kills.rs` holds the cases a plausible wrong port
+fails (the causes left unsorted in `unread_fields` or sorted in
+`_unread_dict`, the ids capped after a sort or not at all, `unconfirmed`
+or the unread keys written at zero or dropped at a negative count,
+`f64::clamp` for the clamp at `-0.0` and NaN, a NaN threshold firing, the
+ratio equal to the threshold firing, a TypeError row in `stale` or the
+cold rows not raised, the declaration order for the key order, a repeated
+unread id dropped) and, in debug builds, the refusal of a repeated cause
+key or `unread_fields` id;
+`health_model_debt_robustness.rs` takes counts at both ends of `i64`
+through every rollup and threshold, 100,000 rows in each list (a raise at
+the last still raises), `unread_fields` over 100,000 ids and
+`_unread_dict` over 10,000 causes and ids with growth claims through
+`tests/timing`, and `to_dict` linear in its rows. The rollups copy their
+rows and texts into the answer as unit 1's types do; their cost is that
+of the `MemoryStats` rows they hold.
+
+Unit 2's known costs, release builds against CPython 3.13.13 on the same
+input, best of three on a loaded machine: `_unread_dict` over 100,000
+causes and 100,000 ids takes 9.5 ms (32 ms in a debug build) against
+0.6 ms, about 16 times, since `dict(causes)` and `list(ids)` copy
+references where the port clones each text into the answer. Real rollups
+hold at most six causes and the 20 ids `unread_fields` keeps. Every
+other measured ratio is under 2: `unread_fields` over 100,000 ids 0.7 ms
+against 16.7 ms, `VerificationDebt.to_dict` over two lists of 100,000
+rows 846 ms against 588 ms, `CommitDriftDebt` 126 ms against 129 ms,
+`CrossRepoDrift` over 100,000 groups and skipped entries 83 ms against
+52 ms, `ActorSlices` over 100,000 declared slices 92 ms against 51 ms.
+
+Left for later: unit health_model-3 as mapped above.
 
 ## The ranker
 

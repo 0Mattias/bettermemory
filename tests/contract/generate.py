@@ -323,6 +323,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "health_roots": gen_health_roots.generate,
     "health_summary": gen_health_summary.generate,
     "health_model": gen_health_model.generate,
+    "health_model_debt": gen_health_model.generate_debt,
     "log_chain": gen_log.generate,
     "ring_binding_paths": gen_ring_binding_paths.generate,
     "ring_binding_path_codecs": gen_ring_binding_paths.generate_codecs,

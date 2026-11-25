@@ -21,6 +21,15 @@ use crate::search::num::{int_true_div, py_max, round_digits};
 use crate::time_utils::isoformat_utc_optional;
 use crate::unicode;
 
+mod debt;
+pub use debt::{
+    clamp_ratio_threshold, is_weakly_endorsed, unread_dict, unread_fields, weakly_endorsed,
+    ActorSlices, ColdEndorsementMemories, CommitDriftDebt, CommitDriftRow, CrossRepoDrift,
+    CrossRepoDriftGroup, RecentSilentMiss, SilentMissStats, UnreadFields, VerificationDebt,
+    COLD_ENDORSEMENT_CAP, COLD_ENDORSEMENT_MIN_RETRIEVALS, COMMIT_DRIFT_DEBT_CAP,
+    CROSS_REPO_MAX_ROOTS, RECENT_SILENT_MISSES_CAP, VERIFICATION_DEBT_CAP,
+};
+
 /// `_ENDORSEMENT_GRACE_DAYS`: how old a memory's earliest timestamped
 /// retrieval must be before `applied == 0` counts against it.
 pub const ENDORSEMENT_GRACE_DAYS: i64 = 2;

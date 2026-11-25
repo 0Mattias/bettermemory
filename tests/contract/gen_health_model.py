@@ -1,5 +1,7 @@
 """Fixtures: the report model of health, unit health_model-1
-(``health_model.jsonl``).
+(``health_model.jsonl``) and unit health_model-2
+(``health_model_debt.jsonl``, `generate_debt`, described where it begins
+below).
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/health_model.rs``. This pins it to
@@ -57,6 +59,7 @@ from typing import Any
 
 from bettermemory import health_model as hm
 from bettermemory.models import Category
+from bettermemory.origin_history import HistoryUnread
 
 from ._common import jsonl, neutral, text_field
 
@@ -1008,3 +1011,815 @@ def generate() -> dict[str, bytes]:
         {"k": "ts", "seed": TS_SEED, "count": TS_COUNT, "sha256": ts_digest()},
     ]
     return {"health_model.jsonl": jsonl([header, *rows, *sweeps])}
+
+
+# ---------------------------------------------------------------------------
+# unit health_model-2 (``health_model_debt.jsonl``)
+# ---------------------------------------------------------------------------
+#
+# Each report type of the unit built from chosen values with its
+# ``to_dict`` (``d``, neutral, or ``x``, the class raised),
+# `clamp_ratio_threshold`, `weakly_endorsed` with `_is_weakly_endorsed`,
+# `unread_fields` and `_unread_dict`; then two sweeps drawn with `_Draw`:
+# ``rollup`` (``count`` report values, the kind by ``pick(9)``, the SHA-256
+# of their ``json.dumps(to_dict())`` lines or the class raised) and
+# ``pred`` (``count`` triples through `clamp_ratio_threshold` and
+# `weakly_endorsed`). Not gated, for unit 1's reasons: no answer follows
+# the release, the Unicode tables or the platform.
+
+DEBT_ROLLUP_SEED = 20261125
+DEBT_ROLLUP_COUNT = 20000
+DEBT_PRED_SEED = 31
+DEBT_PRED_COUNT = 20000
+_CAUSE_VALUES = [
+    "timeout",
+    "over_budget",
+    "shallow",
+    "error",
+    "unconfirmed_cut",
+    "call_budget",
+]
+
+
+def _opt_text(name: str, text: str | None) -> dict[str, Any]:
+    return {name: None} if text is None else text_field(name, text)
+
+
+def _texts(items: list[str]) -> list[dict[str, Any]]:
+    return [text_field("v", s) for s in items]
+
+
+def _pairs(items: dict[str, int]) -> list[list[Any]]:
+    return [[text_field("v", k), n] for k, n in items.items()]
+
+
+def _clamp_rows() -> list[dict[str, Any]]:
+    xs = [
+        -math.inf,
+        -1.0,
+        -0.0,
+        0.0,
+        5e-324,
+        -5e-324,
+        0.5,
+        _f(_bits(1.0) - 1),
+        1.0,
+        1.5,
+        math.inf,
+        math.nan,
+        _f(0xFFF8000000000000),
+        _f(0x7FF0000000000001),
+    ]
+    return [
+        {"k": "clamp", "x": neutral(x), "r": neutral(hm.clamp_ratio_threshold(x))}
+        for x in xs
+    ]
+
+
+_WEAK = [
+    (0, 0, 0.0),
+    (0, 0, 0.5),
+    (0, 3, 0.5),
+    (-1, 0, 0.5),
+    (-5, -1, 0.5),
+    (I64_MIN, 0, 0.5),
+    (1, 0, 0.0),
+    (1, 0, math.nan),
+    (5, 0, -1.0),
+    (I64_MAX, 0, -math.inf),
+    (3, 1, 0.0),
+    (3, 1, -0.0),
+    (3, 1, math.nan),
+    (3, 1, -math.inf),
+    (3, 1, 5e-324),
+    (3, 1, 0.5),
+    (2, 1, 0.5),
+    (4, 1, 0.25),
+    (10, 1, 0.1),
+    (3, 1, 1 / 3),
+    (3, 1, math.nextafter(1 / 3, 1.0)),
+    (3, 1, 1.0),
+    (3, 3, 1.0),
+    (3, 3, math.inf),
+    (3, 4, 2.0),
+    (1, -1, 0.5),
+    (1, I64_MIN, 0.5),
+    (I64_MAX, 1, 5e-324),
+    (I64_MAX, 1, 1e-18),
+    (I64_MAX, I64_MAX, 1.0),
+    (I64_MAX, I64_MAX - 1, 1.0),
+    (2**53 + 1, 2**53, 1.0),
+]
+
+
+def _weak_rows() -> list[dict[str, Any]]:
+    rows = []
+    for applied, explicit, t in _WEAK:
+        stats = hm.MemoryStats(
+            id="m",
+            scopes=[],
+            summary="",
+            created=D1,
+            updated=D1,
+            applied_count=applied,
+            explicit_applied_count=explicit,
+        )
+        rows.append(
+            {
+                "k": "weak",
+                "applied": applied,
+                "explicit": explicit,
+                "t": neutral(t),
+                "r": hm.weakly_endorsed(applied, explicit, t),
+                "rs": hm._is_weakly_endorsed(stats, t),
+            }
+        )
+    return rows
+
+
+def _unread_map(n: int, causes: list[str]) -> dict[str, HistoryUnread]:
+    """``n`` ids counting down (insertion order is not sorted order), the
+    causes taken in turn from ``causes``."""
+    return {f"id-{n - j:02d}": HistoryUnread(causes[j % len(causes)]) for j in range(n)}
+
+
+def _unread_cases() -> list[dict[str, HistoryUnread]]:
+    mixed = [
+        "timeout",
+        "error",
+        "call_budget",
+        "shallow",
+        "unconfirmed_cut",
+        "over_budget",
+    ]
+    odd = {
+        "z\ud800": HistoryUnread("shallow"),
+        "é": HistoryUnread("error"),
+        "": HistoryUnread("shallow"),
+        "a": HistoryUnread("call_budget"),
+    }
+    return [
+        _unread_map(0, mixed),
+        _unread_map(1, ["unconfirmed_cut"]),
+        _unread_map(20, mixed),
+        _unread_map(21, ["shallow", "error"]),
+        _unread_map(25, mixed),
+        _unread_map(25, ["timeout"]),
+        odd,
+    ]
+
+
+def _unread_rows() -> list[dict[str, Any]]:
+    rows = []
+    for m in _unread_cases():
+        rows.append(
+            {
+                "k": "unread",
+                "in": [[text_field("v", k), why.value] for k, why in m.items()],
+                "d": neutral(hm.unread_fields(m)),
+            }
+        )
+    return rows
+
+
+_IDS25 = [f"id-{25 - j}" for j in range(25)]
+_UNREAD_DICT = [
+    (0, {"timeout": 1}, ["x"]),
+    (0, {}, []),
+    (1, {}, []),
+    (-1, {"z": 1, "a": 2}, ["b", "a"]),
+    (3, {"timeout": 2, "error": 1}, _IDS25),
+    (I64_MIN, {"é\ud800": I64_MAX}, ["\ud800"]),
+    (I64_MAX, {"shallow": 0, "call_budget": -1}, []),
+]
+
+
+def _unread_dict_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "k": "unread_dict",
+            "unread": n,
+            "causes": _pairs(causes),
+            "ids": _texts(ids),
+            "d": neutral(hm._unread_dict(n, causes, ids)),
+        }
+        for n, causes, ids in _UNREAD_DICT
+    ]
+
+
+def _actor_in(kw: dict[str, Any]) -> dict[str, Any]:
+    spelled: dict[str, Any] = _opt_text("client", kw.get("client"))
+    for k, v in kw.items():
+        if k in ("models", "principals"):
+            spelled[k] = _pairs(v)
+        elif k != "client":
+            spelled[k] = v
+    return spelled
+
+
+def _actors_rows() -> list[dict[str, Any]]:
+    a1 = {"client": "claude-code", "memories": 3, "events": 9, "models": {"m": 2}}
+    a2 = {"client": "c\ud800", "applies": I64_MIN, "principals": {"z": 1, "a": 2}}
+    und = {"client": None, "memories": 40, "memories_in_window": 2, "searches": I64_MAX}
+    cases: list[dict[str, Any]] = [
+        {},
+        {"declared": [a1]},
+        {"declared": [a2, a1], "undeclared": und},
+        {"undeclared": {"client": "named"}},
+    ]
+    rows = []
+    for c in cases:
+        kw: dict[str, Any] = {}
+        spelled: dict[str, Any] = {}
+        if "declared" in c:
+            kw["declared"] = [hm.ActorSlice(**a) for a in c["declared"]]
+            spelled["declared"] = [_actor_in(a) for a in c["declared"]]
+        if "undeclared" in c:
+            kw["undeclared"] = hm.ActorSlice(**c["undeclared"])
+            spelled["undeclared"] = _actor_in(c["undeclared"])
+        rows.append(
+            {"k": "actors", "in": spelled, "d": neutral(hm.ActorSlices(**kw).to_dict())}
+        )
+    return rows
+
+
+_RAISES = {**_M0, "id": "m-raise", "last_contradicted_at": D1, "last_verified_at": _N1}
+_FULL = _MEMORIES[3]
+_UNICODE = _MEMORIES[2]
+
+
+def _stats_kw(rows: list[dict[str, Any]]) -> tuple[list[hm.MemoryStats], list[Any]]:
+    return [_memory(kw) for kw in rows], [_memory_in(kw) for kw in rows]
+
+
+def _vdebt_rows() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = [
+        {"stale_after_days": 30},
+        {
+            "stale_after_days": 90,
+            "never_verified": [_M0, _UNICODE],
+            "never_verified_total": 500,
+            "stale": [_FULL],
+            "stale_total": 7,
+            "fresh_count": 12,
+            "never_verified_checkable": 300,
+            "stale_checkable": 2,
+        },
+        {"stale_after_days": -1, "never_verified": [_M0, _RAISES], "stale": [_FULL]},
+        {"stale_after_days": 0, "never_verified": [_M0], "stale": [_FULL, _RAISES]},
+        {
+            "stale_after_days": I64_MIN,
+            "never_verified_total": I64_MAX,
+            "stale_total": I64_MIN,
+            "fresh_count": -1,
+            "never_verified_checkable": I64_MAX,
+            "stale_checkable": I64_MIN,
+        },
+    ]
+    rows = []
+    for c in cases:
+        kw = dict(c)
+        spelled = dict(c)
+        for name in ("never_verified", "stale"):
+            if name in c:
+                kw[name], spelled[name] = _stats_kw(c[name])
+        debt = hm.VerificationDebt(**kw)
+        rows.append({"k": "vdebt", "in": spelled, "d": _try(debt.to_dict, neutral)})
+    return rows
+
+
+def _drow_in(kw: dict[str, Any]) -> dict[str, Any]:
+    spelled = {
+        **text_field("id", kw["id"]),
+        "scopes": _texts(kw["scopes"]),
+        **text_field("summary", kw["summary"]),
+        "last_verified_at": _iso(kw["last_verified_at"]),
+        "commits_since_verify": kw["commits_since_verify"],
+    }
+    if "basis" in kw:
+        spelled.update(text_field("basis", kw["basis"]))
+    return spelled
+
+
+_R0: dict[str, Any] = {
+    "id": "m-1",
+    "scopes": ["projects:a"],
+    "summary": "a drifted memory",
+    "last_verified_at": D1,
+    "commits_since_verify": 12,
+}
+_DROWS: list[dict[str, Any]] = [
+    _R0,
+    {**_R0, "last_verified_at": None, "commits_since_verify": 0},
+    {**_R0, "basis": "reachability"},
+    {
+        **_R0,
+        "id": "m-é\ud800",
+        "scopes": [],
+        "summary": "\ud83d",
+        "last_verified_at": D1.astimezone(SEC30),
+        "basis": "",
+    },
+    {**_R0, "last_verified_at": _N1, "commits_since_verify": -1, "basis": "b\ud800"},
+    {**_R0, "last_verified_at": D1.astimezone(MICRO), "commits_since_verify": I64_MAX},
+    {
+        **_R0,
+        "last_verified_at": datetime(1, 1, 1, tzinfo=P559),
+        "commits_since_verify": I64_MIN,
+    },
+]
+
+
+def _drow_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "k": "drow",
+            "in": _drow_in(kw),
+            "d": neutral(hm.CommitDriftRow(**kw).to_dict()),
+        }
+        for kw in _DROWS
+    ]
+
+
+def _debt_in(c: dict[str, Any]) -> dict[str, Any]:
+    spelled: dict[str, Any] = {}
+    for k, v in c.items():
+        if k in ("current_repo", "current_cwd", "repo", "worktree_root"):
+            spelled.update(_opt_text(k, v))
+        elif k == "rows":
+            spelled[k] = [_drow_in(r) for r in v]
+        elif k == "unread_causes":
+            spelled[k] = _pairs(v)
+        elif k == "unread_ids":
+            spelled[k] = _texts(v)
+        elif k == "last_checked_at":
+            spelled[k] = _iso(v)
+        else:
+            spelled[k] = v
+    return spelled
+
+
+def _with_rows(c: dict[str, Any]) -> dict[str, Any]:
+    kw = dict(c)
+    if "rows" in kw:
+        kw["rows"] = [hm.CommitDriftRow(**r) for r in kw["rows"]]
+    return kw
+
+
+def _ddebt_rows() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = [
+        {"current_repo": None, "current_cwd": None},
+        {
+            "current_repo": "github.com/a/b",
+            "current_cwd": "/w/b",
+            "rows": [_R0, _DROWS[2]],
+            "total_drifted": 40,
+        },
+        {"current_repo": "r", "current_cwd": None, "unconfirmed": 3},
+        {"current_repo": "r", "current_cwd": "c", "unconfirmed": -1},
+        {
+            "current_repo": None,
+            "current_cwd": "c\ud800",
+            "unread": 0,
+            "unread_causes": {"timeout": 2},
+            "unread_ids": ["x"],
+        },
+        {
+            "current_repo": "r",
+            "current_cwd": "c",
+            "unconfirmed": 2,
+            "unread": 2,
+            "unread_causes": {"timeout": 1, "error": 1},
+            "unread_ids": ["b", "a"],
+        },
+        {"current_repo": "r", "current_cwd": "c", "unread": -2},
+        {
+            "current_repo": "r",
+            "current_cwd": "c",
+            "total_drifted": I64_MIN,
+            "unconfirmed": I64_MAX,
+            "unread": I64_MAX,
+            "unread_causes": {"z": 1, "a": I64_MIN},
+            "unread_ids": _IDS25,
+        },
+        {
+            "current_repo": "r",
+            "current_cwd": "c",
+            **hm.unread_fields(_unread_map(25, ["error", "timeout"])),
+        },
+    ]
+    return [
+        {
+            "k": "ddebt",
+            "in": _debt_in(c),
+            "d": neutral(hm.CommitDriftDebt(**_with_rows(c)).to_dict()),
+        }
+        for c in cases
+    ]
+
+
+def _group_rows() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = [
+        {"repo": "github.com/a/b", "worktree_root": "/w/b"},
+        {
+            "repo": "r\ud800",
+            "worktree_root": "",
+            "rows": [_R0, _DROWS[3]],
+            "total_drifted": 2,
+            "candidates": 9,
+            "last_checked_at": D1,
+        },
+        {
+            "repo": "r",
+            "worktree_root": "w",
+            "candidates": -1,
+            "unread": 1,
+            "unread_causes": {"shallow": 1},
+            "unread_ids": ["m-9"],
+            "last_checked_at": _N1,
+        },
+        {
+            "repo": "r",
+            "worktree_root": "w",
+            "unread": 0,
+            "unread_causes": {"shallow": 1},
+            "last_checked_at": D1.astimezone(SEC30),
+        },
+        {
+            "repo": "r",
+            "worktree_root": "w",
+            "total_drifted": I64_MAX,
+            "candidates": I64_MIN,
+            "unread": -5,
+            "last_checked_at": datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=M559),
+        },
+    ]
+    return [
+        {
+            "k": "group",
+            "in": _debt_in(c),
+            "d": neutral(hm.CrossRepoDriftGroup(**_with_rows(c)).to_dict()),
+        }
+        for c in cases
+    ]
+
+
+def _cross_rows() -> list[dict[str, Any]]:
+    g1 = {"repo": "a", "worktree_root": "/w/a", "rows": [_R0], "total_drifted": 1}
+    g2 = {
+        "repo": "b",
+        "worktree_root": "/w/b",
+        "unread": 1,
+        "unread_causes": {"error": 1},
+    }
+    cases: list[dict[str, Any]] = [
+        {},
+        {"groups": [g1, g2], "total_drifted": 1, "unanchorable": 4},
+        {
+            "skipped": [
+                {"repo": "c", "reason": "missing"},
+                {"z": [1, 2.5, None], "a": {"n": True}},
+                {},
+            ],
+            "total_drifted": I64_MIN,
+            "unanchorable": I64_MAX,
+        },
+    ]
+    rows = []
+    for c in cases:
+        kw = dict(c)
+        spelled = dict(c)
+        if "groups" in c:
+            kw["groups"] = [
+                hm.CrossRepoDriftGroup(**_with_rows(g)) for g in c["groups"]
+            ]
+            spelled["groups"] = [_debt_in(g) for g in c["groups"]]
+        if "skipped" in c:
+            spelled["skipped"] = neutral(c["skipped"])
+        rows.append(
+            {
+                "k": "cross",
+                "in": spelled,
+                "d": neutral(hm.CrossRepoDrift(**kw).to_dict()),
+            }
+        )
+    return rows
+
+
+def _cold_rows() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = [
+        {"min_retrievals": hm._COLD_ENDORSEMENT_MIN_RETRIEVALS},
+        {"min_retrievals": 5, "rows": [_FULL, _UNICODE], "total": 300},
+        {"min_retrievals": 30, "rows": [_M0, _RAISES, _FULL], "total": 3},
+        {"min_retrievals": I64_MIN, "total": I64_MAX},
+    ]
+    rows = []
+    for c in cases:
+        kw = dict(c)
+        spelled = dict(c)
+        if "rows" in c:
+            kw["rows"], spelled["rows"] = _stats_kw(c["rows"])
+        cold = hm.ColdEndorsementMemories(**kw)
+        rows.append({"k": "cold", "in": spelled, "d": _try(cold.to_dict, neutral)})
+    return rows
+
+
+def _silent_rows() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = [
+        {},
+        {
+            "audited_total": 40,
+            "miss_total": 9,
+            "unique_miss_memories": 1,
+            "no_signal_total": 3,
+        },
+        {
+            "audited_total": I64_MIN,
+            "miss_total": I64_MAX,
+            "unique_miss_memories": -1,
+            "no_signal_total": 0,
+        },
+    ]
+    return [
+        {"k": "silent", "in": c, "d": neutral(hm.SilentMissStats(**c).to_dict())}
+        for c in cases
+    ]
+
+
+def _recent_rows() -> list[dict[str, Any]]:
+    cases: list[dict[str, str | None]] = [
+        {"event_id": None, "top_hit_id": None, "query_preview": None, "ts": None},
+        {
+            "event_id": "01J0000000000000000000000",
+            "top_hit_id": "m-1",
+            "query_preview": "how do I <redacted>",
+            "ts": "2026-03-01T12:00:00Z",
+        },
+        {"event_id": "", "top_hit_id": "\ud800", "query_preview": "é—", "ts": None},
+    ]
+    rows = []
+    for c in cases:
+        spelled: dict[str, Any] = {}
+        for k, v in c.items():
+            spelled.update(_opt_text(k, v))
+        rows.append(
+            {
+                "k": "recent",
+                "in": spelled,
+                "d": neutral(hm.RecentSilentMiss(**c).to_dict()),
+            }
+        )
+    return rows
+
+
+# The sweeps. Every draw below is made in the order the statements read.
+
+
+def _draw_text(d: _Draw) -> str:
+    return _TEXTS[d.pick(len(_TEXTS))]
+
+
+def _draw_opt_text(d: _Draw) -> str | None:
+    if d.pick(3) == 0:
+        return None
+    return _draw_text(d)
+
+
+def _draw_census(d: _Draw, names: list[str]) -> dict[str, int]:
+    """``pick(3)`` distinct keys of ``names`` from ``pick(len(names))`` on,
+    each with a `draw_count`."""
+    n = d.pick(3)
+    start = d.pick(len(names))
+    out = {}
+    for j in range(n):
+        out[names[(start + j) % len(names)]] = draw_count(d)
+    return out
+
+
+def _draw_actor(d: _Draw, undeclared: bool) -> hm.ActorSlice:
+    client = None if undeclared else _draw_opt_text(d)
+    memories = draw_count(d)
+    in_window = draw_count(d)
+    events = draw_count(d)
+    searches = draw_count(d)
+    applies = draw_count(d)
+    models = _draw_census(d, _TEXTS)
+    principals = _draw_census(d, _TEXTS)
+    return hm.ActorSlice(
+        client=client,
+        memories=memories,
+        memories_in_window=in_window,
+        events=events,
+        searches=searches,
+        applies=applies,
+        models=models,
+        principals=principals,
+    )
+
+
+def _draw_drift_row(d: _Draw) -> hm.CommitDriftRow:
+    ident = _draw_text(d)
+    scopes = [_draw_text(d) for _ in range(d.pick(3))]
+    summary = _draw_text(d)
+    verified = draw_opt_dt(d, True)
+    commits = draw_count(d)
+    basis = d.pick(3)
+    row = hm.CommitDriftRow(
+        id=ident,
+        scopes=scopes,
+        summary=summary,
+        last_verified_at=verified,
+        commits_since_verify=commits,
+    )
+    if basis == 1:
+        row.basis = "reachability"
+    elif basis == 2:
+        row.basis = _draw_text(d)
+    return row
+
+
+def _draw_unread(d: _Draw) -> dict[str, Any]:
+    """By ``pick(2)``: 1 `unread_fields` of ``pick(26)`` ids counting down,
+    each cause ``pick(6)``; 0 the three fields drawn apart (a count, a
+    census of causes, ``pick(3)`` texts)."""
+    if d.pick(2):
+        n = d.pick(26)
+        m = {}
+        for j in range(n):
+            m[f"u{n - j}"] = HistoryUnread(_CAUSE_VALUES[d.pick(6)])
+        return hm.unread_fields(m)
+    unread = draw_count(d)
+    causes = _draw_census(d, _CAUSE_VALUES)
+    ids = [_draw_text(d) for _ in range(d.pick(3))]
+    return {"unread": unread, "unread_causes": causes, "unread_ids": ids}
+
+
+def _draw_group(d: _Draw) -> hm.CrossRepoDriftGroup:
+    repo = _draw_text(d)
+    root = _draw_text(d)
+    rows = [_draw_drift_row(d) for _ in range(d.pick(3))]
+    total = draw_count(d)
+    candidates = draw_count(d)
+    unread = _draw_unread(d)
+    checked = draw_opt_dt(d, True)
+    return hm.CrossRepoDriftGroup(
+        repo=repo,
+        worktree_root=root,
+        rows=rows,
+        total_drifted=total,
+        candidates=candidates,
+        last_checked_at=checked,
+        **unread,
+    )
+
+
+def draw_rollup(d: _Draw, i: int) -> Any:
+    """One report value of the kind ``pick(9)``: 0 `ActorSlices`, 1
+    `VerificationDebt`, 2 `CommitDriftRow`, 3 `CommitDriftDebt`, 4
+    `CrossRepoDriftGroup`, 5 `CrossRepoDrift`, 6
+    `ColdEndorsementMemories`, 7 `SilentMissStats`, 8 `RecentSilentMiss`.
+    The `MemoryStats` rows are unit 1's `draw_memory`."""
+    kind = d.pick(9)
+    if kind == 0:
+        declared = [_draw_actor(d, False) for _ in range(d.pick(3))]
+        if d.pick(2):
+            return hm.ActorSlices(declared=declared, undeclared=_draw_actor(d, True))
+        return hm.ActorSlices(declared=declared)
+    if kind == 1:
+        days = draw_count(d)
+        never = [draw_memory(d, i) for _ in range(d.pick(3))]
+        never_total = draw_count(d)
+        stale = [draw_memory(d, i) for _ in range(d.pick(3))]
+        stale_total = draw_count(d)
+        fresh = draw_count(d)
+        never_checkable = draw_count(d)
+        stale_checkable = draw_count(d)
+        return hm.VerificationDebt(
+            stale_after_days=days,
+            never_verified=never,
+            never_verified_total=never_total,
+            stale=stale,
+            stale_total=stale_total,
+            fresh_count=fresh,
+            never_verified_checkable=never_checkable,
+            stale_checkable=stale_checkable,
+        )
+    if kind == 2:
+        return _draw_drift_row(d)
+    if kind == 3:
+        repo = _draw_opt_text(d)
+        cwd = _draw_opt_text(d)
+        rows = [_draw_drift_row(d) for _ in range(d.pick(3))]
+        total = draw_count(d)
+        unconfirmed = draw_count(d)
+        unread = _draw_unread(d)
+        return hm.CommitDriftDebt(
+            current_repo=repo,
+            current_cwd=cwd,
+            rows=rows,
+            total_drifted=total,
+            unconfirmed=unconfirmed,
+            **unread,
+        )
+    if kind == 4:
+        return _draw_group(d)
+    if kind == 5:
+        groups = [_draw_group(d) for _ in range(d.pick(3))]
+        skipped = []
+        for _ in range(d.pick(3)):
+            repo = _draw_text(d)
+            reason = _draw_text(d)
+            skipped.append({"repo": repo, "reason": reason})
+        total = draw_count(d)
+        unanchorable = draw_count(d)
+        return hm.CrossRepoDrift(
+            groups=groups,
+            skipped=skipped,
+            total_drifted=total,
+            unanchorable=unanchorable,
+        )
+    if kind == 6:
+        floor = draw_count(d)
+        rows_ = [draw_memory(d, i) for _ in range(d.pick(3))]
+        total = draw_count(d)
+        return hm.ColdEndorsementMemories(min_retrievals=floor, rows=rows_, total=total)
+    if kind == 7:
+        counts = [draw_count(d) for _ in range(4)]
+        return hm.SilentMissStats(*counts)
+    texts = [_draw_opt_text(d) for _ in range(4)]
+    return hm.RecentSilentMiss(*texts)
+
+
+def rollup_digest() -> str:
+    d = _Draw(DEBT_ROLLUP_SEED)
+    lines = []
+    for i in range(DEBT_ROLLUP_COUNT):
+        value = draw_rollup(d, i)
+        try:
+            lines.append(json.dumps(value.to_dict()))
+        except TypeError:
+            lines.append("TypeError")
+    return hashlib.sha256("\n".join(lines).encode("ascii")).hexdigest()
+
+
+def pred_digest() -> str:
+    """Each case: ``applied`` and ``explicit`` by `draw_count`, ``t`` by
+    unit 1's `draw_float`; the line ``<applied> <explicit> <t bits> <clamp
+    bits> <weak of t> <weak of the clamp>``, the answers 0 or 1."""
+    d = _Draw(DEBT_PRED_SEED)
+    lines = []
+    for _ in range(DEBT_PRED_COUNT):
+        applied = draw_count(d)
+        explicit = draw_count(d)
+        t = draw_float(d)
+        c = hm.clamp_ratio_threshold(t)
+        w = int(hm.weakly_endorsed(applied, explicit, t))
+        wc = int(hm.weakly_endorsed(applied, explicit, c))
+        lines.append(f"{applied} {explicit} {_bits(t):016x} {_bits(c):016x} {w} {wc}")
+    return hashlib.sha256("\n".join(lines).encode("ascii")).hexdigest()
+
+
+def generate_debt() -> dict[str, bytes]:
+    rows = [
+        *_clamp_rows(),
+        *_weak_rows(),
+        *_unread_rows(),
+        *_unread_dict_rows(),
+        *_actors_rows(),
+        *_vdebt_rows(),
+        *_drow_rows(),
+        *_ddebt_rows(),
+        *_group_rows(),
+        *_cross_rows(),
+        *_cold_rows(),
+        *_silent_rows(),
+        *_recent_rows(),
+    ]
+    header = {
+        "fixture": "health_model_debt",
+        "count": len(rows),
+        "caps": {
+            "verification_debt": hm._VERIFICATION_DEBT_CAP,
+            "cold_endorsement_min_retrievals": hm._COLD_ENDORSEMENT_MIN_RETRIEVALS,
+            "cold_endorsement": hm._COLD_ENDORSEMENT_CAP,
+            "cross_repo_max_roots": hm._CROSS_REPO_MAX_ROOTS,
+            "commit_drift_debt": hm._COMMIT_DRIFT_DEBT_CAP,
+            "recent_silent_misses": hm._RECENT_SILENT_MISSES_CAP,
+        },
+        "basis_default": hm.CommitDriftRow("i", [], "s", None, 0).basis,
+    }
+    sweeps = [
+        {
+            "k": "rollup",
+            "seed": DEBT_ROLLUP_SEED,
+            "count": DEBT_ROLLUP_COUNT,
+            "sha256": rollup_digest(),
+        },
+        {
+            "k": "pred",
+            "seed": DEBT_PRED_SEED,
+            "count": DEBT_PRED_COUNT,
+            "sha256": pred_digest(),
+        },
+    ]
+    return {"health_model_debt.jsonl": jsonl([header, *rows, *sweeps])}
