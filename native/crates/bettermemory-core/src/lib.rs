@@ -27,6 +27,10 @@
 //!   `admitted_nothing`;
 //! - [`health_summary`]: `health_summary.py` whole: the default health
 //!   answer and the answer naming sections;
+//! - [`health_model`]: the report model of `health.py`, its first unit:
+//!   the dead-weight, contradiction and hook-telemetry predicates, the
+//!   applied tiers, and the per-memory, per-marker, per-scope and
+//!   per-actor report types with their `to_dict`;
 //! - [`health_roots`]: `health_roots.py`'s estate progress cursor;
 //! - [`float_repr`]: Python's `float.__repr__`;
 //! - [`datetime`]: the datetime spellings and readings;
@@ -450,6 +454,7 @@ pub mod gitobjects;
 pub mod gitsystem;
 pub mod handler_checks;
 pub mod handlers;
+pub mod health_model;
 pub mod health_roots;
 pub mod health_summary;
 pub mod history;

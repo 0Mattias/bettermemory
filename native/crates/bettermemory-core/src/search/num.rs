@@ -1,8 +1,9 @@
 //! The floating-point operations of the ranker that are not one IEEE-754
 //! operation: Python's `int / int` (correctly rounded at any size),
-//! `round(x, 4)` (decimal rounding, half to even, of the exact binary
-//! value), `max` as Python picks between two floats, and `math.log` with
-//! its domain errors.
+//! `round(x, ndigits)` (decimal rounding, half to even, of the exact
+//! binary value; `round4` at four digits, `health_model` at three), `max`
+//! as Python picks between two floats, and `math.log` with its domain
+//! errors.
 
 use super::SearchError;
 
@@ -63,10 +64,21 @@ pub fn int_true_div(n: i128, d: i128) -> f64 {
     }
 }
 
-/// `round(x, 4)` for a finite `x`: CPython rounds the exact binary value to
-/// four decimals (half to even, `_Py_dg_dtoa` mode 3) and reads the
-/// decimal back (`_Py_dg_strtod`, correctly rounded).
-pub fn round4(x: f64) -> f64 {
+/// `round(x, ndigits)` for `0 <= ndigits <= 15`: CPython rounds the exact
+/// binary value of a finite `x` to `ndigits` decimals (half to even,
+/// `_Py_dg_dtoa` mode 3) and reads the decimal back (`_Py_dg_strtod`,
+/// correctly rounded); an infinity, a NaN and a zero come back as given,
+/// and a negative value that rounds to zero is `-0.0`.
+///
+/// Panics in every build for `ndigits > 15`: the exact arithmetic below
+/// holds the scaled mantissa under 2**103 and the divisor under 2**72
+/// only that far (from 22 digits it would answer wrongly, where Python's
+/// `round` stays exact). Every caller passes 3 or 4.
+pub fn round_digits(x: f64, ndigits: u32) -> f64 {
+    assert!(
+        ndigits <= 15,
+        "round_digits holds 0 to 15 digits, not {ndigits}"
+    );
     if x == 0.0 || !x.is_finite() {
         return x;
     }
@@ -80,13 +92,15 @@ pub fn round4(x: f64) -> f64 {
         (frac | (1 << 52), biased - 1075)
     };
     if e >= 0 {
-        // An integer: four decimals hold it whole.
+        // An integer: any count of decimals holds it whole.
         return x;
     }
     let sh = -e;
-    let num = u128::from(m) * 10_000;
+    let scale = 10u128.pow(ndigits);
+    // Under 2**53 * 10**15 < 2**103.
+    let num = u128::from(m) * scale;
     let q = if sh >= 120 {
-        // Under 2**67 / 2**120: well below one half of a unit.
+        // Under 2**103 / 2**120: well below one half of a unit.
         0
     } else {
         let q = num >> sh;
@@ -98,12 +112,17 @@ pub fn round4(x: f64) -> f64 {
             q
         }
     };
-    let r = div_u128(q, 10_000);
+    let r = div_u128(q, scale);
     if neg {
         -r
     } else {
         r
     }
+}
+
+/// `round(x, 4)`: [`round_digits`] at four decimals.
+pub fn round4(x: f64) -> f64 {
+    round_digits(x, 4)
 }
 
 /// Python's `max(a, b)` of two floats: `b` only when `b > a`.

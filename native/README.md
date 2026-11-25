@@ -24,6 +24,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `in_force` | `in_force.py` whole: `InForce` (with `history`), `in_force` and its inner `newest`, `newest_head`, `admitted_sources`, `head`; the store's reads and the admission are traits (`LinkReader`, `RecordView`) | `in_force.jsonl` |
 | `admission` | `admission.py` 59-127 beside `store::caller`'s `Admission` and `NO_RESOLUTION` (re-exported): `DriftScope`, `CountedRecords`, `EveryRecord` (with `admits_row`), `EVERY_RECORD`, `admitted_nothing` | unit tests |
 | `health_summary` | `health_summary.py` whole: `section_names`, `health_summary` (with `_empty`, `_attention`), `health_section`, `SUMMARY_IDS`, `HEADLINE_KEYS` | `health_summary.jsonl` |
+| `health_model` | unit health_model-1 of `health_model.py`: `_ENDORSEMENT_GRACE_DAYS`, `_freshest_touch_ts`, `_has_unresolved_contradiction`, `_is_dead_weight`, `is_hook_telemetry_event`, `applied_tier`, `endorsement_tier`, `TelemetryCoverage`, `_HOOKLESS_REASON`, `MemoryStats`, `MarkerStats`, `ScopeHealth`, `ActorSlice` (each `to_dict`), `explicit_ratio`, `_iso`; `round(x, 3)` through `search::num::round_digits` | `health_model.jsonl` |
 | `health_roots` | `health_roots.py` 21-73: `EstateProgress` (`ordered`, `attempt`), `_LAST_CHECKED_CAP`; `progress_for_store` is the open Store's own `EstateProgress` | `health_roots.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
@@ -3326,6 +3327,170 @@ its module.
 Left for later: `admission.recorded_caller` and `admits_row` on
 `RecordView`, with their first reader; wiring `EstateProgress` into the
 Store.
+
+## The report model of health (`health_model.py`)
+
+`health_model.py` (1,571 lines) is the report model `health.compute_health`
+fills: its dataclasses, caps and shared predicates. It imports
+`models.Category` (`records::Category`), `store.EpisodeVolume`
+(`store::journal::EpisodeVolume`), `time_utils.isoformat_utc_optional` and
+`verify.BASIS_AUTHOR_DATE`, all built. Nothing in it asks the machine: the
+datetimes, counts and events are arguments. It is cut into three units,
+leaves first; unit health_model-1 is built (`src/health_model.rs`, 571
+lines of Rust outside tests, and `round(x, ndigits)` in `search::num`).
+
+| function | reference lines | needs | unit, status |
+| --- | --- | --- | --- |
+| `_ENDORSEMENT_GRACE_DAYS` (`ENDORSEMENT_GRACE_DAYS`) | 59 | nothing | 1, built |
+| `_freshest_touch_ts` (`freshest_touch_ts`, with `timestamp`) | 62-79 | nothing | 1, built |
+| `_has_unresolved_contradiction` | 82-97 | nothing | 1, built |
+| `_is_dead_weight` (`DeadWeight::is_dead_weight`) | 100-140 | nothing | 1, built |
+| `is_hook_telemetry_event` | 182-207 | nothing | 1, built |
+| `applied_tier` (`AppliedTier`) | 210-251 | nothing | 1, built |
+| `endorsement_tier` | 254-274 | nothing | 1, built |
+| `TelemetryCoverage` | 278-309 | nothing | 1, built |
+| `_HOOKLESS_REASON` (`HOOKLESS_REASON`) | 325-332 | nothing | 1, built |
+| `MemoryStats` (`has_unresolved_contradiction`, `endorsement_ratio`, `model_endorsement_ratio`, `to_dict`) | 341-518 | nothing | 1, built |
+| `MarkerStats` (`total`, `override_rate`, `to_dict`) | 522-567 | nothing | 1, built |
+| `ScopeHealth` | 571-606 | nothing | 1, built |
+| `ActorSlice` | 610-659 | nothing | 1, built |
+| `explicit_ratio` | 780-788 | nothing | 1, built |
+| `_iso` (`iso`) | 1570-1571 | nothing | 1, built |
+| `ActorSlices`, `VerificationDebt`, `_VERIFICATION_DEBT_CAP` | 662-751 | nothing | 2 |
+| `_COLD_ENDORSEMENT_MIN_RETRIEVALS`, `_COLD_ENDORSEMENT_CAP`, `clamp_ratio_threshold`, `weakly_endorsed`, `_is_weakly_endorsed` | 772-777, 791-872 | nothing | 2 |
+| `CommitDriftRow`, `CommitDriftDebt`, `unread_fields`, `_unread_dict` | 875-999 | `verify.BASIS_AUTHOR_DATE` | 2 |
+| `_CROSS_REPO_MAX_ROOTS`, `CrossRepoDriftGroup`, `CrossRepoDrift`, `_COMMIT_DRIFT_DEBT_CAP`, `_RECENT_SILENT_MISSES_CAP` | 1002-1082 | nothing | 2 |
+| `ColdEndorsementMemories`, `SilentMissStats`, `RecentSilentMiss` | 1086-1241 | nothing | 2 |
+| `Recommendation`, `_RECOMMENDATION_ROW_CAP`, `_RECOMMENDATION_SIZE_FLOOR` | 1244-1303 | nothing | 3 |
+| `_PROVENANCE_ROW_CAP`, `ProvenanceRow`, `ProvenanceDebt` | 1322-1368 | nothing | 3 |
+| `HealthReport` | 1371-1567 | `store.EpisodeVolume` | 3 |
+
+Unit health_model-2 is lines 662-1241 less `explicit_ratio`, unit
+health_model-3 lines 1244-1567. `eval_model.py` imports only
+`explicit_ratio` from this module, so eval_model-1 waits on this unit
+alone. `compute_health` and the event walk belong to the health and
+health_stats units.
+
+What unit 1 reproduces, and why:
+
+- The types hold Rust values: text as `PyStr` (a lone surrogate is kept),
+  datetimes as `DateTime`, `Category` as `records::Category`, counts as
+  `i64`, `resolution_timeline` as a `Vec<PyValue>` copied as given, and the
+  `models` and `principals` censuses of `ActorSlice` as `(key, count)`
+  pairs in insertion order (a dict's keys are distinct; the caller keeps
+  them so). Every caller counts rows, so no count passes `i64`; a sum of
+  two counts (`MarkerStats.total`) is taken in `i128`, where a Python `int`
+  does not wrap either. `to_dict` answers a `PyValue::Dict` in the
+  reference's key order; the JSON text is a later caller's, through
+  `json::dumps`.
+- The events are `dict[str, Any]`, read as a `PyValue`. `ev.get(key)` is
+  the last value of a `str` key, None when missing, and AttributeError
+  for a value that is not a dict. `ev.get("auto") is True` is the bool
+  True only: 1, 1.0, `"true"` and `[True]` are not, and such an applied
+  use is `model`. Every `== "literal"` is Python's: only a `str` of those
+  code points equals it, never an int, a bool, a path or a list.
+- `_is_dead_weight` takes its keyword arguments as the struct
+  `DeadWeight`. Each gate compares as Python does: `freshest_ts >=
+  cutoff_ts` and `earliest_retrieval_ts >= grace_cutoff_ts` exclude at
+  the bound, a NaN compares false and excludes nothing, and
+  `applied_count > 0` lets a negative count through.
+- `_freshest_touch_ts` reads `datetime.timestamp()` of an aware value as
+  CPython does: the microseconds since the epoch divided by 10**6 with one
+  correct rounding (`timedelta.total_seconds`). Dividing the microseconds
+  as an `f64` by 1e6 rounds twice once they pass 2**53 (after about
+  2255: 5530-03-03T08:26:42.691225Z is 112348024002.69122, not
+  112348024002.69124). The latest of the four is kept as `max` keeps it.
+  A naive datetime's timestamp is the machine's local time (`mktime`):
+  that reading is not ported, and the port declines it
+  (`HealthModelError::NaiveTimestamp`), as `review::related`'s
+  `related_entry` declines a naive `updated` (`NaiveUpdated`).
+- `_has_unresolved_contradiction` orders two aware datetimes as instants
+  (one instant at +23:59 and at -23:59 is not later), two naive ones by
+  their wall clocks, and raises TypeError for a naive against an aware at
+  whichever comparison meets it; without a contradiction nothing is
+  compared. `MemoryStats.to_dict` raises that TypeError where the
+  property does.
+- `explicit_ratio`, `model_endorsement_ratio` and `override_rate` are
+  Python's `int / int`: correctly rounded at any size (`search::num`'s
+  division), the sign that of the quotient, so `0 / -3` is `-0.0`.
+  `explicit_ratio` answers None for `applied <= 0`, and
+  `model_endorsement_ratio` only for `applied_count == 0` (a negative
+  count divides); `override_rate` is 0.0 when the total is not positive.
+- `MarkerStats.to_dict` rounds the rate with `round(x, 3)`:
+  `search::num::round_digits`, CPython's rounding of the exact binary
+  value to the digit count, half to even, read back correctly rounded.
+  `round4`, which the ranker and the dedup call, is `round_digits(x, 4)`
+  with its answers unchanged. `round_digits` holds 0 to 15 digits and
+  panics past 15 in every build (an `assert!`): Python's `round` is exact
+  at any count, and the `u128` arithmetic here would answer wrongly from
+  22 digits (`round(0.5, 22)` as 0.0). `(x * 1000).round() / 1000` differs at the
+  exact tie 0.0625 (0.062, not 0.063) and at 1.0005 (1.0), and a half to
+  even of the scaled product at 0.0025 (0.003, not 0.002).
+- `_iso` is `time_utils::isoformat_utc_optional`: every `+00:00` becomes
+  `Z`, so an offset of 30 seconds spells `Z:30`. `last_used_at` and
+  `last_verified_at` are None only when None (a datetime is never falsy).
+- Two answers of the reference differ from its own docstrings, and the
+  port reproduces them as written. `isoformat_utc` promises
+  `YYYY-MM-DDTHH:MM:SS.fffZ` but writes six fractional digits or none
+  (`2026-01-01T00:00:00.123456Z`, `2026-01-01T00:00:00Z`) and turns a
+  non-UTC offset whose text starts `+00:00` into `Z` and a tail
+  (`2026-01-01T00:00:00Z:30` at 30 seconds east). `model_endorsement_ratio`
+  promises the None-on-zero contract of `endorsement_ratio`, yet at
+  `applied_count = -3` it divides (`0 / -3` is `-0.0`) where
+  `endorsement_ratio` is None. No counted row is negative, so no store
+  reaches the second.
+- No regular expression is involved.
+
+Fixtures and tests: `tests/contract/gen_health_model.py` writes
+`health_model.jsonl`: 238 rows (round to three places at ties and their
+neighbours, timestamps at years 1 and 9999 and past 2**53 microseconds,
+contradiction orderings with naive and aware values, 49 events through
+the three predicates, each dead-weight gate alone and at its bound, ratios
+past 2**53 and at the ends of `i64`, and each report type's properties
+and `to_dict` with surrogates, offsets of seconds and microseconds and
+extreme counts) and three digest rows: 20,000 drawn stats (three
+`MemoryStats` to each `MarkerStats`, 181 of them raising TypeError) by
+the SHA-256 of their `json.dumps(to_dict())`, 20,000 drawn floats each
+rounded to three and four places, and 20,000 sets of four drawn aware
+datetimes through `_freshest_touch_ts`. The draws are a 64-bit linear
+congruential generator the Rust test runs by the same rule. Input
+datetimes travel as their fields, not their isoformat:
+`fromisoformat` reads an offset of minus one microsecond as zero. The
+file is not gated: integer division, `round`, `float.__repr__`,
+`isoformat` and ASCII-escaped `json.dumps` spell the same under 3.11 to
+3.14 on every system. `golden_health_model.rs` checks every row and the
+three digests; `health_model_kills.rs` holds the cases a plausible wrong
+port fails (half away from zero, rounding the scaled product, truthiness
+for `is True`, an int or a path equal to a `str`, each dead-weight bound
+moved, the timestamp through `f64` microseconds, naive datetimes
+accepted, wall-clock order of aware values, `f64` division of counts,
+`i64` overflow of the total, the key order, an event's first value of a
+repeated key or a key one code point off read for its own);
+`health_model_robustness.rs` takes counts at both ends of `i64`, years 1
+and 9999 at offsets up to a microsecond short of a day, `round(x, 3)` over
+every exponent, `round(x, 15)` against CPython and the refusal of 16 and
+22 digits, a timeline of 100,000 entries and events of 200,000 keys with
+growth claims through `tests/timing`, and events 100,000 deep and 100,000
+keys wide.
+
+Known costs, release builds against CPython 3.13 on the same input, best
+of three on a loaded machine. The predicates read every key they need in
+one pass from the end of the event, stopping once each is found: on a
+three-key event `endorsement_tier` takes 0.011 us (the reference 0.11
+us). A `PyValue::Dict` is a list of pairs, not a hash table, so on an
+event of 100,000 keys with the read keys first the pass still meets
+every key: `is_hook_telemetry_event` 140 us and `endorsement_tier` 166 us
+against 0.08 and 0.11 us (about 1,700 and 1,500 times; one scan per key
+took 159 and 316 us). `MemoryStats.to_dict` copies `resolution_timeline`
+and the texts into the answer, where the reference's `list()` copies
+references: 27 ms against 0.25 ms for 100,000 entries (about 110 times).
+Both are linear in an input the caller already built or parsed in linear
+time, and real events and timelines hold a few entries; removing either
+needs a shared or hashed `PyValue`, which `pyvalue.rs` does not have.
+`health_model_robustness.rs` holds the predicates and `to_dict` linear
+in their input.
+
+Left for later: units health_model-2 and health_model-3 as mapped above.
 
 ## The ranker
 
