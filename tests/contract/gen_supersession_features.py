@@ -63,7 +63,7 @@ SWEEP_WORDS = [
     *("deprecated removed unmoved replacement retired formerly reverted".split()),
     *("to through on in at with by via into onto".split()),
     *("8443 9443 3.11 3.13 v2 2026-07-20 74f625d a1b2c3d4e5f6a7b8c9".split()),
-    *("prod-hlx-1 hlx-exports-v2 runners-medium runners-large eu-west-1".split()),
+    *("prod-hlx-1 hlx-exports-v2 workers-medium workers-large eu-west-1".split()),
     *("release-gateway on-call read-only billing-db-green prod_hlx_2".split()),
     *("PagerDuty Opsgenie Airflow API AWS Postgres K8s Monday iPhone".split()),
     *("yarn pnpm port service pages the a is it was new old".split()),
@@ -223,7 +223,7 @@ def _ascii_cases() -> list[dict[str, Any]]:
         # Compounds of two and three parts.
         "Pages go on-call and read-only.",
         "Traffic uses billing-db-green and prod-hlx-2.",
-        "The runners-medium pool and runners-large pool.",
+        "The workers-medium pool and workers-large pool.",
         "Exports land in hlx_exports and hlx.exports and a-b and x-.",
         "A two-part deploy-gateway beside a three-part deploy-gateway-v2.",
         # Capitalised words first in a clause, acronyms, odd shapes.
@@ -262,7 +262,7 @@ def _ascii_cases() -> list[dict[str, Any]]:
         ("3.11", "3.1.1"),
         ("3.11", "8443"),
         ("8443", "8443"),
-        ("runners-medium", "runners-large"),
+        ("workers-medium", "workers-large"),
         ("prod-hlx-1", "hlx-exports-v2"),
         ("hlx-exports-prod", "hlx-exports-v2"),
         ("eu-west-1", "eu-central-1"),
