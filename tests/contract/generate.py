@@ -225,6 +225,7 @@ from . import (
     gen_history_rows,
     gen_history_detail,
     gen_history_record,
+    gen_history_render,
     gen_store_reads,
     gen_store_rows,
     gen_store_rows_written,
@@ -528,6 +529,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_rows_columns": gen_store_rows.generate_columns,
     "history_detail": gen_history_detail.generate,
     "history_record": gen_history_record.generate,
+    "history_render": gen_history_render.generate,
+    "history_render_unicode": gen_history_render.generate_unicode,
     "history_rows_mac": gen_history_rows.generate_mac,
     "store_rows_written": gen_store_rows_written.generate,
     "gitconfig": gen_gitconfig.generate,
@@ -776,6 +779,9 @@ UNICODE_GATED = frozenset(
         "store_rows_written",
         "store_provenance",
         "history_record",
+        # `printable` escapes by category: every code point through
+        # `render_text` (`gen_history_render`).
+        "history_render_unicode",
         "store_bulk",
         "gitsystem_record",
         "gitsystem_answers_unicode",

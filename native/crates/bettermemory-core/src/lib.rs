@@ -131,6 +131,9 @@
 //! - [`history_record`]: `history.py`'s fourth unit, one record's whole
 //!   history (`RecordHistory`, `record_history`, `_read_history`,
 //!   `_state`, `_table_kind`, `replaced_detail`);
+//! - [`history_render`]: `history.py`'s fifth unit, a record's history
+//!   as `memory history` prints it (`render_text` with `_actor_text`,
+//!   `_value_text` and `_VERIFIED_TEXT`, and `render_json`);
 //! - [`store`]: a store file read without writing to it: the version
 //!   contract, the tables, the key ring from a keys directory, the chain
 //!   verified on disk, the FTS5 prefilter, the additive schema steps
@@ -443,6 +446,7 @@ pub mod health_roots;
 pub mod health_summary;
 pub mod history;
 pub mod history_record;
+pub mod history_render;
 pub mod history_rows;
 pub mod hook;
 pub mod hook_settle;

@@ -71,6 +71,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `history` | `history.py`'s first two units: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection; `_RowVerifier` and `_set` | `history_rows.jsonl`, `history_rows_python.jsonl`, `history_rows_mac.jsonl` |
 | `history_rows` | `history.py`'s third unit: `HistoryRow` with `to_dict`, `_changed` (with `py_ne`, Python's `!=` over payload values), `_body_diff` (through `difflib::body_diff`), `_set`, `_event_detail`, `_RecordWalk`, `_record_row`, `_link_change_rows` | `history_detail.jsonl` |
 | `history_record` | `history.py`'s fourth unit: `RecordHistory` with `known`, `findings`, `exit_code` and `to_dict`, `record_history`, `_read_history` with its `adjacent`, `_state`, `_table_kind`, `replaced_detail`, and `FORMAT`, `FORMAT_VERSION`, `EVENT`, `STORE`, `ACTOR_FROM_EVENT`, over a store source, its key ring and a provenance reader | `history_record.jsonl` |
+| `history_render` | `history.py`'s fifth unit: `render_text` with `_actor_text`, `_value_text` and `_VERIFIED_TEXT`, and `render_json`, pure functions over a `RecordHistory` | `history_render.jsonl`, `history_render_unicode.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `tool_handlers` | `_handlers.py`, unit handlers-2a: `RefusedError`, `_in_the_way`, `RetryableRefusal`, `KeptWriteRefusal`, `store_refusal`, `_ABSENT`, `_kept_or_retryable`, `_refusals_as_tool_errors`, `_read_only`, and `ToolHandlers`' `__init__`, `for_request`, `with_store` and `_run` (the nine forwarders are handlers-2b) | `tool_handlers.jsonl` |
 | `events` | `events.py`'s first unit: the kind tables (`HARNESS_STAMPED_KINDS`, `AUDIT_KINDS`, `OVERRIDE_EVIDENCE_KINDS`, `AUDIT_STATUSES`, `OVERRIDABLE_REFUSALS`, `STATE_STAMP_FIELDS`, `STATE_FIELDS` as `_kept` builds it, `MEASUREMENT_KINDS`, `ROW_KINDS`), `RowClass`, `is_audit_row`, `row_class`, `prunable`, `state_fields` (the redaction passed in) and `_keys_of` | `events_kinds.jsonl` |
@@ -8504,6 +8505,8 @@ that Unicode too.
 | `golden_history_rows`: `every_history_rows_answer_is_the_reference_s`; `history_rows_kills` (13), `history_rows_robustness` (5) | `history_rows.jsonl` (the last two none) | i |
 | `golden_history_rows`: `every_nested_history_rows_answer_is_the_reference_s` | `history_rows_python.jsonl` | ii |
 | `golden_history_mac`: `every_history_mac_answer_is_the_reference_s`; `history_mac_kills` (7), `history_mac_robustness` (4) | `history_rows_mac.jsonl` (the last two none) | i |
+| `golden_history_render`: `every_history_render_case`; `history_render_kills` (18), `history_render_robustness` (10) | `history_render.jsonl` (the last two none) | i |
+| `golden_history_render`: `every_code_point_through_render_text` | `history_render_unicode.jsonl` | ii (Unicode) |
 | `golden_log_chain`: `log_chain_every_row_and_variant` | `log_chain.jsonl` | i |
 | `golden_log_keyring`: `log_keyring_every_case` | `log_keyring.jsonl` | i |
 | `golden_log_keyfiles`: `log_keyfiles_every_case`; `log_keyfiles_kills` (6), `log_keyfiles_robustness` (2) | `log_keyfiles.jsonl` (the last two none) | i |
@@ -24947,9 +24950,6 @@ What the reference has and this build does not, by area:
   `store_index.py` is built in `store::docfreq`; `_advanced_inputs` and
   the store's `DocFreqSource` are not),
   `ranking_statistics` and `store_orphans` (store-3).
-- The renderers of a record's history (`history.py`'s `render_text`,
-  `render_json`, `_actor_text`, `_value_text`): the read itself,
-  `record_history`, is built (`history_record`).
 - Checkout capture still requires the orchestration in `origin.py`;
   `origin_match` holds its caller matching, `origin_git` its Git probes and
   `origin_cache` its signature and cache, while registration and lookup
@@ -25107,9 +25107,9 @@ of the read (it catches only ValueError and RecursionError).
 ## One record's history, read off the log (`history.py`)
 
 `history.py` (1,050 lines) answers `memory history ID`. It needs more
-than 600 lines of Rust, so it is cut into units, leaves first. The
-first four are built (`src/history.rs`, `src/history_rows.rs`,
-`src/history_record.rs`); unit 5 is cut below.
+than 600 lines of Rust, so it is cut into units, leaves first. All
+five are built (`src/history.rs`, `src/history_rows.rs`,
+`src/history_record.rs`, `src/history_render.rs`).
 
 | function | lines | what it needs from the machine | status |
 | --- | --- | --- | --- |
@@ -25127,7 +25127,7 @@ first four are built (`src/history.rs`, `src/history_rows.rs`,
 | `HistoryRow`, `_RecordWalk` | 165-197, 581-590 | nothing | unit 3, built |
 | `RecordHistory` | 200-266 | nothing | unit 4, built |
 | `record_history`, `_read_history`, `_table_kind`, `_state` | 571-577, 780-960 | the store (its tables, meta's key fingerprint, the key ring, `can_verify`, provenance) | unit 4, built |
-| `render_text`, `render_json`, `_actor_text`, `_value_text` | 963-1050 | nothing (`printable`, `quoted`) | unit 5 |
+| `render_text`, `render_json`, `_actor_text`, `_value_text`, `_VERIFIED_TEXT` | 963-1028 | nothing (`printable`) | unit 5, built |
 
 ### Unit 1: the rows that name a record
 
@@ -25425,3 +25425,148 @@ by one line and ids at the edges.
 
 Left for unit 5: `render_text`, `render_json`, `_actor_text`,
 `_value_text`, `_VERIFIED_TEXT`, which read `RecordHistory`.
+
+### Unit 5: the text and the JSON `memory history` prints
+
+Built in `src/history_render.rs`, a file of its own beside units 1 to
+4, which it does not edit. The reference's lines, confirmed against the
+source at 6330bd5f: `_actor_text` 963-969, `_value_text` 972-979,
+`_VERIFIED_TEXT` 982, `render_text` 985-1024, `render_json` 1027-1028
+(the rest of the file, to 1050, is `__all__`). The functions are pure:
+nothing is read from the machine.
+
+- `render_text(history, diff)`: the header (`row` for exactly one row,
+  `rows` for any other count, 0 included; `record` when the kind is
+  None or empty, the reference's `or`), the provenance line when there
+  is a label, with `(unverified: no key)` only for an `active` record
+  without the key (a tombstone's `unaccounted` rests on the log's shape),
+  the key line when the key is not held, one line per row, the diff's
+  pieces under a row when `diff` is set and the row's diff is not empty,
+  and the findings block only when there are findings. Each line is
+  built whole, then passed through `printable` on its own and followed
+  by a line feed (`"\n".join(...) + "\n"`). So a line feed, an escape
+  sequence or a bidirectional control inside a record id, a label, a
+  row's ts, kind or action, an actor's value, a changed field or a
+  detail name or value is written as its escape and cannot start a line
+  or close one, while the diff's own line feeds, split before the
+  escaping (`str.split("\n")`, so a diff ending in a line feed gives a
+  last line of six spaces), each start one. Every category `printable`
+  escapes includes the lone surrogates, so the text holds none.
+- A row's line: seq, ts, kind, action and `_VERIFIED_TEXT` (`mac ok`,
+  `MAC FAILS`, `mac unverifiable`); then, when the actor is not None (an
+  empty mapping is not None and reads `undeclared`), `author` when its
+  source is `record` and `actor` for any other source or None; then
+  `changed` with the fields joined by commas; then each detail item in
+  insertion order. The parts are spelled in the reference's order, so
+  the first error raised is the reference's: the actor, then each
+  detail name, then its value.
+- `actor_text`: `client`, `model`, `principal`, in that order, each
+  when its value is a non-empty `str` (the last of a name given twice,
+  as `json.loads` keeps it); `undeclared` when none is. The pairs are
+  read once, from the last, until all three names are met, not once per
+  name. An actor that is not a mapping is the AttributeError of
+  `actor.get` (`RenderError::ActorNotMapping`).
+- A row's actor of `Some(PyValue::None)` is read as no actor. No
+  reference row holds it (the actor is a mapping or None, and
+  `record_history` keeps only mappings), and `HistoryRow::to_dict`
+  already writes it as `null`, as it writes None; so `render_text`
+  prints no actor part for it, as the reference does for None, and the
+  two renderers agree. `actor_text(&PyValue::None)` itself stays the
+  AttributeError `_actor_text(None)` raises.
+- `value_text`: a `str` as itself; anything else through `json::dumps`
+  with `DumpOptions::SORTED_UNICODE_SPACED` (sorted keys, non-ASCII
+  kept, `, ` and `: `); then a text of more than 80 code points is its
+  first 77 and `...`. The count is in code points, as Python's `len`:
+  an astral code point is one, a lone surrogate is one. A `str` is cut
+  from its own code points, as the reference slices it, so its length
+  costs nothing. TypeError for
+  a value `json.dumps` cannot spell (a datetime, a path, a dict whose
+  keys do not sort), ValueError for an `int` past 4,300 digits.
+- A detail name that is not a `str` (no payload makes one) is `str()`
+  of it, as the f-string writes it: ValueError for an `int` past 4,300
+  digits, RecursionError past the budget below.
+- `render_json(history, diff)`: `json::dumps(history.to_dict(diff))`
+  with `JSON_OPTIONS`, `DOCUMENT_INDENT2` without the sort (insertion
+  order, ASCII escapes with astral code points as surrogate pairs and a
+  lone surrogate as its own escape, `,` and `: `, an empty list and dict
+  as `[]` and `{}`, `NaN` and `Infinity` by name), and a line feed. It
+  is not passed through `printable`. A dict key `json.dumps` refuses (a
+  tuple) is TypeError; mixed key types are written, since nothing sorts.
+- Errors are typed: `render_text` returns `RenderError` (what was
+  raised, or the actor's AttributeError, with `name()` the class),
+  `render_json` the `PyError`. The CLI decides what to print.
+- Nesting: `json::MAX_DEPTH`, the port's budget, equal to what CPython
+  3.13.13 showed from a plain script on macOS: 9,998 lists around a
+  value in `_value_text` and 9,994 in `render_json` (four containers
+  hold the value there), and a detail name of 9,997 tuples around a
+  scalar (the f-string's `format` takes a level `str()` does not). The
+  reference's bound follows the release and the caller's stack (3.11 and
+  3.12 encode an indented document in Python and stop near a thousand
+  levels; CPython 3.14 on Linux reads deeper), so no golden file sits
+  near it and `history_render_robustness` holds the port's. The budget
+  is one for every value. For a value no store produces whose bottom
+  raises (a datetime or a path, a dict whose keys do not sort or a
+  tuple key, an `int` past 4,300 digits) CPython 3.13.13's bound sits
+  one to five levels lower, since the raise spends stack of its own:
+  within those levels the port answers the bottom's TypeError or
+  ValueError, or a detail name's text, where the reference answers
+  RecursionError. Measured: under `_value_text` and a `render_text`
+  value, 9,996 to 9,998 lists or dicts around a datetime or a path,
+  9,996 and 9,997 around mixed keys, 9,997 around a tuple key, 9,998
+  around a long `int`; under `render_json` 9,992 to 9,994 around a
+  datetime or a path, 9,993 around a tuple key and 9,994 around a long
+  `int`; a detail name of 9,993 to 9,997 tuples around a path, and 9,997
+  around a long `int`.
+
+No regular expression is used. No crate is added.
+
+Pinned by `history_render.jsonl` (`gen_history_render.py`, class i):
+`_actor_text` over 15 actors (the three names in either order, values
+that are not text or empty, extra names, non-ASCII, a lone surrogate,
+three that are not mappings), `_value_text` over 47 values (every JSON
+type, text of 77, 80 and 81 code points in ASCII, Latin-1 and astral,
+a lone surrogate at the cut, floats at their edges, a nested dict whose
+keys sort otherwise than they were inserted, keys that are not text,
+an `int` of 4,300 digits, values `json.dumps` refuses), and 36 whole
+histories rendered four ways (text and JSON, with and without the
+diff), compared whole: 0, 1 and 2 rows, each state, the kind None and
+empty, provenance None, `local`, `imported`, `unaccounted`, empty and a
+hostile label with the key held and not on an active record and a
+tombstone, every verdict, every actor and source, changed empty, one
+and several, the diffs of the brief, every finding, a row with every
+part, hostile text in every field, and the errors. The histories are
+built directly, without a store, and written field by field
+(`_common.neutral` for the values). A seeded sweep of 600 histories
+drawn from pools the row holds (splitmix64, seed 20261124) is pinned by
+count and SHA-256 of the four renders of each. The file holds ASCII,
+Latin-1 and code points whose category has not moved since Unicode 14,
+so it regenerates byte for byte under 3.11 to 3.14.
+`history_render_unicode.jsonl` (class ii, gated on the Unicode data:
+`printable` escapes by category) pins `render_text` over every code
+point, in chunks of 64 placed in the record id, an actor, a changed
+field, a detail name and value and the diff, by count and SHA-256 per
+65,536 code points. Both files confirm the brief's open point: the
+indented writer spells an empty list and dict and a lone surrogate as
+`json.dumps` does.
+
+`history_render_kills` (18) holds `row` against `rows` at 0, 1 and 2,
+the unverified note on a tombstone, `author` against `actor`, the empty
+actor mapping, the cut at 80 and 81 code points with astral text and a
+lone surrogate, the sort in `_value_text` and not in `render_json`,
+`ensure_ascii` the other way round in each, `printable` per line, the
+diff's last empty piece, the findings block absent when there are none,
+the order errors are raised in (the actor, a detail name before its
+value, a tuple name's items first to last), a negative name of 4,300
+digits written and of 4,301 refused, and an actor of `Some(PyValue::None)`
+read as none in both renderers. `history_render_robustness` (10)
+renders 100,000 rows and a diff of a megabyte whole (the JSON compared
+by the SHA-256 of the reference's text), holds the nesting bounds with
+the texts written at them, a deep tuple item before a long `int` at the
+bound, raises RecursionError for a value nested 100,000 deep without
+overflowing the stack, and shows both renderers linear in the rows
+(50,000 against 5,000), `render_text` linear in the diff, a long `str`
+value's cost flat in its length (10,000,000 code points against 1,000)
+and an actor's names read in one pass.
+
+Left for later: the `memory history` command (its parser, the store's
+read-only open, printing and the exit code), a CLI unit.

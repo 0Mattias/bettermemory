@@ -471,6 +471,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // through the models.
         "store_provenance.jsonl" => &[Unicode, Pydantic],
         "history_record.jsonl" => &[Unicode, Pydantic],
+        // `printable` escapes by category: every code point through
+        // `render_text` (`gen_history_render`).
+        "history_render_unicode.jsonl" => &[Unicode],
         // A loose header's size past `int`'s 4,300 digits (`gen_gitobjects`).
         "gitobjects_python.jsonl" => &[Python],
         // Where the linked zlib's `inflate` stops and what it has consumed
