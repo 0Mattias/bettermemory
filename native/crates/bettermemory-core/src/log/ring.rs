@@ -451,6 +451,16 @@ impl<L: RingLock> KeyFiles<L> {
         }
     }
 
+    /// `KeyRing.create_key`'s write, with the key drawn by the caller
+    /// (`secrets.token_bytes(KEY_BYTES)`, the provider's `key`), who has
+    /// made the keys directory owner-only first ([`Self::ensure_dir`], in
+    /// the reference's order: before the draw): the key written owner-only
+    /// and atomically over the current key file. The bytes are never
+    /// logged.
+    pub fn create_key(&self, key: &Key) -> io::Result<()> {
+        write_private(&self.current_path(), key.bytes())
+    }
+
     /// `KeyRing.retire_current`: the current key moved aside under its
     /// fingerprint (removed when that name is taken), its fingerprint
     /// returned; None when there is no current key.

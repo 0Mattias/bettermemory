@@ -172,7 +172,10 @@
 //!   deadline, the v8 import, the migration and capture rows
 //!   (`store::record_event`); the owner's writing open's upkeep with its
 //!   key present, a foreign tail closed and the origin anchor settled
-//!   (`store::open`, `open/upkeep.rs`); and the returned marks' backfill on the
+//!   (`store::open`, `open/upkeep.rs`), and with its key missing or
+//!   foreign, the store reclaimed for the key in hand or rekeyed under a
+//!   new one (`open/rekey.rs`); the saved orphans a store was created
+//!   after (`store::create::store_orphans`); and the returned marks' backfill on the
 //!   writable store (`store::returned`: `missing_links`,
 //!   `returned_rows`, `backfill`, `ensure_backfilled`);
 //! - [`store_refusal`]: the stores a hook refuses before it starts a

@@ -65,6 +65,11 @@ fn states() -> Vec<(&'static str, &'static str, Vec<Value>)> {
 }
 
 fn index(b: Boundary) -> usize {
+    assert_eq!(
+        Boundary::ALL.len(),
+        17,
+        "a boundary added: name what a kill there leaves"
+    );
     Boundary::ALL
         .iter()
         .position(|x| *x == b)

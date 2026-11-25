@@ -45,10 +45,12 @@ use super::{StoreVersionError, BUSY_TIMEOUT, LOG_SELECT, SCHEMA_REVISION};
 use crate::json;
 use crate::lexicon;
 use crate::log::ring::binding_path::{self, BindingError, BindingPath};
+use crate::log::ring::KeyFiles;
 use crate::log::{self, fingerprint, HistoryOrigin, Key, KeyRing, LogRow};
 use crate::pyvalue::{self, PyStr, PyValue};
 use crate::unicode;
 
+mod rekey;
 mod upkeep;
 
 pub use upkeep::{Arg as UpkeepArg, Cause as UpkeepCause, Warning as UpkeepWarning};
@@ -95,9 +97,13 @@ pub enum NotPorted {
         unread: Option<String>,
     },
     /// No key file: the reference retires nothing, writes a new key and
-    /// appends a `rekey` row (`_open_rekeyed`).
+    /// appends a `rekey` row (`_open_rekeyed`). Refused by the entries that
+    /// share the provider (they draw no key); performed by
+    /// [`open_for_writing_mut`].
     KeyMissing,
     /// A key whose fingerprint is not meta's: `_reclaim` or `_open_rekeyed`.
+    /// Refused by the entries that share the provider; performed by
+    /// [`open_for_writing_mut`].
     KeyForeign,
     /// The last `rekey` row names another key (`_close_foreign_tail`
     /// appends a `rekey` row, stamped by the log's clock): refused by the
@@ -250,14 +256,47 @@ pub enum OpenError {
     /// `_close_foreign_tail` does not catch (neither `sqlite3.Error` nor
     /// `OSError`: a writer check, a callback's exception).
     Write(Box<WriteError>),
+    /// `sqlite3`'s OperationalError for a log row the open reads whose text
+    /// is not UTF-8 (`chain_segments` in the dispatch for a missing or
+    /// foreign key, which nothing catches), in the module's words.
+    Decode(String),
+    /// Any other error, raised after the upkeep logged `logged` (a tail
+    /// closed, a store reclaimed or rekeyed): `error` is the error itself.
+    Logged {
+        error: Box<OpenError>,
+        logged: Vec<UpkeepWarning>,
+    },
 }
 
 impl OpenError {
     /// What the upkeep logged before the open raised (`Recursion`).
     pub fn upkeep(&self) -> &[UpkeepWarning] {
         match self {
-            OpenError::Recursion { logged, .. } => logged,
+            OpenError::Recursion { logged, .. } | OpenError::Logged { logged, .. } => logged,
             _ => &[],
+        }
+    }
+
+    /// The error itself, seen through [`OpenError::Logged`]: a caller that
+    /// matches a variant (a `NotPorted` to fall back on, say) matches this,
+    /// since an error raised after the upkeep logged something comes back
+    /// wrapped with what it logged.
+    pub fn inner(&self) -> &OpenError {
+        match self {
+            OpenError::Logged { error, .. } => error.inner(),
+            other => other,
+        }
+    }
+
+    /// `self` with what the upkeep logged before it was raised.
+    fn after(self, logged: Vec<UpkeepWarning>) -> OpenError {
+        match self {
+            _ if logged.is_empty() => self,
+            OpenError::Recursion { text, .. } => OpenError::Recursion { text, logged },
+            error => OpenError::Logged {
+                error: Box::new(error),
+                logged,
+            },
         }
     }
 
@@ -294,6 +333,8 @@ impl OpenError {
             OpenError::NotPorted(_) => "NotPorted",
             OpenError::Overflow => "OverflowError",
             OpenError::Recursion { .. } => "RecursionError",
+            OpenError::Decode(_) => "OperationalError",
+            OpenError::Logged { error, .. } => error.class(),
             OpenError::Write(e) => match &**e {
                 WriteError::Version(_) => "StoreVersionError",
                 WriteError::Refused { class, .. } => class,
@@ -328,6 +369,8 @@ impl std::fmt::Display for OpenError {
             OpenError::NotPorted(n) => write!(f, "not ported: {}.{}", n.what(), n.remedy()),
             OpenError::Overflow => write!(f, "{}", digest::OVERFLOW_TEXT),
             OpenError::Recursion { text, .. } => f.write_str(text),
+            OpenError::Decode(text) => f.write_str(text),
+            OpenError::Logged { error, .. } => write!(f, "{error}"),
             OpenError::Write(e) => write!(f, "{e}"),
         }
     }
@@ -392,6 +435,18 @@ pub enum Boundary {
     /// `_close_foreign_tail` done: a `rekey` row committed and the head
     /// moved, when a foreign tail was closed.
     TailClosed,
+    /// A key that is not meta's and signs no segment retired
+    /// (`retire_current`): no current key from here until the next.
+    KeyRetired,
+    /// A new key written (`create_key`), which meta does not name yet.
+    KeyCreated,
+    /// The rekey's transaction committed (`_open_rekeyed`), or the
+    /// reclaim's done (`_reclaim`: meta set back, a `rekey` row when one
+    /// was due, or the failure logged).
+    Rekeyed,
+    /// `_take_over_origin` done after a rekey: an anchor on the `rekey`
+    /// row, or the one there kept (its key named when it named none).
+    OriginTaken,
     /// `_settle_origin` done: an anchor written, or its key named.
     OriginSettled,
     /// The digest's record mutations after its mark applied (one
@@ -412,7 +467,7 @@ impl Boundary {
     /// Every boundary, in the order an open passes them (a build's batch
     /// once per batch; a store whose digest is current passes none of the
     /// digest's).
-    pub const ALL: [Boundary; 13] = [
+    pub const ALL: [Boundary; 17] = [
         Boundary::Swept,
         Boundary::Checked,
         Boundary::Connected,
@@ -420,6 +475,10 @@ impl Boundary {
         Boundary::Bound,
         Boundary::TailNamed,
         Boundary::TailClosed,
+        Boundary::KeyRetired,
+        Boundary::KeyCreated,
+        Boundary::Rekeyed,
+        Boundary::OriginTaken,
         Boundary::OriginSettled,
         Boundary::BuildBegun,
         Boundary::BuildBatch,
@@ -551,8 +610,11 @@ pub fn open_for_writing(
 
 /// [`open_for_writing`] with the provider the open may draw on: its log
 /// clock stamps the `rekey` row that closes a foreign tail
-/// (`_close_foreign_tail`), which the entries that share the provider
-/// refuse ([`NotPorted::ForeignTail`]).
+/// (`_close_foreign_tail`), reclaims the store for the key in hand
+/// (`_reclaim`) or rekeys it, and its key draw is the new key
+/// (`_open_rekeyed`); the entries that share the provider refuse those
+/// states ([`NotPorted::ForeignTail`], [`NotPorted::KeyMissing`],
+/// [`NotPorted::KeyForeign`]) with nothing written.
 pub fn open_for_writing_mut(
     path: &Path,
     keys_dir: &Path,
@@ -731,14 +793,30 @@ fn open_writer(
         None => false,
     };
     hook(Boundary::Bound);
+    // A missing or foreign key: the key is retired and a new one written
+    // before the store is bound under it (`_open_rekeyed`).
+    let path = match plan.path {
+        rekey::Dispatch::Raise(error) => return Err(error),
+        path => path,
+    };
+    let key = match (&path, plan.key) {
+        (rekey::Dispatch::Rekey { .. }, key) => {
+            let drawing = provider
+                .clock()
+                .ok_or_else(|| not_ported(NotPorted::KeyMissing))?;
+            rekey::new_key(keys_dir, &plan.store_id, key.is_some(), drawing, hook)?
+        }
+        (_, Some(key)) => key,
+        (_, None) => return Err(not_ported(NotPorted::KeyMissing)),
+    };
     let mut store = WritableStore {
         conn,
         busy_timeout_seconds: BUSY_TIMEOUT.as_secs_f64(),
         path: file,
         keys_dir: keys_dir.to_path_buf(),
         store_id: plan.store_id,
-        key_fingerprint: plan.key_fingerprint,
-        key: plan.key,
+        key_fingerprint: fingerprint(key.bytes()),
+        key,
         head: None,
         digest: DigestOutcome::Current,
         digest_reason: None,
@@ -746,28 +824,56 @@ fn open_writer(
         bound,
         upkeep: Vec::new(),
     };
-    // KEY_PRESENT with ``allow_rekey``: `_close_foreign_tail`, then
-    // `_settle_origin` (`restore_rows.settle` is refused by the decision).
     let mut log = Vec::new();
-    let upkept =
-        upkeep::close_foreign_tail(&mut store, provider.clock(), hook, &mut log).and_then(|()| {
-            hook(Boundary::TailClosed);
-            upkeep::settle_origin(&store, &mut log)
-        });
-    match upkept {
-        Ok(()) => hook(Boundary::OriginSettled),
-        Err(OpenError::Recursion { text, .. }) => {
-            return Err(OpenError::Recursion { text, logged: log })
+    let upkept = match path {
+        // KEY_PRESENT with ``allow_rekey``: `_close_foreign_tail`, then
+        // `_settle_origin` (`restore_rows.settle` is refused by the
+        // decision).
+        rekey::Dispatch::Present => {
+            upkeep::close_foreign_tail(&mut store, provider.clock(), hook, &mut log)
+                .and_then(|()| {
+                    hook(Boundary::TailClosed);
+                    upkeep::settle_origin(&store, &mut log)
+                })
+                .map(|()| hook(Boundary::OriginSettled))
         }
-        Err(e) => return Err(e),
+        // `_reclaim`, then `_settle_origin`.
+        rekey::Dispatch::Reclaim { tail, foreign } => provider
+            .clock()
+            .ok_or_else(|| not_ported(NotPorted::KeyForeign))
+            .and_then(|clock| {
+                rekey::reclaim(
+                    &mut store,
+                    clock,
+                    &plan.meta_fingerprint,
+                    tail,
+                    foreign,
+                    &mut log,
+                )
+            })
+            .and_then(|()| {
+                hook(Boundary::Rekeyed);
+                upkeep::settle_origin(&store, &mut log)
+            })
+            .map(|()| hook(Boundary::OriginSettled)),
+        // The rekey's transaction, then `_take_over_origin`.
+        rekey::Dispatch::Rekey { previous } => provider
+            .clock()
+            .ok_or_else(|| not_ported(NotPorted::KeyMissing))
+            .and_then(|clock| rekey::rekeyed(&mut store, clock, previous, hook, &mut log)),
+        rekey::Dispatch::Raise(error) => Err(error),
+    };
+    if let Err(e) = upkept {
+        return Err(e.after(log));
     }
     store.upkeep = log;
     // A refusal the decision held back because it read the upkeep as
     // raising first, when it did not (another opener changed the log or
     // the anchor in between).
-    plan.later?;
+    plan.later.map_err(|e| e.after(store.upkeep.clone()))?;
     let mut digest_reason = None;
-    let outcome = digest_mark(&store.conn, &store.path, hook, &mut digest_reason)?;
+    let outcome = digest_mark(&store.conn, &store.path, hook, &mut digest_reason)
+        .map_err(|e| e.after(store.upkeep.clone()))?;
     if let DigestOutcome::Left(text) = &outcome {
         digest_reason.get_or_insert_with(|| unicode::cps(text));
     }
@@ -788,10 +894,14 @@ fn open_writer(
 /// What the open decided before writing anything.
 struct Plan {
     store_id: String,
-    key_fingerprint: String,
+    /// meta's `key_fingerprint`.
+    meta_fingerprint: String,
     record_engine: bool,
-    /// The current key, which meta names.
-    key: Key,
+    /// The current key: meta's (`Dispatch::Present`), the one a reclaim
+    /// keeps, the one a rekey retires, or none.
+    key: Option<Key>,
+    /// What the open does with it.
+    path: rekey::Dispatch,
     /// The resolved store file to bind the ring to, when it is bound to
     /// none (or to a file that is gone) and this file fits it.
     bind: Option<PathBuf>,
@@ -837,7 +947,7 @@ fn decide(
     file: &Path,
     keys_dir: &Path,
     provider: &dyn Provider,
-    closes_tail: bool,
+    may_draw: bool,
     diagnostics: &mut OpenDiagnostics,
 ) -> Result<Plan, OpenError> {
     let meta = read_meta(conn, deadline)?;
@@ -889,12 +999,38 @@ fn decide(
         }
         Ok(())
     })?;
-    let Some(key) = key else {
-        return Err(not_ported(NotPorted::KeyMissing));
+    let key = match key {
+        Some(key) if fingerprint(key.bytes()) == expected => key,
+        // KEY_MISSING, KEY_FOREIGN: the dispatch (`chain_segments`, then
+        // `_signs_a_segment`), read now; `_reclaim` or `_open_rekeyed`
+        // after the binding. A refusal of the later steps is held back
+        // when `chain_segments` raises first.
+        key => {
+            if !may_draw {
+                return Err(not_ported(if key.is_none() {
+                    NotPorted::KeyMissing
+                } else {
+                    NotPorted::KeyForeign
+                }));
+            }
+            let files = KeyFiles::new(keys_dir, &PyValue::str(&store_id))
+                .map_err(|_| not_ported(NotPorted::Unreadable("the key ring")))?;
+            let path = rekey::decide(conn, &ring, &files, &expected, key.as_ref());
+            let later = match after_upkeep(conn, &meta, keys_dir, &store_id) {
+                Err(e) if !matches!(path, rekey::Dispatch::Raise(_)) => return Err(e),
+                later => later,
+            };
+            return Ok(Plan {
+                store_id,
+                meta_fingerprint: expected,
+                record_engine,
+                key,
+                path,
+                bind,
+                later,
+            });
+        }
     };
-    if fingerprint(key.bytes()) != expected {
-        return Err(not_ported(NotPorted::KeyForeign));
-    }
     // KEY_PRESENT, with ``allow_rekey``: `_close_foreign_tail`,
     // `_settle_origin` (both performed after the binding: open/upkeep.rs),
     // `restore_rows.settle`. A refusal of the later steps is held back
@@ -903,7 +1039,7 @@ fn decide(
     // limit.
     let named = upkeep::last_rekey_name(conn);
     match &named {
-        Ok(Some(named)) if *named != unicode::cps(&expected) && !closes_tail => {
+        Ok(Some(named)) if *named != unicode::cps(&expected) && !may_draw => {
             return Err(not_ported(NotPorted::ForeignTail));
         }
         Err(upkeep::NameError::Store(_)) => {
@@ -921,9 +1057,10 @@ fn decide(
     };
     Ok(Plan {
         store_id,
-        key_fingerprint: expected,
+        meta_fingerprint: expected,
         record_engine,
-        key,
+        key: Some(key),
+        path: rekey::Dispatch::Present,
         bind,
         later,
     })

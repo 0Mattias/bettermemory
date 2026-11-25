@@ -67,7 +67,7 @@ impl Cause {
     /// What reading a log row raised: an SQLite error, or a text that is
     /// not UTF-8 (`sqlite3`'s OperationalError, raised by the module; a
     /// connection's read returns nothing else).
-    fn store(error: &StoreError) -> Self {
+    pub(super) fn store(error: &StoreError) -> Self {
         match error {
             StoreError::Sqlite(e) => Self::sqlite(e),
             _ => Self::named("OperationalError"),
@@ -96,6 +96,23 @@ pub enum Warning {
     KeyUnread(Cause),
     /// The anchor's key could not be named.
     KeyNotNamed(Cause),
+    /// `_reclaim`'s transaction failed: meta still names `meta`.
+    MetaNotSetBack {
+        meta: String,
+        own: String,
+        cause: Cause,
+    },
+    /// `_reclaim` kept this host's key `own` over meta's `meta`, with a
+    /// rekey row at `seq` when one was due; `foreign` lists the segments
+    /// no held key signed.
+    Reclaimed {
+        meta: String,
+        own: String,
+        seq: Option<i64>,
+        foreign: PyStr,
+    },
+    /// `_open_rekeyed` wrote the key `new` over `previous`'s segment.
+    Rekeyed { previous: PyStr, new: String },
 }
 
 /// One argument of a warning, as the logger receives it.
@@ -139,6 +156,20 @@ impl Warning {
                 "store %s: the origin anchor's key not named: the log could not be read (%s)"
             }
             Warning::KeyNotNamed(_) => "store %s: the origin anchor's key not named: %s",
+            Warning::MetaNotSetBack { .. } => {
+                "store %s: meta names key %s but this host's key %s signs the log; the store \
+                 opens with that key, and meta could not be set back (%s)"
+            }
+            Warning::Reclaimed { .. } => {
+                "store %s: meta named key %s, but this host's key %s signs the log, so it stays \
+                 the store's key and no new key is written; %s. Rows no key on this host \
+                 signed, after rows it did: %s. They read unaccounted, and `bettermemory log \
+                 verify` reports them"
+            }
+            Warning::Rekeyed { .. } => {
+                "store %s was opened without its key (fingerprint %s); a new key %s was written \
+                 and the log rekeyed"
+            }
         }
     }
 
@@ -163,6 +194,36 @@ impl Warning {
             | Warning::OriginNotWritten(cause)
             | Warning::KeyUnread(cause)
             | Warning::KeyNotNamed(cause) => vec![Arg::Path, Arg::Cause(cause)],
+            Warning::MetaNotSetBack { meta, own, cause } => vec![
+                Arg::Path,
+                Arg::Text(head16(&unicode::cps(meta))),
+                Arg::Text(head16(&unicode::cps(own))),
+                Arg::Cause(cause),
+            ],
+            Warning::Reclaimed {
+                meta,
+                own,
+                seq,
+                foreign,
+            } => vec![
+                Arg::Path,
+                Arg::Text(head16(&unicode::cps(meta))),
+                Arg::Text(head16(&unicode::cps(own))),
+                Arg::Text(unicode::cps(&match seq {
+                    None => "meta is set back to it".to_owned(),
+                    Some(seq) => format!("a rekey row at seq {seq} returns the chain to it"),
+                })),
+                Arg::Text(if foreign.is_empty() {
+                    unicode::cps("none")
+                } else {
+                    foreign.clone()
+                }),
+            ],
+            Warning::Rekeyed { previous, new } => vec![
+                Arg::Path,
+                Arg::Text(head16(previous)),
+                Arg::Text(head16(&unicode::cps(new))),
+            ],
         }
     }
 }
@@ -205,7 +266,7 @@ pub(super) fn last_rekey_name(conn: &Connection) -> Result<Option<PyStr>, NameEr
 
 /// The open's RecursionError, worded as `json.loads` words it for `text`;
 /// what the upkeep logged before it is joined by the open.
-fn recursion(text: &'static str) -> OpenError {
+pub(super) fn recursion(text: &'static str) -> OpenError {
     OpenError::Recursion {
         text,
         logged: Vec::new(),
@@ -213,7 +274,7 @@ fn recursion(text: &'static str) -> OpenError {
 }
 
 /// `read_origin`'s RecursionError: the anchor's text, read again.
-fn anchor_recursion(keys_dir: &Path, store_id: &str) -> OpenError {
+pub(super) fn anchor_recursion(keys_dir: &Path, store_id: &str) -> OpenError {
     let text = fs::read(keys_dir.join(format!("{store_id}.origin")))
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
         .unwrap_or_default();
@@ -222,7 +283,7 @@ fn anchor_recursion(keys_dir: &Path, store_id: &str) -> OpenError {
 
 /// `chain_segments`'s RecursionError: the first rekey payload, in seq
 /// order, that nests past the limit (the read that raised).
-fn segments_recursion(conn: &Connection) -> OpenError {
+pub(super) fn segments_recursion(conn: &Connection) -> OpenError {
     let rows = ConnSource(conn).rekeys().unwrap_or_default();
     let nested = rows
         .iter()
@@ -257,7 +318,7 @@ pub(super) fn settle_raises(
     }
 }
 
-fn files(store: &WritableStore) -> Result<KeyFiles, OpenError> {
+pub(super) fn files(store: &WritableStore) -> Result<KeyFiles, OpenError> {
     KeyFiles::new(store.keys_dir(), &PyValue::str(store.store_id()))
         .map_err(|_| not_ported(NotPorted::Unreadable("the key ring")))
 }
@@ -306,7 +367,7 @@ fn tail_cause(error: &WriteError) -> Option<Cause> {
 
 /// How the tail's transaction failed: logged (`sqlite3.Error`, `OSError`),
 /// or raised out of the open.
-enum TailFailure {
+pub(super) enum TailFailure {
     Logged(Cause),
     Raised(OpenError),
 }
@@ -443,7 +504,7 @@ pub(super) fn settle_origin(
 
 /// `Store._record_origin`: the anchor on `row`, naming `key`, unless one
 /// is there; an OSError is logged and the open goes on.
-fn record_origin(
+pub(super) fn record_origin(
     store: &WritableStore,
     files: &KeyFiles,
     row: &LogRow,

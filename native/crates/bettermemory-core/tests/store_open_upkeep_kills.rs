@@ -277,8 +277,20 @@ fn a_killed_upkeep_is_settled_by_the_next_open_as_if_never_killed() {
         eprintln!("{label} x{count}");
     }
     eprintln!("{kills} kills");
+    // The four after the tail are a missing or foreign key's
+    // (`store_open_rekey_kills`).
+    assert_eq!(Boundary::ALL.len(), 17);
+    let rekey = [
+        Boundary::KeyRetired,
+        Boundary::KeyCreated,
+        Boundary::Rekeyed,
+        Boundary::OriginTaken,
+    ];
     for b in Boundary::ALL {
-        assert!(every.contains(&index(b)), "no state passes {b:?}");
+        assert!(
+            rekey.contains(&b) || every.contains(&index(b)),
+            "no state passes {b:?}"
+        );
     }
     assert!(kills >= 40, "{kills} kills");
 }

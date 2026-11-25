@@ -877,7 +877,7 @@ fn orphans_beside(file: &Path) -> Vec<PyStr> {
     };
     let prefix: Vec<u32> = unicode::cps(&format!("{STORE_FILENAME}.orphaned-"));
     let suffix: Vec<u32> = unicode::cps(".sqlite");
-    let mut found: Vec<((PyStr, u128), PyStr)> = Vec::new();
+    let mut found: Vec<((PyStr, OrphanCount), PyStr)> = Vec::new();
     for entry in entries.flatten() {
         let name = crate::fsutil::fsdecode(&entry.file_name());
         if name.len() < prefix.len() + suffix.len()
@@ -887,45 +887,96 @@ fn orphans_beside(file: &Path) -> Vec<PyStr> {
         {
             continue;
         }
-        found.push((orphan_order(&name), name));
+        let Ok(order) = orphan_order(&name) else {
+            // A file name holds no 4300 digits.
+            continue;
+        };
+        found.push((order, name));
     }
     found.sort();
     found.into_iter().map(|(_, n)| n).collect()
 }
 
-/// `orphan_order`: the regex `\.orphaned-(?P<stamp>[^.]*?)(?:-(?P<n>\d+))?\.sqlite\Z`
-/// searched in the name: (stamp, n or 1), else (name, 1).
-fn orphan_order(name: &[u32]) -> (PyStr, u128) {
+/// `orphan_order`'s counter: `int(n)`'s decimal digits (no leading zero),
+/// compared by value (the number of digits, then the digits).
+pub(crate) type OrphanCount = (usize, PyStr);
+
+/// `orphan_order`: `_ORPHAN_SUFFIX.search(name)`, the regex
+/// `\.orphaned-(?P<stamp>[^.]*?)(?:-(?P<n>\d+))?\.sqlite\Z` matched by hand
+/// (rule 3 of the pattern decision): (stamp, `int(n or 1)`) at the leftmost
+/// place it matches, else (name, 1). `\d` is any Unicode decimal digit, as
+/// `int()` reads it; `int()` past 4300 digits is ValueError.
+pub(crate) fn orphan_order(name: &[u32]) -> Result<(PyStr, OrphanCount), crate::pyvalue::PyError> {
+    let one = (1, unicode::cps("1"));
     let marker = unicode::cps(".orphaned-");
-    let end = name.len() - 7; // before ".sqlite"
-    let mut at = 0;
-    while at + marker.len() <= end {
-        if name[at..].starts_with(&marker) {
-            let rest = &name[at + marker.len()..end];
-            if !rest.contains(&('.' as u32)) {
-                // The lazy stamp: the shortest prefix the rest of which is
-                // nothing or `-` and digits.
-                for cut in 0..=rest.len() {
-                    let tail = &rest[cut..];
-                    if tail.is_empty() {
-                        return (rest[..cut].to_vec(), 1);
-                    }
-                    if tail.len() > 1 && tail[0] == '-' as u32 {
-                        let digits: Option<String> = tail[1..]
-                            .iter()
-                            .map(|&c| char::from_u32(c).and_then(|c| c.to_digit(10)))
-                            .map(|d| d.and_then(|d| char::from_digit(d, 10)))
-                            .collect();
-                        if let Some(n) = digits.and_then(|d| d.parse::<u128>().ok()) {
-                            return (rest[..cut].to_vec(), n);
-                        }
-                    }
-                }
+    let suffix = unicode::cps(".sqlite");
+    for at in 0..name.len() {
+        let Some(body) = name[at..]
+            .strip_prefix(marker.as_slice())
+            .and_then(|rest| rest.strip_suffix(suffix.as_slice()))
+        else {
+            continue;
+        };
+        if body.contains(&u32::from('.')) {
+            continue;
+        }
+        // The lazy stamp: the shortest prefix the rest of which is nothing
+        // or `-` and digits.
+        for cut in 0..=body.len() {
+            let tail = &body[cut..];
+            if tail.is_empty() {
+                return Ok((body.to_vec(), one));
+            }
+            if tail.len() > 1
+                && tail[0] == u32::from('-')
+                && tail[1..].iter().all(|&c| unicode::is_re_digit(c))
+            {
+                let n = crate::pyvalue::py_str(&crate::pyvalue::int_from_str(&tail[1..])?)?;
+                return Ok((body[..cut].to_vec(), (n.len(), n)));
             }
         }
-        at += 1;
     }
-    (name.to_vec(), 1)
+    Ok((name.to_vec(), one))
+}
+
+/// `Store.store_orphans` (`store.py` 1163-1181), over the store's
+/// connection and its file's path: the saved orphans meta's
+/// `created_after_orphans` names that are regular files beside the store
+/// (links followed), oldest first (`orphan_order`, a stable sort). Empty
+/// with no such row. The value is `str()` of whatever meta holds (a BLOB
+/// an editor wrote reads as its repr, and names nothing); a text that is
+/// not UTF-8 is `StoreError::NotUtf8` (sqlite3's OperationalError), and a
+/// counter past 4300 digits ValueError (`StoreError::Py`). Under the host's
+/// path rules: on Windows a backslash or a drive makes a name not plain.
+pub fn store_orphans(
+    conn: &Connection,
+    store_path: &Path,
+) -> Result<Vec<PathBuf>, super::StoreError> {
+    use rusqlite::OptionalExtension;
+    let value = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = ?",
+            [CREATED_AFTER_ORPHANS],
+            |r| Ok(super::sql_value(r.get_ref(0)?)),
+        )
+        .optional()?;
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let value = unicode::cps(&value?.py_str());
+    let directory = parent_of(store_path);
+    let mut kept = Vec::new();
+    for name in super::schema::orphan_names(Some(&value), cfg!(windows)) {
+        let Ok(relative) = super::key_read::os_path(&name) else {
+            continue;
+        };
+        let path = directory.join(relative);
+        if path.is_file() {
+            kept.push((orphan_order(&name).map_err(super::StoreError::Py)?, path));
+        }
+    }
+    kept.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(kept.into_iter().map(|(_, path)| path).collect())
 }
 
 /// Everything up to the closed connection, in the temporary file: the
