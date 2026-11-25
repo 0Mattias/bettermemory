@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 import tempfile
 from typing import Any
+from unittest import mock
 
 from bettermemory import location
 from bettermemory import membership as mm
@@ -285,8 +286,12 @@ def _token_read_cases(root: str) -> list[dict[str, Any]]:
         was = location._evicted
         if spec.get("evicted"):
             location._evicted = lambda st: True
+        # No case here is about the read's time bound: a loaded CI runner
+        # once took longer than PROBE_BUDGET (0.5 s) to read a plain file,
+        # and the row read None. The budget is lifted for these reads.
         try:
-            got = mr._token_read(git_dir)
+            with mock.patch.object(mr, "PROBE_BUDGET", 60.0):
+                got = mr._token_read(git_dir)
         finally:
             location._evicted = was
         out.append({"f": "token_read", **spec, "o": got})
