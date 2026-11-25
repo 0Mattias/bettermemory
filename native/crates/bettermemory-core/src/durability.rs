@@ -14,6 +14,10 @@ use crate::pyvalue::PyStr;
 use crate::unicode;
 use crate::verify_candidates::validate::is_lower;
 
+mod capture;
+
+pub use capture::*;
+
 /// `SHA_MARKER`: the one name every commit-hash marker folds onto.
 pub const SHA_MARKER: &str = "sha:<commit>";
 

@@ -270,7 +270,8 @@
 //!   delivery (`recall::choose`);
 //! - [`durability`]: the write gate's transient markers, its first unit
 //!   (the marker's canonical form, quoted spans, the snippet and sentence
-//!   helpers);
+//!   helpers), and its third, the capture rules (`CaptureRuleHit`,
+//!   `find_capture_rule_hits` and their patterns on the engine);
 //! - [`gitconfig`]: the text of a git config file as the reference reads it;
 //! - [`git_read_budget`] and [`git_calls`]: the shared deadline of a
 //!   call's history reads (`git_read_budget.py` whole), and `_git.py`'s

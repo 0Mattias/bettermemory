@@ -1,0 +1,297 @@
+{"cases":296,"k":"header"}
+{"f":32,"id":"_USERS_OPENER_RE","k":"pat","p":"\\bThe user['\u2019]s\\b"}
+{"f":34,"id":"_ASSISTANT_SAID_RE","k":"pat","p":"\\bthe assistant\\b(?:\\s+[\\w'\u2019-]+){0,2}?\\s+(?:said|says|suggested|suggests|recommended|recommends|explained|explains|noted|notes|provided|provides|stated|states|mentioned|mentions|proposed|proposes|told|tells|answered|answers|replied|replies|gave|gives|advised|advises|claimed|claims|offered|offers|confirmed|confirms|described|describes|reported|reports|shared|shares|wrote|writes|pointed out)\\b"}
+{"f":34,"id":"_ASSISTANTS_ANSWER_RE","k":"pat","p":"\\bthe assistant['\u2019]s\\s+(?:recommendation|answer|suggestion|advice|response|reply|explanation|proposal|view|opinion|summary)s?\\b"}
+{"f":42,"id":"_TODO_HEADING_RE","k":"pat","p":"^[ \\t>#*_-]*(?:to-?dos?|next steps?|action items?|follow-?ups?|remaining work|open items?)[*_]*\\s*:"}
+{"f":32,"id":"_TODO_PATTERNS","k":"pat","p":"\\bTODO\\b"}
+{"f":34,"id":"_TODO_PATTERNS#2","k":"pat","p":"\\bstill (?:needs? to|to) [a-z]+"}
+{"f":34,"id":"_TODO_PATTERNS#3","k":"pat","p":"\\byet to be [a-z]+"}
+{"f":34,"id":"_TODO_PATTERNS#4","k":"pat","p":"\\bleft to do\\b"}
+{"f":40,"id":"_TODO_PATTERNS#5","k":"pat","p":"^[ \\t]*[-*+] \\[ \\]"}
+{"f":34,"id":"_TODO_PATTERNS#6","k":"pat","p":"\\bin the next session\\b|\\bnext time\\b|\\bwhen we resume\\b"}
+{"f":34,"id":"_IMPERATIVE_OPENER_RE","k":"pat","p":"\\A[ \\t>#*_-]*(?:release|ship|fix|add|delete|remove|run|rerun|push|tag|merge|deploy|update|write|create|rename|revert|bump|publish|commit|file|close|check|test|investigate|move|finish|implement|port|revisit|wire|land|document|refactor|clean up|drop|retry)\\s+(?:the|a|an|this|that|these|those|it|them|all|every|each|our|my|your|its)\\b"}
+{"f":34,"id":"_RELATIVE_DATE_PATTERNS","k":"pat","p":"(?<!least )(?<!most )(?<!least-)(?<!most-)\\brecently\\b(?![ -](?:used|viewed|opened|accessed|added|closed|modified|played|visited|edited))"}
+{"f":34,"id":"_RELATIVE_DATE_PATTERNS#2","k":"pat","p":"\\b(?:lately|nowadays|these days|the other day|just now|a while ago|not long ago)\\b"}
+{"f":34,"id":"_RELATIVE_DATE_PATTERNS#3","k":"pat","p":"\\b(?:\\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten|a few|several|a couple of)\\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\\s+ago\\b"}
+{"f":34,"id":"_RELATIVE_DATE_PATTERNS#4","k":"pat","p":"\\b(?:last|next|this|coming|past)\\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|night|week|month|year|quarter|season|spring|summer|autumn|fall|winter)\\b"}
+{"f":34,"id":"_RELATIVE_DATE_PATTERNS#5","k":"pat","p":"(?<!what )\\b(?:is|are) now\\b(?! known as)"}
+{"f":32,"id":"_ISO_DATE_RE","k":"pat","p":"\\b\\d{4}-\\d{2}-\\d{2}\\b"}
+{"f":32,"id":"_COMMIT_HASH_RE","k":"pat","p":"\\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\\d)[0-9a-f]{7,40}\\b"}
+{"f":34,"id":"_DRIFTING_COUNT_RE","k":"pat","p":"\\b(?:\\d[\\d,.]*k?|zero|one|two|three|four|five|six|seven|eight|nine|ten)\\s+(?:GitHub\\s+)?(?:stars?|forks?|followers?|downloads?|open issues|watchers?)\\b"}
+{"f":34,"id":"_TEST_TOTAL_RE","k":"pat","p":"\\b\\d[\\d,]*\\s+(?:tests?\\s+)?(?:passed|failed|skipped|passing|failing|errors?)\\b"}
+{"f":34,"id":"_SUITE_WORD_RE","k":"pat","p":"\\b(?:tests?|suite|pytest|CI)\\b"}
+{"k":"hits","o":[],"t":""}
+{"k":"hits","o":[],"t":"A plain durable fact about the hook."}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"The user's project uses Rust."}],"t":"The user's project uses Rust."}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"The user\u2019s project uses Rust."}],"t":"The user\u2019s project uses Rust."}
+{"k":"hits","o":[],"t":"the user's project uses Rust."}
+{"k":"hits","o":[],"t":"THE USER'S project"}
+{"k":"hits","o":[],"t":"The users project"}
+{"k":"hits","o":[],"t":"The user'sx project"}
+{"k":"hits","o":[],"t":"XThe user's project"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"Notes: The user's project"}],"t":"Notes: The user's project"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"Notes: The user's project"}],"t":"Notes:  \t The user's project"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"- The user's project"}],"t":"- The user's project"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"(The user's project)"}],"t":"(The user's project)"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"[The user's project]"}],"t":"[The user's project]"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"'The user's project'"}],"t":"'The user's project'"}
+{"k":"hits","o":[],"t":"We saw The user's project"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"...The user's project. The user's laptop"}],"t":"We saw The user's project. The user's laptop"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"...user's project, and the assistant said so"}],"t":"We saw The user's project, and the assistant said so"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"...'s view\" is quoted. The user's laptop"}],"t":"\"The user's view\" is quoted. The user's laptop"}
+{"k":"hits","o":[],"t":"\u201cThe user's view\u201d is quoted"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"The assistant said to use the cache."}],"t":"The assistant said to use the cache."}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant then said so"}],"t":"the assistant then said so"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant then quickly said so"}],"t":"the assistant then quickly said so"}
+{"k":"hits","o":[],"t":"the assistant then very quickly said so"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant pointed out the flaw"}],"t":"the assistant pointed out the flaw"}
+{"k":"hits","o":[],"t":"the assistant pointed  out the flaw"}
+{"k":"hits","o":[],"t":"the assistant saidx so"}
+{"k":"hits","o":[],"t":"the assistants said so"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"THE ASSISTANT SAID so"}],"t":"THE ASSISTANT SAID so"}
+{"k":"hits","o":[],"t":"the assistant's-own reply said"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant o\u2019brien-like said"}],"t":"the assistant o\u2019brien-like said"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant said so"}],"t":"the assistant\nsaid so"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant's recommendation was Rust"}],"t":"the assistant's recommendation was Rust"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant\u2019s answers were Rust"}],"t":"the assistant\u2019s answers were Rust"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant's summarys"}],"t":"the assistant's summarys"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant's view's"}],"t":"the assistant's view's"}
+{"k":"hits","o":[],"t":"the assistant 's view"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the user's x and the assistant said y"}],"t":"the user's x and the assistant said y"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"The user's x and the assistant..."}],"t":"The user's x and the assistant said y"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"...assistant said so. The user's y"}],"t":"x the assistant said so. The user's y"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"...e saw The user's x; the assistant's advice was y"}],"t":"We saw The user's x; the assistant's advice was y"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"...assistant said\" and the assistant said"}],"t":"\"the assistant said\" and the assistant said"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant said \u201cthe assistant said..."}],"t":"the assistant said \u201cthe assistant said\u201d twice"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"TODO: fix the hook test i..."}],"t":"TODO: fix the hook test in the daemon before release"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"TODO fix the hook test i..."}],"t":"TODO fix the hook test in the daemon before release"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"todo: fix the hook"}],"t":"todo: fix the hook"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"the TODO tag"}],"t":"the TODO tag"}
+{"k":"hits","o":[],"t":"TODOs remain"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"## Next steps: - ship it"}],"t":"## Next steps:\n- ship it"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Intro line Action items: ship it"}],"t":"Intro line\nAction items: ship it"}
+{"k":"hits","o":[],"t":"Intro line Action items: ship it"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"**Follow-ups**: ship it"}],"t":"**Follow-ups**: ship it"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"> to-do : ship it"}],"t":"> to-do : ship it"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"__Remaining work__ :ship"}],"t":"__Remaining work__ :ship"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"open item: one"}],"t":"open item: one"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Open items : one"}],"t":"Open items\t:\tone"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Followups: one"}],"t":"Followups: one"}
+{"k":"hits","o":[],"t":"next step - one"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"We still need to fix it"}],"t":"We still need to fix it"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"We still needs to fix it"}],"t":"We still needs to fix it"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"It is still to decide"}],"t":"It is still to decide"}
+{"k":"hits","o":[],"t":"It is still to 9"}
+{"k":"hits","o":[],"t":"It is still  to decide"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"STILL TO DECIDE"}],"t":"STILL TO DECIDE"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"It is yet to be decided"}],"t":"It is yet to be decided"}
+{"k":"hits","o":[],"t":"It is yet to be 9"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"nothing left to do here"}],"t":"nothing left to do here"}
+{"k":"hits","o":[],"t":"nothing left to doing"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"- [ ] write the docs"}],"t":"- [ ] write the docs"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"* [ ] write the docs"}],"t":"  * [ ] write the docs"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"+ [ ] write the docs"}],"t":"\t+ [ ] write the docs"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"x - [ ] write the docs"}],"t":"x\n- [ ] write the docs"}
+{"k":"hits","o":[],"t":"x - [ ] write the docs"}
+{"k":"hits","o":[],"t":"- [x] wrote the docs"}
+{"k":"hits","o":[],"t":"-  [ ] two spaces"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"We continue in the next session"}],"t":"We continue in the next session"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Next time we try harder"}],"t":"Next time we try harder"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"when we resume the port"}],"t":"when we resume the port"}
+{"k":"hits","o":[],"t":"the next timer"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Fix the hook test"}],"t":"Fix the hook test"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"fix the hook test"}],"t":"fix  the hook test"}
+{"k":"hits","o":[],"t":"Fix ownership lies with the team"}
+{"k":"hits","o":[],"t":"Release 8.0.0 shipped"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Release the build"}],"t":"Release the build"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"**Fix the** hook"}],"t":"**Fix the** hook"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"> Release the build"}],"t":"> Release the build"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Run it again"}],"t":"  \tRun it again"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"#- *Run it again"}],"t":"#- *Run it again"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Clean up the logs"}],"t":"Clean up the logs"}
+{"k":"hits","o":[],"t":"Clean  up the logs"}
+{"k":"hits","o":[],"t":"Cleanup the logs"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Fix them all"}],"t":"Fix them all"}
+{"k":"hits","o":[],"t":"Fix themselves"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Port its parser"}],"t":"Port its parser"}
+{"k":"hits","o":[],"t":"x\nFix the hook"}
+{"k":"hits","o":[],"t":" x Fix the hook"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Fix the hook. TODO later"}],"t":"Fix the hook. TODO later"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Fix the hook. Then the next..."}],"t":"Fix the hook. Then the next session"}
+{"k":"hits","o":[],"t":"\u201cFix the hook\u201d is an order"}
+{"k":"hits","o":[],"t":"\"Fix the hook\" said nobody"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"The repo has 1,200 stars."}],"t":"The repo has 1,200 stars."}
+{"k":"hits","o":[],"t":"The repo has 1,200 stars as of 2025-01-01."}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"...2025-01-01. It has 30 forks."}],"t":"The repo had 1.2k GitHub stars on 2025-01-01. It has 30 forks."}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"It has 5 stars. Checked 2025-01-01..."}],"t":"It has 5 stars. Checked 2025-01-01."}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"three followers"}],"t":"three followers"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"ten open issues"}],"t":"ten open issues"}
+{"k":"hits","o":[],"t":"10 open  issues"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"5 watchers"}],"t":"5 watchers"}
+{"k":"hits","o":[],"t":"eleven stars"}
+{"k":"hits","o":[],"t":"5stars"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"5 GitHub stars"}],"t":"5 GitHub  stars"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"5 github stars"}],"t":"5 github stars"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"1.2.3 downloads"}],"t":"1.2.3 downloads"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"2,5k forks"}],"t":"2,5k forks"}
+{"k":"hits","o":[],"t":"x5 stars"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"1 star 2025-1-01"}],"t":"1 star 2025-1-01"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"1 star 20250-01-01"}],"t":"1 star 20250-01-01"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"1 star on 2025-01-01x"}],"t":"1 star on 2025-01-01x"}
+{"k":"hits","o":[],"t":"Version 3.13 has 5 stars 2025-01-01"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"v1.2 5 stars. 2025-01-01"}],"t":"v1.2 5 stars. 2025-01-01"}
+{"k":"hits","o":[],"t":"The repo has \"5 stars\" today"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"\"5 stars\" and 7 forks"}],"t":"\"5 stars\" and 7 forks"}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"The suite: 1,024 passed."}],"t":"The suite: 1,024 passed."}
+{"k":"hits","o":[],"t":"1,024 passed."}
+{"k":"hits","o":[],"t":"Tests: 1024 passed at abc1234."}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"Tests: 1024 passed at 1234567."}],"t":"Tests: 1024 passed at 1234567."}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"Tests: 1024 passed at abcdefa."}],"t":"Tests: 1024 passed at abcdefa."}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"Tests: 1024 passed at ABC1234."}],"t":"Tests: 1024 passed at ABC1234."}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"Tests: 1024 passed at deadbeef."}],"t":"Tests: 1024 passed at deadbeef."}
+{"k":"hits","o":[],"t":"Tests: 1024 passed at deadbee1."}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"Tests: 1024 passed at abc123."}],"t":"Tests: 1024 passed at abc123."}
+{"k":"hits","o":[],"t":"Tests: 5 failed at a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1."}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"Tests: 5 failed at a1a1a1a1a1a1a1a1..."}],"t":"Tests: 5 failed at a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1b."}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"Tests: 5 failed at xa1a1a1a1."}],"t":"Tests: 5 failed at xa1a1a1a1."}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"pytest 12 tests passed"}],"t":"pytest 12 tests passed"}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"pytest 12 test passed"}],"t":"pytest 12 test  passed"}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"CI: 3 errors"}],"t":"CI: 3 errors"}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"CI: 3 error"}],"t":"CI: 3 error"}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"ci: 3 errors"}],"t":"ci: 3 errors"}
+{"k":"hits","o":[],"t":"CI 2025-01-01: 3 failed"}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"...1234: 5 passed. CI: 7 failed."}],"t":"CI at abc1234: 5 passed. CI: 7 failed."}
+{"k":"hits","o":[],"t":"The tests ran. 5 passed."}
+{"k":"hits","o":[],"t":"testsuite 5 passed"}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"suite 5 passing, 2 failing, 1 skipp..."}],"t":"suite 5 passing, 2 failing, 1 skipped"}
+{"k":"hits","o":[],"t":"suite 1.5 passed"}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"suite 1,,5 passed"}],"t":"suite 1,,5 passed"}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"...ite \"5 passed\" then 6 passed"}],"t":"suite \"5 passed\" then 6 passed"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"suite: 5 passed and 12 stars"},{"name":"test_total","rule":1,"s":"suite: 5 passed and 12 stars"}],"t":"suite: 5 passed and 12 stars"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"We changed it recently."}],"t":"We changed it recently."}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"Recently, we changed it."}],"t":"Recently, we changed it."}
+{"k":"hits","o":[],"t":"the least recently used entry"}
+{"k":"hits","o":[],"t":"the most recently opened file"}
+{"k":"hits","o":[],"t":"the least-recently used entry"}
+{"k":"hits","o":[],"t":"the most-recently added"}
+{"k":"hits","o":[],"t":"the least  recently used entry"}
+{"k":"hits","o":[],"t":"LEAST RECENTLY USED"}
+{"k":"hits","o":[],"t":"a recently used cache"}
+{"k":"hits","o":[],"t":"a recently-viewed page"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"a recently used cache"}],"t":"a recently  used cache"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"recently, used"}],"t":"recently, used"}
+{"k":"hits","o":[],"t":"recentlyish"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"lately we ship"}],"t":"lately we ship"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"nowadays"}],"t":"nowadays"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"these days"}],"t":"these days"}
+{"k":"hits","o":[],"t":"these  days"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"the other day"}],"t":"the other day"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"just now"}],"t":"just now"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"a while ago"}],"t":"a while ago"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"not long ago"}],"t":"not long ago"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"3 days ago"}],"t":"3 days ago"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"a few weeks ago"}],"t":"a few weeks ago"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"an hour ago"}],"t":"an hour ago"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"a couple of months ago"}],"t":"a couple of months ago"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"several years ago"}],"t":"several years ago"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"two days ago"}],"t":"two  days\tago"}
+{"k":"hits","o":[],"t":"eleven days ago"}
+{"k":"hits","o":[],"t":"3 days agog"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"last friday"}],"t":"last friday"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"Next Week"}],"t":"Next Week"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"this quarter"}],"t":"this quarter"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"coming weekend"}],"t":"coming weekend"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"past fall"}],"t":"past fall"}
+{"k":"hits","o":[],"t":"last Fridays"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"last night"}],"t":"last\nnight"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"it is now done"}],"t":"it is now done"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"they are now done"}],"t":"they are now done"}
+{"k":"hits","o":[],"t":"what is now done"}
+{"k":"hits","o":[],"t":"WHAT IS NOW done"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"what is now done"}],"t":"what  is now done"}
+{"k":"hits","o":[],"t":"it is now known as X"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"it is now known as X"}],"t":"it is now known  as X"}
+{"k":"hits","o":[],"t":"it is nowhere"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"this is now"}],"t":"this is now"}
+{"k":"hits","o":[],"t":"\"recently\" we left"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"\"recently\" and recently"}],"t":"\"recently\" and recently"}
+{"k":"hits","o":[],"t":"\u201crecently\u201d we left"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"\u201crecently\u201c recently\u201d"}],"t":"\u201crecently\u201c recently\u201d"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"\"open quote recently"}],"t":"\"open quote recently"}
+{"k":"hits","o":[],"t":"two \"quotes\" then \"recently\""}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"\u2018recently\u2019 is not a span"}],"t":"\u2018recently\u2019 is not a span"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"The user's repo has 5 stars. T..."},{"name":"no_todo","rule":1,"s":"...s repo has 5 stars. TODO: tests 3 passed rec..."},{"name":"drifting_count","rule":1,"s":"The user's repo has 5 stars. TODO: tests 3 pass..."},{"name":"test_total","rule":1,"s":"...stars. TODO: tests 3 passed recently."},{"name":"absolute_date","rule":5,"s":"...ODO: tests 3 passed recently."}],"t":"The user's repo has 5 stars. TODO: tests 3 passed recently."}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"Fix the hook; the assistant said the repo has 9 fork..."},{"name":"no_todo","rule":1,"s":"Fix the hook; the assistant..."},{"name":"drifting_count","rule":1,"s":"...t said the repo has 9 forks and CI shows 4 fail..."},{"name":"test_total","rule":1,"s":"...forks and CI shows 4 failed lately."},{"name":"absolute_date","rule":5,"s":"...d CI shows 4 failed lately."}],"t":"Fix the hook; the assistant said the repo has 9 forks and CI shows 4 failed lately."}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"...words lead in here, recently and the rest of the..."}],"t":"Some words lead in here, Some words lead in here, recently and the rest of the line runs on for a while"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"...words lead in here. The user's project uses Ru..."}],"t":"Some words lead in here, Some words lead in here. The user's\n\nproject   uses\t\tRust and the rest of the line runs on for a while"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"...................recently..................."}],"t":"...................recently..................."}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"....................recently...................."}],"t":"....................recently...................."}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":".......................recently......................."}],"t":".....................recently....................."}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s_cps":[55296,32,114,101,99,101,110,116,108,121,32,57343]}],"t_cps":[55296,32,114,101,99,101,110,116,108,121,32,57343]}
+{"k":"hits","o":[],"t_cps":[55296,84,104,101,32,117,115,101,114,39,115,32,120]}
+{"k":"hits","o":[],"t_cps":[116,104,101,32,97,115,115,105,115,116,97,110,116,32,57343,32,115,97,105,100]}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s_cps":[84,101,115,116,115,32,55296,32,53,32,112,97,115,115,101,100]}],"t_cps":[84,101,115,116,115,32,55296,32,53,32,112,97,115,115,101,100]}
+{"k":"tt","o":false,"t":""}
+{"k":"tt","o":true,"t":"tests 5 passed"}
+{"k":"tt","o":false,"t":"5 passed"}
+{"k":"tt","o":false,"t":"tests 5 passed 2025-01-01"}
+{"k":"tt","o":false,"t":"tests 5 passed abc1234"}
+{"k":"tt","o":true,"t":"tests 5 passed abcdefg"}
+{"k":"tt","o":true,"t":"Suite x"}
+{"k":"tt","o":false,"t":"CI abc1234"}
+{"k":"tt","o":false,"t":"CI 2025-13-45"}
+{"k":"tt","o":true,"t":"PYTEST"}
+{"k":"tt","o":false,"t":"tested"}
+{"head":"","k":"rep","n":125,"o":[],"tail":"","unit":"1."}
+{"head":"","k":"rep","n":250,"o":[],"tail":"","unit":"1."}
+{"head":"","k":"rep","n":500,"o":[],"tail":"","unit":"1."}
+{"head":"","k":"rep","n":1000,"o":[],"tail":"","unit":"1."}
+{"head":"","k":"rep","n":125,"o":[],"tail":"","unit":"1,"}
+{"head":"","k":"rep","n":250,"o":[],"tail":"","unit":"1,"}
+{"head":"","k":"rep","n":500,"o":[],"tail":"","unit":"1,"}
+{"head":"","k":"rep","n":1000,"o":[],"tail":"","unit":"1,"}
+{"head":"tests ","k":"rep","n":125,"o":[{"name":"test_total","rule":1,"s":"tests 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, passed"}],"tail":" passed","unit":"1,"}
+{"head":"tests ","k":"rep","n":250,"o":[{"name":"test_total","rule":1,"s":"tests 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, passed"}],"tail":" passed","unit":"1,"}
+{"head":"tests ","k":"rep","n":500,"o":[{"name":"test_total","rule":1,"s":"tests 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, passed"}],"tail":" passed","unit":"1,"}
+{"head":"tests ","k":"rep","n":1000,"o":[{"name":"test_total","rule":1,"s":"tests 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, passed"}],"tail":" passed","unit":"1,"}
+{"head":"tests 1 passed ","k":"rep","n":125,"o":[{"name":"test_total","rule":1,"s":"tests 1 passed a1a1a1a1a1a1a1a1a1a..."}],"tail":"","unit":"a1"}
+{"head":"tests 1 passed ","k":"rep","n":250,"o":[{"name":"test_total","rule":1,"s":"tests 1 passed a1a1a1a1a1a1a1a1a1a..."}],"tail":"","unit":"a1"}
+{"head":"tests 1 passed ","k":"rep","n":500,"o":[{"name":"test_total","rule":1,"s":"tests 1 passed a1a1a1a1a1a1a1a1a1a..."}],"tail":"","unit":"a1"}
+{"head":"tests 1 passed ","k":"rep","n":1000,"o":[{"name":"test_total","rule":1,"s":"tests 1 passed a1a1a1a1a1a1a1a1a1a..."}],"tail":"","unit":"a1"}
+{"head":"tests 1 passed ","k":"rep","n":125,"o":[],"tail":" 2025-01-01","unit":"a1"}
+{"head":"tests 1 passed ","k":"rep","n":250,"o":[],"tail":" 2025-01-01","unit":"a1"}
+{"head":"tests 1 passed ","k":"rep","n":500,"o":[],"tail":" 2025-01-01","unit":"a1"}
+{"head":"tests 1 passed ","k":"rep","n":1000,"o":[],"tail":" 2025-01-01","unit":"a1"}
+{"head":"the assistant","k":"rep","n":125,"o":[],"tail":"","unit":" x"}
+{"head":"the assistant","k":"rep","n":250,"o":[],"tail":"","unit":" x"}
+{"head":"the assistant","k":"rep","n":500,"o":[],"tail":"","unit":" x"}
+{"head":"the assistant","k":"rep","n":1000,"o":[],"tail":"","unit":" x"}
+{"head":"","k":"rep","n":17,"o":[],"tail":"","unit":"the assistant "}
+{"head":"","k":"rep","n":35,"o":[],"tail":"","unit":"the assistant "}
+{"head":"","k":"rep","n":71,"o":[],"tail":"","unit":"the assistant "}
+{"head":"","k":"rep","n":142,"o":[],"tail":"","unit":"the assistant "}
+{"head":"","k":"rep","n":8,"o":[],"tail":"","unit":"                              \n"}
+{"head":"","k":"rep","n":16,"o":[],"tail":"","unit":"                              \n"}
+{"head":"","k":"rep","n":32,"o":[],"tail":"","unit":"                              \n"}
+{"head":"","k":"rep","n":64,"o":[],"tail":"","unit":"                              \n"}
+{"head":"1","k":"rep","n":250,"o":[],"tail":"","unit":" "}
+{"head":"1","k":"rep","n":500,"o":[],"tail":"","unit":" "}
+{"head":"1","k":"rep","n":1000,"o":[],"tail":"","unit":" "}
+{"head":"1","k":"rep","n":2000,"o":[],"tail":"","unit":" "}
+{"head":"","k":"rep","n":27,"o":[],"tail":"","unit":"\"1 star\" "}
+{"head":"","k":"rep","n":55,"o":[],"tail":"","unit":"\"1 star\" "}
+{"head":"","k":"rep","n":111,"o":[],"tail":"","unit":"\"1 star\" "}
+{"head":"","k":"rep","n":222,"o":[],"tail":"","unit":"\"1 star\" "}
+{"head":"\"","k":"rep","n":35,"o":[{"name":"drifting_count","rule":1,"s":"\"1 star 1 star 1 star 1 sta..."}],"tail":"","unit":"1 star "}
+{"head":"\"","k":"rep","n":71,"o":[{"name":"drifting_count","rule":1,"s":"\"1 star 1 star 1 star 1 sta..."}],"tail":"","unit":"1 star "}
+{"head":"\"","k":"rep","n":142,"o":[{"name":"drifting_count","rule":1,"s":"\"1 star 1 star 1 star 1 sta..."}],"tail":"","unit":"1 star "}
+{"head":"\"","k":"rep","n":285,"o":[{"name":"drifting_count","rule":1,"s":"\"1 star 1 star 1 star 1 sta..."}],"tail":"","unit":"1 star "}
+{"head":"2025-01-01 ","k":"rep","n":35,"o":[],"tail":"","unit":"1 star "}
+{"head":"2025-01-01 ","k":"rep","n":71,"o":[],"tail":"","unit":"1 star "}
+{"head":"2025-01-01 ","k":"rep","n":142,"o":[],"tail":"","unit":"1 star "}
+{"head":"2025-01-01 ","k":"rep","n":284,"o":[],"tail":"","unit":"1 star "}
+{"head":"tests 2025-01-01 ","k":"rep","n":27,"o":[],"tail":"","unit":"1 passed "}
+{"head":"tests 2025-01-01 ","k":"rep","n":55,"o":[],"tail":"","unit":"1 passed "}
+{"head":"tests 2025-01-01 ","k":"rep","n":111,"o":[],"tail":"","unit":"1 passed "}
+{"head":"tests 2025-01-01 ","k":"rep","n":222,"o":[],"tail":"","unit":"1 passed "}
+{"count":20000,"k":"sweep","most":12,"rules":{"absolute_date":2805,"drifting_count":83,"no_todo":10635,"plain_subject":8,"test_total":5},"seed":20261125,"seps":[" "," "," "," ",". ","\n",", ",": ","\n- [ ] ","**"],"sha":"69d84691ec8a99c2e3e9a75dd9622b927c835c335d3855f5f4c49b580efff821","words":["The","the","user's","user\u2019s","assistant","assistant's","said","suggested","pointed","out","then","recommendation","TODO","todo","TODO:","Next","steps:","Action","items:","still","to","need","needs","yet","be","left","do","[","]","in","next","session","time","when","we","resume","Fix","fix","add","Run","Clean","up","it","a","this","recently","least","most","used","viewed","lately","these","days","ago","3","1,024","1.2k","few","weeks","last","friday","week","is","are","now","what","known","as","stars","GitHub","forks","open","issues","tests","passed","failed","suite","CI","pytest","2025-01-01","abc1234","deadbeef","1234567","\"","\u201c","\u201d","x"]}

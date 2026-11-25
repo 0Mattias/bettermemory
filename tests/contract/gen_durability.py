@@ -1,5 +1,8 @@
 """Fixtures: the transient markers' helpers, unit 1 of ``durability.py``
-(``durability.jsonl``, ``durability_unicode.jsonl``).
+(``durability.jsonl``, ``durability_unicode.jsonl``), and the capture
+rules, unit 3 (``durability_capture.jsonl``,
+``durability_capture_unicode.jsonl``, described where their rows are
+made below).
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/durability.rs``. This pins
@@ -354,4 +357,497 @@ def generate_unicode() -> dict[str, bytes]:
     rows = [*_rows(unicode=True), *_sweep()]
     return {
         "durability_unicode.jsonl": jsonl([{"k": "header", "cases": len(rows)}, *rows])
+    }
+
+
+# --- unit 3: the capture rules ----------------------------------------------
+#
+# ``durability_capture.jsonl`` (not gated) and ``durability_capture_unicode
+# .jsonl`` (gated on the Unicode version) pin `find_capture_rule_hits`,
+# `_unanchored_test_total` and `CaptureRuleHit.to_dict`, and through them
+# every capture pattern and `_first_unquoted`. Rows, after a header with the
+# count of the lines after it:
+#
+# - ``{"k": "pat", "id": name, "p": text, "f": flags}`` (not gated only):
+#   each pattern's text and `re.Pattern.flags`, by its inventory id;
+# - ``{"k": "hits", "t": text, "o": hits}``: `find_capture_rule_hits`, each
+#   hit as ``{"rule": n, "name": name, "s": snippet}`` (``s_cps`` where the
+#   snippet holds a surrogate), which is `to_dict` with the snippet's key
+#   shortened;
+# - ``{"k": "tt", "t": sentence, "o": bool}``: `_unanchored_test_total`;
+# - ``{"k": "rep", "head": text, "unit": text, "n": count, "tail": text,
+#   "o": hits}``: the hostile bodies, ``head + unit * n + tail``, with the
+#   reference's hits (their timing is the robustness test's);
+# - ``{"k": "sweep", ...}`` (not gated only): ``count`` bodies drawn from
+#   ``words`` and ``seps`` by the LCG of `_lcg` from ``seed``: per body,
+#   ``1 + (s >> 33) % most`` words, each followed by a separator, each pick
+#   ``(s >> 33) % len(list)`` after one LCG step. The answer of a body is
+#   each hit as ``f"{rule}|{name}|{snippet}\n"``, then NUL; ``sha`` is the
+#   SHA-256 of the answers in order, as UTF-8; ``rules`` counts the bodies
+#   each rule name fired on.
+#
+# The ungated file's texts are ASCII, the curly quotes U+2018, U+2019,
+# U+201C and U+201D (literals of the patterns and the span reader, of
+# category ``Pi`` or ``Pf`` and outside ``\w``, ``\s`` and ``\d`` in every
+# Unicode version) and lone surrogates. The Unicode file holds the case
+# folding, ``\b``, ``\w``, ``\s`` and ``\d`` past ASCII. No answer follows
+# the Python release or the platform.
+
+_CAPTURE_PATTERN_IDS: list[tuple[str, re.Pattern[str]]] = [
+    ("_USERS_OPENER_RE", d._USERS_OPENER_RE),
+    ("_ASSISTANT_SAID_RE", d._ASSISTANT_SAID_RE),
+    ("_ASSISTANTS_ANSWER_RE", d._ASSISTANTS_ANSWER_RE),
+    ("_TODO_HEADING_RE", d._TODO_HEADING_RE),
+    *[
+        (f"_TODO_PATTERNS{'' if i == 0 else f'#{i + 1}'}", p)
+        for i, p in enumerate(d._TODO_PATTERNS)
+    ],
+    ("_IMPERATIVE_OPENER_RE", d._IMPERATIVE_OPENER_RE),
+    *[
+        (f"_RELATIVE_DATE_PATTERNS{'' if i == 0 else f'#{i + 1}'}", p)
+        for i, p in enumerate(d._RELATIVE_DATE_PATTERNS)
+    ],
+    ("_ISO_DATE_RE", d._ISO_DATE_RE),
+    ("_COMMIT_HASH_RE", d._COMMIT_HASH_RE),
+    ("_DRIFTING_COUNT_RE", d._DRIFTING_COUNT_RE),
+    ("_TEST_TOTAL_RE", d._TEST_TOTAL_RE),
+    ("_SUITE_WORD_RE", d._SUITE_WORD_RE),
+]
+
+_CAPTURE_STABLE = frozenset({0x2018, 0x2019, 0x201C, 0x201D})
+
+
+def _capture_stable(text: str) -> bool:
+    return all(
+        ord(ch) < 0x80 or ord(ch) in _CAPTURE_STABLE or 0xD800 <= ord(ch) <= 0xDFFF
+        for ch in text
+    )
+
+
+_PAD = "Some words lead in here, " * 2
+_LONG_TAIL = " and the rest of the line runs on for a while"
+
+_CAPTURE_TEXTS: list[str] = [
+    "",
+    "A plain durable fact about the hook.",
+    # Rule 3: the user's opener, at a sentence start only.
+    "The user's project uses Rust.",
+    "The user’s project uses Rust.",
+    "the user's project uses Rust.",
+    "THE USER'S project",
+    "The users project",
+    "The user'sx project",
+    "XThe user's project",
+    "Notes: The user's project",
+    "Notes:  \t The user's project",
+    "- The user's project",
+    "(The user's project)",
+    "[The user's project]",
+    "'The user's project'",
+    "We saw The user's project",
+    "We saw The user's project. The user's laptop",
+    "We saw The user's project, and the assistant said so",
+    "\"The user's view\" is quoted. The user's laptop",
+    "“The user's view” is quoted",
+    # Rule 3: what the assistant said.
+    "The assistant said to use the cache.",
+    "the assistant then said so",
+    "the assistant then quickly said so",
+    "the assistant then very quickly said so",
+    "the assistant pointed out the flaw",
+    "the assistant pointed  out the flaw",
+    "the assistant saidx so",
+    "the assistants said so",
+    "THE ASSISTANT SAID so",
+    "the assistant's-own reply said",
+    "the assistant o’brien-like said",
+    "the assistant\nsaid so",
+    "the assistant's recommendation was Rust",
+    "the assistant’s answers were Rust",
+    "the assistant's summarys",
+    "the assistant's view's",
+    "the assistant 's view",
+    "the user's x and the assistant said y",
+    "The user's x and the assistant said y",
+    "x the assistant said so. The user's y",
+    "We saw The user's x; the assistant's advice was y",
+    '"the assistant said" and the assistant said',
+    "the assistant said “the assistant said” twice",
+    # Rule 1: to-dos.
+    "TODO: fix the hook test in the daemon before release",
+    "TODO fix the hook test in the daemon before release",
+    "todo: fix the hook",
+    "the TODO tag",
+    "TODOs remain",
+    "## Next steps:\n- ship it",
+    "Intro line\nAction items: ship it",
+    "Intro line Action items: ship it",
+    "**Follow-ups**: ship it",
+    "> to-do : ship it",
+    "__Remaining work__ :ship",
+    "open item: one",
+    "Open items\t:\tone",
+    "Followups: one",
+    "next step - one",
+    "We still need to fix it",
+    "We still needs to fix it",
+    "It is still to decide",
+    "It is still to 9",
+    "It is still  to decide",
+    "STILL TO DECIDE",
+    "It is yet to be decided",
+    "It is yet to be 9",
+    "nothing left to do here",
+    "nothing left to doing",
+    "- [ ] write the docs",
+    "  * [ ] write the docs",
+    "\t+ [ ] write the docs",
+    "x\n- [ ] write the docs",
+    "x - [ ] write the docs",
+    "- [x] wrote the docs",
+    "-  [ ] two spaces",
+    "We continue in the next session",
+    "Next time we try harder",
+    "when we resume the port",
+    "the next timer",
+    # Rule 1: the imperative opener.
+    "Fix the hook test",
+    "fix  the hook test",
+    "Fix ownership lies with the team",
+    "Release 8.0.0 shipped",
+    "Release the build",
+    "**Fix the** hook",
+    "> Release the build",
+    "  \tRun it again",
+    "#- *Run it again",
+    "Clean up the logs",
+    "Clean  up the logs",
+    "Cleanup the logs",
+    "Fix them all",
+    "Fix themselves",
+    "Port its parser",
+    "x\nFix the hook",
+    " x Fix the hook",
+    "Fix the hook. TODO later",
+    "Fix the hook. Then the next session",
+    "“Fix the hook” is an order",
+    '"Fix the hook" said nobody',
+    # Rule 1: drifting counts.
+    "The repo has 1,200 stars.",
+    "The repo has 1,200 stars as of 2025-01-01.",
+    "The repo had 1.2k GitHub stars on 2025-01-01. It has 30 forks.",
+    "It has 5 stars. Checked 2025-01-01.",
+    "three followers",
+    "ten open issues",
+    "10 open  issues",
+    "5 watchers",
+    "eleven stars",
+    "5stars",
+    "5 GitHub  stars",
+    "5 github stars",
+    "1.2.3 downloads",
+    "2,5k forks",
+    "x5 stars",
+    "1 star 2025-1-01",
+    "1 star 20250-01-01",
+    "1 star on 2025-01-01x",
+    "Version 3.13 has 5 stars 2025-01-01",
+    "v1.2 5 stars. 2025-01-01",
+    'The repo has "5 stars" today',
+    '"5 stars" and 7 forks',
+    # Rule 1: test totals.
+    "The suite: 1,024 passed.",
+    "1,024 passed.",
+    "Tests: 1024 passed at abc1234.",
+    "Tests: 1024 passed at 1234567.",
+    "Tests: 1024 passed at abcdefa.",
+    "Tests: 1024 passed at ABC1234.",
+    "Tests: 1024 passed at deadbeef.",
+    "Tests: 1024 passed at deadbee1.",
+    "Tests: 1024 passed at abc123.",
+    "Tests: 5 failed at " + "a1" * 20 + ".",
+    "Tests: 5 failed at " + "a1" * 20 + "b.",
+    "Tests: 5 failed at x" + "a1" * 4 + ".",
+    "pytest 12 tests passed",
+    "pytest 12 test  passed",
+    "CI: 3 errors",
+    "CI: 3 error",
+    "ci: 3 errors",
+    "CI 2025-01-01: 3 failed",
+    "CI at abc1234: 5 passed. CI: 7 failed.",
+    "The tests ran. 5 passed.",
+    "testsuite 5 passed",
+    "suite 5 passing, 2 failing, 1 skipped",
+    "suite 1.5 passed",
+    "suite 1,,5 passed",
+    'suite "5 passed" then 6 passed',
+    "suite: 5 passed and 12 stars",
+    # Rule 5: relative dates.
+    "We changed it recently.",
+    "Recently, we changed it.",
+    "the least recently used entry",
+    "the most recently opened file",
+    "the least-recently used entry",
+    "the most-recently added",
+    "the least  recently used entry",
+    "LEAST RECENTLY USED",
+    "a recently used cache",
+    "a recently-viewed page",
+    "a recently  used cache",
+    "recently, used",
+    "recentlyish",
+    "lately we ship",
+    "nowadays",
+    "these days",
+    "these  days",
+    "the other day",
+    "just now",
+    "a while ago",
+    "not long ago",
+    "3 days ago",
+    "a few weeks ago",
+    "an hour ago",
+    "a couple of months ago",
+    "several years ago",
+    "two  days\tago",
+    "eleven days ago",
+    "3 days agog",
+    "last friday",
+    "Next Week",
+    "this quarter",
+    "coming weekend",
+    "past fall",
+    "last Fridays",
+    "last\nnight",
+    "it is now done",
+    "they are now done",
+    "what is now done",
+    "WHAT IS NOW done",
+    "what  is now done",
+    "it is now known as X",
+    "it is now known  as X",
+    "it is nowhere",
+    "this is now",
+    '"recently" we left',
+    '"recently" and recently',
+    "“recently” we left",
+    "“recently“ recently”",
+    '"open quote recently',
+    'two "quotes" then "recently"',
+    "‘recently’ is not a span",
+    # Several rules, and the snippet's edges.
+    "The user's repo has 5 stars. TODO: tests 3 passed recently.",
+    "Fix the hook; the assistant said the repo has 9 forks and CI shows 4 failed lately.",
+    _PAD + "recently" + _LONG_TAIL,
+    _PAD[:-2] + ". The user's\n\nproject   uses\t\tRust" + _LONG_TAIL,
+    "." * 19 + "recently" + "." * 19,
+    "." * 20 + "recently" + "." * 20,
+    "." * 21 + "recently" + "." * 21,
+    # Lone surrogates.
+    "\ud800 recently \udfff",
+    "\ud800The user's x",
+    "the assistant \udfff said",
+    "Tests \ud800 5 passed",
+]
+
+_TEST_TOTAL_SENTENCES: list[str] = [
+    "",
+    "tests 5 passed",
+    "5 passed",
+    "tests 5 passed 2025-01-01",
+    "tests 5 passed abc1234",
+    "tests 5 passed abcdefg",
+    "Suite x",
+    "CI abc1234",
+    "CI 2025-13-45",
+    "PYTEST",
+    "tested",
+]
+
+#: (head, unit, count at 2,000 characters, tail); a body is ``head +
+#: unit * (count * size // 2000) + tail`` at each of `_HOSTILE_SIZES`.
+_HOSTILE: list[tuple[str, str, int, str]] = [
+    ("", "1.", 1000, ""),
+    ("", "1,", 1000, ""),
+    ("tests ", "1,", 1000, " passed"),
+    ("tests 1 passed ", "a1", 1000, ""),
+    ("tests 1 passed ", "a1", 1000, " 2025-01-01"),
+    ("the assistant", " x", 1000, ""),
+    ("", "the assistant ", 142, ""),
+    ("", " " * 30 + "\n", 64, ""),
+    ("1", " ", 2000, ""),
+    ("", '"1 star" ', 222, ""),
+    ('"', "1 star ", 285, ""),
+    ("2025-01-01 ", "1 star ", 284, ""),
+    ("tests 2025-01-01 ", "1 passed ", 222, ""),
+]
+_HOSTILE_SIZES = (250, 500, 1000, 2000)
+
+#: The words, split on single spaces.
+_SWEEP_WORDS: list[str] = (
+    "The the user's user’s assistant assistant's said suggested "
+    "pointed out then recommendation TODO todo TODO: Next steps: "
+    "Action items: still to need needs yet be left do [ ] in next "
+    "session time when we resume Fix fix add Run Clean up it a this "
+    "recently least most used viewed lately these days ago 3 1,024 "
+    "1.2k few weeks last friday week is are now what known as stars "
+    "GitHub forks open issues tests passed failed suite CI pytest "
+    '2025-01-01 abc1234 deadbeef 1234567 " “ ” x'
+).split(" ")
+_SWEEP_SEPS: list[str] = [" ", " ", " ", " ", ". ", "\n", ", ", ": ", "\n- [ ] ", "**"]
+_SWEEP_SEED = 20261125
+_SWEEP_COUNT = 20000
+_SWEEP_MOST = 12
+
+
+def _lcg(state: int) -> int:
+    return (state * 6364136223846793005 + 1442695040888963407) % (1 << 64)
+
+
+def capture_sweep_bodies() -> Iterator[str]:
+    state = _SWEEP_SEED
+    for _ in range(_SWEEP_COUNT):
+        state = _lcg(state)
+        n = 1 + (state >> 33) % _SWEEP_MOST
+        parts: list[str] = []
+        for _ in range(n):
+            state = _lcg(state)
+            parts.append(_SWEEP_WORDS[(state >> 33) % len(_SWEEP_WORDS)])
+            state = _lcg(state)
+            parts.append(_SWEEP_SEPS[(state >> 33) % len(_SWEEP_SEPS)])
+        yield "".join(parts)
+
+
+def _hits(text: str) -> list[dict[str, Any]]:
+    out = []
+    for hit in d.find_capture_rule_hits(text):
+        row = hit.to_dict()
+        assert list(row) == ["rule", "name", "snippet"]
+        out.append({"rule": hit.rule, "name": hit.name, **text_field("s", hit.snippet)})
+    return out
+
+
+def _capture_sweep() -> dict[str, Any]:
+    h = hashlib.sha256()
+    rules: dict[str, int] = {}
+    count = 0
+    for body in capture_sweep_bodies():
+        count += 1
+        for hit in d.find_capture_rule_hits(body):
+            rules[hit.name] = rules.get(hit.name, 0) + 1
+            h.update(f"{hit.rule}|{hit.name}|{hit.snippet}\n".encode())
+        h.update(b"\0")
+    assert all(_capture_stable(w) for w in _SWEEP_WORDS + _SWEEP_SEPS)
+    return {
+        "k": "sweep",
+        "seed": _SWEEP_SEED,
+        "count": count,
+        "most": _SWEEP_MOST,
+        "words": _SWEEP_WORDS,
+        "seps": _SWEEP_SEPS,
+        "rules": rules,
+        "sha": h.hexdigest(),
+    }
+
+
+def _unicode_capture_texts() -> Iterator[str]:
+    # IGNORECASE as `re` folds one code point against one.
+    yield "THE ASSİSTANT SAID so"
+    yield "the assiſtant said so"
+    yield "the assistant ſaid so"
+    yield "the aßistant said so"
+    yield "the assistant SAİD so"
+    yield "the assistant’s ANſWER"
+    yield "5\u212a stars"
+    yield "Chec\u212a the hook"
+    yield "ſtill to decide"
+    yield "\u212anown as"
+    yield "it is now \u212anown as X"
+    yield "leaſt recently used"
+    yield "ᴛᴏᴅᴏ: x"
+    # \b, \w, \s and \d past ASCII.
+    yield "érecently"
+    yield "—recently"
+    yield "the\u00a0assistant said so"
+    yield "the assistant\u00a0\u2003said so"
+    yield "the assistant été said so"
+    yield "the assistant été très said so"
+    yield "3\u2009days ago"
+    yield "٣ stars"
+    yield "٣ stars on ٢٠٢٥-٠١-٠١"
+    yield "５ stars"
+    yield "Tests: ٣ passed"
+    yield "Tests: 5 passed at abc12٣4"
+    yield "Tests: 5 passed at abc123٣"
+    yield "x:\u00a0The user's project"
+    yield "— The user's project"
+    yield "★ The user's project"
+    yield "→ The user's project"
+    yield "• The user's project"
+    yield "x。The user's project"
+    yield "\u3000Fix the hook"
+    yield "\u00a0- [ ] item"
+    yield "\u00a0TODO: item"
+    yield "x\u2028Action items: one"
+    yield "x\u0085Action items: one"
+    yield "It has 5 stars。 Checked 2025-01-01."
+
+
+def _unicode_test_total_sentences() -> Iterator[str]:
+    yield "ᴛests 5 passed"
+    yield "tests 5 passed ٢٠٢٥-٠١-٠١"
+    yield "Suite ５ passed"
+
+
+def _capture_rows(unicode: bool) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not unicode:
+        for name, pattern in _CAPTURE_PATTERN_IDS:
+            rows.append(
+                {"k": "pat", "id": name, "p": pattern.pattern, "f": pattern.flags}
+            )
+    texts = list(_unicode_capture_texts()) if unicode else _CAPTURE_TEXTS
+    for t in texts:
+        assert _capture_stable(t) != unicode, t
+        rows.append({"k": "hits", **text_field("t", t), "o": _hits(t)})
+    sentences = (
+        list(_unicode_test_total_sentences()) if unicode else _TEST_TOTAL_SENTENCES
+    )
+    for s in sentences:
+        assert _capture_stable(s) != unicode, s
+        rows.append({"k": "tt", "t": s, "o": d._unanchored_test_total(s)})
+    if not unicode:
+        for head, unit, full, tail in _HOSTILE:
+            for size in _HOSTILE_SIZES:
+                n = full * size // 2000
+                body = head + unit * n + tail
+                rows.append(
+                    {
+                        "k": "rep",
+                        "head": head,
+                        "unit": unit,
+                        "n": n,
+                        "tail": tail,
+                        "o": _hits(body),
+                    }
+                )
+        rows.append(_capture_sweep())
+    return rows
+
+
+def generate_capture() -> dict[str, bytes]:
+    """``durability_capture.jsonl``: not gated."""
+    rows = _capture_rows(unicode=False)
+    return {
+        "durability_capture.jsonl": jsonl([{"k": "header", "cases": len(rows)}, *rows])
+    }
+
+
+def generate_capture_unicode() -> dict[str, bytes]:
+    """``durability_capture_unicode.jsonl``: gated on the Unicode version."""
+    rows = _capture_rows(unicode=True)
+    return {
+        "durability_capture_unicode.jsonl": jsonl(
+            [{"k": "header", "cases": len(rows)}, *rows]
+        )
     }

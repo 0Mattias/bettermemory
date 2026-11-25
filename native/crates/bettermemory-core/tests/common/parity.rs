@@ -269,6 +269,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `str.isspace`, `str.istitle`, the general category and `\w`, `\d`
         // past ASCII (`gen_durability`).
         "durability_unicode.jsonl" => &[Unicode],
+        // IGNORECASE folding, `\b`, `\w`, `\s` and `\d` past ASCII in the
+        // capture rules (`gen_durability`).
+        "durability_capture_unicode.jsonl" => &[Unicode],
         "lexicon.jsonl"
         | "verify_candidates_unicode.jsonl"
         // `str.isalpha` of the drive test over every code point.

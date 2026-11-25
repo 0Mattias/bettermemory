@@ -151,7 +151,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json`, `store_restore_lock_hold_python.json`, `store_restore_lock_python.json` (POSIX only) |
 | `store::returned` | `store_returned.py`'s backfill half on the writable store: `missing_links`, `returned_rows`, `backfill`, `ensure_backfilled` (`has_key` given, its log lines returned); `Store._put_relinked` as `store::writers::put_relinked`; the `returned_put` row a backfill appends (`Transaction::mutate_returned_put`) | `store_returned.jsonl`, `store_returned_posix.jsonl` (POSIX only) |
-| `durability` | unit 1 of `durability.py`: `canonical_marker`, `quoted_spans`, `in_quoted_span`, `TransientMatch`, `_snippet_around`, `_at_sentence_start`, `_is_titlecase_name` with `str.istitle`, `sentence_around` | `durability.jsonl`, `durability_unicode.jsonl` |
+| `durability` | unit 1 of `durability.py`: `canonical_marker`, `quoted_spans`, `in_quoted_span`, `TransientMatch`, `_snippet_around`, `_at_sentence_start`, `_is_titlecase_name` with `str.istitle`, `sentence_around`. Unit 3 (`durability::capture`): `CaptureRuleHit` with `to_dict`, the capture patterns and word lists (`_SAYING_VERBS` to `_SUITE_WORD_RE`, on the engine), `_first_unquoted`, `_unanchored_test_total`, `find_capture_rule_hits` | `durability.jsonl`, `durability_unicode.jsonl`, `durability_capture.jsonl`, `durability_capture_unicode.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
 is the reference's digest (the one the golden header pins), and
@@ -19011,8 +19011,8 @@ first.
 | `sentence_around` (`_SENTENCE_END_RE`) | 558-570 | Unicode data (`\d`) | unit 1, built |
 | `_anchored_new_reference` | 573-588 | `search._raw_content_token_set`, `supersession.change_cues` and `anchor_tokens` | unit 2 |
 | `find_transient_markers` | 591-641 | nothing | unit 2 |
-| `CaptureRuleHit` and the capture patterns (`_SAYING_VERBS` to `_SUITE_WORD_RE`) | 660-771 | nothing | unit 3 |
-| `_first_unquoted`, `_unanchored_test_total`, `find_capture_rule_hits` | 774-858 | nothing | unit 3 |
+| `CaptureRuleHit` and the capture patterns (`_SAYING_VERBS` to `_SUITE_WORD_RE`) | 659-771 | Unicode data (IGNORECASE folding, `\b`, `\w`, `\s`, `\d`) | unit 3, built |
+| `_first_unquoted`, `_unanchored_test_total`, `find_capture_rule_hits` | 774-858 | nothing | unit 3, built |
 
 The cut: unit 1 is the leaves every detector shares; unit 2 the marker
 tables, their patterns and `find_transient_markers`, with
@@ -19092,6 +19092,139 @@ quotes, the hidden digit, `So` against `Sm`, the circled capital that is
 upper but not `\w`); `durability_robustness.rs` holds unpaired quotes and
 long runs at 200,000 and 400,000 code points (the fastest of three runs at
 2n within four times n) and positions at `usize::MAX`.
+
+### Unit 3, built (`durability::capture`)
+
+`src/durability/capture.rs`, a child of `durability.rs`, re-exported from
+it. A text is its code points and every position a code point index, as
+in unit 1.
+
+- The patterns. Every one of the 21 patterns of the capture rules is the
+  engine's `Regex` built from the reference's own text and flags, none by
+  hand (decision rule 4): `_USERS_OPENER_RE`, `_ASSISTANT_SAID_RE` (with
+  `_SAYING_VERBS` spliced in), `_ASSISTANTS_ANSWER_RE`,
+  `_TODO_HEADING_RE` (`IGNORECASE | MULTILINE`), the six
+  `_TODO_PATTERNS`, `_IMPERATIVE_OPENER_RE`, the five
+  `_RELATIVE_DATE_PATTERNS` (the fourth with `_WEEKDAYS` spliced in),
+  `_ISO_DATE_RE`, `_COMMIT_HASH_RE`, `_DRIFTING_COUNT_RE` (with
+  `_NUMBER`), `_TEST_TOTAL_RE` and `_SUITE_WORD_RE`. The f-strings are
+  expanded by `concat!` from the same pieces, so each text is a constant
+  (`CAPTURE_PATTERNS`: inventory id, text, flags), and the golden file
+  pins each text and its `re.Pattern.flags` against the reference. All 21
+  are in the engine's inventory under those ids already. They are
+  compiled once on first use; a pattern the engine refuses answers
+  `CaptureError::Pattern`, never a panic.
+- What the flags read, all as the engine reads them: IGNORECASE is `re`'s
+  Unicode folding of one code point against one (the long s matches `s`,
+  the Kelvin sign `k`, `İ` matches `i`, `ß` never matches `ss`); `\b`,
+  `\w`, `\s` and `\d` are Unicode; `^` under MULTILINE follows every
+  `\n` (not U+2028 nor U+0085); `\A` holds only at 0; the lookbehinds
+  `(?<!least )`, `(?<!most )`, `(?<!least-)`, `(?<!most-)` and
+  `(?<!what )` are fixed width and fold case on the text as written;
+  `['’]` holds the right single quote.
+- `_first_unquoted`: for each pattern in order, its `finditer` (one memo
+  for the whole call) walked to the first match outside every quoted span
+  that `keep` accepts, then the next pattern; across patterns the earliest
+  start, the earlier pattern on a tie (strict `<`). The answer is the
+  match's span. The quoted test is `in_quoted_span` read on the spans as
+  `quoted_spans` makes them, in text order and disjoint: the last span
+  opening at or before the match's start is the only one that can hold
+  it, so a binary search answers as the reference's scan over every span
+  does, and a body dense in quoted matches stays linear where the
+  reference is quadratic (each match against every span).
+- `find_capture_rule_hits`: the five rules in the reference's order
+  (`plain_subject` 3, `no_todo` 1, `drifting_count` 1, `test_total` 1,
+  `absolute_date` 5). An `a or b` reads `b` only where `a` found nothing
+  (a match object is always true), so a later `The user's` at a sentence
+  start beats an earlier assistant phrase, and a to-do pattern anywhere
+  beats the imperative at the body's start. `keep` for
+  `_USERS_OPENER_RE` is `_at_sentence_start` at the match start (never
+  past the end, so never unit 1's `None`); `drifting_count` keeps a count
+  whose `sentence_around` holds no ISO date; `test_total` keeps one whose
+  sentence `_unanchored_test_total` accepts. The snippet is
+  `_snippet_around(content, start, end)`.
+- `_unanchored_test_total`: a suite word, and neither an ISO date nor a
+  commit hash, each a `search` of the sentence.
+- `CaptureRuleHit`: `rule`, `name`, `snippet`; `to_dict` in that key order.
+
+#### What the reference does that looks wrong (reproduced, pinned)
+
+- `_DRIFTING_COUNT_RE` and `_TEST_TOTAL_RE` are quadratic in `re` on a
+  run of `1.` or `1,` (each `\b` start scans the run to its end, then
+  backs off); the engine's memo holds them to linear steps (below). The
+  answers are pinned at 250 to 2,000 characters.
+- A sentence holding an ISO date (or, for test totals, a hash) and many
+  counts costs the square of its length: `keep` builds the sentence and
+  searches it again for every count it refuses. The port reproduces the
+  calls and so the cost; `durability_capture_robustness` holds it to that
+  family.
+- `_COMMIT_HASH_RE` reads a hex run as a hash only when it is 7 to 40
+  lowercase digits with both a letter and a digit: `deadbeef` (no digit),
+  `1234567` (no letter), `ABC1234` (upper case) and a 41-digit run are
+  no hash, so a test total beside them counts as unanchored.
+- `_TODO_PATTERNS`' checkbox wants exactly one space after the marker
+  (`-  [ ]` passes), `_IMPERATIVE_OPENER_RE` and `clean up` want one
+  space inside (`Clean  up the logs` passes), and `_TODO_HEADING_RE`
+  reads `next step - one` as no heading; the lookbehinds are fixed width,
+  so `the least  recently` (two spaces) and `what  is now` fire.
+- `sentence_around` ends sentences at `!`, `?`, `\n` and a `.` not
+  between digits only, so `It has 5 stars。 Checked 2025-01-01.` keeps
+  the date in the count's sentence and passes.
+
+#### Fixtures and tests
+
+`gen_durability.generate_capture` writes `durability_capture.jsonl` (not
+gated: ASCII, the curly quotes U+2018, U+2019, U+201C and U+201D and lone
+surrogates, whose readings no Unicode version moves): each pattern's text
+and flags; `find_capture_rule_hits` on each pattern's hits and misses at
+the edges of its word lists, every rule alone and all five at once, two
+patterns of one rule at one start, the quoted skip, a first match `keep`
+refuses with a later one kept, `least recently used`, `what is now`, `is
+now known as`, a to-do heading after a newline and at 0, the imperative
+after `> ` and `**`, counts and totals with a hash, a date or neither, the
+7-, 40- and 41-character hex runs, the snippet's edges and lone
+surrogates; `_unanchored_test_total` alone; the hostile bodies of the
+quadratic families at 250 to 2,000 characters with the reference's
+answer; and a sweep of 20,000 bodies drawn by a seeded LCG from a word
+list rich in the rules' words, pinned by count, bodies per rule and
+SHA-256. `generate_capture_unicode` writes
+`durability_capture_unicode.jsonl` (gated on the Unicode version): the
+folding past ASCII, `\b`, `\s` and `\d` past ASCII, and sentence starts
+after `Pd`, `So`, `Sm` and a no-break space. No row follows the Python
+release or the platform.
+
+`golden_durability_capture.rs` checks every row of both files (the
+sweep regenerated by the same rule) and fails when the count checked is
+zero or differs from the file's. `durability_capture_kills.rs` holds the
+cases a plausible wrong port fails: the break placed before the quoted
+and `keep` tests, a tie to the later pattern, an `or` read as the earlier
+of both, IGNORECASE as ASCII only or as full folding, a dropped
+lookbehind or lookahead, the keep predicates swapped, the opener kept
+off a sentence start, the hash's lookaheads dropped, `\A` and `^` read
+alike, and a quoted test that misses a span. Dropping `_first_unquoted`'s
+`break` alone changes no answer (`finditer` hands matches in rising
+start, so no later match beats the first kept one), so no test can hold
+it. `durability_capture_robustness.rs` holds the steps of the
+reference-quadratic patterns at 10,000, 100,000 and 500,000 code points
+and at twice each (a megabyte), each within a pinned multiple of the
+length and the steps at twice a length within 2.2 times those at the
+length: `_DRIFTING_COUNT_RE` on `1.` repeated at 119 steps per code point
+(118.5 measured), `_TEST_TOTAL_RE` on `1,` repeated at 72 (71.5), and
+`_COMMIT_HASH_RE` with `search` on hex runs at 6 (5.77 on runs of letters
+only, 4.0 on one run of digits); every family doubles its steps exactly
+with the length. Each lookahead of `_COMMIT_HASH_RE` is entered only at
+the boundary that opens a hex run, so the scans of two entries never
+overlap. The whole check runs over a megabyte of each hostile body, of
+unpaired straight and curly quotes, of dense quoted matches and of lone
+surrogates with the reference's answers; ten times a body takes at most
+thirty times as long (the thread's clock, least of several rounds); and
+the dated sentence of counts and of totals is held to its quadratic
+family (ten times the sentence within two hundred times the time).
+
+Left for later units: unit 2 (the marker tables, `_PHRASE_REGEXES`,
+`_anchored_new_reference`, `find_transient_markers`), and the write gate
+that calls `find_capture_rule_hits` (the `handlers/write_gates.py`
+units).
 
 ## How origin reads a repository's history (`origin_history.py`)
 
@@ -27256,7 +27389,7 @@ What the reference has and this build does not, by area:
 - The write gates past the control tokens, the dedup and `credentials.py`
   (built whole): `durability.py` past
   its quoted spans and sentence helpers (the marker tables with
-  `find_transient_markers`, and the capture rules: units 2 and 3), and
+  `find_transient_markers`: unit 2), and
   the store-backed review chain and related-set construction. The review
   tables, answer validation and decision policy are built. The dedup's
   store side reads through a trait not yet wired to `store::digest`.

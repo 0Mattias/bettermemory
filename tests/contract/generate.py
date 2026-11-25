@@ -600,6 +600,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "ulid": gen_ulid.generate,
     "durability": gen_durability.generate,
     "durability_unicode": gen_durability.generate_unicode,
+    "durability_capture": gen_durability.generate_capture,
+    "durability_capture_unicode": gen_durability.generate_capture_unicode,
     "verify_status": gen_verify_status.generate,
     "response_write": gen_response_write.generate,
     "response_write_posix": gen_response_write.generate_posix,
@@ -795,6 +797,9 @@ UNICODE_GATED = frozenset(
         "recall_render_unicode",
         "machine_facts_unicode",
         "durability_unicode",
+        # IGNORECASE folding, `\b`, `\w`, `\s` and `\d` past ASCII in the
+        # capture rules (`gen_durability`).
+        "durability_capture_unicode",
         "fold",
         "fold_python",
         "store_create",

@@ -1,0 +1,42 @@
+{"cases":41,"k":"header"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"THE ASS\u0130STANT SAID so"}],"t":"THE ASS\u0130STANT SAID so"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assi\u017ftant said so"}],"t":"the assi\u017ftant said so"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant \u017faid so"}],"t":"the assistant \u017faid so"}
+{"k":"hits","o":[],"t":"the a\u00dfistant said so"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant SA\u0130D so"}],"t":"the assistant SA\u0130D so"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant\u2019s AN\u017fWER"}],"t":"the assistant\u2019s AN\u017fWER"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"5\u212a stars"}],"t":"5\u212a stars"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"Chec\u212a the hook"}],"t":"Chec\u212a the hook"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"\u017ftill to decide"}],"t":"\u017ftill to decide"}
+{"k":"hits","o":[],"t":"\u212anown as"}
+{"k":"hits","o":[],"t":"it is now \u212anown as X"}
+{"k":"hits","o":[],"t":"lea\u017ft recently used"}
+{"k":"hits","o":[],"t":"\u1d1b\u1d0f\u1d05\u1d0f: x"}
+{"k":"hits","o":[],"t":"\u00e9recently"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"\u2014recently"}],"t":"\u2014recently"}
+{"k":"hits","o":[],"t":"the\u00a0assistant said so"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant said so"}],"t":"the assistant\u00a0\u2003said so"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant \u00e9t\u00e9 said so"}],"t":"the assistant \u00e9t\u00e9 said so"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"the assistant \u00e9t\u00e9 tr\u00e8s said so"}],"t":"the assistant \u00e9t\u00e9 tr\u00e8s said so"}
+{"k":"hits","o":[{"name":"absolute_date","rule":5,"s":"3 days ago"}],"t":"3\u2009days ago"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"\u0663 stars"}],"t":"\u0663 stars"}
+{"k":"hits","o":[],"t":"\u0663 stars on \u0662\u0660\u0662\u0665-\u0660\u0661-\u0660\u0661"}
+{"k":"hits","o":[{"name":"drifting_count","rule":1,"s":"\uff15 stars"}],"t":"\uff15 stars"}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"Tests: \u0663 passed"}],"t":"Tests: \u0663 passed"}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"Tests: 5 passed at abc12\u06634"}],"t":"Tests: 5 passed at abc12\u06634"}
+{"k":"hits","o":[{"name":"test_total","rule":1,"s":"Tests: 5 passed at abc123\u0663"}],"t":"Tests: 5 passed at abc123\u0663"}
+{"k":"hits","o":[],"t":"x:\u00a0The user's project"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"\u2014 The user's project"}],"t":"\u2014 The user's project"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"\u2605 The user's project"}],"t":"\u2605 The user's project"}
+{"k":"hits","o":[],"t":"\u2192 The user's project"}
+{"k":"hits","o":[{"name":"plain_subject","rule":3,"s":"\u2022 The user's project"}],"t":"\u2022 The user's project"}
+{"k":"hits","o":[],"t":"x\u3002The user's project"}
+{"k":"hits","o":[],"t":"\u3000Fix the hook"}
+{"k":"hits","o":[],"t":"\u00a0- [ ] item"}
+{"k":"hits","o":[{"name":"no_todo","rule":1,"s":"TODO: item"}],"t":"\u00a0TODO: item"}
+{"k":"hits","o":[],"t":"x\u2028Action items: one"}
+{"k":"hits","o":[],"t":"x\u0085Action items: one"}
+{"k":"hits","o":[],"t":"It has 5 stars\u3002 Checked 2025-01-01."}
+{"k":"tt","o":false,"t":"\u1d1bests 5 passed"}
+{"k":"tt","o":false,"t":"tests 5 passed \u0662\u0660\u0662\u0665-\u0660\u0661-\u0660\u0661"}
+{"k":"tt","o":true,"t":"Suite \uff15 passed"}
