@@ -214,7 +214,7 @@ fn fields<'a, const N: usize>(ev: &'a PyValue, keys: [&str; N]) -> Answer<[&'a P
 
 /// Whether the code points `s` spell `text`; the length is compared first
 /// (a `str` literal here is ASCII, one code point to a byte).
-fn is_text(s: &[u32], text: &str) -> bool {
+pub(crate) fn is_text(s: &[u32], text: &str) -> bool {
     debug_assert!(text.is_ascii());
     s.len() == text.len() && s.iter().zip(text.bytes()).all(|(&c, b)| c == u32::from(b))
 }
@@ -285,19 +285,19 @@ pub fn endorsement_tier(ev: &PyValue) -> Answer<Option<AppliedTier>> {
     Ok(Some(tier_of(auto, attribution)))
 }
 
-fn text(s: &[u32]) -> PyValue {
+pub(crate) fn text(s: &[u32]) -> PyValue {
     PyValue::Str(s.to_vec())
 }
 
-fn int(n: impl Into<i128>) -> PyValue {
+pub(crate) fn int(n: impl Into<i128>) -> PyValue {
     PyValue::int(n.into())
 }
 
-fn opt_float(f: Option<f64>) -> PyValue {
+pub(crate) fn opt_float(f: Option<f64>) -> PyValue {
     f.map_or(PyValue::None, PyValue::Float)
 }
 
-fn dict(items: Vec<(&str, PyValue)>) -> PyValue {
+pub(crate) fn dict(items: Vec<(&str, PyValue)>) -> PyValue {
     PyValue::Dict(
         items
             .into_iter()

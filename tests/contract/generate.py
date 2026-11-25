@@ -146,6 +146,7 @@ from . import (
     gen_health_roots,
     gen_health_summary,
     gen_health_model,
+    gen_eval_model,
     gen_lexicon,
     gen_verify_candidates,
     gen_path_drift_steps,
@@ -324,6 +325,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "health_summary": gen_health_summary.generate,
     "health_model": gen_health_model.generate,
     "health_model_debt": gen_health_model.generate_debt,
+    "eval_model": gen_eval_model.generate,
+    "eval_model_python": gen_eval_model.generate_python,
     "log_chain": gen_log.generate,
     "ring_binding_paths": gen_ring_binding_paths.generate,
     "ring_binding_path_codecs": gen_ring_binding_paths.generate_codecs,
@@ -993,6 +996,10 @@ PYTHON_GATED = frozenset(
         "argparse_python",
         "argparse_subparsers_python",
         "argparse_help_python",
+        # `fromisoformat` at its edges: 3.14 and later 3.13 releases keep an
+        # offset's microseconds and read an hour of 24, which 3.13.13 drops
+        # and refuses; and `int()`'s digit-limit text (`gen_eval_model`).
+        "eval_model_python",
         "cli_common_python",
         "cli_root_python",
         # 3.11 and 3.12 raise RuntimeError where `Path.resolve` meets a link loop.

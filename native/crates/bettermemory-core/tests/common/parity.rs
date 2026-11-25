@@ -209,6 +209,11 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "toml.jsonl"
         // The TypeError's text of an unhashable set element (`gen_use_tokens`).
         | "use_tokens_python.jsonl"
+        // `fromisoformat` at its edges: 3.14 and later 3.13 releases keep
+        // an offset's microseconds and read an hour of 24, which 3.13.13
+        // drops and refuses; and `int()`'s digit-limit text
+        // (`gen_eval_model`).
+        | "eval_model_python.jsonl"
         // Where the JSON decoder stops recursing (`gen_transcript`).
         | "transcript_python.jsonl"
         | "settings_python.json"

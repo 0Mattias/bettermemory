@@ -25,6 +25,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `admission` | `admission.py` 59-127 beside `store::caller`'s `Admission` and `NO_RESOLUTION` (re-exported): `DriftScope`, `CountedRecords`, `EveryRecord` (with `admits_row`), `EVERY_RECORD`, `admitted_nothing` | unit tests |
 | `health_summary` | `health_summary.py` whole: `section_names`, `health_summary` (with `_empty`, `_attention`), `health_section`, `SUMMARY_IDS`, `HEADLINE_KEYS` | `health_summary.jsonl` |
 | `health_model` | units health_model-1 and health_model-2 of `health_model.py`: `_ENDORSEMENT_GRACE_DAYS`, `_freshest_touch_ts`, `_has_unresolved_contradiction`, `_is_dead_weight`, `is_hook_telemetry_event`, `applied_tier`, `endorsement_tier`, `TelemetryCoverage`, `_HOOKLESS_REASON`, `MemoryStats`, `MarkerStats`, `ScopeHealth`, `ActorSlice` (each `to_dict`), `explicit_ratio`, `_iso`; `round(x, 3)` through `search::num::round_digits`; unit 2 (`health_model::debt`): `ActorSlices`, `VerificationDebt`, `CommitDriftRow`, `CommitDriftDebt`, `CrossRepoDriftGroup`, `CrossRepoDrift`, `ColdEndorsementMemories`, `SilentMissStats`, `RecentSilentMiss` (each `to_dict`), `clamp_ratio_threshold`, `weakly_endorsed`, `_is_weakly_endorsed`, `unread_fields`, `_unread_dict` and the six caps | `health_model.jsonl`, `health_model_debt.jsonl` |
+| `eval_model` | unit eval_model-1 of `eval_model.py`: `DEFAULT_SINCE_SPEC`, `DEFAULT_ENDORSEMENT_MIN_RETRIEVALS`, `DEFAULT_SILENT_MISS_LIMIT`, `_WILSON_Z`, `_SINCE_PATTERN` (on the engine), `_SINCE_UNIT_TO_SECONDS`, `_EARLIEST_START`, `EARLIER_RULES`, `RateCI` (`from_counts`, `to_dict`), `_wilson_interval`, `ColdEndorsementMemoriesRow` (`endorsement_ratio`, `to_dict`), `SilentMissCandidate`, `parse_since`, `parse_timestamp_utc`, `parse_window_bound` (`now` an argument), `resolve_window`, `_show_in_window`, `_canonical_top_hit_id`, `_silent_miss_from_event` | `eval_model.jsonl`, `eval_model_python.jsonl` |
 | `health_roots` | `health_roots.py` 21-73: `EstateProgress` (`ordered`, `attempt`), `_LAST_CHECKED_CAP`; `progress_for_store` is the open Store's own `EstateProgress` | `health_roots.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
@@ -3619,6 +3620,208 @@ rows 846 ms against 588 ms, `CommitDriftDebt` 126 ms against 129 ms,
 52 ms, `ActorSlices` over 100,000 declared slices 92 ms against 51 ms.
 
 Left for later: unit health_model-3 as mapped above.
+
+## The eval family's model (`eval_model.py`)
+
+`eval_model.py` (1,320 lines) holds what `eval.py`'s rates and reports
+build on: the Wilson interval and `RateCI`, the row types, the
+silent-miss readers of one event, the threshold and widening rule
+registries, the widening lanes' walk over the audited turns, the
+`--since` and `--until` parsing, the recall surfaces' split on each
+show's rule, and the tool-usage kind map. It imports
+`health_model.explicit_ratio` (built, `health_model::explicit_ratio`)
+and `time_utils.parse_event_ts` (built, `datetime::parse_event_ts`).
+Nothing in unit 1 asks the machine: the clock (`now`) and every event
+are arguments. It is cut into four units, leaves first; unit
+eval_model-1 is built (`src/eval_model.rs`, 574 lines of Rust outside
+tests).
+
+| function | reference lines | needs | unit, status |
+| --- | --- | --- | --- |
+| `DEFAULT_SINCE_SPEC`, `DEFAULT_ENDORSEMENT_MIN_RETRIEVALS`, `DEFAULT_SILENT_MISS_LIMIT`, `_WILSON_Z` (`WILSON_Z`) | 37-81 | nothing | 1, built |
+| `_SINCE_PATTERN` (`SINCE_PATTERN`), `_SINCE_UNIT_TO_SECONDS`, `_EARLIEST_START` (`earliest_start`, `EARLIEST_START_US`) | 87-100 | the engine (`pyre`) | 1, built |
+| `RateCI` (`from_counts`, `to_dict`) | 108-172 | nothing | 1, built |
+| `ColdEndorsementMemoriesRow` (`endorsement_ratio`, `to_dict`) | 175-214 | `health_model.explicit_ratio` | 1, built |
+| `SilentMissCandidate` (`to_dict`) | 217-238 | nothing | 1, built |
+| `parse_since` | 246-280 | nothing | 1, built |
+| `parse_timestamp_utc` | 283-313 | `datetime.fromisoformat` (`DateTime::from_isoformat`) | 1, built |
+| `parse_window_bound` (`Bound`) | 316-354 | the caller's `now` | 1, built |
+| `resolve_window` | 357-367 | the caller's `now` | 1, built |
+| `EARLIER_RULES` | 373 | nothing | 1, built |
+| `_show_in_window` (`show_in_window`) | 392-401 | `time_utils.parse_event_ts` | 1, built |
+| `_wilson_interval` (`wilson_interval`) | 497-519 | nothing | 1, built |
+| `_parse_ts` | 529 | `datetime::parse_event_ts` itself | 1, built (an alias) |
+| `_canonical_top_hit_id` (`canonical_top_hit_id`) | 532-554 | nothing | 1, built |
+| `_silent_miss_from_event` (`silent_miss_from_event`) | 557-608 | nothing | 1, built |
+| `_with_rule_split`, `surface_rule_split` | 376-389, 404-494 | `recall_counters` (`compute_surface_report`, `SURFACES`, `is_surface_show`, `shown_ids`), `recall.RULE` (`recall_settle::RULE`) | 1b, after recall_counters-1 |
+| `_package_version` | 611-650 | the installed package's metadata | 2 |
+| `ThresholdRule`, the four threshold rules, `THRESHOLD_RULES`, `ThresholdSweepRow` | 653-786 | nothing | 2 |
+| the two widening rules, `WIDENING_RULES`, `_ReplayableAudits`, `_collect_replayable_audits`, `_probe_query_display` | 788-1021 | the audited turns' events | 2 |
+| `WideningFlaggedTurn`, `WideningMemoryRollup`, `WideningRuleDetail` | 1024-1116 | nothing | 2 |
+| `_TOOL_EVENT_KIND_TO_TOOL`, `TOOLS_WITHOUT_TELEMETRY`, `_KNOWN_SIDE_EFFECT_KINDS`, `_IN_SESSION_SIDE_EFFECT_KINDS`, `ToolUsageRow` | 1117-1320 | nothing | 3 |
+
+Unit eval_model-1b is lines 376-494 less `EARLIER_RULES` and
+`_show_in_window`; unit eval_model-2 lines 611-1116; unit eval_model-3
+lines 1117-1320. `compute_eval` and the rates belong to the eval units
+(`eval.py`).
+
+What unit 1 reproduces, and why:
+
+- Counts are `i64`: every caller counts events. A span is `i128`
+  microseconds where the reference holds a `timedelta` (the crate has
+  none): the longest span `parse_since` returns, 999,999,999 days and
+  86,399 seconds, is past `i64` microseconds. `Bound` is the
+  `timedelta | datetime` `parse_window_bound` returns.
+- `RateCI.from_counts` gives no rate and no interval for a denominator
+  `<= 0` (`torn_read` False); a numerator past the denominator is a torn
+  read with the rate 1.0; else the rate is `numerator / denominator` as
+  Python divides two ints (`search::num::int_true_div`, correctly
+  rounded), never an `f64` division of the counts, which differs past
+  2**53 (`(2**53 + 1) / (2**53 + 2)` is `0x3fefffffffffffff`, the `f64`
+  quotient `0x3feffffffffffffe`). A negative numerator divides (`-1 / 3`)
+  and is not torn.
+- `_wilson_interval` takes `z` as the reference does. `k` is clamped to
+  `[0, n]`; `p = k / n` is int division; every other step keeps the
+  reference's order of operations, with `n` read as a float (`n as f64`
+  from `i64` rounds to nearest even, as Python's `float(int)` does):
+  `z * z / n`, `z * z / (2.0 * n)`, `p * (1.0 - p) / n`,
+  `z * z / (4.0 * n * n)`, `z * sqrt(...) / denom`. Reordering one step
+  moves the last bit (`z * (z / n)` gives another upper bound at 1/5).
+  The bounds go through Python's `max(0.0, x)` and `min(1.0, x)` (the
+  first argument kept unless the second compares greater or less), so a
+  NaN bound from a NaN or infinite `z` is 0.0 below and 1.0 above. Rust's
+  `f64::max` and `f64::min` answer the same on every input this
+  function produces (they return the non-NaN argument, and no bound is
+  ever -0.0 here); a clamp or an `if x < 0.0` would let the NaN through.
+  The port writes the lower bound with `search::num::py_max` and the
+  upper with `f64::min`.
+- `ColdEndorsementMemoriesRow.endorsement_ratio` calls `explicit_ratio`
+  on `auto + explicit`; the sum is an unbounded `int` in the reference,
+  so past `i64` it is divided here by the same rule (None when not
+  positive). `SilentMissCandidate.recent_retrieval_count` keeps the
+  event's `int` as `PyValue::Int`'s decimal text: the reference keeps any
+  `int`, past `i64` too.
+- `parse_since` answers None for None, `""` or `"all"`, compared before
+  the strip (`" all"` is refused). The token is
+  `_SINCE_PATTERN.fullmatch(spec.strip())`: the engine's `Regex` built
+  from the reference's text (decision rule 1; `\d` is every Unicode
+  decimal digit, `$` at a fullmatch); the pattern is in the engine's
+  inventory already (T1, `eval_model.py:_SINCE_PATTERN`). `str.strip` is
+  `str.isspace` at both ends (`unicode::py_strip`, U+001C to U+001F
+  included). The value is `int()` of the digits (`pyvalue::int_from_str`:
+  `٣٠d` is 30 days), and past 4,300 digits (leading zeros count) it
+  raises CPython's own ValueError text, which `parse_since` does not
+  catch. Zero is the "must be positive" ValueError (`\d+` has no sign);
+  `timedelta` overflows from 10**9 days (`86400000000000s`,
+  `1000000000d`), turned into the "out of range" text. Every message
+  spells the spec with `repr` (`pyvalue::repr_str`).
+- `parse_timestamp_utc` strips, turns one final `Z` or `z` into
+  `+00:00`, reads `DateTime::from_isoformat` (CPython 3.13's reader),
+  refuses a naive value with the reference's text (which writes the
+  stripped spec unquoted before `Z`), and turns `astimezone`'s
+  OverflowError outside the calendar into the "lies outside the
+  calendar" text.
+- `parse_window_bound` takes `now` as an argument (the reference's
+  `datetime.now(timezone.utc)` is the caller's). A stripped `""` or
+  `"all"` is None. A token is `parse_since` of the stripped text, so its
+  errors name `--since` under `--until` too, and it is refused when it
+  is longer than `now - _EARLIEST_START` as instants, exact to the
+  microsecond (a span equal to it is kept). The shape test reads the raw
+  spec: a `str.isdigit` character (`unicode::is_digit`) and a `-`; the
+  compact `20261001T000000Z`, which `fromisoformat` reads, is refused
+  there for want of a `-`. An absolute bound later than `now` as an
+  instant is refused when the flag is the literal `--since`; under any
+  other flag it is kept. A naive `now` raises TypeError where the
+  reference subtracts it (a token) or compares it (an absolute
+  `--since`), and is used as given elsewhere.
+- `resolve_window` is `now` minus a span (`DateTime::minus_micros`, the
+  offset kept) and an absolute bound as it is; OverflowError ("date
+  value out of range") outside the calendar. A span past `i64`
+  microseconds is refused before the subtraction: no `timedelta` holds
+  one, and it leaves the calendar from any `now`.
+- `_show_in_window` reads `show.get("ts")` (AttributeError with
+  CPython's text for a value that is not a dict), `parse_event_ts` of a
+  `str` only, and keeps a row without a readable stamp only in an
+  unbounded window; `stamp >= start` and `stamp < end` compare instants,
+  in the reference's order, so a naive `end` raises only when the start
+  test passed.
+- `_canonical_top_hit_id` and `_silent_miss_from_event` read the event
+  as `health_model` does (the last value of a `str` key). The session is
+  `ev.get("session_id") or ev.get("session")` with Python truthiness
+  (`events::truthy`: an empty `str`, 0, -0.0, False, an empty list,
+  tuple or dict and None fall through). The legacy `top_hit_ids` is read
+  when `top_hits` is not a list or is an empty one, never when its first
+  entry is not a dict. `recent_retrieval_count` is an `int` that is not
+  a `bool`, else 0.
+- Unit 1 adds no regular expression to the inventory; `_SINCE_PATTERN`
+  was there.
+
+Fixtures and tests: `tests/contract/gen_eval_model.py` writes
+`eval_model.jsonl` (437 rows and a sweep, 84 KB): `RateCI` over 25
+count pairs (zero and negative denominators, torn reads, past 2**53, the
+ends of `i64`), the interval over 8 pairs at 10 values of `z` (NaN, both
+infinities, both zeros, a negative `z`, the extremes) and at one `z`
+whose square is a subnormal (where `z * z / (2.0 * n)` and
+`z * z / 2.0 / n` differ), 10 cold rows
+(surrogates, sums past `i64`, negative counts), 57 `parse_since` specs
+(every unit, zero, leading zeros, whitespace from `str.isspace`, Arabic,
+Devanagari and fullwidth digits, a superscript, the overflow edges in
+every unit, 4,300 digits), 76 window bounds over `now` at 2026, with
+offsets, naive, one microsecond either side of a second, and at years 1
+and 9999 (the year-1 edge in seconds and days, offsets of hours,
+naive, outside the calendar at both ends, later than now under each
+flag, and a spec padded with spaces for each message that spells the
+stripped spec), 12 resolutions, 100 `_show_in_window` cases over stamp shapes at
+each bound, and 69 events through both readers. The sweep is 20,000
+drawn `(k, n)` pairs through `RateCI.from_counts` by the SHA-256 of their
+bits. `eval_model_python.jsonl` (`PYTHON_GATED`, 53 rows, 9 KB) holds
+timestamps at `fromisoformat`'s edges (offsets of seconds and
+microseconds, reduced and compact forms, an hour of 24, a lowercase `z`
+inside `parse_event_ts`) and the text of `int()`'s digit limit,
+CPython's own message. 3.11.15 and 3.12.13 write it byte for byte as
+3.13.13 does; 3.14.10 differs on 7 rows: its `fromisoformat` keeps an
+offset's microseconds, which 3.13.13 drops
+(`2026-10-01T00:00:00-00:00:00.000001` is 00:00 UTC under 3.13.13 and
+00:00:00.000001 under 3.14; `0001-01-01T00:00:00+00:00:00.000001` leaves
+the calendar only under 3.14), and it reads an hour of 24
+(`2026-10-01T24:00:00Z`, refused by 3.13.13, is the next midnight).
+CI's 3.13.18 reads `fromisoformat` otherwise than 3.13.13 too
+(`PYTHON_VERSION` in `generate.py`). `golden_eval_model.rs` checks every row of both, the
+header's constants and the sweep; `eval_model_kills.rs` holds the cases
+a plausible wrong port fails (`f64` division of counts past 2**53 for
+the rate and for `p`, `z * z / n` reordered, a clamp for Python's
+`max` and `min`, the rate not clamped on a torn read, `\d` or `int()`
+read as ASCII, the digit limit turned into the `--since` text, the
+year-1 edge off by a microsecond, a later `--until` refused, a
+wall-clock comparison of offsets, `or` read as is-None for the session,
+the legacy ids not read for an empty `top_hits`, a bool counted);
+`eval_model_robustness.rs` takes counts at both ends of `i64`, `z` at
+every extreme, a megabyte of digits (with a unit, without one, and with
+a `-`) and of whitespace with growth claims through `tests/timing`,
+every numeric code point before a unit, `now` at years 1 and 9999 with
+offsets up to a day, and events 100,000 deep and 200,000 keys wide.
+
+Known costs, measured in release against CPython 3.13.13 on one machine
+(two runs each); both come from shared parts, not from this unit:
+
+- A megabyte of ASCII digits and a unit (`'1' * 10**6 + 'd'`):
+  `parse_window_bound` takes 30 to 35 ms where the reference takes
+  2.6 ms (11 to 13 times), `parse_since` 13.7 to 16.3 ms against 1.5 ms
+  (9 to 11 times), and `'0' * 10**6 + 'd'` as a bound 28.7 to 35.1 ms
+  against 2.6 to 4.8 ms. The time is the engine's `\d+` over the run
+  (`pyre`), matched twice as the reference matches it (once in
+  `parse_window_bound`, again in `parse_since`); it grows linearly
+  (`eval_model_robustness.rs` holds the claim). Every other input
+  measured is under 5 times the reference (a megabyte of Arabic digits
+  1.7 times; a megabyte of ideographic spaces around `30d` is faster
+  than the reference).
+- `silent_miss_from_event` of a dict of 10**6 keys takes 10.9 ms
+  against 0.017 ms (about 640 times): `PyValue::Dict` is a list of pairs
+  read from the end for each key, the crate-wide representation, and
+  building such an input is linear already.
+
+Left for later: units eval_model-1b, eval_model-2 and eval_model-3 as
+mapped above.
 
 ## The ranker
 

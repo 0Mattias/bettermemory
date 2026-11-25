@@ -33,6 +33,10 @@
 //!   per-actor report types with their `to_dict`; the actor slices, the
 //!   verification, commit-drift and cross-repo debt rollups, the
 //!   cold-endorsement predicate and bucket, and the silent-miss types;
+//! - [`eval_model`]: the eval family's model (`eval_model.py`), its first
+//!   unit: the defaults, `RateCI` with the Wilson interval, the two row
+//!   types, the `--since` and `--until` parsing and the window, and the
+//!   silent-miss readers of one event;
 //! - [`health_roots`]: `health_roots.py`'s estate progress cursor;
 //! - [`float_repr`]: Python's `float.__repr__`;
 //! - [`datetime`]: the datetime spellings and readings;
@@ -452,6 +456,7 @@ pub mod declare;
 pub mod difflib;
 pub mod durability;
 pub mod entry;
+pub mod eval_model;
 pub mod event_hook;
 pub mod event_recorder;
 pub mod event_redact;
