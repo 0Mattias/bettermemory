@@ -11,10 +11,11 @@ use crate::unicode;
 /// Why a text does not lex.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LexError {
-    /// A name past ASCII whose NFKC is `True`, `False`, `None` or `set`:
-    /// whether it is an identifier needs the XID tables (lane pyident).
+    /// No longer answered: a name past ASCII is read with the XID tables
+    /// (unit claims-6). Kept until unit 5d, since callers match on it.
     NeedsIdentTable,
-    /// A `\N{...}` escape in a str literal: the name table is not ported.
+    /// No longer answered: `\N{...}` is read with `unicode::names` (unit
+    /// claims-6). Kept until unit 5d, since callers match on it.
     NeedsNameTable,
     /// What CPython raises, by a short kind.
     Syntax(&'static str),
@@ -318,17 +319,10 @@ impl Lexer<'_> {
             self.i += 1;
         }
         let run = &self.s[start..self.i];
-        if run.iter().any(|&c| c >= 0x80) {
-            let mut norm = Vec::new();
-            unicode::nfkc_into(run, &mut norm);
-            let special = ["True", "False", "None", "set"]
-                .iter()
-                .any(|w| norm.iter().copied().eq(w.bytes().map(u32::from)));
-            return Err(if special {
-                LexError::NeedsIdentTable
-            } else {
-                LexError::Syntax("name past ASCII")
-            });
+        // `verify_identifier`: `_PyUnicode_ScanIdentifier` over the raw
+        // run. The token keeps the raw text; the parser reads its NFKC.
+        if run.iter().any(|&c| c >= 0x80) && !unicode::xid::is_identifier(run) {
+            return err("invalid character");
         }
         self.push(Tok::Name, start);
         Ok(false)
@@ -761,11 +755,20 @@ pub(super) fn decode_str(body: &[u32]) -> Result<PyStr, LexError> {
             0x75 => 4,
             0x55 => 8,
             0x4E => {
-                let close = body[i..].iter().position(|&c| c == 0x7D);
-                if body.get(i + 1) == Some(&0x7B) && close.is_some_and(|k| k > 2) {
-                    return Err(LexError::NeedsNameTable);
-                }
-                return err("malformed \\N escape");
+                // `\N{name}`: the name runs to the next `}` and is read by
+                // `getcode`; an empty, unclosed or unknown name raises.
+                let name = body.get(i + 2..).unwrap_or_default();
+                let found = (body.get(i + 1) == Some(&0x7B))
+                    .then(|| name.iter().position(|&c| c == 0x7D))
+                    .flatten()
+                    .filter(|&k| k > 0)
+                    .and_then(|k| Some((k, unicode::names::lookup(&name[..k])?)));
+                let Some((k, cp)) = found else {
+                    return err("malformed \\N escape");
+                };
+                out.push(cp);
+                i += 3 + k;
+                continue;
             }
             _ => {
                 out.push(BS);

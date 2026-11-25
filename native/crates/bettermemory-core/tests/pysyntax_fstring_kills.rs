@@ -90,27 +90,23 @@ fn a_named_escape_is_read_only_when_not_raw() {
         spans("rf'\\N{x}'\n"),
         "FSTRING_START:0:3 FSTRING_MIDDLE:3:5 OP:5:6 NAME:6:7 OP:7:8 FSTRING_END:8:9 NEWLINE ENDMARKER"
     );
-    assert_eq!(
-        module_tokens(&cps("f'\\N{x}'\n")),
-        Err(ModuleError::NeedsNameTable)
-    );
+    assert!(refused("f'\\N{x}'\n"));
+    assert!(module_tokens(&cps("f'\\N{EM DASH}'\n")).is_ok());
     // The escape's `}` ends the part; a second `}` is single.
     assert!(refused("f'\\N{a}b}'\n"));
 }
 
 #[test]
 fn a_named_escape_in_a_plain_string_declines_only_when_nothing_refuses() {
-    // CPython's tokenizer refuses each of these after the string; the
-    // string's `\N{...}` alone would need the name table.
+    // CPython's tokenizer refuses each of these after the string, and
+    // `DASH` names no character.
     assert!(refused(
         "fr'''{ '{'!s'\\777\\N{DASH}''' # c\ny = (1,\n 2)\n"
     ));
     assert!(refused("f'{\"\\N{DASH}\"}' )\n"));
     assert!(refused("'\\N{DASH}' (\n"));
-    assert_eq!(
-        module_tokens(&cps("'\\N{DASH}'\n")),
-        Err(ModuleError::NeedsNameTable)
-    );
+    assert!(refused("'\\N{DASH}'\n"));
+    assert!(module_tokens(&cps("'\\N{EM DASH}'\n")).is_ok());
 }
 
 #[test]

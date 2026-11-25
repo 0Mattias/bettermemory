@@ -1,8 +1,8 @@
 //! Every case of `pysyntax_module.jsonl` (gated on the Python release)
 //! against `pysyntax::module_lex`: a source the tokenizer of 3.13.13
 //! refuses is refused, any other is read into the tokens `tokenize`
-//! reads. Only a source holding a `\N{...}` escape may be declined (one
-//! row). The spelling is the generator's
+//! reads. No source is declined: `\N{...}` is read with the name table.
+//! The spelling is the generator's
 //! (`tests/contract/gen_pysyntax_module.py`).
 
 mod common;
@@ -204,7 +204,7 @@ fn pysyntax_module_every_case() {
     }
     if ledger.strict() {
         assert!(checked > 200, "checked {checked}, declined {declined}");
-        assert!(declined <= 1, "declined {declined}");
+        assert_eq!(declined, 0, "declined {declined}");
     }
     ledger.finish(rows.len());
 }

@@ -1,5 +1,6 @@
-//! The committed `src/unicode/tables.rs` is what the generator writes:
-//! runs `native/tools/gen_unicode_tables.py --check` under the reference
+//! The committed `src/unicode/tables.rs`, `src/unicode/xid_tables.rs` and
+//! `src/unicode/name_tables.rs` are what the generator writes: runs
+//! `native/tools/gen_unicode_tables.py --check` under the reference
 //! Python (Unicode 15.1.0). The interpreter is `BM_REFERENCE_PYTHON`, else
 //! the repository's `.venv/bin/python`.
 //!
@@ -57,10 +58,14 @@ fn regenerating_the_unicode_tables_gives_the_same_bytes() {
         eprintln!("NOT COMPARABLE HERE regenerating_the_unicode_tables: {why}");
         parity::record(
             "regenerating_the_unicode_tables_gives_the_same_bytes",
-            "src/unicode/tables.rs, src/unicode/xid_tables.rs",
+            "src/unicode/tables.rs, src/unicode/xid_tables.rs, src/unicode/name_tables.rs",
             "ii",
             0,
-            &["tables.rs".to_owned(), "xid_tables.rs".to_owned()],
+            &[
+                "tables.rs".to_owned(),
+                "xid_tables.rs".to_owned(),
+                "name_tables.rs".to_owned(),
+            ],
             &[why],
         );
         return;
@@ -74,17 +79,21 @@ fn regenerating_the_unicode_tables_gives_the_same_bytes() {
         );
         parity::record(
             "regenerating_the_unicode_tables_gives_the_same_bytes",
-            "src/unicode/tables.rs, src/unicode/xid_tables.rs",
+            "src/unicode/tables.rs, src/unicode/xid_tables.rs, src/unicode/name_tables.rs",
             "ii",
             0,
-            &["tables.rs".to_owned(), "xid_tables.rs".to_owned()],
+            &[
+                "tables.rs".to_owned(),
+                "xid_tables.rs".to_owned(),
+                "name_tables.rs".to_owned(),
+            ],
             &[format!("{} is not the reference Python", python.display())],
         );
         return;
     }
     parity::record(
         "regenerating_the_unicode_tables_gives_the_same_bytes",
-        "src/unicode/tables.rs, src/unicode/xid_tables.rs",
+        "src/unicode/tables.rs, src/unicode/xid_tables.rs, src/unicode/name_tables.rs",
         "ii",
         usize::from(output.status.success()),
         &[],

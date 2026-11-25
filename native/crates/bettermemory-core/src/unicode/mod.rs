@@ -9,8 +9,12 @@
 
 #[rustfmt::skip]
 #[allow(clippy::all)]
+mod name_tables;
+#[rustfmt::skip]
+#[allow(clippy::all)]
 mod tables;
 
+pub mod names;
 pub mod xid;
 
 pub use tables::UNIDATA_VERSION;

@@ -130,10 +130,8 @@ fn escapes() {
     fails("'\\x4'");
     fails("'\\U00110000'");
     fails("'\\N'");
-    assert_eq!(
-        literal_tokens(&cps("'\\N{EM DASH}'")),
-        Err(LexError::NeedsNameTable)
-    );
+    assert_eq!(one("'\\N{EM DASH}'"), Tok::Str(vec![0x2014]));
+    fails("'\\N{NO SUCH NAME}'");
     assert_eq!(one("r'\\N{EM DASH}'"), Tok::Str(cps("\\N{EM DASH}")));
     assert_eq!(one("b'\\u1234'"), Tok::Bytes(b"\\u1234".to_vec()));
     fails("b'\u{e9}'");
@@ -142,12 +140,12 @@ fn escapes() {
 
 #[test]
 fn names_past_ascii() {
-    assert_eq!(
-        literal_tokens(&cps("\u{ff53}\u{ff45}\u{ff54}()")),
-        Err(LexError::NeedsIdentTable)
-    );
-    fails("\u{e9}");
+    // An identifier past ASCII is a NAME with its raw text; one that is
+    // not an identifier is refused, whatever its NFKC reads.
+    assert_eq!(lexes("\u{ff53}\u{ff45}\u{ff54}()"), 3);
+    assert_eq!(one("\u{e9}"), Tok::Name);
     fails("\u{20ac}");
+    fails("\u{24e2}\u{24d4}\u{24e3}()");
 }
 
 #[test]

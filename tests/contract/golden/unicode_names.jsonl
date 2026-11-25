@@ -1,0 +1,1268 @@
+{"fixture":"unicode_names","rows":1267,"ruled":{"count":116865,"jamo":[["G","GG","N","D","DD","R","M","B","BB","S","SS","","J","JJ","C","K","T","P","H"],["A","AE","YA","YAE","EO","E","YEO","YE","O","WA","WAE","OE","YO","U","WEO","WE","WI","YU","EU","YI","I"],["","G","GG","GS","N","NJ","NH","D","L","LG","LM","LB","LS","LT","LP","LH","M","B","BS","S","SS","NG","J","C","K","T","P","H"]],"ranges":[["CJK UNIFIED IDEOGRAPH-",13312,19903],["CJK UNIFIED IDEOGRAPH-",19968,40959],["CJK COMPATIBILITY IDEOGRAPH-",63744,64109],["CJK COMPATIBILITY IDEOGRAPH-",64112,64217],["TANGUT IDEOGRAPH-",94208,100343],["KHITAN SMALL SCRIPT CHARACTER-",101120,101589],["TANGUT IDEOGRAPH-",101632,101640],["NUSHU CHARACTER-",110960,111355],["CJK UNIFIED IDEOGRAPH-",131072,173791],["CJK UNIFIED IDEOGRAPH-",173824,177977],["CJK UNIFIED IDEOGRAPH-",177984,178205],["CJK UNIFIED IDEOGRAPH-",178208,183969],["CJK UNIFIED IDEOGRAPH-",183984,191456],["CJK UNIFIED IDEOGRAPH-",191472,192093],["CJK COMPATIBILITY IDEOGRAPH-",194560,195101],["CJK UNIFIED IDEOGRAPH-",196608,201546],["CJK UNIFIED IDEOGRAPH-",201552,205743]],"rule":"Hangul syllables by short names, then each range by %04X, in code point order","sha256":"64a4be81dfb88e44895c0f45ccc31899995a9f31f3cbce6bc730e7757bbb0394"},"table":{"count":33421,"rule":"every name and alias not made by a rule, sorted by name","sha256":"28ce5a522288b7a8e3dc92682e704941778616b666e9ea7a546ebd277127fdb9"},"unidata_version":"15.1.0"}
+{"t":"'\\N{EM DASH}'","v":{"str":[8212]}}
+{"t":"'\\N{em dash}'","v":{"str":[8212]}}
+{"t":"'\\N{Em Dash}'","v":{"str":[8212]}}
+{"t":"'\\N{eM dAsH}'","v":{"str":[8212]}}
+{"t":"'\\N{LATIN SMALL LETTER A}'","v":{"str":[97]}}
+{"t":"'\\N{latin small letter a}'","v":{"str":[97]}}
+{"t":"'\\N{LATIN CAPITAL LETTER A}'","v":{"str":[65]}}
+{"t":"'\\N{LATIN SMALL LETTER SHARP S}'","v":{"str":[223]}}
+{"t":"'\\N{latin small letter sharp s}'","v":{"str":[223]}}
+{"t":"'\\N{GREEK SMALL LETTER FINAL SIGMA}'","v":{"str":[962]}}
+{"t":"'\\N{BULLET}'","v":{"str":[8226]}}
+{"t":"'\\N{bullet}'","v":{"str":[8226]}}
+{"t":"'\\N{SNOWMAN}'","v":{"str":[9731]}}
+{"t":"'\\N{DIGIT ZERO}'","v":{"str":[48]}}
+{"t":"'\\N{HYPHEN-MINUS}'","v":{"str":[45]}}
+{"t":"'\\N{hyphen-minus}'","v":{"str":[45]}}
+{"t":"'\\N{HYPHEN MINUS}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HYPHENMINUS}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{SPACE}'","v":{"str":[32]}}
+{"t":"'\\N{NO-BREAK SPACE}'","v":{"str":[160]}}
+{"t":"'\\N{<control>}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT COMPONENT-001}'","v":{"str":[100352]}}
+{"t":"'\\N{tangut component-001}'","v":{"str":[100352]}}
+{"t":"'\\N{TANGUT COMPONENT-1}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT COMPONENT-0001}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-4E00}'","v":{"str":[19968]}}
+{"t":"'\\N{cjk unified ideograph-4e00}'","v":{"str":[19968]}}
+{"t":"'\\N{Cjk Unified Ideograph-4E00}'","v":{"str":[19968]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-4e00}'","v":{"str":[19968]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-4E0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-04E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-004E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-0004E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-4E00 }'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH- 4E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-+4E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-0x4E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-4G00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH 4E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2a6df}'","v":{"str":[173791]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-02A6DF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-FFFFFFFF4E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-FFFFFFF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-FFFFFFFF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-FFFFFFFFF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-100004E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-f900}'","v":{"str":[63744]}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-0F900}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-17000}'","v":{"str":[94208]}}
+{"t":"'\\N{tangut ideograph-17000}'","v":{"str":[94208]}}
+{"t":"'\\N{TANGUT IDEOGRAPH-017000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-187f7}'","v":{"str":[100343]}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-18b00}'","v":{"str":[101120]}}
+{"t":"'\\N{NUSHU CHARACTER-1b170}'","v":{"str":[110960]}}
+{"t":"'\\N{EGYPTIAN HIEROGLYPH-13460}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HANGUL SYLLABLE GA}'","v":{"str":[44032]}}
+{"t":"'\\N{hangul syllable ga}'","v":{"str":[44032]}}
+{"t":"'\\N{Hangul Syllable Ga}'","v":{"str":[44032]}}
+{"t":"'\\N{HANGUL SYLLABLE ga}'","v":{"str":[44032]}}
+{"t":"'\\N{HANGUL SYLLABLE GAG}'","v":{"str":[44033]}}
+{"t":"'\\N{HANGUL SYLLABLE GAGG}'","v":{"str":[44034]}}
+{"t":"'\\N{HANGUL SYLLABLE GAGS}'","v":{"str":[44035]}}
+{"t":"'\\N{HANGUL SYLLABLE GGA}'","v":{"str":[44620]}}
+{"t":"'\\N{HANGUL SYLLABLE GGGA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HANGUL SYLLABLE A}'","v":{"str":[50500]}}
+{"t":"'\\N{HANGUL SYLLABLE YAE}'","v":{"str":[50584]}}
+{"t":"'\\N{HANGUL SYLLABLE WAELH}'","v":{"str":[50795]}}
+{"t":"'\\N{HANGUL SYLLABLE SSYEOLH}'","v":{"str":[50095]}}
+{"t":"'\\N{HANGUL SYLLABLE HIH}'","v":{"str":[55203]}}
+{"t":"'\\N{HANGUL SYLLABLE HIHH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HANGUL SYLLABLE G}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HANGUL SYLLABLE GAX}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HANGUL SYLLABLE GA }'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HANGUL SYLLABLE }'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HANGUL SYLLABLE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HANGUL SYLLABLEGA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HANGUL  SYLLABLE GA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HANGUL SYLLABLE \u00c0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KEYCAP NUMBER SIGN}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NULL}'","v":{"str":[0]}}
+{"t":"'\\N{null}'","v":{"str":[0]}}
+{"t":"'\\N{NUL}'","v":{"str":[0]}}
+{"t":"'\\N{LINE FEED}'","v":{"str":[10]}}
+{"t":"'\\N{LF}'","v":{"str":[10]}}
+{"t":"'\\N{lf}'","v":{"str":[10]}}
+{"t":"'\\N{CHARACTER TABULATION}'","v":{"str":[9]}}
+{"t":"'\\N{DELETE}'","v":{"str":[127]}}
+{"t":"'\\N{BYTE ORDER MARK}'","v":{"str":[65279]}}
+{"t":"'\\N{BOM}'","v":{"str":[65279]}}
+{"t":"'\\N{ZWNBSP}'","v":{"str":[65279]}}
+{"t":"'\\N{ZERO WIDTH NO-BREAK SPACE}'","v":{"str":[65279]}}
+{"t":"'\\N{LATIN CAPITAL LETTER GHA}'","v":{"str":[418]}}
+{"t":"'\\N{LATIN CAPITAL LETTER OI}'","v":{"str":[418]}}
+{"t":"'\\N{VS256}'","v":{"str":[917999]}}
+{"t":"'\\N{vs256}'","v":{"str":[917999]}}
+{"t":"'\\N{VARIATION SELECTOR-256}'","v":{"str":[917999]}}
+{"t":"'\\N{AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER ALATIN SMALL LETTER ALATIN SMALL LETTER ALATIN SMALL LETTER ALATIN SMALL LETTER A}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER A\u00e9}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EM D\u0141SH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{BULLE\u0154}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{\u00e9}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EM\tDASH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EM \\\nDASH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EM DASH\\N{BULLET}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N '","v":{"raised":"SyntaxError"}}
+{"t":"'\\Nx'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EM DASH'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N EM DASH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EM DASH}}'","v":{"str":[8212,125]}}
+{"t":"'\\N{{EM DASH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{ EM DASH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EM DASH }'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EM  DASH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EMDASH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EM_DASH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EM-DASH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EM DASH}\\N{X}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{X}\\N{EM DASH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{X}\\x4'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{EM DASH}\\x4'","v":{"raised":"SyntaxError"}}
+{"t":"'\\x4\\N{EM DASH}'","v":{"raised":"SyntaxError"}}
+{"t":"'a\\N{EM DASH}b\\N{BULLET}c'","v":{"str":[97,8212,98,8226,99]}}
+{"t":"'\\N{EM DASH}\\N{BULLET}'","v":{"str":[8212,8226]}}
+{"t":"'\\N{EM DASH}' '\\N{BULLET}'","v":{"str":[8212,8226]}}
+{"t":"'\\N{EM DASH}' + '\\N{BULLET}'","v":{"raised":"ValueError"}}
+{"t_cps":[39,92,92,78,123,69,77,32,68,65,83,72,125,39],"v":{"str":[92,78,123,69,77,32,68,65,83,72,125]}}
+{"t_cps":[39,92,92,92,78,123,69,77,32,68,65,83,72,125,39],"v":{"str":[92,8212]}}
+{"t":"r'\\N{EM DASH}'","v":{"str":[92,78,123,69,77,32,68,65,83,72,125]}}
+{"t":"R'\\N{X}'","v":{"str":[92,78,123,88,125]}}
+{"t":"u'\\N{EM DASH}'","v":{"str":[8212]}}
+{"t":"U'\\N{EM DASH}'","v":{"str":[8212]}}
+{"t":"b'\\N{EM DASH}'","v":{"repr_cps":[98,39,92,92,78,123,69,77,32,68,65,83,72,125,39]}}
+{"t":"rb'\\N{X}'","v":{"repr_cps":[98,39,92,92,78,123,88,125,39]}}
+{"t":"f'\\N{EM DASH}'","v":{"raised":"ValueError"}}
+{"t":"'''\\N{EM DASH}'''","v":{"str":[8212]}}
+{"t":"\"\"\"\\N{EM'DASH}\"\"\"","v":{"raised":"SyntaxError"}}
+{"t":"'''\\N{EM\nDASH}'''","v":{"raised":"SyntaxError"}}
+{"t":"('\\N{EM DASH}',)","v":{"repr":"('\u2014',)"}}
+{"t":"['\\N{EM DASH}', '\\N{X}']","v":{"raised":"SyntaxError"}}
+{"t":"{'\\N{EM DASH}': '\\N{BULLET}'}","v":{"repr":"{'\u2014': '\u2022'}"}}
+{"t":"'\\N{LATIN SMALL LETTER A}' '\\N{latin capital letter a}'","v":{"str":[97,65]}}
+{"t":"\ud835\udc2c\ud835\udc1e\ud835\udc2d()","v":{"repr":"set()"}}
+{"t":"\uff53\uff45\uff54()","v":{"repr":"set()"}}
+{"t":"\uff53\uff45\uff54 ()","v":{"repr":"set()"}}
+{"t":"(\uff53\uff45\uff54)()","v":{"repr":"set()"}}
+{"t":"(\uff53\uff45\uff54())","v":{"repr":"set()"}}
+{"t":"[\uff53\uff45\uff54()]","v":{"repr":"[set()]"}}
+{"t":"{1: \uff53\uff45\uff54()}","v":{"repr":"{1: set()}"}}
+{"t":"{\uff53\uff45\uff54()}","v":{"raised":"TypeError"}}
+{"t":"\uff53\uff45\uff54(1)","v":{"raised":"ValueError"}}
+{"t":"\uff53\uff45\uff54","v":{"raised":"ValueError"}}
+{"t":"s\uff45t()","v":{"repr":"set()"}}
+{"t":"\u017fet()","v":{"repr":"set()"}}
+{"t":"\u02e2\u1d49\u1d57()","v":{"repr":"set()"}}
+{"t":"\u24e2\u24d4\u24e3()","v":{"raised":"SyntaxError"}}
+{"t":"set\u00b7()","v":{"raised":"ValueError"}}
+{"t":"set\u0301()","v":{"raised":"ValueError"}}
+{"t":"\uff33\uff25\uff34()","v":{"raised":"ValueError"}}
+{"t":"\ud835\udc13\ud835\udc2b\ud835\udc2e\ud835\udc1e","v":{"raised":"ValueError"}}
+{"t":"\uff34\uff52\uff55\uff45","v":{"raised":"ValueError"}}
+{"t":"\uff26\uff41\uff4c\uff53\uff45","v":{"raised":"ValueError"}}
+{"t":"\uff2e\uff4f\uff4e\uff45","v":{"raised":"ValueError"}}
+{"t":"[\uff2e\uff4f\uff4e\uff45]","v":{"raised":"ValueError"}}
+{"t":"\u00e9","v":{"raised":"ValueError"}}
+{"t":"\u00e9()","v":{"raised":"ValueError"}}
+{"t":"\u20ac","v":{"raised":"SyntaxError"}}
+{"t":"\ud835\udc22\ud835\udc1f","v":{"raised":"ValueError"}}
+{"t":"\ufb01","v":{"raised":"ValueError"}}
+{"t":"\u2118","v":{"raised":"ValueError"}}
+{"t":"\u309b","v":{"raised":"SyntaxError"}}
+{"t":"_\uff53\uff45\uff54()","v":{"raised":"ValueError"}}
+{"t":"1\u00e9","v":{"raised":"SyntaxError"}}
+{"t":"\uff53\uff45\uff54()\u00e9","v":{"raised":"SyntaxError"}}
+{"t":"\u00e9 + '\\N{EM DASH}'","v":{"raised":"ValueError"}}
+{"t":"b\u00e9'x'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-33FF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-3400}'","v":{"str":[13312]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-4DBF}'","v":{"str":[19903]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-4DC0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk unified ideograph-3400}'","v":{"str":[13312]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-4DFF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-4E00}'","v":{"str":[19968]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-9FFF}'","v":{"str":[40959]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-A000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk unified ideograph-4e00}'","v":{"str":[19968]}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-F8FF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-F900}'","v":{"str":[63744]}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-FA6D}'","v":{"str":[64109]}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-FA6E}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk compatibility ideograph-f900}'","v":{"str":[63744]}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-FA6F}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-FA70}'","v":{"str":[64112]}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-FAD9}'","v":{"str":[64217]}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-FADA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk compatibility ideograph-fa70}'","v":{"str":[64112]}}
+{"t":"'\\N{TANGUT IDEOGRAPH-16FFF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-17000}'","v":{"str":[94208]}}
+{"t":"'\\N{TANGUT IDEOGRAPH-187F7}'","v":{"str":[100343]}}
+{"t":"'\\N{TANGUT IDEOGRAPH-187F8}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{tangut ideograph-17000}'","v":{"str":[94208]}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-18AFF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-18B00}'","v":{"str":[101120]}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-18CD5}'","v":{"str":[101589]}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-18CD6}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{khitan small script character-18b00}'","v":{"str":[101120]}}
+{"t":"'\\N{TANGUT IDEOGRAPH-18CFF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-18D00}'","v":{"str":[101632]}}
+{"t":"'\\N{TANGUT IDEOGRAPH-18D08}'","v":{"str":[101640]}}
+{"t":"'\\N{TANGUT IDEOGRAPH-18D09}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{tangut ideograph-18d00}'","v":{"str":[101632]}}
+{"t":"'\\N{NUSHU CHARACTER-1B16F}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-1B170}'","v":{"str":[110960]}}
+{"t":"'\\N{NUSHU CHARACTER-1B2FB}'","v":{"str":[111355]}}
+{"t":"'\\N{NUSHU CHARACTER-1B2FC}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{nushu character-1b170}'","v":{"str":[110960]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-1FFFF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-20000}'","v":{"str":[131072]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2A6DF}'","v":{"str":[173791]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2A6E0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk unified ideograph-20000}'","v":{"str":[131072]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2A6FF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2A700}'","v":{"str":[173824]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2B739}'","v":{"str":[177977]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2B73A}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk unified ideograph-2a700}'","v":{"str":[173824]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2B73F}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2B740}'","v":{"str":[177984]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2B81D}'","v":{"str":[178205]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2B81E}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk unified ideograph-2b740}'","v":{"str":[177984]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2B81F}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2B820}'","v":{"str":[178208]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2CEA1}'","v":{"str":[183969]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2CEA2}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk unified ideograph-2b820}'","v":{"str":[178208]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2CEAF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2CEB0}'","v":{"str":[183984]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2EBE0}'","v":{"str":[191456]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2EBE1}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk unified ideograph-2ceb0}'","v":{"str":[183984]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2EBEF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2EBF0}'","v":{"str":[191472]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2EE5D}'","v":{"str":[192093]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2EE5E}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk unified ideograph-2ebf0}'","v":{"str":[191472]}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-2F7FF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-2F800}'","v":{"str":[194560]}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-2FA1D}'","v":{"str":[195101]}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-2FA1E}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk compatibility ideograph-2f800}'","v":{"str":[194560]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2FFFF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-30000}'","v":{"str":[196608]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-3134A}'","v":{"str":[201546]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-3134B}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk unified ideograph-30000}'","v":{"str":[196608]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-3134F}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-31350}'","v":{"str":[201552]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-323AF}'","v":{"str":[205743]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-323B0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{cjk unified ideograph-31350}'","v":{"str":[201552]}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-F900}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-FA70}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-17000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-18B00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-18D00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-1B170}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK UNIFIED IDEOGRAPH-2F800}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-3400}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-4E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-17000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-18B00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-18D00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-1B170}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-20000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-2A700}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-2B740}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-2B820}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-2CEB0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-2EBF0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-30000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{CJK COMPATIBILITY IDEOGRAPH-31350}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-3400}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-4E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-F900}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-FA70}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-18B00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-1B170}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-20000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-2A700}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-2B740}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-2B820}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-2CEB0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-2EBF0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-2F800}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-30000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TANGUT IDEOGRAPH-31350}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-3400}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-4E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-F900}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-FA70}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-17000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-18D00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-1B170}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-20000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-2A700}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-2B740}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-2B820}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-2CEB0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-2EBF0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-2F800}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-30000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHITAN SMALL SCRIPT CHARACTER-31350}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-3400}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-4E00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-F900}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-FA70}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-17000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-18B00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-18D00}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-20000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-2A700}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-2B740}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-2B820}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-2CEB0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-2EBF0}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-2F800}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-30000}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NUSHU CHARACTER-31350}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{NULL}'","v":{"str":[0]}}
+{"t":"'\\N{NUL}'","v":{"str":[0]}}
+{"t":"'\\N{START OF HEADING}'","v":{"str":[1]}}
+{"t":"'\\N{SOH}'","v":{"str":[1]}}
+{"t":"'\\N{START OF TEXT}'","v":{"str":[2]}}
+{"t":"'\\N{STX}'","v":{"str":[2]}}
+{"t":"'\\N{END OF TEXT}'","v":{"str":[3]}}
+{"t":"'\\N{ETX}'","v":{"str":[3]}}
+{"t":"'\\N{END OF TRANSMISSION}'","v":{"str":[4]}}
+{"t":"'\\N{EOT}'","v":{"str":[4]}}
+{"t":"'\\N{ENQUIRY}'","v":{"str":[5]}}
+{"t":"'\\N{ENQ}'","v":{"str":[5]}}
+{"t":"'\\N{ACKNOWLEDGE}'","v":{"str":[6]}}
+{"t":"'\\N{ACK}'","v":{"str":[6]}}
+{"t":"'\\N{ALERT}'","v":{"str":[7]}}
+{"t":"'\\N{BEL}'","v":{"str":[7]}}
+{"t":"'\\N{BACKSPACE}'","v":{"str":[8]}}
+{"t":"'\\N{BS}'","v":{"str":[8]}}
+{"t":"'\\N{CHARACTER TABULATION}'","v":{"str":[9]}}
+{"t":"'\\N{HORIZONTAL TABULATION}'","v":{"str":[9]}}
+{"t":"'\\N{HT}'","v":{"str":[9]}}
+{"t":"'\\N{TAB}'","v":{"str":[9]}}
+{"t":"'\\N{LINE FEED}'","v":{"str":[10]}}
+{"t":"'\\N{NEW LINE}'","v":{"str":[10]}}
+{"t":"'\\N{END OF LINE}'","v":{"str":[10]}}
+{"t":"'\\N{LF}'","v":{"str":[10]}}
+{"t":"'\\N{NL}'","v":{"str":[10]}}
+{"t":"'\\N{EOL}'","v":{"str":[10]}}
+{"t":"'\\N{LINE TABULATION}'","v":{"str":[11]}}
+{"t":"'\\N{VERTICAL TABULATION}'","v":{"str":[11]}}
+{"t":"'\\N{VT}'","v":{"str":[11]}}
+{"t":"'\\N{FORM FEED}'","v":{"str":[12]}}
+{"t":"'\\N{FF}'","v":{"str":[12]}}
+{"t":"'\\N{CARRIAGE RETURN}'","v":{"str":[13]}}
+{"t":"'\\N{CR}'","v":{"str":[13]}}
+{"t":"'\\N{SHIFT OUT}'","v":{"str":[14]}}
+{"t":"'\\N{LOCKING-SHIFT ONE}'","v":{"str":[14]}}
+{"t":"'\\N{SO}'","v":{"str":[14]}}
+{"t":"'\\N{SHIFT IN}'","v":{"str":[15]}}
+{"t":"'\\N{LOCKING-SHIFT ZERO}'","v":{"str":[15]}}
+{"t":"'\\N{SI}'","v":{"str":[15]}}
+{"t":"'\\N{DATA LINK ESCAPE}'","v":{"str":[16]}}
+{"t":"'\\N{DLE}'","v":{"str":[16]}}
+{"t":"'\\N{DEVICE CONTROL ONE}'","v":{"str":[17]}}
+{"t":"'\\N{DC1}'","v":{"str":[17]}}
+{"t":"'\\N{DEVICE CONTROL TWO}'","v":{"str":[18]}}
+{"t":"'\\N{DC2}'","v":{"str":[18]}}
+{"t":"'\\N{DEVICE CONTROL THREE}'","v":{"str":[19]}}
+{"t":"'\\N{DC3}'","v":{"str":[19]}}
+{"t":"'\\N{DEVICE CONTROL FOUR}'","v":{"str":[20]}}
+{"t":"'\\N{DC4}'","v":{"str":[20]}}
+{"t":"'\\N{NEGATIVE ACKNOWLEDGE}'","v":{"str":[21]}}
+{"t":"'\\N{NAK}'","v":{"str":[21]}}
+{"t":"'\\N{SYNCHRONOUS IDLE}'","v":{"str":[22]}}
+{"t":"'\\N{SYN}'","v":{"str":[22]}}
+{"t":"'\\N{END OF TRANSMISSION BLOCK}'","v":{"str":[23]}}
+{"t":"'\\N{ETB}'","v":{"str":[23]}}
+{"t":"'\\N{CANCEL}'","v":{"str":[24]}}
+{"t":"'\\N{CAN}'","v":{"str":[24]}}
+{"t":"'\\N{END OF MEDIUM}'","v":{"str":[25]}}
+{"t":"'\\N{EOM}'","v":{"str":[25]}}
+{"t":"'\\N{EM}'","v":{"str":[25]}}
+{"t":"'\\N{SUBSTITUTE}'","v":{"str":[26]}}
+{"t":"'\\N{SUB}'","v":{"str":[26]}}
+{"t":"'\\N{ESCAPE}'","v":{"str":[27]}}
+{"t":"'\\N{ESC}'","v":{"str":[27]}}
+{"t":"'\\N{INFORMATION SEPARATOR FOUR}'","v":{"str":[28]}}
+{"t":"'\\N{FILE SEPARATOR}'","v":{"str":[28]}}
+{"t":"'\\N{FS}'","v":{"str":[28]}}
+{"t":"'\\N{INFORMATION SEPARATOR THREE}'","v":{"str":[29]}}
+{"t":"'\\N{GROUP SEPARATOR}'","v":{"str":[29]}}
+{"t":"'\\N{GS}'","v":{"str":[29]}}
+{"t":"'\\N{INFORMATION SEPARATOR TWO}'","v":{"str":[30]}}
+{"t":"'\\N{RECORD SEPARATOR}'","v":{"str":[30]}}
+{"t":"'\\N{RS}'","v":{"str":[30]}}
+{"t":"'\\N{INFORMATION SEPARATOR ONE}'","v":{"str":[31]}}
+{"t":"'\\N{UNIT SEPARATOR}'","v":{"str":[31]}}
+{"t":"'\\N{US}'","v":{"str":[31]}}
+{"t":"'\\N{SP}'","v":{"str":[32]}}
+{"t":"'\\N{DELETE}'","v":{"str":[127]}}
+{"t":"'\\N{DEL}'","v":{"str":[127]}}
+{"t":"'\\N{PADDING CHARACTER}'","v":{"str":[128]}}
+{"t":"'\\N{PAD}'","v":{"str":[128]}}
+{"t":"'\\N{HIGH OCTET PRESET}'","v":{"str":[129]}}
+{"t":"'\\N{HOP}'","v":{"str":[129]}}
+{"t":"'\\N{BREAK PERMITTED HERE}'","v":{"str":[130]}}
+{"t":"'\\N{BPH}'","v":{"str":[130]}}
+{"t":"'\\N{NO BREAK HERE}'","v":{"str":[131]}}
+{"t":"'\\N{NBH}'","v":{"str":[131]}}
+{"t":"'\\N{INDEX}'","v":{"str":[132]}}
+{"t":"'\\N{IND}'","v":{"str":[132]}}
+{"t":"'\\N{NEXT LINE}'","v":{"str":[133]}}
+{"t":"'\\N{NEL}'","v":{"str":[133]}}
+{"t":"'\\N{START OF SELECTED AREA}'","v":{"str":[134]}}
+{"t":"'\\N{SSA}'","v":{"str":[134]}}
+{"t":"'\\N{END OF SELECTED AREA}'","v":{"str":[135]}}
+{"t":"'\\N{ESA}'","v":{"str":[135]}}
+{"t":"'\\N{CHARACTER TABULATION SET}'","v":{"str":[136]}}
+{"t":"'\\N{HORIZONTAL TABULATION SET}'","v":{"str":[136]}}
+{"t":"'\\N{HTS}'","v":{"str":[136]}}
+{"t":"'\\N{CHARACTER TABULATION WITH JUSTIFICATION}'","v":{"str":[137]}}
+{"t":"'\\N{HORIZONTAL TABULATION WITH JUSTIFICATION}'","v":{"str":[137]}}
+{"t":"'\\N{HTJ}'","v":{"str":[137]}}
+{"t":"'\\N{LINE TABULATION SET}'","v":{"str":[138]}}
+{"t":"'\\N{VERTICAL TABULATION SET}'","v":{"str":[138]}}
+{"t":"'\\N{VTS}'","v":{"str":[138]}}
+{"t":"'\\N{PARTIAL LINE FORWARD}'","v":{"str":[139]}}
+{"t":"'\\N{PARTIAL LINE DOWN}'","v":{"str":[139]}}
+{"t":"'\\N{PLD}'","v":{"str":[139]}}
+{"t":"'\\N{PARTIAL LINE BACKWARD}'","v":{"str":[140]}}
+{"t":"'\\N{PARTIAL LINE UP}'","v":{"str":[140]}}
+{"t":"'\\N{PLU}'","v":{"str":[140]}}
+{"t":"'\\N{REVERSE LINE FEED}'","v":{"str":[141]}}
+{"t":"'\\N{REVERSE INDEX}'","v":{"str":[141]}}
+{"t":"'\\N{RI}'","v":{"str":[141]}}
+{"t":"'\\N{SINGLE SHIFT TWO}'","v":{"str":[142]}}
+{"t":"'\\N{SINGLE-SHIFT-2}'","v":{"str":[142]}}
+{"t":"'\\N{SS2}'","v":{"str":[142]}}
+{"t":"'\\N{SINGLE SHIFT THREE}'","v":{"str":[143]}}
+{"t":"'\\N{SINGLE-SHIFT-3}'","v":{"str":[143]}}
+{"t":"'\\N{SS3}'","v":{"str":[143]}}
+{"t":"'\\N{DEVICE CONTROL STRING}'","v":{"str":[144]}}
+{"t":"'\\N{DCS}'","v":{"str":[144]}}
+{"t":"'\\N{PRIVATE USE ONE}'","v":{"str":[145]}}
+{"t":"'\\N{PRIVATE USE-1}'","v":{"str":[145]}}
+{"t":"'\\N{PU1}'","v":{"str":[145]}}
+{"t":"'\\N{PRIVATE USE TWO}'","v":{"str":[146]}}
+{"t":"'\\N{PRIVATE USE-2}'","v":{"str":[146]}}
+{"t":"'\\N{PU2}'","v":{"str":[146]}}
+{"t":"'\\N{SET TRANSMIT STATE}'","v":{"str":[147]}}
+{"t":"'\\N{STS}'","v":{"str":[147]}}
+{"t":"'\\N{CANCEL CHARACTER}'","v":{"str":[148]}}
+{"t":"'\\N{CCH}'","v":{"str":[148]}}
+{"t":"'\\N{MESSAGE WAITING}'","v":{"str":[149]}}
+{"t":"'\\N{MW}'","v":{"str":[149]}}
+{"t":"'\\N{START OF GUARDED AREA}'","v":{"str":[150]}}
+{"t":"'\\N{START OF PROTECTED AREA}'","v":{"str":[150]}}
+{"t":"'\\N{SPA}'","v":{"str":[150]}}
+{"t":"'\\N{END OF GUARDED AREA}'","v":{"str":[151]}}
+{"t":"'\\N{END OF PROTECTED AREA}'","v":{"str":[151]}}
+{"t":"'\\N{EPA}'","v":{"str":[151]}}
+{"t":"'\\N{START OF STRING}'","v":{"str":[152]}}
+{"t":"'\\N{SOS}'","v":{"str":[152]}}
+{"t":"'\\N{SINGLE GRAPHIC CHARACTER INTRODUCER}'","v":{"str":[153]}}
+{"t":"'\\N{SGC}'","v":{"str":[153]}}
+{"t":"'\\N{SINGLE CHARACTER INTRODUCER}'","v":{"str":[154]}}
+{"t":"'\\N{SCI}'","v":{"str":[154]}}
+{"t":"'\\N{CONTROL SEQUENCE INTRODUCER}'","v":{"str":[155]}}
+{"t":"'\\N{CSI}'","v":{"str":[155]}}
+{"t":"'\\N{STRING TERMINATOR}'","v":{"str":[156]}}
+{"t":"'\\N{ST}'","v":{"str":[156]}}
+{"t":"'\\N{OPERATING SYSTEM COMMAND}'","v":{"str":[157]}}
+{"t":"'\\N{OSC}'","v":{"str":[157]}}
+{"t":"'\\N{PRIVACY MESSAGE}'","v":{"str":[158]}}
+{"t":"'\\N{PM}'","v":{"str":[158]}}
+{"t":"'\\N{APPLICATION PROGRAM COMMAND}'","v":{"str":[159]}}
+{"t":"'\\N{APC}'","v":{"str":[159]}}
+{"t":"'\\N{NBSP}'","v":{"str":[160]}}
+{"t":"'\\N{SHY}'","v":{"str":[173]}}
+{"t":"'\\N{LATIN CAPITAL LETTER GHA}'","v":{"str":[418]}}
+{"t":"'\\N{LATIN SMALL LETTER GHA}'","v":{"str":[419]}}
+{"t":"'\\N{CGJ}'","v":{"str":[847]}}
+{"t":"'\\N{ARABIC SMALL HIGH LIGATURE ALEF WITH YEH BARREE}'","v":{"str":[1558]}}
+{"t":"'\\N{ALM}'","v":{"str":[1564]}}
+{"t":"'\\N{SYRIAC SUBLINEAR COLON SKEWED LEFT}'","v":{"str":[1801]}}
+{"t":"'\\N{KANNADA LETTER LLLA}'","v":{"str":[3294]}}
+{"t":"'\\N{LAO LETTER FO FON}'","v":{"str":[3741]}}
+{"t":"'\\N{LAO LETTER FO FAY}'","v":{"str":[3743]}}
+{"t":"'\\N{LAO LETTER RO}'","v":{"str":[3747]}}
+{"t":"'\\N{LAO LETTER LO}'","v":{"str":[3749]}}
+{"t":"'\\N{TIBETAN MARK BKA- SHOG GI MGO RGYAN}'","v":{"str":[4048]}}
+{"t":"'\\N{HANGUL JONGSEONG YESIEUNG-KIYEOK}'","v":{"str":[4588]}}
+{"t":"'\\N{HANGUL JONGSEONG YESIEUNG-SSANGKIYEOK}'","v":{"str":[4589]}}
+{"t":"'\\N{HANGUL JONGSEONG SSANGYESIEUNG}'","v":{"str":[4590]}}
+{"t":"'\\N{HANGUL JONGSEONG YESIEUNG-KHIEUKH}'","v":{"str":[4591]}}
+{"t":"'\\N{FVS1}'","v":{"str":[6155]}}
+{"t":"'\\N{FVS2}'","v":{"str":[6156]}}
+{"t":"'\\N{FVS3}'","v":{"str":[6157]}}
+{"t":"'\\N{MVS}'","v":{"str":[6158]}}
+{"t":"'\\N{FVS4}'","v":{"str":[6159]}}
+{"t":"'\\N{SUNDANESE LETTER ARCHAIC I}'","v":{"str":[7101]}}
+{"t":"'\\N{ZWSP}'","v":{"str":[8203]}}
+{"t":"'\\N{ZWNJ}'","v":{"str":[8204]}}
+{"t":"'\\N{ZWJ}'","v":{"str":[8205]}}
+{"t":"'\\N{LRM}'","v":{"str":[8206]}}
+{"t":"'\\N{RLM}'","v":{"str":[8207]}}
+{"t":"'\\N{LRE}'","v":{"str":[8234]}}
+{"t":"'\\N{RLE}'","v":{"str":[8235]}}
+{"t":"'\\N{PDF}'","v":{"str":[8236]}}
+{"t":"'\\N{LRO}'","v":{"str":[8237]}}
+{"t":"'\\N{RLO}'","v":{"str":[8238]}}
+{"t":"'\\N{NNBSP}'","v":{"str":[8239]}}
+{"t":"'\\N{MMSP}'","v":{"str":[8287]}}
+{"t":"'\\N{WJ}'","v":{"str":[8288]}}
+{"t":"'\\N{LRI}'","v":{"str":[8294]}}
+{"t":"'\\N{RLI}'","v":{"str":[8295]}}
+{"t":"'\\N{FSI}'","v":{"str":[8296]}}
+{"t":"'\\N{PDI}'","v":{"str":[8297]}}
+{"t":"'\\N{WEIERSTRASS ELLIPTIC FUNCTION}'","v":{"str":[8472]}}
+{"t":"'\\N{MICR ON US SYMBOL}'","v":{"str":[9288]}}
+{"t":"'\\N{MICR DASH SYMBOL}'","v":{"str":[9289]}}
+{"t":"'\\N{LEFTWARDS TRIANGLE-HEADED ARROW WITH DOUBLE VERTICAL STROKE}'","v":{"str":[11130]}}
+{"t":"'\\N{RIGHTWARDS TRIANGLE-HEADED ARROW WITH DOUBLE VERTICAL STROKE}'","v":{"str":[11132]}}
+{"t":"'\\N{YI SYLLABLE ITERATION MARK}'","v":{"str":[40981]}}
+{"t":"'\\N{MYANMAR LETTER KHAMTI LLA}'","v":{"str":[43630]}}
+{"t":"'\\N{VS1}'","v":{"str":[65024]}}
+{"t":"'\\N{VS2}'","v":{"str":[65025]}}
+{"t":"'\\N{VS3}'","v":{"str":[65026]}}
+{"t":"'\\N{VS4}'","v":{"str":[65027]}}
+{"t":"'\\N{VS5}'","v":{"str":[65028]}}
+{"t":"'\\N{VS6}'","v":{"str":[65029]}}
+{"t":"'\\N{VS7}'","v":{"str":[65030]}}
+{"t":"'\\N{VS8}'","v":{"str":[65031]}}
+{"t":"'\\N{VS9}'","v":{"str":[65032]}}
+{"t":"'\\N{VS10}'","v":{"str":[65033]}}
+{"t":"'\\N{VS11}'","v":{"str":[65034]}}
+{"t":"'\\N{VS12}'","v":{"str":[65035]}}
+{"t":"'\\N{VS13}'","v":{"str":[65036]}}
+{"t":"'\\N{VS14}'","v":{"str":[65037]}}
+{"t":"'\\N{VS15}'","v":{"str":[65038]}}
+{"t":"'\\N{VS16}'","v":{"str":[65039]}}
+{"t":"'\\N{PRESENTATION FORM FOR VERTICAL RIGHT WHITE LENTICULAR BRACKET}'","v":{"str":[65048]}}
+{"t":"'\\N{BYTE ORDER MARK}'","v":{"str":[65279]}}
+{"t":"'\\N{BOM}'","v":{"str":[65279]}}
+{"t":"'\\N{ZWNBSP}'","v":{"str":[65279]}}
+{"t":"'\\N{CUNEIFORM SIGN NU11 TENU}'","v":{"str":[74452]}}
+{"t":"'\\N{CUNEIFORM SIGN NU11 OVER NU11 BUR OVER BUR}'","v":{"str":[74453]}}
+{"t":"'\\N{MEDEFAIDRIN CAPITAL LETTER H}'","v":{"str":[93782]}}
+{"t":"'\\N{MEDEFAIDRIN CAPITAL LETTER NG}'","v":{"str":[93783]}}
+{"t":"'\\N{MEDEFAIDRIN SMALL LETTER H}'","v":{"str":[93814]}}
+{"t":"'\\N{MEDEFAIDRIN SMALL LETTER NG}'","v":{"str":[93815]}}
+{"t":"'\\N{HENTAIGANA LETTER E-1}'","v":{"str":[110593]}}
+{"t":"'\\N{BYZANTINE MUSICAL SYMBOL FTHORA SKLIRON CHROMA VASIS}'","v":{"str":[118981]}}
+{"t":"'\\N{VS17}'","v":{"str":[917760]}}
+{"t":"'\\N{VS18}'","v":{"str":[917761]}}
+{"t":"'\\N{VS19}'","v":{"str":[917762]}}
+{"t":"'\\N{VS20}'","v":{"str":[917763]}}
+{"t":"'\\N{VS21}'","v":{"str":[917764]}}
+{"t":"'\\N{VS22}'","v":{"str":[917765]}}
+{"t":"'\\N{VS23}'","v":{"str":[917766]}}
+{"t":"'\\N{VS24}'","v":{"str":[917767]}}
+{"t":"'\\N{VS25}'","v":{"str":[917768]}}
+{"t":"'\\N{VS26}'","v":{"str":[917769]}}
+{"t":"'\\N{VS27}'","v":{"str":[917770]}}
+{"t":"'\\N{VS28}'","v":{"str":[917771]}}
+{"t":"'\\N{VS29}'","v":{"str":[917772]}}
+{"t":"'\\N{VS30}'","v":{"str":[917773]}}
+{"t":"'\\N{VS31}'","v":{"str":[917774]}}
+{"t":"'\\N{VS32}'","v":{"str":[917775]}}
+{"t":"'\\N{VS33}'","v":{"str":[917776]}}
+{"t":"'\\N{VS34}'","v":{"str":[917777]}}
+{"t":"'\\N{VS35}'","v":{"str":[917778]}}
+{"t":"'\\N{VS36}'","v":{"str":[917779]}}
+{"t":"'\\N{VS37}'","v":{"str":[917780]}}
+{"t":"'\\N{VS38}'","v":{"str":[917781]}}
+{"t":"'\\N{VS39}'","v":{"str":[917782]}}
+{"t":"'\\N{VS40}'","v":{"str":[917783]}}
+{"t":"'\\N{VS41}'","v":{"str":[917784]}}
+{"t":"'\\N{VS42}'","v":{"str":[917785]}}
+{"t":"'\\N{VS43}'","v":{"str":[917786]}}
+{"t":"'\\N{VS44}'","v":{"str":[917787]}}
+{"t":"'\\N{VS45}'","v":{"str":[917788]}}
+{"t":"'\\N{VS46}'","v":{"str":[917789]}}
+{"t":"'\\N{VS47}'","v":{"str":[917790]}}
+{"t":"'\\N{VS48}'","v":{"str":[917791]}}
+{"t":"'\\N{VS49}'","v":{"str":[917792]}}
+{"t":"'\\N{VS50}'","v":{"str":[917793]}}
+{"t":"'\\N{VS51}'","v":{"str":[917794]}}
+{"t":"'\\N{VS52}'","v":{"str":[917795]}}
+{"t":"'\\N{VS53}'","v":{"str":[917796]}}
+{"t":"'\\N{VS54}'","v":{"str":[917797]}}
+{"t":"'\\N{VS55}'","v":{"str":[917798]}}
+{"t":"'\\N{VS56}'","v":{"str":[917799]}}
+{"t":"'\\N{VS57}'","v":{"str":[917800]}}
+{"t":"'\\N{VS58}'","v":{"str":[917801]}}
+{"t":"'\\N{VS59}'","v":{"str":[917802]}}
+{"t":"'\\N{VS60}'","v":{"str":[917803]}}
+{"t":"'\\N{VS61}'","v":{"str":[917804]}}
+{"t":"'\\N{VS62}'","v":{"str":[917805]}}
+{"t":"'\\N{VS63}'","v":{"str":[917806]}}
+{"t":"'\\N{VS64}'","v":{"str":[917807]}}
+{"t":"'\\N{VS65}'","v":{"str":[917808]}}
+{"t":"'\\N{VS66}'","v":{"str":[917809]}}
+{"t":"'\\N{VS67}'","v":{"str":[917810]}}
+{"t":"'\\N{VS68}'","v":{"str":[917811]}}
+{"t":"'\\N{VS69}'","v":{"str":[917812]}}
+{"t":"'\\N{VS70}'","v":{"str":[917813]}}
+{"t":"'\\N{VS71}'","v":{"str":[917814]}}
+{"t":"'\\N{VS72}'","v":{"str":[917815]}}
+{"t":"'\\N{VS73}'","v":{"str":[917816]}}
+{"t":"'\\N{VS74}'","v":{"str":[917817]}}
+{"t":"'\\N{VS75}'","v":{"str":[917818]}}
+{"t":"'\\N{VS76}'","v":{"str":[917819]}}
+{"t":"'\\N{VS77}'","v":{"str":[917820]}}
+{"t":"'\\N{VS78}'","v":{"str":[917821]}}
+{"t":"'\\N{VS79}'","v":{"str":[917822]}}
+{"t":"'\\N{VS80}'","v":{"str":[917823]}}
+{"t":"'\\N{VS81}'","v":{"str":[917824]}}
+{"t":"'\\N{VS82}'","v":{"str":[917825]}}
+{"t":"'\\N{VS83}'","v":{"str":[917826]}}
+{"t":"'\\N{VS84}'","v":{"str":[917827]}}
+{"t":"'\\N{VS85}'","v":{"str":[917828]}}
+{"t":"'\\N{VS86}'","v":{"str":[917829]}}
+{"t":"'\\N{VS87}'","v":{"str":[917830]}}
+{"t":"'\\N{VS88}'","v":{"str":[917831]}}
+{"t":"'\\N{VS89}'","v":{"str":[917832]}}
+{"t":"'\\N{VS90}'","v":{"str":[917833]}}
+{"t":"'\\N{VS91}'","v":{"str":[917834]}}
+{"t":"'\\N{VS92}'","v":{"str":[917835]}}
+{"t":"'\\N{VS93}'","v":{"str":[917836]}}
+{"t":"'\\N{VS94}'","v":{"str":[917837]}}
+{"t":"'\\N{VS95}'","v":{"str":[917838]}}
+{"t":"'\\N{VS96}'","v":{"str":[917839]}}
+{"t":"'\\N{VS97}'","v":{"str":[917840]}}
+{"t":"'\\N{VS98}'","v":{"str":[917841]}}
+{"t":"'\\N{VS99}'","v":{"str":[917842]}}
+{"t":"'\\N{VS100}'","v":{"str":[917843]}}
+{"t":"'\\N{VS101}'","v":{"str":[917844]}}
+{"t":"'\\N{VS102}'","v":{"str":[917845]}}
+{"t":"'\\N{VS103}'","v":{"str":[917846]}}
+{"t":"'\\N{VS104}'","v":{"str":[917847]}}
+{"t":"'\\N{VS105}'","v":{"str":[917848]}}
+{"t":"'\\N{VS106}'","v":{"str":[917849]}}
+{"t":"'\\N{VS107}'","v":{"str":[917850]}}
+{"t":"'\\N{VS108}'","v":{"str":[917851]}}
+{"t":"'\\N{VS109}'","v":{"str":[917852]}}
+{"t":"'\\N{VS110}'","v":{"str":[917853]}}
+{"t":"'\\N{VS111}'","v":{"str":[917854]}}
+{"t":"'\\N{VS112}'","v":{"str":[917855]}}
+{"t":"'\\N{VS113}'","v":{"str":[917856]}}
+{"t":"'\\N{VS114}'","v":{"str":[917857]}}
+{"t":"'\\N{VS115}'","v":{"str":[917858]}}
+{"t":"'\\N{VS116}'","v":{"str":[917859]}}
+{"t":"'\\N{VS117}'","v":{"str":[917860]}}
+{"t":"'\\N{VS118}'","v":{"str":[917861]}}
+{"t":"'\\N{VS119}'","v":{"str":[917862]}}
+{"t":"'\\N{VS120}'","v":{"str":[917863]}}
+{"t":"'\\N{VS121}'","v":{"str":[917864]}}
+{"t":"'\\N{VS122}'","v":{"str":[917865]}}
+{"t":"'\\N{VS123}'","v":{"str":[917866]}}
+{"t":"'\\N{VS124}'","v":{"str":[917867]}}
+{"t":"'\\N{VS125}'","v":{"str":[917868]}}
+{"t":"'\\N{VS126}'","v":{"str":[917869]}}
+{"t":"'\\N{VS127}'","v":{"str":[917870]}}
+{"t":"'\\N{VS128}'","v":{"str":[917871]}}
+{"t":"'\\N{VS129}'","v":{"str":[917872]}}
+{"t":"'\\N{VS130}'","v":{"str":[917873]}}
+{"t":"'\\N{VS131}'","v":{"str":[917874]}}
+{"t":"'\\N{VS132}'","v":{"str":[917875]}}
+{"t":"'\\N{VS133}'","v":{"str":[917876]}}
+{"t":"'\\N{VS134}'","v":{"str":[917877]}}
+{"t":"'\\N{VS135}'","v":{"str":[917878]}}
+{"t":"'\\N{VS136}'","v":{"str":[917879]}}
+{"t":"'\\N{VS137}'","v":{"str":[917880]}}
+{"t":"'\\N{VS138}'","v":{"str":[917881]}}
+{"t":"'\\N{VS139}'","v":{"str":[917882]}}
+{"t":"'\\N{VS140}'","v":{"str":[917883]}}
+{"t":"'\\N{VS141}'","v":{"str":[917884]}}
+{"t":"'\\N{VS142}'","v":{"str":[917885]}}
+{"t":"'\\N{VS143}'","v":{"str":[917886]}}
+{"t":"'\\N{VS144}'","v":{"str":[917887]}}
+{"t":"'\\N{VS145}'","v":{"str":[917888]}}
+{"t":"'\\N{VS146}'","v":{"str":[917889]}}
+{"t":"'\\N{VS147}'","v":{"str":[917890]}}
+{"t":"'\\N{VS148}'","v":{"str":[917891]}}
+{"t":"'\\N{VS149}'","v":{"str":[917892]}}
+{"t":"'\\N{VS150}'","v":{"str":[917893]}}
+{"t":"'\\N{VS151}'","v":{"str":[917894]}}
+{"t":"'\\N{VS152}'","v":{"str":[917895]}}
+{"t":"'\\N{VS153}'","v":{"str":[917896]}}
+{"t":"'\\N{VS154}'","v":{"str":[917897]}}
+{"t":"'\\N{VS155}'","v":{"str":[917898]}}
+{"t":"'\\N{VS156}'","v":{"str":[917899]}}
+{"t":"'\\N{VS157}'","v":{"str":[917900]}}
+{"t":"'\\N{VS158}'","v":{"str":[917901]}}
+{"t":"'\\N{VS159}'","v":{"str":[917902]}}
+{"t":"'\\N{VS160}'","v":{"str":[917903]}}
+{"t":"'\\N{VS161}'","v":{"str":[917904]}}
+{"t":"'\\N{VS162}'","v":{"str":[917905]}}
+{"t":"'\\N{VS163}'","v":{"str":[917906]}}
+{"t":"'\\N{VS164}'","v":{"str":[917907]}}
+{"t":"'\\N{VS165}'","v":{"str":[917908]}}
+{"t":"'\\N{VS166}'","v":{"str":[917909]}}
+{"t":"'\\N{VS167}'","v":{"str":[917910]}}
+{"t":"'\\N{VS168}'","v":{"str":[917911]}}
+{"t":"'\\N{VS169}'","v":{"str":[917912]}}
+{"t":"'\\N{VS170}'","v":{"str":[917913]}}
+{"t":"'\\N{VS171}'","v":{"str":[917914]}}
+{"t":"'\\N{VS172}'","v":{"str":[917915]}}
+{"t":"'\\N{VS173}'","v":{"str":[917916]}}
+{"t":"'\\N{VS174}'","v":{"str":[917917]}}
+{"t":"'\\N{VS175}'","v":{"str":[917918]}}
+{"t":"'\\N{VS176}'","v":{"str":[917919]}}
+{"t":"'\\N{VS177}'","v":{"str":[917920]}}
+{"t":"'\\N{VS178}'","v":{"str":[917921]}}
+{"t":"'\\N{VS179}'","v":{"str":[917922]}}
+{"t":"'\\N{VS180}'","v":{"str":[917923]}}
+{"t":"'\\N{VS181}'","v":{"str":[917924]}}
+{"t":"'\\N{VS182}'","v":{"str":[917925]}}
+{"t":"'\\N{VS183}'","v":{"str":[917926]}}
+{"t":"'\\N{VS184}'","v":{"str":[917927]}}
+{"t":"'\\N{VS185}'","v":{"str":[917928]}}
+{"t":"'\\N{VS186}'","v":{"str":[917929]}}
+{"t":"'\\N{VS187}'","v":{"str":[917930]}}
+{"t":"'\\N{VS188}'","v":{"str":[917931]}}
+{"t":"'\\N{VS189}'","v":{"str":[917932]}}
+{"t":"'\\N{VS190}'","v":{"str":[917933]}}
+{"t":"'\\N{VS191}'","v":{"str":[917934]}}
+{"t":"'\\N{VS192}'","v":{"str":[917935]}}
+{"t":"'\\N{VS193}'","v":{"str":[917936]}}
+{"t":"'\\N{VS194}'","v":{"str":[917937]}}
+{"t":"'\\N{VS195}'","v":{"str":[917938]}}
+{"t":"'\\N{VS196}'","v":{"str":[917939]}}
+{"t":"'\\N{VS197}'","v":{"str":[917940]}}
+{"t":"'\\N{VS198}'","v":{"str":[917941]}}
+{"t":"'\\N{VS199}'","v":{"str":[917942]}}
+{"t":"'\\N{VS200}'","v":{"str":[917943]}}
+{"t":"'\\N{VS201}'","v":{"str":[917944]}}
+{"t":"'\\N{VS202}'","v":{"str":[917945]}}
+{"t":"'\\N{VS203}'","v":{"str":[917946]}}
+{"t":"'\\N{VS204}'","v":{"str":[917947]}}
+{"t":"'\\N{VS205}'","v":{"str":[917948]}}
+{"t":"'\\N{VS206}'","v":{"str":[917949]}}
+{"t":"'\\N{VS207}'","v":{"str":[917950]}}
+{"t":"'\\N{VS208}'","v":{"str":[917951]}}
+{"t":"'\\N{VS209}'","v":{"str":[917952]}}
+{"t":"'\\N{VS210}'","v":{"str":[917953]}}
+{"t":"'\\N{VS211}'","v":{"str":[917954]}}
+{"t":"'\\N{VS212}'","v":{"str":[917955]}}
+{"t":"'\\N{VS213}'","v":{"str":[917956]}}
+{"t":"'\\N{VS214}'","v":{"str":[917957]}}
+{"t":"'\\N{VS215}'","v":{"str":[917958]}}
+{"t":"'\\N{VS216}'","v":{"str":[917959]}}
+{"t":"'\\N{VS217}'","v":{"str":[917960]}}
+{"t":"'\\N{VS218}'","v":{"str":[917961]}}
+{"t":"'\\N{VS219}'","v":{"str":[917962]}}
+{"t":"'\\N{VS220}'","v":{"str":[917963]}}
+{"t":"'\\N{VS221}'","v":{"str":[917964]}}
+{"t":"'\\N{VS222}'","v":{"str":[917965]}}
+{"t":"'\\N{VS223}'","v":{"str":[917966]}}
+{"t":"'\\N{VS224}'","v":{"str":[917967]}}
+{"t":"'\\N{VS225}'","v":{"str":[917968]}}
+{"t":"'\\N{VS226}'","v":{"str":[917969]}}
+{"t":"'\\N{VS227}'","v":{"str":[917970]}}
+{"t":"'\\N{VS228}'","v":{"str":[917971]}}
+{"t":"'\\N{VS229}'","v":{"str":[917972]}}
+{"t":"'\\N{VS230}'","v":{"str":[917973]}}
+{"t":"'\\N{VS231}'","v":{"str":[917974]}}
+{"t":"'\\N{VS232}'","v":{"str":[917975]}}
+{"t":"'\\N{VS233}'","v":{"str":[917976]}}
+{"t":"'\\N{VS234}'","v":{"str":[917977]}}
+{"t":"'\\N{VS235}'","v":{"str":[917978]}}
+{"t":"'\\N{VS236}'","v":{"str":[917979]}}
+{"t":"'\\N{VS237}'","v":{"str":[917980]}}
+{"t":"'\\N{VS238}'","v":{"str":[917981]}}
+{"t":"'\\N{VS239}'","v":{"str":[917982]}}
+{"t":"'\\N{VS240}'","v":{"str":[917983]}}
+{"t":"'\\N{VS241}'","v":{"str":[917984]}}
+{"t":"'\\N{VS242}'","v":{"str":[917985]}}
+{"t":"'\\N{VS243}'","v":{"str":[917986]}}
+{"t":"'\\N{VS244}'","v":{"str":[917987]}}
+{"t":"'\\N{VS245}'","v":{"str":[917988]}}
+{"t":"'\\N{VS246}'","v":{"str":[917989]}}
+{"t":"'\\N{VS247}'","v":{"str":[917990]}}
+{"t":"'\\N{VS248}'","v":{"str":[917991]}}
+{"t":"'\\N{VS249}'","v":{"str":[917992]}}
+{"t":"'\\N{VS250}'","v":{"str":[917993]}}
+{"t":"'\\N{VS251}'","v":{"str":[917994]}}
+{"t":"'\\N{VS252}'","v":{"str":[917995]}}
+{"t":"'\\N{VS253}'","v":{"str":[917996]}}
+{"t":"'\\N{VS254}'","v":{"str":[917997]}}
+{"t":"'\\N{VS255}'","v":{"str":[917998]}}
+{"t":"'\\N{VS256}'","v":{"str":[917999]}}
+{"t":"'\\N{KEYCAP NUMBER SIGN}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KEYCAP ASTERISK}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KEYCAP DIGIT ZERO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KEYCAP DIGIT ONE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KEYCAP DIGIT TWO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KEYCAP DIGIT THREE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KEYCAP DIGIT FOUR}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KEYCAP DIGIT FIVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KEYCAP DIGIT SIX}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KEYCAP DIGIT SEVEN}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KEYCAP DIGIT EIGHT}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KEYCAP DIGIT NINE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER A WITH MACRON AND GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER A WITH MACRON AND GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER I WITH MACRON AND GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER I WITH MACRON AND GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER U WITH MACRON AND GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER U WITH MACRON AND GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER E WITH VERTICAL LINE BELOW}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER E WITH VERTICAL LINE BELOW}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER E WITH VERTICAL LINE BELOW AND GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER E WITH VERTICAL LINE BELOW AND GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER E WITH VERTICAL LINE BELOW AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER E WITH VERTICAL LINE BELOW AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER O WITH VERTICAL LINE BELOW}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER O WITH VERTICAL LINE BELOW}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER O WITH VERTICAL LINE BELOW AND GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER O WITH VERTICAL LINE BELOW AND GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER O WITH VERTICAL LINE BELOW AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER O WITH VERTICAL LINE BELOW AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER S WITH VERTICAL LINE BELOW}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER S WITH VERTICAL LINE BELOW}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER E WITH CIRCUMFLEX AND MACRON}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER E WITH CIRCUMFLEX AND MACRON}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER E WITH CIRCUMFLEX AND CARON}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER E WITH CIRCUMFLEX AND CARON}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER I WITH DOT ABOVE AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER NG WITH TILDE ABOVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER A WITH OGONEK AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER A WITH OGONEK AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER A WITH OGONEK AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER A WITH OGONEK AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER E WITH OGONEK AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER E WITH OGONEK AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER E WITH OGONEK AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER E WITH OGONEK AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER E WITH DOT ABOVE AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER E WITH DOT ABOVE AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER E WITH DOT ABOVE AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER E WITH DOT ABOVE AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER I WITH DOT ABOVE AND GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER I WITH DOT ABOVE AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER I WITH OGONEK AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER I WITH OGONEK AND DOT ABOVE AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER I WITH OGONEK AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER I WITH OGONEK AND DOT ABOVE AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER J WITH TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER J WITH DOT ABOVE AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER L WITH TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER L WITH TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER M WITH TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER M WITH TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER R WITH TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER R WITH TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER U WITH OGONEK AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER U WITH OGONEK AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER U WITH OGONEK AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER U WITH OGONEK AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER U WITH MACRON AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER U WITH MACRON AND ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN CAPITAL LETTER U WITH MACRON AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER U WITH MACRON AND TILDE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER AE WITH GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER OPEN O WITH GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER OPEN O WITH ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER TURNED V WITH GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER TURNED V WITH ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER SCHWA WITH GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER SCHWA WITH ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER HOOKED SCHWA WITH GRAVE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{LATIN SMALL LETTER HOOKED SCHWA WITH ACUTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{ARABIC SEQUENCE YEH WITH HAMZA ABOVE WITH ALEF}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{ARABIC SEQUENCE YEH WITH HAMZA ABOVE WITH WAW}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{ARABIC SEQUENCE YEH WITH HAMZA ABOVE WITH ALEF MAKSURA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{ARABIC SEQUENCE YEH WITH HAMZA ABOVE WITH OE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{ARABIC SEQUENCE YEH WITH HAMZA ABOVE WITH U}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{ARABIC SEQUENCE YEH WITH HAMZA ABOVE WITH YU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{ARABIC SEQUENCE YEH WITH HAMZA ABOVE WITH E}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{ARABIC SEQUENCE YEH WITH HAMZA ABOVE WITH AE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{ARABIC SEQUENCE NOON WITH KEHEH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{DEVANAGARI SEQUENCE FOR LETTER QA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{DEVANAGARI SEQUENCE FOR LETTER KHHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{DEVANAGARI SEQUENCE FOR LETTER GHHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{DEVANAGARI SEQUENCE FOR LETTER ZA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{DEVANAGARI SEQUENCE FOR LETTER DDDHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{DEVANAGARI SEQUENCE FOR LETTER RHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{DEVANAGARI SEQUENCE FOR LETTER FA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{DEVANAGARI SEQUENCE FOR LETTER YYA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{BENGALI SEQUENCE FOR LETTER RRA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{BENGALI SEQUENCE FOR LETTER RHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{BENGALI SEQUENCE FOR LETTER YYA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{GURMUKHI SEQUENCE FOR LETTER LLA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{GURMUKHI SEQUENCE FOR LETTER SHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{GURMUKHI SEQUENCE FOR LETTER KHHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{GURMUKHI SEQUENCE FOR LETTER GHHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{GURMUKHI SEQUENCE FOR LETTER ZA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{GURMUKHI SEQUENCE FOR LETTER FA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{ORIYA SEQUENCE FOR LETTER RRA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{ORIYA SEQUENCE FOR LETTER RHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{BENGALI LETTER KHINYA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT K}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT NG}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT C}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT NY}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT TT}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT NN}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT T}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT N}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT P}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT M}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT Y}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT R}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT L}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT V}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT LLL}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT LL}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT RR}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT NNN}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT J}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT SH}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT SS}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT S}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT H}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL CONSONANT KSS}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NGAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NGI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NGII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NGU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NGUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NGE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NGEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NGAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NGO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NGOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NGAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE CAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE CI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE CII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE CU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE CUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE CE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE CEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE CAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE CO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE COO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE CAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NYAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NYI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NYII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NYU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NYUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NYE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NYEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NYAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NYO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NYOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NYAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TTAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TTI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TTII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TTU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TTUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TTE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TTEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TTAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TTO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TTOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TTAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE TAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE PAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE PI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE PII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE PU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE PUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE PE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE PEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE PAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE PO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE POO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE PAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE MAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE MI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE MII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE MU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE MUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE ME}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE MEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE MAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE MO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE MOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE MAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE YAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE YI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE YII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE YU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE YUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE YE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE YEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE YAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE YO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE YOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE YAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE REE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE ROO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE VAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE VI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE VII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE VU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE VUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE VE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE VEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE VAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE VO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE VOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE VAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLLAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLLI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLLII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLLU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLLUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLLE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLLEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLLAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLLO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLLOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLLAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE LLAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RRAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RRI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RRII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RRU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RRUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RRE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RREE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RRAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RRO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RROO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE RRAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNNAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNNI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNNII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNNU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNNUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNNE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNNEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNNAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNNO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNNOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE NNNAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE JAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE JI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE JII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE JU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE JUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE JE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE JEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE JAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE JO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE JOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE JAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SHAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SHI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SHII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SHU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SHUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SHE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SHEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SHAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SHO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SHOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SHAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SSAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SSI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SSII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SSU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SSUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SSE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SSEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SSAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SSO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SSOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SSAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE HAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE HI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE HII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE HU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE HUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE HE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE HEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE HAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE HO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE HOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE HAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KSSA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KSSAA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KSSI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KSSII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KSSU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KSSUU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KSSE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KSSEE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KSSAI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KSSO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KSSOO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE KSSAU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{TAMIL SYLLABLE SHRII}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{SINHALA CONSONANT SIGN YANSAYA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{SINHALA CONSONANT SIGN RAKAARAANSAYA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{SINHALA CONSONANT SIGN REPAYA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{GEORGIAN LETTER U-BRJGU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG KA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG KHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG KO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG KHO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG NGO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG CA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG CHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG CO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG CHO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG NYO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG DA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG TTHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG DO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG TTHO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG NA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG TA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG THA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG TO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG THO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG NO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG BA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG PHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG PO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG PHO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG MO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG YO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG RO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG LO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG VO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG SHA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG SSA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG SA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG HA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER CONSONANT SIGN COENG LA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER VOWEL SIGN COENG QA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER INDEPENDENT VOWEL SIGN COENG QU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER INDEPENDENT VOWEL SIGN COENG RY}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER INDEPENDENT VOWEL SIGN COENG RYY}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER INDEPENDENT VOWEL SIGN COENG QE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER VOWEL SIGN OM}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KHMER VOWEL SIGN AAM}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HIRAGANA LETTER BIDAKUON NGA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HIRAGANA LETTER BIDAKUON NGI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HIRAGANA LETTER BIDAKUON NGU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HIRAGANA LETTER BIDAKUON NGE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{HIRAGANA LETTER BIDAKUON NGO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KATAKANA LETTER BIDAKUON NGA}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KATAKANA LETTER BIDAKUON NGI}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KATAKANA LETTER BIDAKUON NGU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KATAKANA LETTER BIDAKUON NGE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KATAKANA LETTER BIDAKUON NGO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KATAKANA LETTER AINU CE}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KATAKANA LETTER AINU TU}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KATAKANA LETTER AINU TO}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{KATAKANA LETTER AINU P}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{MODIFIER LETTER EXTRA-HIGH EXTRA-LOW CONTOUR TONE BAR}'","v":{"raised":"SyntaxError"}}
+{"t":"'\\N{MODIFIER LETTER EXTRA-LOW EXTRA-HIGH CONTOUR TONE BAR}'","v":{"raised":"SyntaxError"}}

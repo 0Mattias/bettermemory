@@ -59,8 +59,9 @@
 //!   the extension of a remembered history) and (`origin_dates::memo`)
 //!   the memoised read of a head's whole history;
 //! - [`unicode`]: normalization, case mapping and the character classes,
-//!   XID_Start and XID_Continue (`unicode::xid`, `str.isidentifier`),
-//!   over tables generated from the reference Python's Unicode 15.1.0;
+//!   XID_Start and XID_Continue (`unicode::xid`, `str.isidentifier`), the
+//!   names `\N{...}` reads (`unicode::names`), over tables generated from
+//!   the reference Python's Unicode 15.1.0;
 //! - [`pyre`]: Python's regular expressions as CPython 3.13.13's `re` runs
 //!   them, its first units: the case folding and the test of one literal;
 //!   the parser's tree and its dump, the parser's state and its tokenizer,
@@ -413,6 +414,7 @@
 //!   string and number literals read, the literal reader with
 //!   `claims._canonical_repr`, and the module-mode tokenizer `ast.parse`
 //!   meets (logical lines, INDENT and DEDENT) with its f-string modes;
+//!   names past ASCII and `\N{...}` are read;
 //! - [`gitfile_rule`]: the rule a `.git` entry is followed by, whole on
 //!   POSIX: from a `gitdir:` file's bytes to the judge of an entry and the
 //!   walk git's discovery makes;

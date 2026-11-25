@@ -16,6 +16,7 @@ use std::collections::{HashMap, HashSet};
 use super::lex::{literal_tokens, LexError, Tok, Token, INT_MAX_STR_DIGITS};
 use crate::float_repr;
 use crate::pyvalue::{repr_str, PyStr};
+use crate::unicode;
 
 /// Why a text is not a literal, or why its value has no canonical text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -255,6 +256,17 @@ impl Parser<'_> {
                 Node::Const(Literal::Bytes(out))
             }
             Tok::FString => return bad("f-string"),
+            Tok::Name if self.text(t).iter().any(|&c| c >= 0x80) => {
+                // `_PyPegen_new_identifier` keeps such a name by its NFKC
+                // and raises for one reading `True`, `False` or `None`; of
+                // the others only `set` evaluates.
+                let mut name = Vec::new();
+                unicode::nfkc_into(self.text(t), &mut name);
+                if !same(&name, "set") {
+                    return bad("not a literal");
+                }
+                Node::SetName
+            }
             Tok::Name => {
                 let name = self.text(t);
                 if same(name, "True") {

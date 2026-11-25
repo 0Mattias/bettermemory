@@ -85,29 +85,25 @@ fn check(row: &Value) {
     let row_text = &row["t"];
     let got = literal_tokens(&t);
     let p = row["p"].as_str().unwrap();
-    match row["d"].as_str() {
-        Some("ident") => assert_eq!(got, Err(LexError::NeedsIdentTable)),
-        Some("names") => assert_eq!(got, Err(LexError::NeedsNameTable)),
-        Some(other) => panic!("no table {other}"),
-        None => match &got {
-            // A refusal is a text literal_eval refuses; where the parse
-            // reads it, only a name past ASCII (no name but the four the
-            // deferred table settles evaluates).
-            Err(LexError::Syntax(k)) => {
-                assert!(row["v"].get("raised").is_some(), "refused {row_text}: {k}");
-                assert!(
-                    p != "ok" || *k == "name past ASCII",
-                    "refused {row_text}: {k}"
-                );
-            }
-            Err(e) => panic!("deferred without a mark {row_text}: {e:?}"),
-            // Lexing stops at an f-string, which the literal reader refuses
-            // whatever follows it.
-            Ok(l) => assert!(
-                p != "lex" || l.tokens.last().is_some_and(|t| t.tok == Tok::FString),
-                "lexed {row_text}"
-            ),
-        },
+    // `d` marks the rows the XID and name tables once deferred; they are
+    // read as every other row now.
+    if let Some(d) = row["d"].as_str() {
+        assert!(d == "ident" || d == "names", "no table {d}");
+    }
+    match &got {
+        // A refusal is a text literal_eval refuses and the parse does not
+        // read.
+        Err(LexError::Syntax(k)) => {
+            assert!(row["v"].get("raised").is_some(), "refused {row_text}: {k}");
+            assert!(p != "ok", "refused {row_text}: {k}");
+        }
+        Err(e) => panic!("deferred {row_text}: {e:?}"),
+        // Lexing stops at an f-string, which the literal reader refuses
+        // whatever follows it.
+        Ok(l) => assert!(
+            p != "lex" || l.tokens.last().is_some_and(|t| t.tok == Tok::FString),
+            "lexed {row_text}"
+        ),
     }
     if let Ok(lexed) = &got {
         assert_eq!(tokens(lexed), row["k"], "tokens of {row_text}");

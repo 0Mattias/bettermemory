@@ -35,7 +35,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_model` | `origin_model.py`'s `Origin` as captured: `CapturedOrigin`, the stored `records::Origin` with `_repo_url_alternates`, `git_indeterminate` and `git_refusal` beside it | `origin_model.jsonl` |
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves; `origin_dates::memo`: `_instant`, `commit_author_timestamps` and `_remember_dates` over the caller's `TimestampsMemo`, `MemoLeaves` and `ShallowHold` | `origin_dates_reads.jsonl`, `origin_dates_memo.jsonl` |
 | `origin_git` | The Git process and repository identity probes in `origin.py`. `OriginRunner` implements `origin_dates::OriginGit` and shares the calling thread’s counts with its other Git readers. |
-| `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl` |
+| `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`); the names `\N{...}` reads, `getcode` of `unicodedata._ucnhash_CAPI` without named sequences (`unicode::names::lookup`, `stored`; unit claims-6) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl`, `unicode_names.jsonl` |
 | `use_tokens` | the per-turn use-token bookkeeping of `handlers/_shared.py`: `_drain_expired_use_tokens`, `_emit_expired_use_tokens`, `_advance_turn`, `_event_ts_epoch`, `_scan_settled_use_events`, `_already_recorded_pending_ids` and its alias `_hook_attributed_pending_ids`, `_attach_use_tokens`; the recorder and its log are a trait (`UseLog`) | `use_tokens.jsonl`, `use_tokens_python.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth. Unit pyre-5b: `_sre`'s ASSERT and ASSERT_NOT (`Op::Look`, `Op::LookEnd`) run in `exec` as sub-attempts on the same stack; `supports` refuses nothing. Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`). Unit pyre-6b: `Pattern.sub`, `subn` and `split` with a count, a literal or a function replacement, a literal holding a backslash refused as a template (`replace::ReplaceError::Template`). Unit pyre-7 (tests only): every pattern of the reference the engine runs, built from its own text and flags, against `re` over texts that tell its mutants apart, the four data-built families, the tripwire on the reference's sites. Unit pyre-9: the call-owned memo (`memo::Memo`, `Setting`, `Way`, `Stats`, `last_call`, `premises`; `exec::exec_with`), failure bits per node and position, runs and failed ends per repeat, the steps of a whole call | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl`, `pyre_inventory.jsonl`, `pyre_memo.jsonl` |
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
@@ -146,7 +146,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `builder` | `builder.py`'s two pure schema scrubs: `_strip_titles`, `_fold_nullable` | `builder_schema.jsonl` |
 | `claims`, `claim_drift` | units 1 to 3 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`); `claim_drift`: `_Headers`, `build_binding_index`, `claim_level_drift`, the trait `LiteralLines` for the literal helpers | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl`, `claim_drift.jsonl`, `claim_drift_unicode.jsonl`, `claim_drift_python.jsonl` |
 | `symbols` | unit symcheck of `symbols.py`: the bounds (`_MAX_*`, `_FILE_SUFFIXES`), `SymbolCitation`, `SymbolDriftReport` (`missing`, `__bool__`, `to_dict`), `check_symbol_citations` over citations already parsed, `_tier`, `_live_root`, `_resolve_module`, `_module_bindings`; `ast.parse` and the name walks are a trait (`ModuleNames`) | `symbols.jsonl`, `symbols_platform.jsonl` |
-| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl` |
+| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII read since unit claims-6 (`verify_identifier` over the raw run, the parser's NFKC in `literal`). Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json`, `store_restore_lock_hold_python.json`, `store_restore_lock_python.json` (POSIX only) |
 | `store::returned` | `store_returned.py`'s backfill half on the writable store: `missing_links`, `returned_rows`, `backfill`, `ensure_backfilled` (`has_key` given, its log lines returned); `Store._put_relinked` as `store::writers::put_relinked`; the `returned_put` row a backfill appends (`Transaction::mutate_returned_put`) | `store_returned.jsonl`, `store_returned_posix.jsonl` (POSIX only) |
@@ -9518,7 +9518,7 @@ that Unicode too.
 | `golden_pyre_fold`: `pyre_python_every_case` | `pyre_python.jsonl` | ii (Python) |
 | `pyre_fold_kills` (13), `pyre_fold_robustness` (6), `pyre_fold_first_read` (1) | none | i |
 | `golden_pyre_fold`: `pyre_fold_differential_file` | a file `BM_PYRE_FOLD_DIFF` names | a tool, `#[ignore]`d, not part of parity |
-| `unicode_tables_regen`: `regenerating_the_unicode_tables_gives_the_same_bytes` | `src/unicode/tables.rs`, `src/unicode/xid_tables.rs` | ii (Unicode) |
+| `unicode_tables_regen`: `regenerating_the_unicode_tables_gives_the_same_bytes` | `src/unicode/tables.rs`, `src/unicode/xid_tables.rs`, `src/unicode/name_tables.rs` | ii (Unicode) |
 | `golden_pyre_tree`: `pyre_tree_and_token_every_row` | `pyre.jsonl` (the `tree.` and `token.` parts) | i |
 | `golden_pyre_tree`: `pyre_tree_python_every_row` | `pyre_python.jsonl` (the `tree.` parts) | ii (Python) |
 | `pyre_tree_kills` (20), `pyre_tree_robustness` (11) | none | i |
@@ -9676,6 +9676,22 @@ The generator refuses any other Unicode version. Its output depends only on
 that data and, for the last table, `SRE_EXTRA_CASES`, on
 `re._casefix._EXTRA_CASES` (`Lib/re/_casefix.py` of the same interpreter,
 `pyre::fold`), so the same interpreter writes the same bytes.
+
+It also writes `src/unicode/name_tables.rs` (`generate_names`, unit
+claims-6): the names `\N{...}` reads. The aliases are listed by no
+public API; the generator reads them through `getname` of the capsule
+`unicodedata._ucnhash_CAPI` by `ctypes` (the struct of 3.13's
+`Include/internal/pycore_ucnhash.h`: `getname`, then `getcode`), from
+U+F0000 until `getname` fails, and checks each by decoding
+`'\N{alias}'`; the named sequences, from U+F0200, are checked to read as
+nothing. The rule ranges are the code points `getcode` reads for each
+prefix of `RULE_PREFIXES` followed by `%04X`; the Hangul short names
+come from the syllables' own names. The 33,421 names and aliases no rule
+makes are written word-coded: `NAME_WORDS` lists the words by
+frequency, and each entry of `NAMES` is its code point's distance from
+the one before and its words' numbers, in 91 printable characters (391
+KB in all, under the 1 MB the unit allowed). The crate decodes them once
+into a list sorted by name.
 
 ## XID and `str.isidentifier` (`unicode::xid`)
 
@@ -22832,14 +22848,15 @@ were confirmed against `claims.py` at 860b002d.
   lines of a `str` value split at line feeds only, stripped, of at least
   twelve code points, first spelling first (`dict` order).
 
-The pylex gaps. `literal_eval` answers `LiteralError::NeedsIdentTable`
-for a name past ASCII whose NFKC is `True`, `False`, `None` or `set`, and
-`LiteralError::NeedsNameTable` for a `\N{...}` escape, where the reference
-answers. Each function here returns that gap as its own error
+The pylex gaps, closed by unit claims-6: `literal_eval` answered
+`LiteralError::NeedsIdentTable` for a name past ASCII whose NFKC is
+`True`, `False`, `None` or `set`, and `LiteralError::NeedsNameTable` for a
+`\N{...}` escape, and no longer answers either. Each function here
+returns such a gap as its own error
 (`ClaimError::Gap` from `parse_claim` and `parse_claims`, the
 `LiteralError` from the others), never as the refusal or as `None`, so a
-caller can tell "the reference refuses" from "the port cannot say". The
-gaps close when the lexer gains the XID and name tables.
+caller can tell "the reference refuses" from "the port cannot say";
+`ClaimError::Gap` stays until unit 5d removes the variants.
 
 No pattern of `claims.py` is read by this unit: it holds no `re` call,
 so nothing is added to the engine's inventory.
@@ -23167,8 +23184,8 @@ none edits another's.
 | `lex` | the eval-mode tokenizer (`Parser/lexer/lexer.c`'s `tok_get_normal_mode`), the newline translation of `_PyTokenizer_FromString`, the string decoders (`_PyUnicode_DecodeUnicodeEscapeInternal`, `_PyBytes_DecodeEscape`) and the number readers (`parsenumber`, `int`'s 4,300-digit limit) | nothing | built (unit pylex) |
 | `literal` | the eval-mode parser over `lex`'s tokens, `literal_eval`'s evaluation and `claims._canonical_repr` | nothing | built (unit pylit) |
 | `module_lex`, `fstring_lex` | the module-mode tokenizer for `ast.parse` at 672 (unit 5a) and its f-string modes (5b, first part); the expression grammar (5b2), the statement grammar (5c) and the top-level binding read (5d) follow | nothing | 5a built (unit pymodlex), 5b first part built (unit pyfstring) |
-| the XID tables | whether a name past ASCII is an identifier | Unicode tables | lane pyident |
-| `\N{...}` | the Unicode name table | Unicode tables | unit pysyntax-names |
+| the XID tables | whether a name past ASCII is an identifier (`verify_identifier`) | Unicode tables (`unicode::xid`) | built (unit claims-6) |
+| `\N{...}` | the Unicode name table (`getcode`) | Unicode tables (`unicode::names`) | built (unit claims-6) |
 
 ### The tokenizer (`lex`)
 
@@ -23187,10 +23204,12 @@ brackets are a stack held to `MAX_LEVEL` (200 open, the 201st refused).
   expression, after which only blank and comment lines may follow;
   whitespace after the last newline is an indent too (`"1\n  "` raises).
   A backslash must end its line and a line must follow it.
-- Names: ASCII exactly. A run holding a code point past ASCII is NFKC
-  normalised (`unicode::nfkc_into`): `True`, `False`, `None` or `set`
-  answer `NeedsIdentTable` (the XID tables of lane pyident decide); any
-  other is refused, since `literal_eval` evaluates no other name.
+- Names: a run of ASCII letters, digits, `_` and code points past ASCII.
+  A run holding one past ASCII must be an identifier
+  (`verify_identifier`: `unicode::xid::is_identifier` over the raw run,
+  before any normalization), else it is refused; the NAME token keeps
+  the raw text. The parser keeps such a name by its NFKC, so the literal
+  reader reads it there (below).
 - Numbers: `tok_decimal_tail` (one underscore between digits), the radix
   forms with an underscore allowed after the prefix (`0x_1`), a digit
   past the radix refused, leading zeros refused unless every digit is
@@ -23212,7 +23231,9 @@ brackets are a stack held to `MAX_LEVEL` (200 open, the 201st refused).
   U+10FFFF refused), lone surrogates kept, an unknown escape kept with its
   backslash (a backslash before a code point past ASCII included). Bytes:
   the same less `\u`, `\U` and `\N`, octal masked to a byte (`b'\777'` is
-  `b'\xff'`). `\N{NAME}` in a non-raw str answers `NeedsNameTable`.
+  `b'\xff'`). `\N{name}` in a non-raw str: the name runs to the next
+  `}` and is read by `unicode::names::lookup`; an empty, unclosed or
+  unknown name refuses the literal, at the first such escape.
 - f-strings: an `f` prefix yields one `FString` token, its end found
   without reading the replacement fields, and lexing stops there: the
   literal reader refuses any text holding one, so what follows is not
@@ -23281,7 +23302,11 @@ and `Literal::as_str` serve the callers in `claims`.
   other token sequence is one `LiteralError::Invalid`: a text that parses
   to a non-literal (ValueError) and one that does not parse (SyntaxError)
   are not told apart, since every caller catches `Exception`.
-  `NeedsIdentTable` and `NeedsNameTable` from `lex` pass through.
+  A name past ASCII is read by its NFKC (`_PyPegen_new_identifier`):
+  `set` is the name `set`, and every other is refused, those reading
+  `True`, `False` or `None` included (the parser raises ValueError for
+  them; they are no constants). `NeedsIdentTable` and `NeedsNameTable`
+  from `lex` pass through, though `lex` no longer answers them.
 - Arithmetic is 3.13's: `x + cj` is `complex(x, 0.0) + cj`, so the real
   part is `x + 0.0` (`-0.0+0j` is `0j`) and the imaginary part `0.0 + c`
   or `0.0 - c` (`0.0-0j` is `0j`); 3.14 changed mixed arithmetic, which
@@ -23402,15 +23427,11 @@ bracket stack are vectors.
 - Strings and numbers decode as `lex` decodes them, which is how the
   parser decodes them: a bad escape, a byte past ASCII in bytes, an
   integer past 4,300 digits and every malformed number are refused.
-  A non-raw str holding `\N{...}` answers `NeedsNameTable` only when
-  nothing else in the source is refused, as an f-string's literal part
-  does: the reader goes on past it, so `'\N{DASH}' (` is refused for the
-  bracket never closed. Within one str literal `lex`'s decoder stops at
-  the first `\N{...}`, so a bad escape after it in the same literal is
-  not reached: `'\N{EM DASH}\x4'` declines where CPython refuses. An
-  f-string's literal part ends at a named escape's `}`, so it has no
-  such case (`f'\N{EM DASH}\x4'` is refused). That order is `lex`'s and
-  goes with the name table.
+  `\N{...}` is read with the name table since unit claims-6, so
+  `'\N{EM DASH}\x4'` is refused as CPython refuses it. The branch that
+  answered `NeedsNameTable` only when nothing else in the source is
+  refused is no longer reached; it stays until unit 5d removes the
+  variant.
 
 `ModuleError::Syntax` carries a short kind; `check_claim` catches every
 class alike, so only whether a source is refused matters.
@@ -23491,9 +23512,9 @@ loop as any other, so nothing recurses.
   text included, is decoded as the parser decodes it
   (`decode_unicode_with_escapes`: `lex`'s str decoder, with a backslash
   left at the part's end before a brace taken as a backslash); a bad
-  `\x`, `\u`, `\U` or `\N` refuses the source. A part
-  holding `\N{...}` answers `NeedsNameTable` only when nothing else in
-  the source is refused. Raw f-strings decode nothing. The decoded text
+  `\x`, `\u`, `\U` or `\N` refuses the source, an unknown name
+  included (unit claims-6; the `NeedsNameTable` branch is no longer
+  reached and stays until unit 5d). Raw f-strings decode nothing. The decoded text
   is not kept: the grammar unit decodes the span again.
 
 Decisions. The three kinds replace the former single FSTRING token; the
@@ -23541,11 +23562,131 @@ fields, a megabyte of literal text and 200 nestings to 149 levels
 within ten times the time of a tenth, the deepest nesting on a 64 KiB
 thread, hostile shapes without a panic) hold the rest.
 
+### Names past ASCII and `\N{...}` (unit claims-6)
+
+Unit claims-6 closes the two declines `lex` answered. Reference: CPython
+3.13.13 itself (`Parser/lexer`, `Parser/string_parser.c`,
+`Objects/unicodeobject.c` and `Modules/unicodedata.c` are not on the
+build machine; every rule below was read from the interpreter, by
+`ast.literal_eval` and by calling the decoder's own lookup through
+`ctypes`). 176 lines of Rust source outside tests were added (138 in
+`src/unicode/names.rs`, 22 in `lex.rs`, 12 in `literal.rs`, 4 in
+`unicode/mod.rs`), under the bound of 600; `src/unicode/name_tables.rs`
+is generated data (391 KB, not counted).
+
+| function | reproduces | needs | status |
+| --- | --- | --- | --- |
+| `unicode::names::lookup(&[u32]) -> Option<u32>` | `_PyUnicode_Name_CAPI`'s `getcode(name, len, &code, 0)` as the `unicode_escape` decoder calls it for `\N{name}` | `name_tables.rs` | built |
+| `unicode::names::stored()` | every name and alias the table holds, by name (for the tests) | `name_tables.rs` | built |
+| `lex` names | `verify_identifier`: `_PyUnicode_ScanIdentifier` over the raw run of a name holding a code point past ASCII | `unicode::xid` | built |
+| `lex::decode_str`, `\N` | the decoder's `\N{...}` branch: the name to the next `}`, `getcode`, "malformed" or "unknown Unicode character name" | `unicode::names` | built |
+| `literal` names | `_PyPegen_new_identifier`'s NFKC of a name past ASCII and its refusal of `True`, `False` and `None` | `unicode::nfkc_into` | built |
+
+What `getcode` accepts (checked against `getcode` itself over every
+name, its lower-case and mixed-case spellings and 300,000 mutations of
+names, with no difference):
+
+- A name compares with ASCII letters upper-cased against exactly one
+  spelling per code point: `em dash` reads, `EM  DASH`, ` EM DASH` and
+  `EMDASH` do not.
+- The spellings: every name `unicodedata.name` gives; every alias of
+  `NameAliases.txt` (473: `NULL`, `LF`, `BOM`, the corrections such as
+  `LATIN CAPITAL LETTER GHA` beside the original); and, by rule, a prefix
+  and the code point as `%04X` for the CJK unified ideographs, the CJK
+  compatibility ideographs, Khitan small script characters, Nushu
+  characters and the Tangut ideographs (U+17000 to U+187F7 and U+18D00 to
+  U+18D08). `unicodedata.name` names no Tangut ideograph in 3.13.13, yet
+  `\N{TANGUT IDEOGRAPH-17000}` reads; the port follows the decoder. The
+  hex compares upper-cased too (`4e00` reads), and only its canonical
+  form reads (`04E00`, `004E00` and `4E0` do not).
+- A Hangul syllable is `HANGUL SYLLABLE ` and its three short names,
+  each column read by `find_syllable`'s longest match (the first of
+  equal length), the whole name used; the short names are upper-cased
+  like the rest (`HANGUL SYLLABLE ga` reads).
+- Named sequences (`KEYCAP NUMBER SIGN`) never read: the decoder passes
+  `with_named_seq` 0. Control characters have no name but their aliases
+  (`<control>` does not read).
+- A code point past ASCII in the name never reads: the parser hands the
+  decoder each one as `\Uxxxxxxxx` (`decode_unicode_with_escapes`), and
+  no name holds a backslash. No length limit is reachable: no name is
+  longer than 88 characters.
+
+`decode_str` keeps its order: the first escape that does not decode
+refuses the literal there; `\N` without `{`, `\N{}` and an unclosed
+brace are malformed, an unknown name refuses alike. Raw strings and bytes
+do not read the escape (`b'\N{X}'` keeps it, as an unknown escape).
+
+Names past ASCII: the tokenizer reads a run of identifier characters and,
+when the run holds a code point past ASCII, refuses it unless it is an
+identifier as written (`ⓢⓔⓣ()` is refused, though its NFKC reads
+`set`); the NAME token keeps the raw text, as `tokenize` shows it. The
+parser keeps the name by its NFKC, and `literal_eval` evaluates no name
+but `set` called with nothing, so `literal` reads a name past ASCII as
+`set` when its NFKC is `set` (`ｓｅｔ()`, `𝐬𝐞𝐭()`, `ſet()` are `set()`)
+and refuses every other; for `Ｔｒｕｅ`, `Ｆａｌｓｅ` and `Ｎｏｎｅ` the
+parser itself raises ValueError ("identifier field can't represent
+'True' constant").
+
+Decisions:
+
+- `literal.rs` gains the NFKC branch, outside the files the unit's brief
+  listed: `lex` keeps the raw text in its tokens (the golden files pin
+  `tokenize`'s raw spelling) and the literal reader reads a name from
+  that text, so the reader is where the parser's normalization belongs.
+- The rule ranges are data, probed through `getcode` for each prefix of
+  `RULE_PREFIXES` (Unicode's NR2 prefixes); Khitan, Nushu and CJK
+  compatibility names are stored names in CPython but read by the same
+  rule here, which answers alike and keeps 1,880 names out of the table.
+- The table is word-coded and decoded once, on the first lookup, into a
+  list sorted by name for a binary search: lookup is logarithmic in the
+  33,421 names and linear in the name's length.
+- No regular expression is involved: the reference is C code.
+
+Fixtures: `tests/contract/gen_unicode_names.py` writes
+`unicode_names.jsonl`, gated on Unicode 15.1.0 (under another version it
+writes the header alone). The header pins the 33,421 names and aliases
+of the table, sorted by name, and the 116,865 names a rule makes (Hangul
+from the short names it lists, then each range it lists by `%04X`), each
+by count and the SHA-256 of `<name>\t<code point>` lines, every one
+checked through `ast.literal_eval`. Then 1,267 texts with what
+`literal_eval` returns or raises: case variants, every rule range at
+both ends and one past, each rule prefix at the first code point of
+every range of another prefix, hex spellings of up to nine digits (nine
+overflow 32 bits), Hangul spellings, every alias and every named
+sequence, malformed escapes, the decoder's order, a name holding a code
+point past ASCII whose low byte would spell a name (`EM D\u{141}SH`),
+and names past ASCII. A text holding two backslashes in a row is written as code points
+(the golden files' host guard reads `\\` as a Windows share). Tests:
+`golden_unicode_names` (both digests through `lookup`, the second from
+the header's own short names and ranges, and every row through
+`literal_eval`), `unicode_names_kills` (case on a rule prefix,
+lower-case and padded hex, the range ends, aliases, named sequences,
+Hangul composition, exact spacing, the decoder's order, the identifier
+check on the raw run, and, apart from the Unicode-gated fixture, a code
+point past ASCII whose low byte would spell a name, each rule prefix at
+another prefix's code points and hex of seven to nine digits),
+`unicode_names_robustness` (every `u32` boundary,
+a 100,000-character name, 100,000 escapes, 50,000 lookups within ten
+times the time of 5,000). The tests that asserted a decline
+(`golden_pysyntax`, `pysyntax_kills`, `claims_kills`,
+`golden_pysyntax_fstring`, `pysyntax_fstring_kills`,
+`golden_pysyntax_module`) now assert the answer and allow no decline.
+
+Hazard: a name table generated from another Unicode version than CPython
+3.13.13's reads a different code point, or none; the generators refuse
+any version but 15.1.0. Whether a later 3.13 release reads the Tangut
+names alike was not seen here: the table and the fixture follow the
+interpreter that writes them.
+
+Cost: the table compiles alone in about 0.03 s; the first lookup decodes
+it once.
+
 ### Left for later units
 
-The XID tables (lane pyident) and the name table of `\N{...}` (unit
-pysyntax-names), which `lex` answers with `NeedsIdentTable` and
-`NeedsNameTable` until they are built. For `module_lex`: the expression
+Unit 5d removes `LexError::NeedsIdentTable` and `NeedsNameTable`,
+`LiteralError`'s and `ModuleError`'s variants passing them on, and the
+branches of `module_lex` and `fstring_lex` that answer them: since unit
+claims-6 nothing produces them. For `module_lex`: the expression
 grammar over module tokens (unit 5b2), the statement grammar (5c), and
 the reads of the parsed module by `check_claim` and `symbols` (5d).
 

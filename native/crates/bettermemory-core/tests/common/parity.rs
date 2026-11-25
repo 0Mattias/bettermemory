@@ -280,6 +280,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `str.isidentifier` over every code point and the `_` rule, which
         // is the same in every CPython 3 (`gen_unicode_xid`).
         "unicode_xid.jsonl" => &[Unicode],
+        // The names `\N{...}` reads and their aliases, over Unicode
+        // 15.1.0's name database (`gen_unicode_names`).
+        "unicode_names.jsonl" => &[Unicode],
         // `re`'s `finditer` of three patterns past Latin-1, where `\w` and
         // `\s` follow the Unicode data (`gen_verify_candidates`).
         "verify_candidates_patterns_unicode.jsonl" => &[Unicode],

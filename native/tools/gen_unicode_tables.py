@@ -27,11 +27,13 @@ The tables:
   interpreter's order.
 
 It also writes ``xid_tables.rs`` beside it: XID_Start and XID_Continue as
-``str.isidentifier`` answers them (``generate_xid``).
+``str.isidentifier`` answers them (``generate_xid``); and ``name_tables.rs``:
+the names ``\\N{...}`` reads (``generate_names``).
 """
 
 from __future__ import annotations
 
+import ctypes
 import re
 import sys
 import unicodedata
@@ -48,6 +50,7 @@ OUT = (
     / "tables.rs"
 )
 OUT_XID = OUT.with_name("xid_tables.rs")
+OUT_NAMES = OUT.with_name("name_tables.rs")
 
 HANGUL_FIRST, HANGUL_LAST = 0xAC00, 0xD7A3
 _WORD = re.compile(r"\w")
@@ -251,6 +254,206 @@ def generate_xid() -> str:
     return "\n".join(lines) + "\n"
 
 
+#: The prefixes of the names Unicode makes by rule (NR2: the prefix and
+#: the code point in hex). Each is probed through the decoder's own lookup.
+RULE_PREFIXES = (
+    "CJK UNIFIED IDEOGRAPH-",
+    "CJK COMPATIBILITY IDEOGRAPH-",
+    "TANGUT IDEOGRAPH-",
+    "KHITAN SMALL SCRIPT CHARACTER-",
+    "NUSHU CHARACTER-",
+    "EGYPTIAN HIEROGLYPH-",
+)
+HANGUL_PREFIX = "HANGUL SYLLABLE "
+#: Where `unicodedata` keeps the aliases and the named sequences
+#: (`Modules/unicodedata.c`: `aliases_start`, `named_sequences_start`).
+ALIASES_START, NAMED_SEQUENCES_START = 0xF0000, 0xF0200
+#: The characters a word or a code point is written in: printable ASCII
+#: but `"`, `.` and backslash. The first 60 end a number; the other 31
+#: are its leading digits.
+CODE_ALPHABET = "".join(chr(c) for c in range(0x21, 0x7F) if chr(c) not in '".\\')
+CODE_FINAL = 60
+
+
+def name_capi() -> tuple[Callable[[int, int], str | None], Callable[[str], int | None]]:
+    """``getname`` and ``getcode`` of ``unicodedata._ucnhash_CAPI``, the
+    lookup the ``unicode_escape`` decoder asks for ``\\N{...}``. The
+    capsule holds a ``_PyUnicode_Name_CAPI`` (3.13's
+    ``Include/internal/pycore_ucnhash.h``): ``int getname(Py_UCS4 code,
+    char *buffer, int buflen, int with_alias_and_seq)`` then ``int
+    getcode(const char *name, int namelen, Py_UCS4 *code, int
+    with_named_seq)``. Each answer the decoder can give is checked by
+    decoding it."""
+    get_pointer = ctypes.pythonapi.PyCapsule_GetPointer
+    get_pointer.restype = ctypes.c_void_p
+    get_pointer.argtypes = [ctypes.py_object, ctypes.c_char_p]
+    capsule = getattr(unicodedata, "_ucnhash_CAPI")
+    address = get_pointer(capsule, b"unicodedata._ucnhash_CAPI")
+    getname_ptr, getcode_ptr = (ctypes.c_void_p * 2).from_address(address)
+    assert getname_ptr is not None and getcode_ptr is not None
+    getname_fn = ctypes.CFUNCTYPE(
+        ctypes.c_int, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_int, ctypes.c_int
+    )(getname_ptr)
+    getcode_fn = ctypes.CFUNCTYPE(
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_int,
+    )(getcode_ptr)
+
+    def getname(code: int, with_alias: int) -> str | None:
+        buffer = ctypes.create_string_buffer(256)
+        if not getname_fn(code, buffer, 256, with_alias):
+            return None
+        return buffer.value.decode("ascii")
+
+    def getcode(name: str) -> int | None:
+        raw = name.encode("ascii")
+        code = ctypes.c_uint32(0)
+        if not getcode_fn(raw, len(raw), ctypes.byref(code), 0):
+            return None
+        return code.value
+
+    return getname, getcode
+
+
+def decoded(name: str) -> int | None:
+    """What ``'\\N{name}'`` decodes to, or None where it raises."""
+    try:
+        text = (b"\\N{" + name.encode("ascii") + b"}").decode("unicode_escape")
+    except UnicodeDecodeError:
+        return None
+    return ord(text) if len(text) == 1 else None
+
+
+def name_data() -> tuple[
+    list[tuple[str, int]], list[tuple[str, int, int]], list[list[str]]
+]:
+    """The names the table holds (every ``unicodedata.name`` not made by
+    a rule, and every alias, with its code point), the rule ranges by
+    prefix, and the Hangul short names by column (L, V, T)."""
+    getname, getcode = name_capi()
+    rules: list[tuple[str, int, int]] = []
+    ruled: set[int] = set()
+    for prefix in RULE_PREFIXES:
+        for cp in scalars():
+            if getcode(f"{prefix}{cp:04X}") != cp:
+                continue
+            name = unicodedata.name(chr(cp), None)
+            assert name in (None, f"{prefix}{cp:04X}"), (cp, name)
+            ruled.add(cp)
+            if rules and rules[-1][0] == prefix and rules[-1][2] == cp - 1:
+                rules[-1] = (prefix, rules[-1][1], cp)
+            else:
+                rules.append((prefix, cp, cp))
+    rules.sort(key=lambda r: r[1])
+    count = HANGUL_LAST - HANGUL_FIRST + 1
+    syllable = [
+        unicodedata.name(chr(HANGUL_FIRST + i))[len(HANGUL_PREFIX) :]
+        for i in range(count)
+    ]
+    # `GA` is L 0, V 0 ("A"), T 0 (""); L 11 is empty (`A` alone).
+    lead = [syllable[i * 21 * 28][:-1] for i in range(19)]
+    vowel = [syllable[11 * 21 * 28 + i * 28] for i in range(21)]
+    tail = [syllable[11 * 21 * 28 + i][1:] for i in range(28)]
+    for i in range(count):
+        joined = lead[i // (21 * 28)] + vowel[i // 28 % 21] + tail[i % 28]
+        assert (
+            syllable[i] == joined
+            and getcode(HANGUL_PREFIX + joined) == HANGUL_FIRST + i
+        )
+    table: list[tuple[str, int]] = []
+    for cp in scalars():
+        name = unicodedata.name(chr(cp), None)
+        if name is None or cp in ruled or HANGUL_FIRST <= cp <= HANGUL_LAST:
+            continue
+        assert getname(cp, 0) == name and getcode(name) == cp
+        table.append((name, cp))
+    aliases = 0
+    while (alias := getname(ALIASES_START + aliases, 1)) is not None:
+        target = getcode(alias)
+        assert target is not None and decoded(alias) == target, alias
+        table.append((alias, target))
+        aliases += 1
+    assert 0 < aliases < NAMED_SEQUENCES_START - ALIASES_START
+    sequence = getname(NAMED_SEQUENCES_START, 1)
+    assert (
+        sequence is not None and getcode(sequence) is None and decoded(sequence) is None
+    )
+    names = [name for name, _ in table]
+    assert len(set(names)) == len(names)
+    assert not any(n.startswith((HANGUL_PREFIX, *RULE_PREFIXES)) for n in names)
+    return table, rules, [lead, vowel, tail]
+
+
+def code(n: int) -> str:
+    """``n`` in ``CODE_ALPHABET``: leading digits base 31, then one of 60."""
+    high, low = divmod(n, CODE_FINAL)
+    digits = ""
+    while high:
+        high, d = divmod(high, len(CODE_ALPHABET) - CODE_FINAL)
+        digits = CODE_ALPHABET[CODE_FINAL + d] + digits
+    return digits + CODE_ALPHABET[low]
+
+
+def emit_text(name: str, text: str) -> list[str]:
+    """A string literal of lines of 99 characters joined by line
+    continuations (the text holds no white space, which a continuation
+    would drop)."""
+    assert not any(c.isspace() or c in '"\\' for c in text)
+    lines = [f'pub static {name}: &str = "\\']
+    width = 98
+    for i in range(0, len(text), width):
+        lines.append(text[i : i + width] + ("\\" if i + width < len(text) else '";'))
+    if not text:
+        lines.append('";')
+    return lines
+
+
+def generate_names() -> str:
+    """The names ``\\N{...}`` reads. Words are numbered by frequency
+    (then spelling) and listed in ``NAME_WORDS``; each entry of
+    ``NAMES``, in code point order, is the code point's distance from the
+    one before and its words, each a number in ``CODE_ALPHABET``, ended
+    by ``.``."""
+    table, rules, jamo = name_data()
+    table.sort(key=lambda e: (e[1], e[0]))
+    counts: dict[str, int] = {}
+    for name, _ in table:
+        for word in name.split(" "):
+            counts[word] = counts.get(word, 0) + 1
+    words = sorted(counts, key=lambda w: (-counts[w], w))
+    number = {w: i for i, w in enumerate(words)}
+    entries = []
+    previous = 0
+    for name, cp in table:
+        entries.append(
+            code(cp - previous)
+            + "".join(code(number[w]) for w in name.split(" "))
+            + "."
+        )
+        previous = cp
+    lines = [
+        "// @generated by native/tools/gen_unicode_tables.py from Python "
+        f"{sys.version_info.major}.{sys.version_info.minor}'s",
+        f"// unicodedata names and aliases, Unicode {unicodedata.unidata_version}. "
+        "Do not edit; regenerate.",
+        f"pub const NAME_COUNT: usize = {len(table)};",
+    ]
+    lines += emit_list(
+        "RULE_RANGES",
+        "(&str, u32, u32)",
+        [f'("{p}", 0x{a:X}, 0x{b:X})' for p, a, b in rules],
+        4,
+    )
+    for label, column in zip(("JAMO_L", "JAMO_V", "JAMO_T"), jamo, strict=True):
+        lines += emit_list(label, "&str", [f'"{j}"' for j in column], 28)
+    lines += emit_text("NAME_WORDS", ",".join(words))
+    lines += emit_text("NAMES", "".join(entries))
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: list[str]) -> int:
     if unicodedata.unidata_version != EXPECTED_UNIDATA:
         print(
@@ -260,7 +463,11 @@ def main(argv: list[str]) -> int:
         )
         return 2
     status = 0
-    for out, text in ((OUT, generate()), (OUT_XID, generate_xid())):
+    for out, text in (
+        (OUT, generate()),
+        (OUT_XID, generate_xid()),
+        (OUT_NAMES, generate_names()),
+    ):
         if "--check" in argv:
             current = out.read_text(encoding="utf-8") if out.exists() else ""
             if current != text:

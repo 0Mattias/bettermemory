@@ -1,8 +1,8 @@
 //! Every case of `pysyntax_fstring.jsonl` (gated on the Python release)
 //! against `pysyntax::module_lex` and its f-string modes: a source the
 //! tokenizer of 3.13.13 refuses is refused, any other is read into the
-//! tokens of the parser's mode, kind by kind with spans. Only a source
-//! holding a `\N{...}` escape may be declined. A row whose tokens the
+//! tokens of the parser's mode, kind by kind with spans. No source is
+//! declined: `\N{...}` is read with the name table. A row whose tokens the
 //! generator could not judge (`"tok": "unjudged"`, the C entry's
 //! SystemError on a source `ast.parse` accepts) is held to acceptance.
 //! The spelling is the generator's (`tests/contract/gen_pysyntax_fstring.py`).
@@ -221,7 +221,7 @@ fn pysyntax_fstring_every_case() {
     }
     if ledger.strict() {
         assert!(checked > 150, "checked {checked}, declined {declined}");
-        assert!(declined <= 3, "declined {declined}");
+        assert_eq!(declined, 0, "declined {declined}");
     }
     ledger.finish(rows.len());
 }

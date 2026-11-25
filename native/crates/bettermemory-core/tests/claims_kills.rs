@@ -341,23 +341,19 @@ fn load_claims_skips_non_str_and_keeps_repeats() {
 
 #[test]
 fn a_missing_table_is_a_gap_not_a_refusal() {
-    use bettermemory_core::pysyntax::literal::LiteralError;
-    // The reference reads `'\N{BULLET}'` as a str; the port has no name
-    // table, so it must not call the value "not a Python literal".
-    assert_eq!(
-        claims::parse_claim(&c("a::N='\\N{BULLET}'")),
-        Err(claims::ClaimError::Gap(LiteralError::NeedsNameTable))
-    );
+    // The reference reads `'\N{BULLET}'` as a str, and the port now reads
+    // it with the name table: no gap is left.
+    assert!(claims::parse_claim(&c("a::N='\\N{BULLET}'")).is_ok());
     assert_eq!(
         claims::string_fragment(&c("'\\N{BULLET}',")),
-        Err(LiteralError::NeedsNameTable)
+        Ok(Some(vec![0x2022]))
     );
-    // load_claims passes the gap on rather than dropping the entry: the
-    // reference keeps it as a literal claim.
+    // load_claims keeps it as a literal claim, as the reference does.
     assert_eq!(
         claims::load_claims(&[bettermemory_core::pyvalue::PyValue::Str(c(
             "p::N='\\N{BULLET}'"
-        ))]),
-        Err(LiteralError::NeedsNameTable)
+        ))])
+        .map(|claims| claims.len()),
+        Ok(1)
     );
 }
