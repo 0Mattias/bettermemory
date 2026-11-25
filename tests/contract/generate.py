@@ -184,6 +184,7 @@ from . import (
     gen_state,
     gen_search_ranker,
     gen_search_dedup,
+    gen_supersession_features,
     gen_search_snippet,
     gen_store,
     gen_store_docfreq,
@@ -376,6 +377,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "search_ranker": gen_search_ranker.generate,
     "search_dedup": gen_search_dedup.generate,
     "search_dedup_unicode": gen_search_dedup.generate_unicode,
+    "supersession_features": gen_supersession_features.generate,
+    "supersession_features_unicode": gen_supersession_features.generate_unicode,
     "search_snippet": gen_search_snippet.generate,
     "search_snippet_unicode": gen_search_snippet.generate_unicode,
     "store_path": gen_store_path.generate,
@@ -758,6 +761,9 @@ UNICODE_GATED = frozenset(
         "store_files",
         "search_ranker",
         "search_dedup_unicode",
+        # `str.lower`, `str.split`, `str.isdigit`, `\b`, `\d` and the tokenizer
+        # past ASCII (`gen_supersession_features`).
+        "supersession_features_unicode",
         "search_snippet_unicode",
         # `\s` and the tokenizer past ASCII (`gen_review_tables`).
         "review_tables_unicode",

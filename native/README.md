@@ -68,6 +68,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `verdict` | `verdict.py`'s `MemoryVerdict`, `UnresolvedVerdict`, `resolve_verdicts`, `memoised_verdicts`, `memory_verdict`, `_open_legs`, `_verdict` (the commit legs a trait, the path drift read and `unchecked_verdict` closures) | `verdict.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms; `_query_biased_snippet` with its memos (`snippet`), `_memory_tokens`, `seed_memory_tokens` and their LRU (`token_cache`), `top_hit_leads_runner_up` | `search.jsonl`, `search_ranker.jsonl`, `search_snippet.jsonl`, `search_snippet_unicode.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
+| `supersession` | unit supersession-1a of `supersession.py`: `CHANGE_CUES`, `_CUE_RE` (`cue_pattern`), the other patterns, `_VALUE_PREPS`, `_CUE_TOKENS`, the claim and floor constants, `SupersessionMatch` (`note`, `detector`), `SupersessionReport`, `change_cues`, `_word_tokens` and its cache, `anchored_values`, `_proper_nouns`, `value_tokens`, `anchor_tokens`, `_numeric_token_set`, `_numeric_shape`, `values_are_kin`, `_content_stream`, `_context`, `_surface_forms`, `_surface_form`; `claim_sized` and `_strip_provenance` re-exported from `store::digest` | `supersession_features.jsonl`, `supersession_features_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `history` | `history.py`'s first two units: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection; `_RowVerifier` and `_set` | `history_rows.jsonl`, `history_rows_python.jsonl`, `history_rows_mac.jsonl` |
 | `history_rows` | `history.py`'s third unit: `HistoryRow` with `to_dict`, `_changed` (with `py_ne`, Python's `!=` over payload values), `_body_diff` (through `difflib::body_diff`), `_set`, `_event_detail`, `_RecordWalk`, `_record_row`, `_link_change_rows` | `history_detail.jsonl` |
@@ -3752,6 +3753,137 @@ dashes, 3,000 tied records, the `i64` and float extremes and a million
 ideographic spaces. The reference takes 1.76 s, 1.22 s, 0.49 s and 0.10 s
 on the first four (Apple M-series); the whole robustness file runs in
 2.7 s in a debug build.
+
+## Write-time supersession (`supersession.py`)
+
+`supersession` reproduces `supersession.py` (816 lines), whose detector
+decides at write time whether a claim-sized body replaces or conflicts
+with a stored one. It needs nothing from the machine but the tokenizer,
+the regular expression engine and a process-wide cache; the detector
+reads stored bodies through the store. The module is cut in two units,
+leaves first: supersession-1a (built) holds the tables, the patterns,
+the two models and the per-body features (reference 145-518, in
+`src/supersession/mod.rs` and `src/supersession/features.rs`);
+supersession-1b holds the detector (520-797) in a new
+`src/supersession/detect.rs`. `_strip_provenance`, `_PROVENANCE_RE` and
+`claim_sized` were ported earlier in `store::digest` and are re-exported
+here.
+
+### Map, by function
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_PROVENANCE_RE`, `_strip_provenance` | 133-143 | nothing | built in `store::digest` (`strip_provenance`, hand-written), re-exported |
+| `_NUMERIC_TOKEN_RE`, `_ASCII_DIGIT_RE`, `_numeric_token_set` | 145-165 | nothing | built (`numeric_token_set`, a sorted set) |
+| `MAX_CLAIM_TOKENS`, `MAX_CLAIM_SENTENCES`, `MIN_JACCARD`, `MIN_CONFLICT_JACCARD`, `MIN_CONFLICT_KIN_JACCARD`, `CONTEXT_WIDTH`, `MIN_CONTEXT_SHARED`, `MAX_LINKS_PER_WRITE` | 167-183 | nothing | built (constants) |
+| `CHANGE_CUES`, `_CUE_RE`, `_VALUE_PREPS`, `_WORD_RE`, `_CLAUSE_RE`, `_PROPER_NOUN_RE`, `_INTEGER_RE`, `_DOTTED_RE`, `_CUE_TOKENS` | 185-265 | nothing | built (`CHANGE_CUES` in insertion order, `cue_pattern`, `VALUE_PREPS`, the pattern texts, `cue_tokens`) |
+| `_SENTENCE_RE`, `claim_sized` | 251, 325-333 | the tokenizer | built in `store::digest` (hand-written sentence count), re-exported |
+| `SupersessionMatch` (`note`, `detector`), `SupersessionReport` | 268-317 | nothing | built |
+| `change_cues` | 336-338 | nothing | built |
+| `_WORD_TOKEN_ENTRIES`, `_WORD_TOKENS`, `clear_word_token_cache`, `_word_tokens`, `_first_content_token` | 341-370 | a process-wide cache and its lock | built (`WORD_TOKEN_ENTRIES`, `word_tokens`, `first_content_token`, `clear_word_token_cache`, `word_token_cache_len` for the tests) |
+| `anchored_values` | 373-404 | the cache | built |
+| `_proper_nouns` | 407-418 | the cache | built (`proper_nouns`) |
+| `value_tokens`, `anchor_tokens` | 421-447 | the cache | built |
+| `_numeric_shape`, `values_are_kin` | 450-475 | nothing | built (`numeric_shape`) |
+| `_content_stream`, `_context` | 478-492 | the tokenizer | built (`content_stream`, `context`) |
+| `_surface_forms`, `_surface_form` | 495-512 | the cache | built (`surface_forms`, a list in first-seen order; `surface_form`) |
+| `_one_claim_replaced`, `_Old`, `_held`, `_stored`, `_claims_among`, `detect_supersession`, `_floor`, `detect_supersession_in`, `_SCORE_BATCH`, `_best_first`, `_detect`, `_rule` | 520-797 | the store's bodies and digest | unit supersession-1b |
+
+### What each part reproduces, and the decisions
+
+- **Patterns.** Every pattern the unit calls is the engine's `Regex`,
+  built once (a `LazyLock` per pattern) from the reference's own text
+  with no flags, and called with the reference's method:
+  `_NUMERIC_TOKEN_RE.findall`, `_ASCII_DIGIT_RE.search`,
+  `_CUE_RE.finditer`, `_WORD_RE.findall`, `_CLAUSE_RE.split` (with
+  `maxsplit` 1 in `anchored_values`, none in `_proper_nouns`),
+  `_PROPER_NOUN_RE.match`, `_INTEGER_RE.fullmatch` and
+  `_DOTTED_RE.fullmatch`. All eight are already in the engine's
+  inventory (`pyre_inventory.jsonl`) under the engine, so the inventory
+  is unchanged. `_SENTENCE_RE` and `_PROVENANCE_RE` stay the hand-written
+  matchers of `store::digest`. A pattern the engine does not build is
+  `SupersessionError::Pattern`, a failed call `SupersessionError::Call`,
+  so no public function panics on them.
+- **`_CUE_RE`** is built at run time as the reference builds it: the
+  cues sorted by length, longest first, with a stable sort (cues of one
+  length keep `CHANGE_CUES`' order), each through `re.escape`
+  (`pyre::atom::escape`), joined by `|` between `\b(` and `)\b`. The
+  golden file's header holds the reference's pattern text and the test
+  compares it. No cue is a prefix of another, so with `\b` on both sides
+  another order of the alternation finds the same matches; only the
+  pattern's text tells the order apart. `\b` reads Unicode word
+  characters over `body.lower()` (`unicode::lower`, final sigma and
+  growing lowerings included), so `émoved` holds no cue.
+- **Strings.** `str.split()` splits on runs of `str.isspace`
+  (`unicode::is_space`: `\x1c` to `\x1f`, NBSP, U+2028 and the rest);
+  the three `str.strip` sets are the reference's; `str.isdigit` is
+  `unicode::is_digit` (Unicode digits, so `build-٣` anchors); `len` counts
+  code points; `math.ceil(0.5 * min(...))` is the float ceiling, exact at
+  these sizes.
+- **Stopwords.** `search._STOPWORDS` is `search_lexicon._STOPWORDS`,
+  which the crate holds as `lexicon::is_stopword`; `search_dedup` uses the
+  same set. `attribution::STOPWORDS` is a different constant and is not
+  read.
+- **Sets and order.** `anchored_values`, `_proper_nouns`, `value_tokens`,
+  `anchor_tokens`, `_numeric_token_set` and `_context` are sets in the
+  reference and `BTreeSet<String>` here (order free). `_surface_forms`
+  is a dict in first-seen order and a `Vec<(token, form)>` here.
+  `anchored_values` keeps the first content token per cue and goes on to
+  the next cue.
+- **The word-token cache.** `_WORD_TOKENS` is a process-wide map from
+  the word as given (not lowered) to its content tokens, behind a lock
+  held for the whole lookup, emptied whole when it holds 65,536 words
+  before a new one is kept. It changes no answer. Its clearer is
+  registered with `caches::register` under
+  `supersession.clear_word_token_cache` on the cache's first use, the
+  counterpart of the reference's `@_caches.register` at import.
+- **`SupersessionMatch`.** Its text fields are code points. `note()`
+  writes `repr` of the cue (`None` when absent) and of both values
+  through `pyvalue::repr_str`; `detector()` is `numeric` when both values,
+  lowered, have a numeric shape (`\d` is Unicode, so `٨٤٤٣` is
+  `int:4`).
+- **`MAX_CLAIM_TOKENS`, `MAX_CLAIM_SENTENCES`** are public here and
+  private copies in `store::digest`, which is not edited by this unit;
+  the golden header holds both values.
+
+### Reference findings
+
+- **`_PROPER_NOUN_RE` is quadratic** on a long capitalised word that
+  fails at its end (`A` repeated then `+`, `Aa` repeated then `+`, `A`
+  then `a` repeated then `+`): the repeats of both
+  alternatives backtrack over the whole word. CPython 3.13.13 takes
+  0.047 s at 5,000 characters, 0.19 s at 10,000 and 0.76 s at 20,000.
+  On the engine the memo (pyre-9) holds `match` to at most 75 steps per
+  character (70.3 measured) and steps at 2n within 2.2 times steps at n.
+- **`anchored_values` is quadratic in a clause holding many cues**:
+  each cue splits and reads the words of the whole rest of its clause.
+  The reference takes 0.077 s at 10,000 characters of
+  `moved to port 9443 then ` and 7.6 s at 100,000; the port keeps the
+  reference's calls and so its family (`anchored_values`,
+  `anchor_tokens` and `_surface_forms` together take 15.7 s at 100,000
+  in a release build), held to ten times the clause within 200 times
+  the time.
+
+### Fixtures and tests
+
+`tests/contract/gen_supersession_features.py` writes
+`supersession_features.jsonl` (176 cases, ASCII bodies only, not gated)
+and `supersession_features_unicode.jsonl` (26 cases, bodies past ASCII,
+gated on Unicode). A body row holds every feature of the body; a `kin`
+row a pair's kinship and shapes; a `note` row a match's note and
+detector; the `sweep` row 20,000 bodies drawn from a word list by a
+seeded generator, pinned by count and SHA-256. `golden_supersession_features`
+checks every row whole and regenerates the sweep;
+`supersession_features_kills` (13) pins the cue pattern's order, `\b`,
+`str.isdigit` and `str.split` past ASCII, the strip sets, the skipped
+first word, the slot rules, the numeric cap and lowering, the kinship
+floor, the context's exclusions, the compound's length floor, the note
+and detector, and the cache keyed on the word as given;
+`supersession_features_robustness` (7)
+pins the steps of `_PROPER_NOUN_RE` and `_CUE_RE` on hostile words and
+bodies of 10,000 to 200,000 characters, linear time of the features,
+the quadratic family of `anchored_values`, a megabyte body, lone
+surrogates and 70,000 distinct words through the cache (emptied once).
 
 ## The store, read only
 

@@ -122,6 +122,10 @@
 //!   the query-biased snippet and its memos, and the token cache;
 //! - [`search_dedup`]: write-time dedup, the Jaccard scorer and its
 //!   token cache;
+//! - [`supersession`]: write-time supersession, its first unit: the
+//!   cue table, the patterns, the match and report models and the
+//!   per-body features (cues, anchored values, proper nouns, value and
+//!   anchor tokens, numeric shapes, kinship, context, surface forms);
 //! - [`records`]: the reference's record models (memory, tombstone,
 //!   episode, origin, actor, link) validated from a payload or a row and
 //!   written back, with pydantic's errors, and the result models
@@ -538,6 +542,7 @@ pub mod standing;
 pub mod standing_guard;
 pub mod store;
 pub mod store_refusal;
+pub mod supersession;
 pub mod symbols;
 pub mod time_utils;
 pub mod toml;
