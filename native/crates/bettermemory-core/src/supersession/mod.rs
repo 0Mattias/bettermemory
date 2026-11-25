@@ -11,8 +11,10 @@
 //! the method the reference calls. A pattern the engine does not build is
 //! [`SupersessionError::Pattern`], never a panic.
 
+mod detect;
 mod features;
 
+pub use detect::*;
 pub use features::*;
 
 pub use crate::store::digest::{claim_sized, strip_provenance};

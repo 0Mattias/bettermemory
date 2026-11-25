@@ -343,6 +343,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `str.lower`, `str.split`, `str.isdigit`, `\b`, `\d` and the
         // tokenizer past ASCII (`gen_supersession_features`).
         "supersession_features_unicode.jsonl" => &[Unicode],
+        // The tokenizer, `str.lower` and the features' patterns past ASCII
+        // (`gen_supersession_detect`).
+        "supersession_detect_unicode.jsonl" => &[Unicode],
         // The tokenizer, `str.strip` and `\w` past ASCII (`gen_search_snippet`).
         "search_snippet_unicode.jsonl" => &[Unicode],
         // `\s` and the tokenizer past ASCII (`gen_review_tables`).

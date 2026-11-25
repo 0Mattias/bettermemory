@@ -69,7 +69,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `verdict` | `verdict.py`'s `MemoryVerdict`, `UnresolvedVerdict`, `resolve_verdicts`, `memoised_verdicts`, `memory_verdict`, `_open_legs`, `_verdict` (the commit legs a trait, the path drift read and `unchecked_verdict` closures) | `verdict.jsonl` |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms; `_query_biased_snippet` with its memos (`snippet`), `_memory_tokens`, `seed_memory_tokens` and their LRU (`token_cache`), `top_hit_leads_runner_up` | `search.jsonl`, `search_ranker.jsonl`, `search_snippet.jsonl`, `search_snippet_unicode.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
-| `supersession` | unit supersession-1a of `supersession.py`: `CHANGE_CUES`, `_CUE_RE` (`cue_pattern`), the other patterns, `_VALUE_PREPS`, `_CUE_TOKENS`, the claim and floor constants, `SupersessionMatch` (`note`, `detector`), `SupersessionReport`, `change_cues`, `_word_tokens` and its cache, `anchored_values`, `_proper_nouns`, `value_tokens`, `anchor_tokens`, `_numeric_token_set`, `_numeric_shape`, `values_are_kin`, `_content_stream`, `_context`, `_surface_forms`, `_surface_form`; `claim_sized` and `_strip_provenance` re-exported from `store::digest` | `supersession_features.jsonl`, `supersession_features_unicode.jsonl` |
+| `supersession` | units supersession-1a and 1b of `supersession.py`: `CHANGE_CUES`, `_CUE_RE` (`cue_pattern`), the other patterns, `_VALUE_PREPS`, `_CUE_TOKENS`, the claim and floor constants, `SupersessionMatch` (`note`, `detector`), `SupersessionReport`, `change_cues`, `_word_tokens` and its cache, `anchored_values`, `_proper_nouns`, `value_tokens`, `anchor_tokens`, `_numeric_token_set`, `_numeric_shape`, `values_are_kin`, `_content_stream`, `_context`, `_surface_forms`, `_surface_form`; `claim_sized` and `_strip_provenance` re-exported from `store::digest`; the detector: `_one_claim_replaced`, `_floor`, `_SCORE_BATCH`, `detect_supersession` (with `_claims_among` and `_detect`), `detect_supersession_in` (with `_best_first` and its heap) over the `SupersessionStore` trait, `_rule` | `supersession_features.jsonl`, `supersession_features_unicode.jsonl`, `supersession_detect.jsonl`, `supersession_detect_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `history` | `history.py`'s first two units: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection; `_RowVerifier` and `_set` | `history_rows.jsonl`, `history_rows_python.jsonl`, `history_rows_mac.jsonl` |
 | `history_rows` | `history.py`'s third unit: `HistoryRow` with `to_dict`, `_changed` (with `py_ne`, Python's `!=` over payload values), `_body_diff` (through `difflib::body_diff`), `_set`, `_event_detail`, `_RecordWalk`, `_record_row`, `_link_change_rows` | `history_detail.jsonl` |
@@ -4094,7 +4094,7 @@ reads stored bodies through the store. The module is cut in two units,
 leaves first: supersession-1a (built) holds the tables, the patterns,
 the two models and the per-body features (reference 145-518, in
 `src/supersession/mod.rs` and `src/supersession/features.rs`);
-supersession-1b holds the detector (520-797) in a new
+supersession-1b (built) holds the detector (520-797) in
 `src/supersession/detect.rs`. `_strip_provenance`, `_PROVENANCE_RE` and
 `claim_sized` were ported earlier in `store::digest` and are re-exported
 here.
@@ -4117,7 +4117,7 @@ here.
 | `_numeric_shape`, `values_are_kin` | 450-475 | nothing | built (`numeric_shape`) |
 | `_content_stream`, `_context` | 478-492 | the tokenizer | built (`content_stream`, `context`) |
 | `_surface_forms`, `_surface_form` | 495-512 | the cache | built (`surface_forms`, a list in first-seen order; `surface_form`) |
-| `_one_claim_replaced`, `_Old`, `_held`, `_stored`, `_claims_among`, `detect_supersession`, `_floor`, `detect_supersession_in`, `_SCORE_BATCH`, `_best_first`, `_detect`, `_rule` | 520-797 | the store's bodies and digest | unit supersession-1b |
+| `_one_claim_replaced`, `_Old`, `_held`, `_stored`, `_claims_among`, `detect_supersession`, `_floor`, `detect_supersession_in`, `_SCORE_BATCH`, `_best_first`, `_detect`, `_rule` | 520-797 | the store's bodies and digest | built, unit supersession-1b (`one_claim_replaced`, `floor`, `SCORE_BATCH`, `detect_supersession`, `detect_supersession_in` over `SupersessionStore`; `_Old`, `_held`, `_stored`, `_claims_among`, `_best_first`, `_detect` and `_rule` private) |
 
 ### What each part reproduces, and the decisions
 
@@ -4214,6 +4214,157 @@ pins the steps of `_PROPER_NOUN_RE` and `_CUE_RE` on hostile words and
 bodies of 10,000 to 200,000 characters, linear time of the features,
 the quadratic family of `anchored_values`, a megabyte body, lone
 surrogates and 70,000 distinct words through the cache (emptied once).
+
+### Unit supersession-1b, built (`supersession::detect`)
+
+Reference lines 520-797 (at the fold of supersession-1a, as at
+`86fc4b76`), in `src/supersession/detect.rs` (617 lines, 511 of them
+code). The module's `mod.rs` gains the module line and its `pub use`.
+
+- **The two entry points.** `detect_supersession(cache, new_body,
+  existing, exclude_ids)` takes the records as `search_dedup::Candidate`
+  (`Memory` implements it; only `id` and `body` are read).
+  `detect_supersession_in(cache, store, new_body, exclude_ids)` reads a
+  store through `SupersessionStore`, whose five methods carry the
+  reference's names: `digest_shares` (answering `DigestShare`, the
+  native shape `store::digest_query` already holds), `digest_tokens_of`
+  (called with its default `removed=False`, so the trait has no such
+  argument), `bodies_of`, `digest_memo` (handed the computation as a
+  closure over the store, as `search_dedup::DigestStore` is) and
+  `load_all`. The memo key `("supersession", new_body,
+  frozenset(exclude_ids))` is `SupersessionMemoKey` (the body unstripped,
+  the ids a set). A memo answer of None falls back to
+  `detect_supersession` over `load_all()`. Ids reach the store in the
+  order the reference's generators yield them (the unstamped records of
+  a batch, then its stamped ones), repeats kept; a map leaves out an id
+  it does not hold. `exclude_ids` is a slice: the reference iterates its
+  argument twice when the digest is not there (`frozenset(exclude_ids)`,
+  then the scan's `set(exclude_ids)`), which only a one-shot iterator
+  would tell apart, and both callers pass a list.
+- **The token cache.** Every `raw_content_tokens` the reference makes
+  goes through the caller's `RawTokenCache`, `claim_sized`'s included
+  (its answer comes from `store::digest::claim_sized`, which tokenizes
+  without the cache; the port reads the stripped body through the cache
+  beside it), so the cache's keys end in the reference's order: the new
+  body, then each record twice (claim size, tokens), then the new body
+  again for the rule. The golden rows record the keys.
+- **`_detect` and `_claims_among`** are one loop here (the generator is
+  consumed by the one caller in order). The scored records are sorted by
+  `(-round(score, 4), id)` with a stable sort: ids compare by code point
+  (`PyStr` order), and one id twice keeps its order, as Python's key
+  sort does (the key tuples are equal, never compared further).
+- **`_best_first`** is a pull-driven state machine (`next_scored`), so
+  its reads interleave with the rule's exactly as the generator's do:
+  the bounds are computed and sorted on the first pull; each pull
+  computes the ceiling (`round(bound, 4)` of the next unscored share, or
+  -1.0) and hands on the heap's top only when its rounded score is
+  strictly above it; otherwise it reads the next batch of 64. A batch is
+  `bounded[position:position + 64]`, which may reach past `total` (the
+  first share whose bound is under the floor): those shares are scored
+  and pushed too, as the reference does. `similarity_bound` takes `i64`
+  counts: a claim that is a `PyValue::Int` within `i64` is read exactly,
+  a bool as 0 or 1, and anything else (an int past `i64`, None, a float,
+  a string) is declined (`DetectError::Claim`, class `NotPorted`). The
+  reference's `DigestShare.claim` is always `int(row[2])`, a token count
+  of at most `MAX_CLAIM_TOKENS`, so the decline is unreachable from the
+  store; on a share a caller scripts, the reference raises `TypeError`
+  for None and a string and answers for a float.
+- **The heap.** `heapq` is ported as CPython's `_heapq` runs it:
+  `heappush` appends and sifts down, `heappop` moves the last entry to
+  the root and sifts up (the smaller child up to a leaf, then down),
+  every comparison Python's `<` on `(-round(score, 4), id, score, _Old)`
+  tuples, the first unequal item deciding. Past an equal key, id and
+  score, `_Old` compares its id, then its token sets (`<` is the proper
+  subset) and then its body readers, two distinct functions, which
+  raises `TypeError: '<' not supported between instances of 'function'
+  and 'function'` (`DetectError::Unorderable`). That is reachable only
+  through one id repeated among the shares, which one `SELECT` keyed by
+  record never yields; the port reproduces it rather than calling it
+  unreachable, and the golden rows pin the raise (one id twice in a
+  batch), the subset order (a stamped and an unstamped share of one
+  id, both at the containment ceiling of 0.575: the subset pops first
+  whichever was pushed first), the raw score deciding two scores that
+  round alike (the lower pops first), two token sets of one size,
+  neither a subset of the other, kept in the order pushed, and
+  `_siftup` moving up the right child of such an unordered pair.
+- **`_Old.body`** is `Held` (a body in hand: the scan's records and the
+  stamped shares, stripped) or `Stored` (read through `bodies_of([id])`
+  when the rule first asks; None skips the record). A stored body is
+  not stripped: an unstamped share whose stored body carries a stamp is
+  read with the stamp, as the reference reads it (a golden row's
+  summary of a short claim holds the stamp).
+- **`_rule`** reads records until a list holds `MAX_LINKS_PER_WRITE`
+  and then stops pulling, so records past that point are never scored
+  and their tokens and bodies never read. Set differences and
+  intersections are on token strings; `sorted` of strings and of
+  `(str, str)` pairs is code point order (`String` order, UTF-8 byte
+  order being code point order). The replaced value is compared through
+  `unicode::lower` (`str.lower`, final sigma included). The summary is
+  `models_text::snippet_for(old_body, 100)`; the similarity
+  `search::num::round4`.
+- **`_one_claim_replaced`** is ported (`one_claim_replaced`) though the
+  rule inlines it, and is pinned on its own.
+
+No pattern is compiled in this unit; the features' patterns are
+supersession-1a's.
+
+Left for later units: wiring `SupersessionStore` to the store's digest
+(`digest_tokens_of`, `bodies_of` and `digest_memo` are not yet in
+`store::digest*`; the unit that wires `search_dedup::DigestStore` can
+implement both traits), the write path that stores the links (the
+`h_write` units) and durability's `_anchored_new_reference`.
+
+#### Fixtures and tests
+
+`tests/contract/gen_supersession_detect.py` writes
+`supersession_detect.jsonl` (94 cases, ASCII bodies only, not gated) and
+`supersession_detect_unicode.jsonl` (12 cases, bodies past ASCII, gated
+on Unicode: the tokenizer, `str.lower` and the features' patterns read
+the Unicode data). A `scan` row is `detect_supersession` over its
+records; an `in` row is `detect_supersession_in` over a scripted store
+that answers shares, tokens and bodies from the row and logs every call
+with its arguments; both record the report (every match field, the
+similarity's bits) and the token cache's keys after. The rows cover
+every outcome (supersedes by kin and by context; conflict by kin, by
+context and by overlap with the fallback pair), a cue with no pair, the
+replaced value kept and not kept (lowered), the floors at equality with
+and without a cue, claim size on either side, exclude_ids, both caps,
+ties broken by id (and a tie of two raw scores, 0.112150 and 0.112069,
+that round alike), stamped bodies on either side, tokens or a body
+gone, the digest absent and a memo of None (each with and without
+exclude_ids, which the fallback scan honours), a memo hit, a share under
+the floor read in a batch over it, the ceiling at a bound equal to the
+score and under its rounding, 65 and 129 shares of tied bounds, the cap
+reached before the second batch, and a repeated id in each order the
+heap reads it. The
+`sweep` row draws 5,000 stores of 20 records and a new body from a word
+list by a seeded generator and pins, per store, the scan's report, the
+digest path's report and its call log, by count and SHA-256 (the two
+reports agree on every store). Generating the ASCII file takes about
+27 s under CPython 3.13.13.
+
+`golden_supersession_detect` checks every row whole and regenerates the
+sweep (23 s in a debug build). `supersession_detect_kills` (17) pins
+the ceiling rounded and strict (an unrounded ceiling or `>=` hands a
+record on before the next batch is read), the read order of a rounded
+tie by id in both paths, the stable bound sort (which shares make the
+first batch), the walk stopped by a full list (one batch's tokens and
+five bodies read), a cue match kept only with the replaced value
+(lowered), a cue never conflicting, the sorted fallback pair, the
+100-character summary, the floors at equality, a share under the floor
+scored in its batch, a repeated id raising or ordered by token sets,
+by raw score, in the order pushed and by `_siftup`'s right child, an
+unstamped share's stored body read with its stamp, and the fallback
+scan's exclude_ids; each of sixteen such mutants of the port fails it.
+`supersession_detect_robustness` (4) feeds 20,000 shares with the list
+full after the first batch (one batch's tokens read; 2,000 against
+20,000 within ten times), bodies of 100,000 words (10,000 against
+100,000), 1,000 records tied in score (100 against 1,000, both paths)
+and integer extremes and other types in a share's claim and shared
+count. The reference takes 0.49 s on the bodies of 100,000 words,
+0.012 s on the 20,000 shares and 0.021 s on the 1,000 tied records
+(Apple M-series); the robustness file runs in 23 s in a debug build,
+most of it the timing rounds.
 
 ## The store, read only
 

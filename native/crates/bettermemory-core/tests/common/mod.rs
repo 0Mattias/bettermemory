@@ -54,6 +54,7 @@ pub mod settings_create;
 pub mod settle;
 pub mod store_reads;
 pub mod stores;
+pub mod supdetect;
 pub mod symbols;
 pub mod tool_handlers;
 pub mod transcript;

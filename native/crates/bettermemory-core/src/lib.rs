@@ -129,10 +129,11 @@
 //!   the query-biased snippet and its memos, and the token cache;
 //! - [`search_dedup`]: write-time dedup, the Jaccard scorer and its
 //!   token cache;
-//! - [`supersession`]: write-time supersession, its first unit: the
-//!   cue table, the patterns, the match and report models and the
-//!   per-body features (cues, anchored values, proper nouns, value and
-//!   anchor tokens, numeric shapes, kinship, context, surface forms);
+//! - [`supersession`]: write-time supersession: the cue table, the
+//!   patterns, the match and report models, the per-body features (cues,
+//!   anchored values, proper nouns, value and anchor tokens, numeric
+//!   shapes, kinship, context, surface forms), and the detector over the
+//!   active records or a store's digest read best first through a trait;
 //! - [`records`]: the reference's record models (memory, tombstone,
 //!   episode, origin, actor, link) validated from a payload or a row and
 //!   written back, with pydantic's errors, and the result models
