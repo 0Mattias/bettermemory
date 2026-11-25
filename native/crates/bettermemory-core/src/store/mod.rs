@@ -64,6 +64,7 @@ pub mod record_event;
 pub mod record_reads;
 pub mod recorder;
 pub mod restore_lock;
+pub mod restore_rows;
 pub mod returned;
 pub mod rotation;
 pub mod rows;

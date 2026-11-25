@@ -486,6 +486,12 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `json.loads` raises RecursionError there is the interpreter's
         // and the system's (`gen_restore_lock`).
         "store_restore_lock_hold_python.json" => &[Platform, Python],
+        // The created store's open, as `store_open_upkeep.jsonl`'s
+        // (`gen_restore_rows`).
+        "restore_rows.jsonl" => &[Unicode],
+        // A record and a log payload nested past where `json.loads` stops
+        // recursing (`gen_restore_rows.python_cases`).
+        "restore_rows_python.jsonl" => &[Python, Unicode],
         // The rows hold the tokenizer's spelling; the records are built
         // through the models.
         "store_provenance.jsonl" => &[Unicode, Pydantic],

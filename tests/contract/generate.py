@@ -180,6 +180,7 @@ from . import (
     gen_origin_match,
     gen_origin_model,
     gen_restore_lock,
+    gen_restore_rows,
     gen_store_refusal,
     gen_state,
     gen_search_ranker,
@@ -490,6 +491,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_restore_lock_hold": gen_restore_lock.generate_hold,
     "store_restore_lock_python": gen_restore_lock.generate_python,
     "store_restore_lock_hold_python": gen_restore_lock.generate_hold_python,
+    "restore_rows": gen_restore_rows.generate,
+    "restore_rows_python": gen_restore_rows.generate_python,
     "store_refusal": gen_store_refusal.generate,
     "store_refusal_posix": gen_store_refusal.generate_posix,
     "toml": gen_toml.generate,
@@ -788,6 +791,9 @@ UNICODE_GATED = frozenset(
         "store_open",
         "store_open_upkeep",
         "store_open_upkeep_python",
+        # The created store and its open (`gen_restore_rows`).
+        "restore_rows",
+        "restore_rows_python",
         "store_open_rekey",
         "store_open_rekey_python",
         "store_write",
@@ -1081,6 +1087,9 @@ PYTHON_GATED = frozenset(
         "store_open_rekey_python",
         "store_restore_lock_python",
         "store_restore_lock_hold_python",
+        # A record and a log payload nested past where `json.loads` stops
+        # (`gen_restore_rows.python_cases`).
+        "restore_rows_python",
     }
 )
 
@@ -1373,6 +1382,9 @@ POSIX_ONLY = frozenset(
         "store_restore_lock_hold",
         "store_restore_lock_python",
         "store_restore_lock_hold_python",
+        # Modes and a `flock` on the created store (`gen_restore_rows`).
+        "restore_rows",
+        "restore_rows_python",
         # Locks, a FIFO, links and an unreadable record (`gen_store_refusal`).
         "store_refusal_posix",
         "store_schema_posix",

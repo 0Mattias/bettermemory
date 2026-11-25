@@ -180,7 +180,10 @@
 //!   (`store::open`, `open/upkeep.rs`), and with its key missing or
 //!   foreign, the store reclaimed for the key in hand or rekeyed under a
 //!   new one (`open/rekey.rs`); the saved orphans a store was created
-//!   after (`store::create::store_orphans`); and the returned marks' backfill on the
+//!   after (`store::create::store_orphans`); a restore's late
+//!   `store_restored` row, appended or withheld and named in the restore
+//!   record (`store::restore_rows`: `pending`, `append_missing`,
+//!   `append_for`, `settle`); and the returned marks' backfill on the
 //!   writable store (`store::returned`: `missing_links`,
 //!   `returned_rows`, `backfill`, `ensure_backfilled`);
 //! - [`store_refusal`]: the stores a hook refuses before it starts a

@@ -123,7 +123,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns; unit 2: `_first_file_root` (with `unquote(errors="surrogateescape")`), `workspace_declaration` | `identity_caller.jsonl`, `identity_caller_unicode.jsonl`, `identity_roots.jsonl`, `identity_roots_python.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `standing_guard` | `handlers/_guard.py` whole: `read_words`, `record`, `Held`, `check`, `guard` and the hints, over `GuardDeps` | `standing_guard.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); the event reads (`store::event_reads`: `iter_events`, `iter_events_backward`, `capture_rows`, `events_of_kinds`, `session_events_of_kinds`, `events_since`, `_window_floor`, `NAMING_BOUND`, `log.CAPTURE_KINDS`); the event writes (`store::record_event`: `record_event` with `_primary_code`, `_busy`, `_time_left`, `_waiting_until` and `EVENT_RETRY_PAUSE_SECONDS`, `import_event`, `imported_event_keys`, `_named_payload`, `record_migration`, `record_capture`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build, and the upkeep with the key present: `_close_foreign_tail`, `_settle_origin`, `_record_origin`, `_name_origin_key`, `_forget_segments`; and with the key missing or foreign: `_open_connected`'s dispatch (117-143), `_reclaim`, `_open_rekeyed`, `_take_over_origin`, `KeyRing.create_key`; `Store.store_orphans` as `store::create::store_orphans`); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the keys a store opened without writing keeps (`store::key_read::open_reader`: `_open_connected`'s dispatch (82-116), `_open_reader`'s read key (146-203), `Store.has_key`, `Store._verify_key`, `Store.can_verify`); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_event_reads.jsonl`, `store_event_reads_naive.jsonl`, `store_record_event_posix.jsonl` (POSIX only), `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `store_open_upkeep.jsonl` (POSIX only), `store_open_upkeep_python.jsonl` (POSIX only), `store_open_rekey.jsonl` (POSIX only), `store_open_rekey_python.jsonl` (POSIX only), `store_orphans.jsonl` (POSIX only), `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_open_reader.jsonl`, `store_open_reader_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); the event reads (`store::event_reads`: `iter_events`, `iter_events_backward`, `capture_rows`, `events_of_kinds`, `session_events_of_kinds`, `events_since`, `_window_floor`, `NAMING_BOUND`, `log.CAPTURE_KINDS`); the event writes (`store::record_event`: `record_event` with `_primary_code`, `_busy`, `_time_left`, `_waiting_until` and `EVENT_RETRY_PAUSE_SECONDS`, `import_event`, `imported_event_keys`, `_named_payload`, `record_migration`, `record_capture`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build, and the upkeep with the key present: `_close_foreign_tail`, `_settle_origin`, `_record_origin`, `_name_origin_key`, `_forget_segments`; and with the key missing or foreign: `_open_connected`'s dispatch (117-143), `_reclaim`, `_open_rekeyed`, `_take_over_origin`, `KeyRing.create_key`; `Store.store_orphans` as `store::create::store_orphans`); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the keys a store opened without writing keeps (`store::key_read::open_reader`: `_open_connected`'s dispatch (82-116), `_open_reader`'s read key (146-203), `Store.has_key`, `Store._verify_key`, `Store.can_verify`); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`); a restore's late `store_restored` row (`store::restore_rows`, unit restore_rows-1a: `restore_record_path`, `pending`, `record_row`, `append_missing`, `append_for`, `settle`, with `_fill`, `_standing`, `_decide`, `_logged`, `_still_stands`, `_settle_one`, `_report_withheld`, `_said`, `_clock_reading`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_event_reads.jsonl`, `store_event_reads_naive.jsonl`, `store_record_event_posix.jsonl` (POSIX only), `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `store_open_upkeep.jsonl` (POSIX only), `store_open_upkeep_python.jsonl` (POSIX only), `store_open_rekey.jsonl` (POSIX only), `store_open_rekey_python.jsonl` (POSIX only), `store_orphans.jsonl` (POSIX only), `restore_rows.jsonl` (POSIX only), `restore_rows_python.jsonl` (POSIX only), `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_open_reader.jsonl`, `store_open_reader_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
 | `store::docfreq` | the document frequency memo of `store_index.py`: `_memoised_document_frequencies`, `_current_inputs`, `_patched_masks`, `_admitted_mask`, `_keep_doc_freqs`, `_row_mask`, `_DocFreqInputs` and the grouping of `Store._read_doc_freq_inputs`, the memoised half of `Store.ranking_statistics`; the store's side is the trait `DocFreqSource`, implemented over a store connection by `store::docfreq_store` (`_memory_head`, `digest_mark(build=False)`, `digest_admission_rows`, `Store._read_doc_freq_inputs`'s reads, `Store._term_masks`, `Store.document_frequencies`, `Store.ranking_statistics`, and `_advanced_inputs` with `_HEAD_KINDS` and `_ADVANCE_ROWS`, which carries an entry over a moved head) | `store_docfreq.jsonl`, `store_docfreq_store.jsonl`, `store_docfreq_store_b.jsonl`, `store_docfreq_advance.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token`; unit 4 in `identity`: `_strings`, `_flag`, `_FULL_SHA`, `PortableIdentity` (`to_json`, `from_json`, `digest`), `ImportedProject` and the bounds and import words, and in `outcomes`: `Declaration`, `Declared`, `Why`, `UnresolvedProject`, `Health`, `EpisodeRef`, `Handoff`, `RecallAdmission` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl`, `membership_records_identity.jsonl`, `membership_records_identity_python.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks`; unit 2a in `membership::shared_heal`: `_carriers`, `_restamped`, `_healed`, `_chosen`, `retired_into`, `_folded`, and the `MembershipLog` trait; unit 2b in `membership::shared_ask`: `_ask_which`, `_retire_into`, `_asked_at`, `_asked_here`, `_unseen`, `_asked_plan` | `membership_shared.jsonl`, `membership_shared_python.jsonl`, `membership_shared_heal.jsonl`, `membership_shared_ask.jsonl` |
@@ -4967,6 +4967,189 @@ interpreter's and the system's. Tests: `golden_restore_lock_hold`,
 as the fixture, with `restore_lock_hold_not_posix.rs` recording the gap
 (class os). Under `fsdata`'s Windows flavour nothing here resolves a path
 (ENG-124).
+
+## A restore's late `store_restored` row (`restore_rows.py`)
+
+`restore_rows.py` (727 lines, its rules in the module docstring, 1-128)
+appends the `store_restored` row a restore could not write: the restore
+record beside the head (`<store_id>.backup_restore.json`) names each
+restore of the store, and an entry whose `row` is still null gets its
+row from the next owner's writing open (`settle`) or from the next
+restore (`append_for`), or is withheld, with the reason written into the
+entry (`row_withheld`) and said once. `store::restore_rows` holds the
+whole module as functions over a `WritableStore` open for writing and
+the caller's `Provider` (the log clock for the row and the head, the
+engine version for its payload). The cut:
+
+| function | reference | needs | status |
+| --- | --- | --- | --- |
+| `restore_record_path` | 192-196 | nothing | restore_rows-1a, built |
+| `_write_private` | 199-202 | the file system (`store::write::replace_retrying`, then 0600) | restore_rows-1a, built |
+| `record_row`, `_fill` | 205-269 | the record's `flock`, `bounded_read`, `json` | restore_rows-1a, built |
+| `pending` | 272-303 | `bounded_read`, `json`, `log::replaced::history_replaced_kind` | restore_rows-1a, built |
+| `_seq_mac`, `_mac_at`, `_written_before`, `_row_at`, `_replaced_head`, `_withheld`, `_standing`, `_still_stands`, `_payload`, `_logged`, `_decide` | 306-469 | the connection, `datetime::parse_event_ts`, `store::rows::CONTROL_KINDS` | restore_rows-1a, built |
+| `_settle_one` | 472-492 | `WritableStore::begin`, `log::replaced::append_history_replaced_in` | restore_rows-1a, built |
+| `append_missing`, `_SAID`, `_SAID_BY_CLOCK`, `_clock_reading`, `_said`, `_report_withheld`, `append_for`, `settle` | 495-711 | all of the above | restore_rows-1a, built |
+| the owner's writing open's calls of `settle` | `store_open.py` 98, 131, 248 | `store::open` | restore_rows-1b, lane storereopen: the open still refuses a pending record (`NotPorted::RestoreRecord`) |
+| `backup._apply_restore`'s call of `append_for` | `backup.py` 1683 | the backup units | not built |
+
+What restore_rows-1a reproduces, and the decisions:
+
+- Warnings are data: each `log.warning` is a `Warning` pushed onto the
+  caller's list in the reference's order, so a call that raises keeps
+  what it said first. `format()` is the reference's format string and
+  `args()` its arguments: the store's path, the record's path, a value
+  `%s` spells as `str()` (a `restored_at` or `bundle` of any JSON type, a
+  seq or None), a text, an int, and an exception kept as its class and
+  SQLite's error name (`store::open::UpkeepCause`), never its text.
+- What the reference raises is `RestoreError`: SQLite's error, a column
+  that is not UTF-8 (`sqlite3`'s OperationalError), the transaction's or
+  the append's `WriteError`, the record lock's `FlockError`, and
+  RecursionError, OverflowError (a seq past SQLite's INTEGER, from the
+  bound parameter), TypeError and ValueError. `RestoreError::cause` is
+  what `settle`'s `except (sqlite3.Error, OSError, RuntimeError,
+  ValueError)` catches, as the class it logs; OverflowError, TypeError
+  and a refusal of this build raise out of `settle`, as the reference's
+  OverflowError does.
+- The record is read as `json.loads` reads bytes
+  (`store::provenance::decode_json_bytes`, then `json::loads_detailed`):
+  UTF-8 with or without its BOM, UTF-16 and UTF-32 by their BOM or their
+  null bytes, read as the reference reads them (an editor's UTF-16 record
+  is settled, and rewritten as `json.dumps` writes it, ASCII). The
+  classes `pending` logs: FileNotFoundError is no record; any other
+  OSError by `fsdata`'s class; IsADirectoryError for a directory (Python's
+  `open` of the descriptor refuses it after `os.open` succeeds); ValueError
+  for a file over the cap or not regular, and for an integer past 4,300
+  digits; UnicodeDecodeError; JSONDecodeError. RecursionError leaves
+  `pending` and `_fill`, as the reference's does.
+- Python's `==` is `history_rows`' comparison (`py_ne`), used for every
+  `==` of the module: numbers by value (`True == 1 == 1.0`), and a NaN
+  inside a list or dict equal to a NaN there, since every NaN
+  `json.loads` reads is one object (`json.decoder.NaN`) and a container
+  compares its items by identity first; at the top a NaN equals nothing.
+  So `append_for` of an entry whose `restored_at` is NaN finds no place
+  for it and returns None (its row is appended, once), while one whose
+  `restored_at` is `[NaN]` returns its row (`append_for_nan`,
+  `append_for_nan_in_list`).
+- `_fill` takes the record's lock (`fsutil::flock_excl(path, ".lock")`,
+  blocking on POSIX), reads the record again, finds the last dict whose
+  `row` is None (or missing) and whose `kind`, `store_id` and
+  `restored_at` equal the entry's, sets the key in place (a new key at the
+  end, as a dict does), drops `drop`, and writes `json.dumps(document,
+  indent=2, sort_keys=True)` and a line feed atomically and owner-only.
+  `fsutil` holds no atomic write and the two copies of `_write_private`
+  in the crate (`log/ring.rs`, `machine/open.rs`) are private to their
+  units, so this is a third over the same shared
+  `store::write::replace_retrying`. The record's lock file is made 0600
+  when missing; with the keys directory not writable that open fails
+  and the OSError leaves `_fill`, as the reference's does
+  (`lock_unmade`).
+- `_standing` and `_logged` run the reference's SQL as written, with
+  `sorted(CONTROL_KINDS)` as parameters; every column a row holds is
+  decoded as `sqlite3` fetches it (a text that is not UTF-8 raises), a
+  MAC or kind is compared as `str()` of its column (a blob is `b'...'`),
+  and `ts` and `restored_at` are read by `parse_event_ts` and compared as
+  instants. `_logged` reads a payload as `json.loads` reads it (text, or
+  bytes for a blob; any other type is TypeError and skipped). A seq is an
+  int, not a bool, bound as SQLite's INTEGER (OverflowError past it).
+- `_settle_one` reads on the connection outside the lock, then begins the
+  write transaction (`BEGIN IMMEDIATE`, the busy timeout the wait),
+  decides again, and appends through `append_history_replaced_in`
+  (payload: the entry less `row_withheld`; `row` dropped and `kind` and
+  `engine_version` set by the append) before it commits: the head moves
+  once. When the second decision does not append, the transaction is
+  committed with nothing written, as the reference's `with` exits.
+- An entry `append_missing` is given is a dict (the reference's
+  `Mapping`): another value is TypeError where the reference, calling
+  `.get` on it, raises AttributeError. `append_for`'s entry is a dict
+  too, and another value is TypeError, where the reference's
+  `dict(entry)` answers by the value: TypeError for a number,
+  ValueError for a str such as `"ab"`, an empty list read as `{}` (the
+  pending entries settled, None returned) and a list of pairs read as
+  the dict it spells. Both are outside the reference's signature; no
+  caller passes one.
+
+Reference findings, reproduced by the port:
+
+- An entry with no `kind` key (one the module counts as a restore's),
+  or whose `kind` is not `store_restored`, or that holds an
+  `engine_version`, is never found by `_logged`: the payload its row
+  carries has `kind` `store_restored` and the appending build's
+  `engine_version`. Such an entry's row, once on the log but not named in
+  the record (the record could not be written), is appended again at the
+  next open (`no_kind_appended_twice`: a second `store_restored` row
+  with the same payload).
+- Entries that share `kind`, `store_id` and `restored_at` by Python's
+  `==` are one place in the record: `_fill` names the last of them. Two
+  entries whose times are `true` and `1` get each other's rows named
+  (`true_and_one`); two equal entries get one row, named in both
+  (`twins_appended`).
+- `_fill` writes the record with `indent=2`, so a value nested `n` deep
+  takes about `n²` bytes: two values 600 deep make a record of
+  1,457,513 bytes, past the 1 MiB cap, so the second entry's row is
+  appended and returned but named nowhere, and every later read logs
+  ValueError (`restore_rows_robustness`).
+
+Pinned by `restore_rows.jsonl` (57 cases, 78 steps) and
+`restore_rows_python.jsonl` (2 cases, 4 steps), made by
+`tests/contract/gen_restore_rows.py`: the store `Store.create` makes
+under `store_create.json`'s values, opened as the owner, then the case's
+log rows inserted on the connection (raw rows: kinds, stamps and MACs of
+the case's choosing, a blob among them) and its record written as
+`backup._append_record` writes one, or as a hostile file. The record is
+written after the open, so the open's own `settle` finds none (the
+native open refuses a pending record). Each step calls `settle`,
+`append_missing` or `append_for` under fixed clocks and an optional hook
+(`PRAGMA query_only`; a second connection holding the write lock with a
+100 ms busy timeout; the keys directory 0500, skipped as root), and
+records the answer or the class raised, the warnings, the rows appended,
+the record's text after, the head's text, whether the connection is left
+in a transaction and the clocks read. Cases: no record; a record not
+JSON, over and at the cap, a directory, UTF-16 that does not decode, an
+integer past 4,300 digits, not a dict, `restores` not a list, in UTF-16
+and behind a UTF-8 BOM; entries of the other kind, another or no store
+id, a row set, no `row` key, a string, a bogus kind; `head_after`
+missing, absent from the log, with another MAC, with a bool seq, with a
+blob MAC; a replaced head on the log and one not on it; each branch of
+`_clock_reading`; unreadable times; a record row past the head, said,
+kept, decided again silently and then for a new reason; control rows
+only; the row already on the log (as text and as a blob), payloads that
+do not read; withholdings that stand, are gone, or have another shape;
+the record or its lock not writable; `query_only`; `append_for` with its
+entry missing, in the record, after an earlier one, as 1.0 against 1,
+and NaN; `append_missing` with entries given; true against 1; twins;
+a busy store; a seq past 64 bits; odd values said; a blob kind; the
+first row past the head stamped at the restore's very time; a withheld
+entry the record does not hold; an early first row that is the entry's
+own logged row; `append_for` of an entry sharing a pending one's place
+but not its bundle; a `head_before` behind the bundle's head at seq 0
+under the clock's words. The
+Python-gated sibling holds a record and a log payload nested 100,000
+deep (RecursionError out of `append_missing`, logged by `settle`), which
+follows the interpreter and the system. Gates: Unicode (the created
+store's tokenizer) and POSIX only (modes, a `flock`), as
+`store_open_upkeep.jsonl`'s; the sibling is Python-gated too.
+
+Tests: `golden_restore_rows` (every step of both files, through
+`tests/restore_rows/mod.rs`), `restore_rows_kills` (the clock asked where
+a replaced head decides, MACs compared as bytes, Rust's `==` for
+Python's, the decision skipped inside the lock, a control row counted as
+a record, the reason said twice, the record written without its lock),
+`restore_rows_robustness` (two settles at once on two connections append
+one row and fill the record once; 400 restores at the cap settle in
+linear time; nesting 100,000 deep raises without a panic, 9,000 deep is
+compared without one; 600 deep makes a record past the cap that later
+reads decline; seqs at and past SQLite's bounds; a record at 0644
+rewritten 0600, as `atomic_write_bytes(mode_before_rename=0o600)` leaves
+it on macOS and Linux; the connection out of any transaction after
+every path). POSIX only as the fixtures, with `restore_rows_not_posix.rs`
+recording the gap (class os). `restore_rows_cause` runs on every target:
+`RestoreError::cause` for each class `settle`'s four bases catch (the
+Windows lock's TimeoutError among them, logged as the reference logs
+it), and None for those it lets raise. No path
+is resolved here, so `fsdata`'s Windows flavour (ENG-124) does not
+touch it; on Windows `flock_excl` is `_flock_windows`, compiled and not
+run. No regular expression is used.
 
 ## Windows fixes to the settings write and the restore lock (winfix3)
 
@@ -26481,7 +26664,8 @@ What the reference has and this build does not, by area:
   the membership log and the store id reissue (store_membership-2),
   wiring the schema steps and `ensure_backfilled` (the returned marks'
   backfill, built in `store::returned`) into the writing open (store-3c)
-  and `run_steps`, a restore's rows, re-spelling the index.
+  and `run_steps`, wiring a restore's rows into the writing open
+  (restore_rows-1b), re-spelling the index.
 - Checkout capture still requires the orchestration in `origin.py`;
   `origin_match` holds its caller matching, `origin_git` its Git probes and
   `origin_cache` its signature and cache, while registration and lookup
