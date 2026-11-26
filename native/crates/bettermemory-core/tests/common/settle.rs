@@ -88,6 +88,9 @@ fn view(v: &Value) -> SegmentView {
         settled: strs(&v["settled"]).into_iter().collect(),
         review_roots: strs(&v["roots"]).into_iter().collect(),
         shown_by: by,
+        shown: Default::default(),
+        deliveries: 0,
+        marker: None,
     }
 }
 

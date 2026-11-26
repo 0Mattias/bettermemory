@@ -91,6 +91,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `recall_prompt` | `recall_prompt.py` whole: `_PromptTurn` (`PromptTurn`, `PromptTurnView`), `_prompt_window`, `_settle_before_probe`, `_prompt_probe`, `_record_hold`, `_record_delivery`; the session joins and `recall_admission`'s gate are traits, `Admission.on`, `settle_interrupted` and `_probe_message` closures | `recall_prompt.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `recall` | `recall.py`'s first unit: the constants, `WordsSeen` (`remember`, `seen`, `holds`, `clear`), `_fold`, `_bounded`, `RecallPointer`, `_annotation`, `_core`, `_one_excerpt`, `_recall_line`, `render_recall_block`; `recall_admission.summarize` and `disputed_marks`; `recall::choose`: `_seen_in_log`, `_seen_in_segment`, `_choose_hits`, `_deliver_recall`, `_unless_standing`, `_contradiction_open`, `HookResult` | `recall_render.jsonl`, `recall_render_unicode.jsonl`, `recall_choose.jsonl` |
+| `recall_state` | `recall_state.py`'s first unit: `STATE_MAX_SESSIONS`, `_STATE_KINDS`, the surfaces, `is_settlement`, the subagent fields, `Subagent` (`from_payload`, `fields`), `agent_of`, `taken_back`, `_Signal`, `_SessionRecall`, `SegmentView` (taken over from `recall_settle`), `_view`, `_closing_view`, `_restart`, `_reopen`, `_hold_signal`, `_withdraw`, `_replay`, `rebuild_session` over the store's session read as a trait | `recall_state.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `git_read_budget`, `git_calls` | `git_read_budget.py` whole (`ReadBudget`, the scopes as a `Scope` value, `_progress` as `Progresses`, `call_scope`, `call`, `health_call`, `async_call`, `reading`, `expired`, `wait_for`, `unread`, `hit`, `allowance`, `exhausted`, `for_resume`); `_git.py`'s tallies, `run_git`'s counts around one call, `printed_path`, `subcommand`, the `log_nonzero_exit` message | `git_read_budget.jsonl` |
 | `git_run` | `_git.py`'s `run_git` whole over a `GitProcess` (the command, `_environment`, stdin, the timeout given, both streams as text or bytes, the counts through `git_calls::run_git`, the logged lines as values) and `log_nonzero_exit` | `git_run.jsonl` |
@@ -9589,7 +9590,8 @@ the recall state (`SettleState`, whose `segment` answers a plain
 `review_unanswered` reads them) and `joined_sessions` (`Sessions`) are
 traits; `find_chain` is a closure answering `(open, standing_refused)`
 and the recorder `settle_unused` builds is a factory closure. The
-`recall_state` unit takes `SegmentView` over. Every datetime handed in is
+`recall_state` unit took `SegmentView` over: it is defined there in the
+reference's whole shape and re-exported here. Every datetime handed in is
 aware, as the reference's callers make them. `RULE`, `DEFAULT_HARNESS`,
 `STATE_IDLE_SECONDS`, `REVIEW_UNANSWERED` (`recall_state.py`),
 `REAUDIT_DEDUP_WINDOW_SECONDS` (`audit.py`) and `REVIEW_ISSUED`
@@ -10124,6 +10126,110 @@ the dict's order. `golden_recall_choose`, `recall_choose_kills`
 (15) and `recall_choose_robustness` (50,000 events to linear growth,
 100,000-deep values and the year bounds, 3,000 hits) read them; the fakes
 are `tests/common/choose.rs`.
+
+## The recall surface's per-session state (`recall_state.py`)
+
+`recall_state.py` (793 lines at 998253b2) is the recall surface's
+vocabulary, the per-session cooldown (`_SessionRecall`) with the
+transitions the held state and its rebuild share, `rebuild_session`, and
+the process-wide `RecallState`. It is cut in two units. Unit
+recall_state-1 is built in `recall_state`: everything but `RecallState`.
+Unit recall_state-2 is `RecallState` (493-793): the table of sessions
+with its eviction, `segment`, `open_segment`, `pending_compaction`,
+`resolve_compaction`, `attribute_compaction`, `take_closed`, `note_shown`,
+`claim_delivery`, `claim_brief`, `forget`, `note_settled` and
+`note_review_roots`, implementing `recall_settle::SettleState` and the
+state calls of `recall::choose` over the transitions built here.
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `RULE`, `DEFAULT_HARNESS`, `STATE_IDLE_SECONDS`, `REVIEW_UNANSWERED` | 49-110 | nothing | built (`recall_settle`'s, re-exported) |
+| `_DELIVERED_PROVENANCE`, `SUMMARY_CHARS` | 55-60 | nothing | built (`recall::choose`'s) |
+| `STATE_MAX_SESSIONS`, `_STATE_KINDS`, `SURFACE_BRIEF`, `SURFACE_RECALL`, `_SURFACE_OF_KIND`, `_SETTLEMENT_SURFACES` | 65-92 | nothing | built (`STATE_KINDS`, `SURFACE_OF_KIND` in the reference's order) |
+| `is_settlement` | 95-100 | nothing | built |
+| `_str_ids` | 113-114 | nothing | built (`events::str_ids`) |
+| `AGENT_FIELD`, `AGENT_FROM_PAYLOAD`, `AGENT_FROM_TRANSCRIPT`, `WITHDRAWN_FIELD`, `Subagent` (`from_payload`, `fields`), `agent_of`, `taken_back` | 119-188 | nothing | built |
+| `_Signal`, `_SessionRecall`, `SegmentView`, `_view` | 196-269 | nothing | built (`Signal`, `SessionRecall`, `SegmentView`, `view`) |
+| `_closing_view`, `_restart`, `_reopen`, `_hold_signal`, `_withdraw`, `_replay` | 276-422 | nothing | built (`closing_view`, `restart`, `reopen`, `hold_signal`, `withdraw`, `replay`) |
+| `rebuild_session` | 425-491 | the store's session read (a trait), the clock (an argument) | built |
+| `RecallState` | 493-793 | a lock, the store, the clock | not built (recall_state-2) |
+
+### Decisions
+
+- `SegmentView` is taken over from `recall_settle` whole, in the
+  reference's shape (`segment`, `started_at`, `shown`, `deliveries`,
+  `shown_by`, `settled`, `review_roots`, `marker`), and `recall_settle`
+  re-exports it, so its readers compile unchanged; the two test helpers
+  that build one gain the three new fields. `segment` stays a `PyValue`
+  (the log's int is any size) and `shown_by` stays a `BTreeMap` keyed in
+  code point order, the type `recall_settle`'s readers index. The
+  reference's view is a copy of the entry's insertion-ordered dict;
+  `SessionRecall::shown_by` keeps that order (`session::OrderedMap`) and
+  the fixtures pin it on the entry. Whether the view should carry the
+  order too is the next unit's to settle: `settle_shown` and
+  `settle_unused` iterate the view's `shown_by` into `attribute_uses`,
+  whose matches follow that order.
+- The store's read is the trait `SessionEvents`
+  (`session_events_of_kinds(session_id, kinds)`), answering the rows it
+  yields in order and the raise that stopped it; `rebuild_session` walks
+  the rows first, so a row that raises before the read fails raises
+  first, as the reference's generator does. `now` is an argument.
+- `is_settlement` answers `Result`: `x in frozenset` hashes the surface,
+  so a list or dict surface (also inside a tuple) raises `TypeError`, on
+  a `use` row only. `rebuild_session` meets it after the scope, harness
+  and stamp filters, as the reference does.
+- `_replay`'s `str(kind)` is `pyvalue::py_str` behind a walk in `repr`'s
+  order that raises first what `str` raises first: `ValueError` on an
+  `int` past 4,300 digits (also inside a list, tuple or dict), and
+  `RecursionError` at `repr`'s depth bound (a kind of 9,998 lists). The
+  depth bound is `repr`'s at top level, chosen: CPython 3.13.13's `str`
+  first raises at 9,999 lists in a direct call, through
+  `rebuild_session` and under `map(str, ...)`, and earlier where a C
+  caller sits between (9,997 under `sorted(key=str)`, 9,996 under
+  `functools.reduce`), so no constant matches it. A kind read from the
+  log reaches neither of the port's raises: `json.loads` refuses such an
+  int, and a row is a dict, so its kind holds at most 9,997 lists, where
+  port and reference agree unless such a C caller is on the reference's
+  stack. Any kind other than the str `session_brief` maps to `recall`.
+- A row's fields are read through `PyValue::get`, the crate's linear
+  scan, about fifteen times per row, so a row of very many keys rebuilds
+  far slower than the reference's dict lookups (20 rows of 100,000 keys:
+  0.1 ms in the reference, 111 ms in a release build). That is the
+  crate's representation, a known cost; the reference's own `json.loads`
+  of those rows takes 528 ms, so with the read counted the port is not
+  slower.
+- Sets are `BTreeSet`s (their order is not observable); the deliveries
+  are an `i128`, which `_reopen` may drive below zero as the reference's
+  int does (only a signal not taken from the entry can, since a signal
+  counts the entry's own deliveries).
+- `Subagent.from_payload` takes `str` or None, as its callers pass.
+
+Regular expressions: none.
+
+Findings about the reference (reproduced, pinned): none beyond the order
+question above, which is the port's.
+
+Tests: `recall_state.jsonl` (not gated, 42 KB) holds the constants,
+`is_settlement`, `agent_of` and `taken_back` over 28 events (malformed
+kinds, surfaces, agent ids and `withdrawn` values), `Subagent` over seven
+payloads, 41 `rebuild_session` cases over scripted rows (each transition:
+segments restarted, a bool or float segment, segments past i64, a compact
+held then reopened or left held, `opened_at` with and without a signal,
+a subagent's withdrawn ids in both scopes, a pre-recall `prompt_recall`
+with `top_hits` only, a `shown_ids` of None, rows of another harness or
+with no stamp, settlements and plain uses, review roots across segments,
+the store raising part way), each with the entry, `_view`,
+`_closing_view` and `_closing_view` at the signal compared whole, and a
+seeded sweep of 5,000 row sequences by count and SHA-256 (splitmix64,
+`_draw_rows` in the generator and `common::recall_state::draw_rows`).
+`recall_state_kills` holds the mistakes a single-segment log passes (a
+bool segment, a restart for a reopen, a plain use starting the entry,
+`shown_ids` tested for None, `shown_by` overwritten, the agent scope or
+the harness filter misread, a list or dict inside a tuple surface, an
+`int` kind past 4,300 digits); `recall_state_robustness` rebuilds 200,000
+rows of one session and 10,000 subagents' rows with linear growth
+claims, drives the deliveries below zero, reads segments past every
+machine int and kinds nested to the `repr` bound.
 
 ## A request's caller (`identity.py`)
 

@@ -43,6 +43,7 @@ pub mod origin_history_located;
 pub mod parity;
 pub mod provenance;
 pub mod recall_prompt;
+pub mod recall_state;
 pub mod record_calls;
 pub mod repository_history;
 pub mod response_leaf;

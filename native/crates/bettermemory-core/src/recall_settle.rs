@@ -14,7 +14,7 @@
 
 pub mod interrupted;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::attribution::attribute_uses;
 use crate::datetime::{parse_event_ts, DateTime};
@@ -88,17 +88,9 @@ pub trait Recorder {
 /// A session key: `(harness, session_id)`.
 pub type Key = (PyStr, PyStr);
 
-/// The segment `RecallState.segment` and `take_closed` answer: its start,
-/// its number, the ids settled in it, the review roots counted, and each
-/// shown id's `(surface, shown_event_id)`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct SegmentView {
-    pub started_at: DateTime,
-    pub segment: PyValue,
-    pub settled: BTreeSet<PyStr>,
-    pub review_roots: BTreeSet<PyStr>,
-    pub shown_by: BTreeMap<PyStr, (PyValue, PyValue)>,
-}
+/// The segment `RecallState.segment` and `take_closed` answer, defined in
+/// [`crate::recall_state`] with the reference's whole shape.
+pub use crate::recall_state::SegmentView;
 
 /// The `RecallState` calls this unit makes.
 pub trait SettleState {

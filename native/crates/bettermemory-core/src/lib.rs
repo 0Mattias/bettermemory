@@ -289,6 +289,9 @@
 //! - [`recall`]: the prompt recall: the table of the user's words
 //!   (`WordsSeen`), the recall block's renderer, and the hit choice and
 //!   delivery (`recall::choose`);
+//! - [`recall_state`]: the recall surface's vocabulary, the per-session
+//!   cooldown and its transitions, `SegmentView`, and the cooldown rebuilt
+//!   from the session's rows (`rebuild_session`);
 //! - [`durability`]: the write gate's transient markers, its first unit
 //!   (the marker's canonical form, quoted spans, the snippet and sentence
 //!   helpers), and its third, the capture rules (`CaptureRuleHit`,
@@ -566,6 +569,7 @@ pub mod pyvalue;
 pub mod recall;
 pub mod recall_prompt;
 pub mod recall_settle;
+pub mod recall_state;
 pub mod records;
 pub mod repository_history;
 pub mod response_history;

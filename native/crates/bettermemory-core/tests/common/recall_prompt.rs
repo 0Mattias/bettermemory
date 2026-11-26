@@ -431,6 +431,9 @@ pub fn run(kind: &str, case: &Value) -> (PyValue, Vec<PyValue>) {
                 settled: BTreeSet::new(),
                 review_roots: BTreeSet::new(),
                 shown_by: Default::default(),
+                shown: Default::default(),
+                deliveries: 0,
+                marker: None,
             };
             match rp::prompt_window(&mut t, &view, &mut fake) {
                 Ok(w) => l(vec![
