@@ -1,6 +1,14 @@
 //! Every script of response_drift.jsonl over a real `DriftPass`: each
 //! effect in order with its budget scope, each answer, the pass's kept
 //! maps and the memo's keys in order.
+//!
+//! POSIX only, as the fixture is (`POSIX_ONLY` in `generate.py`): the
+//! anchors compare through the host's `Path`, which the port declines
+//! under the Windows flavour; `response_drift_not_posix.rs` records the
+//! gap there.
+
+#![cfg(unix)]
+
 mod common;
 mod response_drift_script;
 

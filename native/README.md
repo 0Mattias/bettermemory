@@ -67,7 +67,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `commit_anchors` | `commit_anchors.py` whole (unit commit_anchors-1): `UNMAPPED_ANCHOR`, `UNMAPPED_REASON`, `relative_under`, `expected_home`, `CommitAnchors`, `project_commit_anchors`, and `HostPaths` (`verify_anchoring`'s `AnchorPaths` over them) | `commit_anchors.jsonl`, `commit_anchors_posix.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
 | `response_history` | `_DriftPass` location, eligibility to key a row, and lazy whole-history reads in `_response.py` | `response_history.jsonl` |
-| `response_drift` | `_DriftPass`'s row half in `_response.py`: `_DriftKey`, the process's `_DRIFT_MEMO` instance with its `_caches` registration, `lookup` (under `git_read_budget.hit`), `_key`, `_owned`, `unstored`, `store`; `origin_history.Walked` | `response_drift.jsonl` |
+| `response_drift` | `_DriftPass`'s row half in `_response.py`: `_DriftKey`, the process's `_DRIFT_MEMO` instance with its `_caches` registration, `lookup` (under `git_read_budget.hit`), `_key`, `_owned`, `unstored`, `store`; `origin_history.Walked` | `response_drift.jsonl` (POSIX only) |
 | `verify_basis`, `verify::status` | `verify_basis.py` whole (`unread_recommendation`, `dates_since`, `date_count_uncertainty`, `_count_since_verify` over the `AnchorWalk` trait) and `verify.py`'s status leaves (`CommitDriftStatus`, `_drift_recommendation`, `_claim_drift_recommendation`, `ResolvedCommitDrift`, `_index_paths`, `_unreadable`, `_gated_claims`, `commit_drift_status`, `staleness_verdict_from_report`), and the claim-level narrowing (`_weak_tier_evaluation`, `_claim_legs`, `_resolve_reachable`, `_resolve_with_claims`, `resolve_commit_drift` over the `DriftGit` and `Spelling` traits, and `LiteralReader`, the `LiteralLines` of the built literal reader), the claim anchors (`commit_drift_anchor_paths`, `_anchor_paths`, `_attested_anchor`, `_RELATIVE_CITATION_RE` on the engine) and the count (`resolve_commit_drift_count`, `_quiescent_drift_applicable`, `_anchor_specs`, `applicable_unread`, `compute_commit_drift`, `_narrow_commit_drift` over the `CountGit` trait) | `verify_basis.jsonl`, `verify_weak.jsonl`, `verify_count.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
 | `response_render` | `_response.py`'s `ResponseBuilder.render_hit`, `render_show`, `_SHOW_DEFAULTS`, `_NATIVE_SEP`, `_slashed`, `_path_states`, `_compact_origin`, `_grouped_links` | `response_render.jsonl` |
@@ -2253,7 +2253,7 @@ No regular expression is matched here: the anchors come from
 ### Fixtures and tests
 
 - `tests/contract/gen_response_drift.py` writes `response_drift.jsonl`
-  (not gated, about 56 KB): 38 scripts over a real `_DriftPass` and its
+  (not gated; POSIX only, below; about 56 KB): 38 scripts over a real `_DriftPass` and its
   memo with every effect scripted (the location and history reads, the
   admission, the signature, the three file signatures, `files_held`,
   the tallies, the clock and `resolve_hit_drift`): each early answer, the
@@ -2286,6 +2286,21 @@ No regular expression is matched here: the anchors come from
   resolution and in the store; a tenfold growth claim, eviction at a cap
   of 3 and at the real cap, extreme stamps, 100,000 anchors, a 1 MiB id,
   and tallies at the ends of `i64`, whose differences are exact).
+- Platforms. `response_drift.jsonl` is POSIX only (`POSIX_ONLY` in
+  `generate.py`), and `golden_response_drift.rs` is `#![cfg(unix)]`: a
+  row's anchors are compared through the host's `Path`
+  (`_normalize_for_compare`), `ntpath` on Windows, where the reference
+  itself would answer otherwise and the port declines
+  (`CompareError::NotPorted`, the Windows flavour's stated gap, ENG-124),
+  so every lookup with an anchor answers
+  `LookupError::Anchors(Compare(NotPorted))` there. The kills and
+  robustness cases that look such a row up are `#[cfg(unix)]` for the
+  same reason; the key's parts, the memo's registration and the hostile
+  rows (whose anchors are all given) run everywhere.
+  `response_drift_not_posix.rs` (`#![cfg(not(unix))]`) records the
+  fixture's gap as class os and pins the decline, with or without
+  `anchor_paths`, and a row whose anchors are all given answering as on
+  POSIX. CI's Windows parity jobs met the gap in run 45835514020.
 
 ### Left for later units
 

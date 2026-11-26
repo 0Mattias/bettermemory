@@ -4,33 +4,44 @@
 //! ignored, a naive stamp converted instead of replaced. The last module
 //! runs the POSIX adapter over a real repository that moves between a
 //! pass's lookups and its store.
+//!
+//! Every case that looks a row up compares its anchors through the host's
+//! `Path`, which the port declines under the Windows flavour (ENG-124), so
+//! those run on POSIX only; `response_drift_not_posix.rs` pins the decline.
+//! The key's parts and the memo's registration run everywhere.
+#[cfg(unix)]
 mod common;
 mod response_drift_script;
 
+#[cfg(unix)]
 mod verify_count_script;
+#[cfg(unix)]
 mod verify_weak_script;
 
-use bettermemory_core::attestation_paths::Record;
 use bettermemory_core::caches;
 use bettermemory_core::datetime::DateTime;
-use bettermemory_core::git_read_budget::Scope;
-use bettermemory_core::origin_history::{ReachableWalk, Unwalked, Walked, WalkedValue};
-use bettermemory_core::response_drift::{
-    clear_drift_memo, drift_memo, DriftKey, DriftPass, HitResolver, LookupError, Memo, Row,
-    CLEAR_KEY,
-};
-use bettermemory_core::verify::count::CountReads;
-use bettermemory_core::verify::literal_lines::LiteralReader;
-use bettermemory_core::verify::weak::{Place, WeakError};
-use response_drift_script::{attributes, cps, replay, shared, text, walk_files, Admit, Reads};
-use serde_json::{json, Value};
-use std::cell::RefCell;
+use bettermemory_core::response_drift::{clear_drift_memo, drift_memo, DriftKey, CLEAR_KEY};
+use response_drift_script::{attributes, cps, walk_files};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
-use verify_count_script::Counted;
-use verify_weak_script::literal;
+#[cfg(unix)]
+use {
+    bettermemory_core::attestation_paths::Record,
+    bettermemory_core::git_read_budget::Scope,
+    bettermemory_core::origin_history::{ReachableWalk, Unwalked, Walked, WalkedValue},
+    bettermemory_core::response_drift::{DriftPass, HitResolver, LookupError, Memo, Row},
+    bettermemory_core::verify::count::CountReads,
+    bettermemory_core::verify::literal_lines::LiteralReader,
+    bettermemory_core::verify::weak::{Place, WeakError},
+    response_drift_script::{replay, shared, text, Admit, Reads},
+    serde_json::{json, Value},
+    std::cell::RefCell,
+    std::sync::Arc,
+    verify_count_script::Counted,
+    verify_weak_script::literal,
+};
 
+#[cfg(unix)]
 fn state(over: Value) -> Value {
     let mut st = json!({
         "files": "H", "git": "H", "moved": false, "head": "H", "dates": [2, 3],
@@ -43,6 +54,7 @@ fn state(over: Value) -> Value {
     st
 }
 
+#[cfg(unix)]
 fn run(over: Value, steps: Value) -> (Vec<Value>, Vec<Value>) {
     let st = state(over);
     let case = json!({"cap": 5000, "cwd": "/r/s", "at_home": false, "state": st, "steps": steps});
@@ -58,6 +70,7 @@ fn run(over: Value, steps: Value) -> (Vec<Value>, Vec<Value>) {
     )
 }
 
+#[cfg(unix)]
 fn resolves(calls: &[Value]) -> usize {
     calls.iter().filter(|c| c[0] == "resolve").count()
 }
@@ -182,6 +195,7 @@ fn every_key_part_tells_keys_apart() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_row_differing_in_one_part_resolves_again() {
     let lk = |opts: Value| json!(["lookup", opts]);
     let rows = [
@@ -246,6 +260,7 @@ fn a_row_differing_in_one_part_resolves_again() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_moved_signature_keeps_nothing() {
     let steps = |sig: &str| {
         json!([
@@ -266,6 +281,7 @@ fn a_moved_signature_keeps_nothing() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_failed_store_breaks_the_pass() {
     let (calls, answers) = run(
         json!({}),
@@ -282,6 +298,7 @@ fn a_failed_store_breaks_the_pass() {
 }
 
 #[test]
+#[cfg(unix)]
 fn call_budget_and_mixed_failures_are_not_kept() {
     let lk = |res: Value| json!(["lookup", {"res": res}]);
     for (what, res, kept) in [
@@ -315,6 +332,7 @@ fn call_budget_and_mixed_failures_are_not_kept() {
 }
 
 #[test]
+#[cfg(unix)]
 fn an_empty_anchor_paths_replaces_the_anchors() {
     let (calls, answers) = run(json!({}), json!([["open"], ["lookup", {"anchors": []}]]));
     assert_eq!(answers[1], json!([true, null]));
@@ -324,6 +342,7 @@ fn an_empty_anchor_paths_replaces_the_anchors() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_naive_stamp_is_read_as_utc_not_converted() {
     let (calls, answers) = run(
         json!({}),
@@ -353,6 +372,7 @@ fn the_process_memo_is_registered_for_clearing() {
 /// `verified_head` as the anchor and the located head, and the pass's own
 /// walked map.
 #[test]
+#[cfg(unix)]
 fn hit_resolver_hands_the_walk_the_pass_place_and_heads() {
     let cell = shared(&state(json!({})));
     let mut reads = Reads(cell.clone());
@@ -458,6 +478,7 @@ fn hit_resolver_hands_the_walk_the_pass_place_and_heads() {
 /// `pwd.getpwnam('u').pw_dir == '/hu'` (and raises RuntimeError for an
 /// unknown user).
 #[test]
+#[cfg(unix)]
 fn the_anchors_expand_against_the_home_and_the_user_table() {
     let resolved_anchors = |calls: &[Value]| {
         calls
@@ -485,6 +506,7 @@ fn the_anchors_expand_against_the_home_and_the_user_table() {
 /// failed while the row was keyed (git's pair, read before the tallies)
 /// does not keep the row out, one that failed inside the resolution does.
 #[test]
+#[cfg(unix)]
 fn the_tallies_count_only_the_resolution() {
     let (_, answers) = run(
         json!({"files": null, "fails": {"git": 1}}),

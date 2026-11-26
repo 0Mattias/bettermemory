@@ -1610,6 +1610,10 @@ POSIX_ONLY = frozenset(
         "gitfile_discovery_python",
         "gitfile_follow",
         "gitfile_follow_python",
+        # The anchors compare through the host's `Path` (`_normalize_for_compare`):
+        # `ntpath` on Windows, where the native build declines (ENG-124)
+        # (`gen_response_drift`).
+        "response_drift",
     }
 )
 

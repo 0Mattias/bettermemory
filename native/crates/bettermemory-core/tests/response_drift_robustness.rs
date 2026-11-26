@@ -1,7 +1,14 @@
 //! Many rows through one pass, the memo at its cap, and hostile stamps
 //! and anchors: no panic, each key resolved once, and time linear in the
 //! rows.
+//!
+//! A row with an anchor compares it through the host's `Path`, which the
+//! port declines under the Windows flavour (ENG-124): the cases that
+//! resolve such rows run on POSIX only (`response_drift_not_posix.rs`
+//! pins the decline); the hostile rows, whose anchors are given, run
+//! everywhere.
 mod response_drift_script;
+#[cfg(unix)]
 mod timing;
 
 use bettermemory_core::admission::DriftScope;
@@ -19,6 +26,7 @@ use bettermemory_core::response_drift::{
     Chain, DriftPass, DriftReads, HitArgs, LookupError, Memo, Resolve, Row,
 };
 use bettermemory_core::response_history::{HistoryReads, Read};
+#[cfg(unix)]
 use bettermemory_core::response_memo::DRIFT_MEMO_CAP;
 use bettermemory_core::verify::hit::HitDrift;
 use bettermemory_core::verify::status::ResolvedCommitDrift;
@@ -146,11 +154,13 @@ impl DriftScope for Every {
     }
 }
 
+#[cfg(unix)]
 fn stamp() -> DateTime {
     DateTime::from_isoformat(&cps("2024-01-02T03:04:05+00:00")).unwrap()
 }
 
 /// `n` governed rows over three verified heads in one pass.
+#[cfg(unix)]
 fn rows(n: usize, memo: &Memo) -> (Lean, Counting, usize) {
     let mut reads = Lean::default();
     let mut resolver = Counting::default();
@@ -196,6 +206,7 @@ fn rows(n: usize, memo: &Memo) -> (Lean, Counting, usize) {
 }
 
 #[test]
+#[cfg(unix)]
 fn ten_thousand_rows_resolve_three_keys_once_each() {
     let memo = Memo::new();
     let (reads, resolver, unstored) = rows(10_000, &memo);
@@ -210,6 +221,7 @@ fn ten_thousand_rows_resolve_three_keys_once_each() {
 }
 
 #[test]
+#[cfg(unix)]
 fn rows_grow_linearly() {
     timing::grows_within(
         "lookup: 1,000 and 10,000 rows",
@@ -219,6 +231,7 @@ fn rows_grow_linearly() {
     );
 }
 
+#[cfg(unix)]
 fn lookup_heads(memo: &Memo, heads: &[&str]) -> usize {
     let mut reads = Lean::default();
     let mut resolver = Counting::default();
@@ -255,6 +268,7 @@ fn lookup_heads(memo: &Memo, heads: &[&str]) -> usize {
     resolver.0
 }
 
+#[cfg(unix)]
 fn memo_heads(memo: &Memo) -> Vec<String> {
     memo.memo_keys()
         .iter()
@@ -263,6 +277,7 @@ fn memo_heads(memo: &Memo) -> Vec<String> {
 }
 
 #[test]
+#[cfg(unix)]
 fn the_memo_at_its_cap_evicts_the_least_recently_used() {
     let memo = Memo::with_cap(3);
     assert_eq!(lookup_heads(&memo, &["a", "b", "c", "d", "e"]), 5);
@@ -333,6 +348,7 @@ fn hostile_stamps_and_anchors_do_not_panic() {
 /// is not kept (the reference's answer); one that moved by as much as the
 /// timed-out count is kept as timed out.
 #[test]
+#[cfg(unix)]
 fn extreme_tallies_answer_as_python_ints_do() {
     let record = Record {
         verified_paths: vec![cps("src/a.py")],
