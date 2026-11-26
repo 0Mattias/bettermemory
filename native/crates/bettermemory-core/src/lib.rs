@@ -307,8 +307,10 @@
 //!   (`WordsSeen`), the recall block's renderer, and the hit choice and
 //!   delivery (`recall::choose`);
 //! - [`recall_state`]: the recall surface's vocabulary, the per-session
-//!   cooldown and its transitions, `SegmentView`, and the cooldown rebuilt
-//!   from the session's rows (`rebuild_session`);
+//!   cooldown and its transitions, `SegmentView`, the cooldown rebuilt
+//!   from the session's rows (`rebuild_session`), and the process-wide
+//!   table of sessions (`RecallState`, `recall_state::held`) with the
+//!   settlement's and the recall's state traits on it bound to a store;
 //! - [`durability`]: the write gate's transient markers, its first unit
 //!   (the marker's canonical form, quoted spans, the snippet and sentence
 //!   helpers), its second (the marker tables, their patterns on the

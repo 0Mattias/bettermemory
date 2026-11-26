@@ -251,7 +251,7 @@ impl DeliveryGate<PyStr, PyStr, Option<PyStr>, PyStr> for Fake {
 }
 
 impl SettleState for Fake {
-    fn segment(&mut self, _key: &Key, _now: &DateTime) -> SegmentView {
+    fn segment(&mut self, _key: &Key, _now: &DateTime) -> Result<SegmentView, SettleError> {
         unreachable!()
     }
     fn take_closed(&mut self, _key: &Key) -> Option<SegmentView> {
@@ -395,6 +395,7 @@ fn settle_err(e: SettleError) -> PyValue {
     err(match e {
         SettleError::OverflowError => "OverflowError",
         SettleError::TypeError => "TypeError",
+        SettleError::State => "State",
     })
 }
 

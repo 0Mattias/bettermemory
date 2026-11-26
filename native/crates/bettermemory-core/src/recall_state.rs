@@ -10,7 +10,9 @@
 //! an argument (`now`). `RULE`, `DEFAULT_HARNESS`, `STATE_IDLE_SECONDS`
 //! and `REVIEW_UNANSWERED` are `recall_settle`'s, re-exported;
 //! `_DELIVERED_PROVENANCE` and `SUMMARY_CHARS` are `recall::choose`'s.
-//! `RecallState` itself is the next unit.
+//! `RecallState`, the process-wide table of sessions, and the state bound
+//! to a store for the settlement's and the recall's traits (`Bound`) are
+//! the second unit, in `held`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,7 +23,10 @@ use crate::session::OrderedMap;
 use crate::toml::INT_MAX_STR_DIGITS;
 use crate::unicode::cps;
 
+mod held;
+
 pub use crate::recall_settle::{DEFAULT_HARNESS, REVIEW_UNANSWERED, RULE, STATE_IDLE_SECONDS};
+pub use held::*;
 
 /// `STATE_MAX_SESSIONS`.
 pub const STATE_MAX_SESSIONS: usize = 1_000;

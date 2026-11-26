@@ -95,7 +95,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `recall_prompt` | `recall_prompt.py` whole: `_PromptTurn` (`PromptTurn`, `PromptTurnView`), `_prompt_window`, `_settle_before_probe`, `_prompt_probe`, `_record_hold`, `_record_delivery`; the session joins and `recall_admission`'s gate are traits, `Admission.on`, `settle_interrupted` and `_probe_message` closures | `recall_prompt.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `recall` | `recall.py`'s first unit: the constants, `WordsSeen` (`remember`, `seen`, `holds`, `clear`), `_fold`, `_bounded`, `RecallPointer`, `_annotation`, `_core`, `_one_excerpt`, `_recall_line`, `render_recall_block`; `recall_admission.summarize` and `disputed_marks`; `recall::choose`: `_seen_in_log`, `_seen_in_segment`, `_choose_hits`, `_deliver_recall`, `_unless_standing`, `_contradiction_open`, `HookResult` | `recall_render.jsonl`, `recall_render_unicode.jsonl`, `recall_choose.jsonl` |
-| `recall_state` | `recall_state.py`'s first unit: `STATE_MAX_SESSIONS`, `_STATE_KINDS`, the surfaces, `is_settlement`, the subagent fields, `Subagent` (`from_payload`, `fields`), `agent_of`, `taken_back`, `_Signal`, `_SessionRecall`, `SegmentView` (taken over from `recall_settle`), `_view`, `_closing_view`, `_restart`, `_reopen`, `_hold_signal`, `_withdraw`, `_replay`, `rebuild_session` over the store's session read as a trait | `recall_state.jsonl` |
+| `recall_state` | `recall_state.py` whole; unit 1: `STATE_MAX_SESSIONS`, `_STATE_KINDS`, the surfaces, `is_settlement`, the subagent fields, `Subagent` (`from_payload`, `fields`), `agent_of`, `taken_back`, `_Signal`, `_SessionRecall`, `SegmentView` (taken over from `recall_settle`), `_view`, `_closing_view`, `_restart`, `_reopen`, `_hold_signal`, `_withdraw`, `_replay`, `rebuild_session` over the store's session read as a trait; unit 2 (`recall_state::held`): `RecallState` (`_sweep`, `_entry`, `_held`, `segment`, `open_segment`, `pending_compaction`, `resolve_compaction`, `attribute_compaction`, `take_closed`, `note_shown`, `claim_delivery`, `claim_brief`, `forget`, `note_settled`, `note_review_roots`) and `SettleState` and `ClaimState` on the state bound to a store (`Bound`, `take_error`) | `recall_state.jsonl`, `recall_state_held.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `git_read_budget`, `git_calls` | `git_read_budget.py` whole (`ReadBudget`, the scopes as a `Scope` value, `_progress` as `Progresses`, `call_scope`, `call`, `health_call`, `async_call`, `reading`, `expired`, `wait_for`, `unread`, `hit`, `allowance`, `exhausted`, `for_resume`); `_git.py`'s tallies, `run_git`'s counts around one call, `printed_path`, `subcommand`, the `log_nonzero_exit` message | `git_read_budget.jsonl` |
 | `git_run` | `_git.py`'s `run_git` whole over a `GitProcess` (the command, `_environment`, stdin, the timeout given, both streams as text or bytes, the counts through `git_calls::run_git`, the logged lines as values) and `log_nonzero_exit` | `git_run.jsonl` |
@@ -10577,9 +10577,12 @@ it; a field it lacks reads as None.
   `note_review_roots` when any count.
 
 Decisions. The store's reads (`SettleStore`), the recorder (`Recorder`),
-the recall state (`SettleState`, whose `segment` answers a plain
+the recall state (`SettleState`, whose `segment` answers a
 `SegmentView` with `review_roots` beside the fields the task names, since
-`review_unanswered` reads them) and `joined_sessions` (`Sessions`) are
+`review_unanswered` reads them, or `SettleError::State` when the state's
+rebuild of the session raised: `settle_shown` and `review_unanswered`
+return it before reading or recording anything, as the reference's
+uncaught raise of `state.segment` stops them) and `joined_sessions` (`Sessions`) are
 traits; `find_chain` is a closure answering `(open, standing_refused)`
 and the recorder `settle_unused` builds is a factory closure. The
 `recall_state` unit took `SegmentView` over: it is defined there in the
@@ -11124,14 +11127,16 @@ are `tests/common/choose.rs`.
 `recall_state.py` (793 lines at 998253b2) is the recall surface's
 vocabulary, the per-session cooldown (`_SessionRecall`) with the
 transitions the held state and its rebuild share, `rebuild_session`, and
-the process-wide `RecallState`. It is cut in two units. Unit
-recall_state-1 is built in `recall_state`: everything but `RecallState`.
-Unit recall_state-2 is `RecallState` (493-793): the table of sessions
-with its eviction, `segment`, `open_segment`, `pending_compaction`,
-`resolve_compaction`, `attribute_compaction`, `take_closed`, `note_shown`,
-`claim_delivery`, `claim_brief`, `forget`, `note_settled` and
-`note_review_roots`, implementing `recall_settle::SettleState` and the
-state calls of `recall::choose` over the transitions built here.
+the process-wide `RecallState`. It is cut in two units, both built.
+Unit recall_state-1 is built in `recall_state`: everything but
+`RecallState`. Unit recall_state-2 is built in `recall_state::held`:
+`RecallState` (493-793), the table of sessions with its eviction,
+`segment`, `open_segment`, `pending_compaction`, `resolve_compaction`,
+`attribute_compaction`, `take_closed`, `note_shown`, `claim_delivery`,
+`claim_brief`, `forget`, `note_settled` and `note_review_roots`, and
+`recall_settle::SettleState` and `recall::choose::ClaimState`
+implemented on the state bound to a store (`Bound`), over the
+transitions built in unit 1.
 
 | function | reference lines | needs from the machine | status |
 | --- | --- | --- | --- |
@@ -11144,7 +11149,7 @@ state calls of `recall::choose` over the transitions built here.
 | `_Signal`, `_SessionRecall`, `SegmentView`, `_view` | 196-269 | nothing | built (`Signal`, `SessionRecall`, `SegmentView`, `view`) |
 | `_closing_view`, `_restart`, `_reopen`, `_hold_signal`, `_withdraw`, `_replay` | 276-422 | nothing | built (`closing_view`, `restart`, `reopen`, `hold_signal`, `withdraw`, `replay`) |
 | `rebuild_session` | 425-491 | the store's session read (a trait), the clock (an argument) | built |
-| `RecallState` | 493-793 | a lock, the store, the clock | not built (recall_state-2) |
+| `RecallState` | 493-793 | a lock, the store, the clock | built (`recall_state::held`: `RecallState`, `Bound`, `BoundError`) |
 
 ### Decisions
 
@@ -11157,10 +11162,13 @@ state calls of `recall::choose` over the transitions built here.
   code point order, the type `recall_settle`'s readers index. The
   reference's view is a copy of the entry's insertion-ordered dict;
   `SessionRecall::shown_by` keeps that order (`session::OrderedMap`) and
-  the fixtures pin it on the entry. Whether the view should carry the
-  order too is the next unit's to settle: `settle_shown` and
-  `settle_unused` iterate the view's `shown_by` into `attribute_uses`,
-  whose matches follow that order.
+  the fixtures pin it on the entry. The view need not carry the order
+  (settled in unit 2): `settle_shown` and `settle_unused`
+  (`recall_settle.py` 226-247 and 296-333) collect the pending ids from
+  the view and walk `sorted(pending)`, so `attribute_uses` receives them
+  in code point order, and `attribute_compaction` sorts its ids; the
+  insertion order reaches no row. The entry keeps its `OrderedMap` for
+  `_replay`'s `setdefault`.
 - The store's read is the trait `SessionEvents`
   (`session_events_of_kinds(session_id, kinds)`), answering the rows it
   yields in order and the raise that stopped it; `rebuild_session` walks
@@ -11198,8 +11206,8 @@ state calls of `recall::choose` over the transitions built here.
 
 Regular expressions: none.
 
-Findings about the reference (reproduced, pinned): none beyond the order
-question above, which is the port's.
+Findings about the reference (reproduced, pinned): none in unit 1; for
+unit 2 see its subsection.
 
 Tests: `recall_state.jsonl` (not gated, 42 KB) holds the constants,
 `is_settlement`, `agent_of` and `taken_back` over 28 events (malformed
@@ -11222,6 +11230,184 @@ the harness filter misread, a list or dict inside a tuple surface, an
 rows of one session and 10,000 subagents' rows with linear growth
 claims, drives the deliveries below zero, reads segments past every
 machine int and kinds nested to the `repr` bound.
+
+### Unit 2, built (`recall_state::held`)
+
+`RecallState::new(max_sessions, idle_seconds, agent_id)` (`Default` is
+the reference's bounds and the session's own scope) holds the table
+behind one `Mutex`. Every method takes `&self`; the three that may
+rebuild a session (`segment`, `open_segment`, `pending_compaction`) take
+the caller's store (`SessionEvents`) per call, as the reference passes
+it, and answer `Result<_, RebuildError<_>>`. The others take no store
+and answer what the reference answers. `keys` and `entries` copy the
+table out in order, for tests and diagnostics (`list(state._sessions)`).
+
+What each piece reproduces:
+
+- The table is in last-seen order, least recent first. Each key's place
+  is a sequence number (a `BTreeMap` of places beside a `HashMap` of
+  entries), so moving a key to the back and reading the front cost a
+  logarithm where the reference's linked `OrderedDict` costs a constant.
+  `session::OrderedMap` was not used: its front is found by a walk past
+  the slots that moves leave behind, linear per sweep under the access
+  pattern of a hook per session.
+- `_sweep`: `now - timedelta(seconds=idle)` first (`OverflowError` out of
+  the years 1 to 9999, also on an empty table, and for an idle past the
+  `timedelta` range, the same type), then the front dropped while
+  `last_seen < cutoff`, stopping at the first entry that is not: an entry
+  seen exactly at the cutoff stays, and stale entries behind a live one
+  (an out-of-order clock) stay until they reach the front. The order is
+  by instant for two aware datetimes and by wall clock for two naive
+  ones; a naive against an aware raises `TypeError`, as Python's `<`
+  does, and the walk keeps what it dropped before the raise.
+- `_entry`: the sweep, then a held key marked seen and moved to the back;
+  otherwise the lock is released, the session rebuilt
+  (`rebuild_session`, the state's `agent_id` as its scope), the lock
+  taken again, and the rebuilt entry inserted only when no other call
+  made one meanwhile (that one is only marked seen and moved), then the
+  front popped past the cap. A rebuild that raises leaves the sweep done
+  and inserts nothing.
+- `_held`: the entry, made empty (`SessionRecall(0, now, set(), 0, now)`)
+  when it is not held and never rebuilt, marked seen, moved to the back,
+  then the cap. A cap of zero drops the entry at once and the call still
+  works on the dropped entry, as the reference's local reference to it
+  does: `segment` answers an empty segment 0 though it just rebuilt, a
+  claim keeps every id it is offered, and `take_closed` finds nothing.
+- `open_segment`: `clear` closes (`closing_view`) and restarts at
+  `segment + 1` on the entry's own marker, whatever marker is passed;
+  `compact` with a marker whose key differs from the entry's closes and
+  restarts on that key; `compact` otherwise holds the signal at `now`
+  with no event id; any other source (`startup`, `resume`, an empty or
+  unknown one) keeps the segment. `segment + 1` is on the int's decimal
+  text (`pyvalue::integer::sum`), any size.
+- `resolve_compaction` and `attribute_compaction` act only on a held
+  session whose signal came at `at`: the same instant for two aware
+  datetimes (equal across offsets), the same wall clock for two naive
+  ones, never for a naive against an aware (Python's `==` answers false
+  there). Neither sweeps nor marks the session seen. `resolve_compaction`
+  needs a marker whose key differs from the entry's, closes at the
+  signal's shows (`closing_view` with `keep`) and reopens at the `at`
+  passed (so `started_at` keeps the caller's offset).
+  `attribute_compaction` answers the ids whose `shown_by` is
+  `("brief", signal.event_id)`, sorted (none when the event id is None),
+  after `withdraw`, and the event id.
+- `take_closed` answers the closed segment once.
+- `note_shown`: the surface is `surface or (recall if delivery else
+  brief)`, so an empty surface falls through; `setdefault` keeps an id's
+  first show; a delivery counts one, also when `ids` is empty.
+- `claim_delivery` keeps the ids not in `shown`, in order, an id repeated
+  in the list kept each time; nothing kept answers `([], segment)` and
+  counts no delivery. `claim_brief` filters both lists against `shown`
+  before noting either, so an id in both lists, or twice in one, is kept
+  each time, and counts no delivery.
+- `forget` pops; `note_settled` and `note_review_roots` add under
+  `_held`.
+
+Decisions:
+
+- `RecallState::bind(store)` answers a `Bound` pair whose
+  `SettleState::segment` rebuilds through the store, and the first error
+  it meets (`BoundError::Rebuild`, the store's read or a row's raise) is
+  kept for `Bound::take_error`, as `origin_git`'s `OriginRunner` keeps
+  its deferred error. `SettleState::segment` is the one trait call that
+  reads the store, and it answers `Err(SettleError::State)` there:
+  `recall_settle::settle_shown` and `review_unanswered` return that error
+  before they read the log or record a row, as the reference's uncaught
+  raise of `state.segment` stops them (`recall_settle.py` 224 and 505).
+  The hook wiring unit, which owns the Stop's real state and store, takes
+  the error from the pair when a call answers `SettleError::State` and
+  raises it as the reference would. Until it is taken every later call
+  on the pair answers the same error (`segment`) or is a no-op
+  (`take_closed` None, `claim_delivery` `([], 0)`, the notes and
+  `forget` nothing); none of these reads the store in the reference, so
+  only a caller that went on past the error meets them.
+- `ClaimState::claim_delivery` answers the segment as an `i64`. A
+  segment past `i64` (only a log row can carry one) is found under the
+  lock before anything is claimed: the pair keeps
+  `BoundError::SegmentPastI64` and claims nothing, where the reference
+  would claim and answer the int. `RecallState::claim_delivery` itself
+  answers the `PyValue`.
+- The cap is a `usize`. A negative cap is not representable; under one
+  the reference's eviction pops an empty `OrderedDict` and raises
+  `KeyError` on every call that reaches `_held` or `_entry`.
+- A lock poisoned by a panic on another thread is taken as it stands
+  (`PoisonError::into_inner`, as `session::SessionState::lock` does):
+  a panic is the caller's fault, not an answer of the reference, whose
+  `with` releases the lock on an exception.
+- `event_id` and `surface` are `Option<&[u32]>`; the trait's
+  `claim_delivery` passes its `event_id` as given, the reference's
+  caller always passing a str.
+
+Regular expressions: none.
+
+Known costs: a key is a `Vec<u32>` hashed on each table lookup and
+copied into the order map each time the session is marked seen, where
+the reference passes a `str` whose hash is cached. Twenty `note_shown`
+calls on one session whose id and shown id are 10,000,000 code points
+take 0.98 s in a release build against 0.004 s under CPython 3.13.13
+(about 245 times), with the same answer; the cost is linear in the key's
+length per call, and a real key is a harness session id of a few dozen
+characters.
+
+Findings about the reference (reproduced, pinned):
+
+- `_held` makes an empty segment 0 entry for a session the table does
+  not hold, without reading the log: a `note_shown`, `claim_*`,
+  `note_settled` or `note_review_roots` after the session was evicted or
+  forgotten starts a cooldown that ignores the session's rows, and a
+  later `segment` answers it instead of the rebuild (case "a held
+  session is never rebuilt by the calls that take no store"). The
+  reference's surfaces call `segment` first, so the path needs an
+  eviction between two calls of one hook.
+- A cap of zero answers on dropped entries (above), and a negative cap
+  raises `KeyError` (not ported).
+- The sweep raises `TypeError` when the clock passed is naive and an
+  entry's is aware (or the reverse), but only on the three calls that
+  sweep; the calls under `_held` store the naive clock silently.
+
+Tests: `recall_state_held.jsonl` (not gated, 76 KB) holds 30 scripted
+call sequences over a scripted store (rows per session, a raise after a
+count of rows, and calls made on the state while a session's rows are
+read, outside the lock), each call's answer, the keys held after it and
+the store reads it made, then every held entry whole (its fields, its
+signal and the segment it last left): clear, compact with a new marker,
+with the same marker and without one then resolved and attributed, the
+signal matched by instant across offsets and never against a naive
+time, a rebuilt signal attributed to a subagent (and the ids the recall
+showed under the brief's event id kept), startup, resume and
+other sources, sweeps at the idle edge (at the cutoff kept, a
+microsecond past dropped), with an out-of-order clock, with a naive
+clock, with a cutoff before year 1 and with a negative idle, the cap
+evicting the least recently seen and a cap of zero, a forget then a
+rebuild, a session made or forgotten while the rebuild reads,
+`claim_delivery` and `claim_brief` with repeats and already-shown ids,
+`note_shown` with an empty surface, a subagent-scoped state, the
+harness in the key, rebuilds that raise, and a segment past i64; and a
+seeded sweep of 5,000 call sequences (bounds, scope, failing session,
+clock steps, offsets, sources, markers, ids, surfaces drawn by
+splitmix64 in `_draw_calls` and `common::recall_state::draw_calls`) by
+count and SHA-256. `recall_state_held_kills` holds the mistakes one
+session with one hook passes (the sweep scanning past a live entry or
+dropping the entry at the cutoff, `_held` rebuilding, no re-check after
+the rebuild, the cap evicting the newest, a same-marker compact
+restarting, the signal matched by wall time, an empty claim counted,
+`shown_by` overwritten, `attribute_compaction` unsorted or taking
+another surface's shows, a clear taking the passed marker) and the bound
+pair's error and `i64` handling: `settle_shown` and `review_unanswered`
+over a pair whose store fails answer `SettleError::State` and record
+nothing, and `forget` and `take_closed` do nothing while the error is
+kept.
+`recall_state_held_robustness` drives a million calls (a release build;
+a tenth of each size in a debug build, about 25 microseconds a call
+there) over 10,000 sessions with the cap at 1,000 within linear growth,
+eight threads claiming on one session (the sets kept disjoint, in the
+order offered, covering every id, one delivery per claim that kept
+any), a show made by another thread while a rebuild reads (kept; each
+hand-off between the two threads waits at most a minute, so a
+regression fails instead of hanging), eight
+threads over fifty sessions with a cap of ten, a rebuild raising part
+way, idle bounds at the ends of `i64`, and claims of 100,000 ids within
+linear growth.
 
 ## A request's caller (`identity.py`)
 

@@ -43,6 +43,10 @@ pub enum SettleError {
     OverflowError,
     /// An unhashable session value tested against the `sessions` set.
     TypeError,
+    /// `state.segment` raised: the state's rebuild of the session from
+    /// the store failed. The state keeps what it raised
+    /// (`recall_state::Bound::take_error`); nothing is recorded after it.
+    State,
 }
 
 /// Why `store.load_one` refused: `MemoryNotFoundError`, `TombstonedError`.
@@ -94,7 +98,9 @@ pub use crate::recall_state::SegmentView;
 
 /// The `RecallState` calls this unit makes.
 pub trait SettleState {
-    fn segment(&mut self, key: &Key, now: &DateTime) -> SegmentView;
+    /// `RecallState.segment(store, key, now=)`, which may raise from the
+    /// store's read (`SettleError::State`).
+    fn segment(&mut self, key: &Key, now: &DateTime) -> Result<SegmentView, SettleError>;
     fn take_closed(&mut self, key: &Key) -> Option<SegmentView>;
     fn note_settled(&mut self, key: &Key, ids: &[PyStr], now: &DateTime);
     fn note_review_roots(&mut self, key: &Key, roots: &[PyStr], now: &DateTime);
@@ -215,15 +221,16 @@ pub struct Shown<'a> {
 
 /// `settle_shown`: the segment's shown ids not settled, not excluded and
 /// not used yet, matched against the reply; one `use` row per match; the
-/// ids settled.
+/// ids settled. A raise of `state.segment` propagates before anything is
+/// read or recorded.
 pub fn settle_shown(
     store: &mut dyn SettleStore,
     recorder: &mut dyn Recorder,
     state: &mut dyn SettleState,
     a: &Shown<'_>,
-) -> Vec<PyStr> {
+) -> Result<Vec<PyStr>, SettleError> {
     let key = key_of(a.harness, a.session_id);
-    let view = state.segment(&key, a.now);
+    let view = state.segment(&key, a.now)?;
     let exclude: BTreeSet<&PyStr> = a.exclude.iter().collect();
     let pending: Vec<&PyStr> = view
         .shown_by
@@ -231,7 +238,7 @@ pub fn settle_shown(
         .filter(|id| !view.settled.contains(*id) && !exclude.contains(id))
         .collect();
     if pending.is_empty() || a.assistant_response.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut sessions: BTreeSet<PyStr> = a.sessions.iter().cloned().collect();
     sessions.insert(key.1.clone());
@@ -247,7 +254,7 @@ pub fn settle_shown(
         }
     }
     if bodies.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut settled = Vec::new();
     for m in attribute_uses(&bodies, a.assistant_response) {
@@ -280,7 +287,7 @@ pub fn settle_shown(
     if !settled.is_empty() {
         state.note_settled(&key, &settled, a.now);
     }
-    settled
+    Ok(settled)
 }
 
 /// The recorder `settle_unused` builds: `Recorder(store=, session_id=,
@@ -402,7 +409,8 @@ fn hashable(value: &PyValue) -> bool {
 
 /// `review_unanswered`: the chain roots of the joined `review_issued`
 /// rows at or after `since`, not counted yet, that `find_chain` reads
-/// open and not refused for a standing record; one row when any.
+/// open and not refused for a standing record; one row when any. A raise
+/// of `state.segment` propagates before anything is recorded.
 /// `find_chain(root)` answers `(open, standing_refused)`.
 #[allow(clippy::too_many_arguments)]
 pub fn review_unanswered(
@@ -420,7 +428,7 @@ pub fn review_unanswered(
         return Ok(Vec::new());
     }
     let key = key_of(harness, session_id);
-    let view = state.segment(&key, now);
+    let view = state.segment(&key, now)?;
     let mut roots: Vec<PyStr> = Vec::new();
     for event in store.events_of_kinds(&[REVIEW_ISSUED], since) {
         let who = either(&event, "session", "session_id");

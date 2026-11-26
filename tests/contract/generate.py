@@ -545,6 +545,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "recall_render_unicode": gen_recall_render.generate_unicode,
     "recall_choose": gen_recall_choose.generate,
     "recall_state": gen_recall_state.generate,
+    "recall_state_held": gen_recall_state.generate_held,
     "fold": gen_fold.generate,
     "fold_python": gen_fold.generate_python,
     "store_event_reads": gen_store_event_reads.generate,

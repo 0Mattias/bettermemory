@@ -247,7 +247,9 @@ pub fn settle_before_probe<S: SettleStore, A, R, C: TurnCaller>(
                 message: cps("date value out of range"),
             },
             // previous_audit_at fails only on the date arithmetic.
-            SettleError::TypeError => unreachable!("previous_audit_at raises only OverflowError"),
+            SettleError::TypeError | SettleError::State => {
+                unreachable!("previous_audit_at raises only OverflowError")
+            }
         }),
         Ok(previous_audit) => settle(
             &mut turn.store,

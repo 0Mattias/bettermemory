@@ -156,13 +156,13 @@ impl Recorder for Fakes<'_> {
 }
 
 impl SettleState for Fakes<'_> {
-    fn segment(&mut self, key: &Key, now: &DateTime) -> SegmentView {
+    fn segment(&mut self, key: &Key, now: &DateTime) -> Result<SegmentView, SettleError> {
         self.log.push(list(vec![
             PyValue::str("seg"),
             key_value(key),
             PyValue::DateTime(*now),
         ]));
-        view(&self.case["seg"])
+        Ok(view(&self.case["seg"]))
     }
 
     fn take_closed(&mut self, key: &Key) -> Option<SegmentView> {
@@ -229,6 +229,7 @@ fn err(e: SettleError) -> PyValue {
     let name = match e {
         SettleError::OverflowError => "OverflowError",
         SettleError::TypeError => "TypeError",
+        SettleError::State => "State",
     };
     PyValue::Dict(vec![(PyValue::str("err"), PyValue::str(name))])
 }
@@ -265,7 +266,7 @@ pub fn run(kind: &str, case: &Value) -> (PyValue, Vec<PyValue>) {
                 &args,
             );
             f.log = shared.into_inner().log;
-            ids(&out)
+            answer_list(out)
         }
         "unused" => {
             let k = strs(&case["key"]);
@@ -372,7 +373,7 @@ impl Recorder for Proxy<'_, '_> {
 }
 
 impl SettleState for Proxy<'_, '_> {
-    fn segment(&mut self, key: &Key, now: &DateTime) -> SegmentView {
+    fn segment(&mut self, key: &Key, now: &DateTime) -> Result<SegmentView, SettleError> {
         self.0.borrow_mut().segment(key, now)
     }
     fn take_closed(&mut self, key: &Key) -> Option<SegmentView> {
