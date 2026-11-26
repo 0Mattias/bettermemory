@@ -193,7 +193,7 @@ fn integer_decimal(w: f64) -> String {
 
 /// An int (canonical decimal text) against a float, exactly, as Python
 /// compares them; None against NaN.
-fn cmp_int_float(int: &str, float: f64) -> Option<Ordering> {
+pub(crate) fn cmp_int_float(int: &str, float: f64) -> Option<Ordering> {
     if float.is_nan() {
         return None;
     }

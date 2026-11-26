@@ -34,9 +34,12 @@
 //!   verification, commit-drift and cross-repo debt rollups, the
 //!   cold-endorsement predicate and bucket, and the silent-miss types;
 //! - [`eval_model`]: the eval family's model (`eval_model.py`), its first
-//!   unit: the defaults, `RateCI` with the Wilson interval, the two row
-//!   types, the `--since` and `--until` parsing and the window, and the
-//!   silent-miss readers of one event;
+//!   two units: the defaults, `RateCI` with the Wilson interval, the two
+//!   row types, the `--since` and `--until` parsing and the window, and
+//!   the silent-miss readers of one event; unit 2 (`eval_model::rules`):
+//!   the threshold and widening rule registries, the sweep row, the
+//!   replayable-audit walk, `_probe_query_display` and the widening
+//!   detail types;
 //! - [`eval`]: `eval.py`, its first unit: `EvalReport` with its
 //!   `to_dict`;
 //! - [`eval_render`]: the eval family's renderers (`eval_render.py`), its

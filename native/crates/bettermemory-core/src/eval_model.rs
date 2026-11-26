@@ -25,6 +25,9 @@ use crate::pyvalue::{int_from_str, repr_str, type_name, PyStr, PyValue};
 use crate::search::num::{int_true_div, py_max};
 use crate::unicode::{self, cps, py_strip};
 
+mod rules;
+pub use rules::*;
+
 /// `DEFAULT_SINCE_SPEC`.
 pub const DEFAULT_SINCE_SPEC: &str = "30d";
 /// `DEFAULT_ENDORSEMENT_MIN_RETRIEVALS`.

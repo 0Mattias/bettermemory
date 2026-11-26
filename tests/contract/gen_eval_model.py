@@ -1,5 +1,7 @@
 """Fixtures: the eval family's model, unit eval_model-1
-(``eval_model.jsonl``, ``eval_model_python.jsonl``).
+(``eval_model.jsonl``, ``eval_model_python.jsonl``) and unit
+eval_model-2 (``eval_model_rules.jsonl``, written by `generate_rules`,
+whose text says how).
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/eval_model.rs``. This pins it to
@@ -941,3 +943,738 @@ def generate_python() -> dict[str, bytes]:
             )
     header = {"fixture": "eval_model_python", "count": len(rows)}
     return {"eval_model_python.jsonl": jsonl([header, *rows])}
+
+
+# ---------------------------------------------------------------------------
+# unit eval_model-2: the rules, the replayable-audit walk, the widening types
+# (``eval_model_rules.jsonl``)
+# ---------------------------------------------------------------------------
+
+RULES_SEED = 20261126
+RULES_COUNT = 20000
+_SINCE_30D = timedelta(days=30)
+_RULES_NOW = datetime(2026, 11, 25, 12, 0, tzinfo=UTC)
+_WALK_SINCES: list[timedelta | None] = [None, _SINCE_30D, timedelta(days=1)]
+
+
+def _all_rules() -> list[em.ThresholdRule]:
+    return [*em.THRESHOLD_RULES.values(), *em.WIDENING_RULES.values()]
+
+
+def _rule_answer(rule: em.ThresholdRule, hits: list[Any], recent: int) -> Any:
+    try:
+        answer = rule.check(hits, recent)
+    except Exception as exc:  # the class and text are the answer
+        return _err(exc)
+    assert isinstance(answer, bool)
+    return answer
+
+
+def _hit(rel: Any = "high", score: Any = _DROP, **kw: Any) -> dict[str, Any]:
+    """A top hit: ``relevance`` and ``score`` (each dropped by `_DROP`),
+    then ``kw``."""
+    hit: dict[str, Any] = {"id": "m1"}
+    for key, value in [("relevance", rel), ("score", score), *kw.items()]:
+        if value is not _DROP:
+            hit[key] = value
+    return hit
+
+
+_BIG = 2**1024
+_SINGLE_SCORES: list[Any] = [
+    True,
+    False,
+    0,
+    49,
+    50,
+    51,
+    -50,
+    _BIG + 1,
+    -_BIG,
+    10**400,
+    49.999999999999993,
+    50.0,
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+    -0.0,
+    1e308,
+    "60",
+    None,
+    [50],
+]
+
+_PAIR_SCORES: list[tuple[Any, Any]] = [
+    (100, 50),
+    (99, 50),
+    (100, 50.0),
+    (100.0, 50),
+    (99.5, 49.75),
+    (99.0, 49.75),
+    (2 * _BIG, _BIG),
+    (2 * _BIG - 1, _BIG),
+    (2**53 + 3, float(2**52 + 2)),
+    (2**54 + 1, 2**53 + 1),
+    (2**54 + 2, 2**53 + 1),
+    (float("inf"), 1e308),
+    (1.7976931348623157e308, 1e308),
+    (2**1030, 1e308),
+    (float("nan"), 1),
+    (1, float("nan")),
+    (True, 0.5),
+    (True, 1),
+    (2, True),
+    (1, True),
+    (60, 0),
+    (60, 0.0),
+    (60, -0.0),
+    (60, False),
+    (60, -1),
+    (60, -0.5),
+    (60, float("-inf")),
+    (60, "30"),
+    (60, None),
+    (60, _DROP),
+    (60, [30]),
+    (60, 10**400),
+    (10**401, 10**400),
+    (_DROP, 1),
+    ("60", 1),
+]
+
+_RECENTS = [0, 1, -1, 10**30, -(10**30)]
+
+
+def _rule_cases() -> list[tuple[list[Any], int]]:
+    cases: list[tuple[list[Any], int]] = []
+    for recent in _RECENTS:
+        cases.append(([], recent))
+        cases.append(([_hit(score=60)], recent))
+        cases.append((["junk"], recent))
+        cases.append(([_hit("medium", 60, relevance_v2="high")], recent))
+    for rel in ["medium", "low", "HIGH", "high ", 5, None, _DROP]:
+        cases.append(([_hit(rel, 60)], 0))
+    firsts: list[Any] = [None, 5, [_hit(score=60)], ("t",), {}]
+    for first in firsts:
+        cases.append(([first], 0))
+    for score in _SINGLE_SCORES:
+        cases.append(([_hit(score=score)], 0))
+    for top, second in _PAIR_SCORES:
+        cases.append(([_hit(score=top), _hit("low", second)], 0))
+    for second in ["junk", None, 7]:
+        cases.append(([_hit(score=60), second], 0))
+        cases.append(([_hit(score=40), second], 0))
+        cases.append(([_hit("low", 60), second], 0))
+    cases.append(([_hit(score=100), _hit(score=10), "junk"], 0))
+    for rel, rel2 in [
+        ("high", "high"),
+        ("medium", "high"),
+        ("low", "high"),
+        ("medium", "medium"),
+        ("medium", _DROP),
+        (_DROP, "high"),
+        ("medium", "HIGH"),
+        ("medium", 5),
+        ("Medium", "high"),
+    ]:
+        for recent in [0, 3]:
+            cases.append(([_hit(rel, 60, relevance_v2=rel2)], recent))
+    return cases
+
+
+def _rule_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "k": "rule",
+            "hits": neutral(hits),
+            "recent": str(recent),
+            "r": [_rule_answer(rule, hits, recent) for rule in _all_rules()],
+        }
+        for hits, recent in _rule_cases()
+    ]
+
+
+_AUDIT_BASE: dict[str, Any] = {
+    "kind": "turn_audited",
+    "ts": "2026-11-20T00:00:00Z",
+    "verdict": "miss",
+    "top_hits": [{"id": "m1", "relevance": "high", "score": 60}],
+    "recent_retrieval_count": 0,
+}
+
+
+class _Ev:
+    """An event spelled compactly: `_AUDIT_BASE` with keys set or dropped
+    (``w``), or any value (``n``)."""
+
+    def __init__(self, value: Any, changes: dict[str, Any] | None) -> None:
+        self.value = value
+        self.changes = changes
+
+    def spelled(self) -> dict[str, Any]:
+        if self.changes is None:
+            return {"n": neutral(self.value)}
+        return {
+            "w": [
+                [key, None if value is _DROP else neutral(value)]
+                for key, value in self.changes.items()
+            ]
+        }
+
+
+def _a(**kw: Any) -> _Ev:
+    ev = dict(_AUDIT_BASE)
+    for key, value in kw.items():
+        if value is _DROP:
+            ev.pop(key, None)
+        else:
+            ev[key] = value
+    return _Ev(ev, kw)
+
+
+def _n(value: Any) -> _Ev:
+    return _Ev(value, None)
+
+
+def _cut(cutoff_ts: Any, ts: Any = "2026-11-21T00:00:00Z") -> _Ev:
+    ev: dict[str, Any] = {"kind": "silent_miss_cutoff", "ts": ts}
+    if cutoff_ts is not _DROP:
+        ev["cutoff_ts"] = cutoff_ts
+    return _n(ev)
+
+
+_NOV1 = "2026-11-01T00:00:00Z"
+_NOV10 = "2026-11-10T00:00:00Z"
+_NOV15 = "2026-11-15T00:00:00Z"
+_NOV20 = "2026-11-20T00:00:00Z"
+
+_STREAMS: list[tuple[str, list[_Ev]]] = [
+    ("empty", []),
+    ("non_dicts", [_n(None), _n(5), _n("x"), _n([]), _n(["kind"]), _a(), _n((1,))]),
+    (
+        "window",
+        [
+            _a(ts="2026-11-25T00:00:00Z"),
+            _a(ts=_NOV1),
+            _a(ts="2026-10-26T12:00:00Z"),
+            _a(ts="2026-10-26T11:59:59.999999Z"),
+            _a(ts="2026-01-01T00:00:00Z"),
+            _a(ts="2026-11-25T13:00:00+01:00"),
+            _a(ts="2026-10-26T13:00:00+01:00"),
+            _a(ts="2026-11-24T12:00:00"),
+            _a(ts="not a time"),
+            _a(ts=5),
+            _a(ts=_DROP),
+            _a(ts=None),
+            _a(ts="2026-12-01T00:00:00Z"),
+        ],
+    ),
+    (
+        "repeat",
+        [
+            _a(repeat=v)
+            for v in [True, 1, "yes", [0], 0.5, False, 0, "", None, [], 0.0, {}]
+        ],
+    ),
+    (
+        "verdict",
+        [
+            _a(verdict="no_signal"),
+            _a(verdict="NO_SIGNAL"),
+            _a(verdict=_DROP),
+            _a(verdict=None),
+            _a(verdict=["no_signal"]),
+            _a(repeat=True, verdict="no_signal"),
+            _a(verdict="no_signal", top_hits=[]),
+        ],
+    ),
+    (
+        "top_hits",
+        [
+            _a(top_hits=v)
+            for v in [
+                _DROP,
+                None,
+                [],
+                "m1",
+                {"id": "m1"},
+                ["junk"],
+                [None],
+                [5],
+                [[{}]],
+                [{}],
+                [{"id": "x"}, "junk"],
+                [{"relevance": "low"}],
+                ({"id": "t"},),
+            ]
+        ],
+    ),
+    (
+        "recent",
+        [
+            _a(recent_retrieval_count=v)
+            for v in [
+                _DROP,
+                True,
+                False,
+                0,
+                3,
+                -2,
+                2**70,
+                -(2**70),
+                10**30,
+                1.0,
+                "3",
+                None,
+                [1],
+            ]
+        ],
+    ),
+    (
+        "kinds",
+        [
+            _n({"kind": "search_miss", "ts": _NOV20}),
+            _n({"ts": _NOV20}),
+            _n({"kind": 5, "ts": "2025-01-01T00:00:00Z"}),
+            _a(kind="TURN_AUDITED"),
+            _a(kind=_DROP),
+            _n({}),
+            _a(),
+        ],
+    ),
+    (
+        "cutoff_before",
+        [
+            _cut("2026-01-01T00:00:00Z", ts="2026-01-01T00:00:00Z"),
+            _a(ts=_NOV1),
+            _a(ts=_NOV20),
+        ],
+    ),
+    (
+        "cutoff_inside",
+        [
+            _a(ts=_NOV1),
+            _a(ts=_NOV10),
+            _cut(_NOV10, ts=_NOV15),
+            _a(ts=_NOV20),
+            _a(ts="junk"),
+        ],
+    ),
+    (
+        "cutoff_after",
+        [_a(ts=_NOV20), _cut("2026-12-01T00:00:00Z", ts="2025-01-01T00:00:00Z")],
+    ),
+    (
+        "cutoffs_out_of_order",
+        [_cut(_NOV15), _a(ts=_NOV10), _a(ts=_NOV20), _cut(_NOV1)],
+    ),
+    (
+        "cutoff_unreadable",
+        [
+            _cut("junk"),
+            _cut(5),
+            _cut(_DROP),
+            _cut(None),
+            _cut([_NOV15]),
+            _a(ts=_NOV20),
+            _a(ts=5),
+        ],
+    ),
+    (
+        "cutoff_offset",
+        [
+            _cut("2026-11-15T01:00:00+01:00"),
+            _a(ts=_NOV15),
+            _a(ts="2026-11-14T23:59:59.999999Z"),
+            _a(ts="2026-11-15T00:30:00+01:00"),
+        ],
+    ),
+    (
+        "cutoff_naive",
+        [_cut("2026-11-15T00:00:00"), _a(ts="2026-11-14T23:00:00Z"), _a(ts=_NOV15)],
+    ),
+    (
+        "cutoff_unreadable_rows",
+        [
+            _cut("2026-01-01T00:00:00Z"),
+            _a(ts="junk"),
+            _a(ts=_DROP),
+            _a(ts=_NOV20),
+        ],
+    ),
+    (
+        "cutoff_after_skips",
+        [
+            _cut(_NOV15),
+            _a(ts=_NOV1, repeat=True),
+            _a(ts=_NOV1, top_hits=[]),
+            _a(ts=_NOV1, verdict="no_signal"),
+            _a(ts=_NOV1),
+            _a(ts=_NOV1, top_hits=["junk"]),
+        ],
+    ),
+    (
+        "stream_order",
+        [
+            _a(ts=_NOV20, top_hits=[{"id": "a"}]),
+            _n({"kind": "turn_audited", "ts": _NOV1, "top_hits": [{"id": "b"}]}),
+            _a(ts=_NOV10, top_hits=[{"id": "c"}], recent_retrieval_count=7),
+        ],
+    ),
+]
+
+
+def _walk_answer(events: list[Any], since: timedelta | None, now: datetime) -> Any:
+    def spell(w: Any) -> dict[str, Any]:
+        rows = []
+        for ev, top_hits, recent in w.rows:
+            index = next(i for i, e in enumerate(events) if e is ev)
+            assert top_hits is ev["top_hits"]
+            rows.append([index, str(recent)])
+        assert w.with_features == len(rows)
+        return {
+            "total": w.total_events_scanned,
+            "in_window": w.events_in_window,
+            "without": w.without_features,
+            "repeats": w.repeats_skipped,
+            "retracted": w.cutoff_retracted,
+            "rows": rows,
+        }
+
+    return _try(
+        lambda: em._collect_replayable_audits(events, since=since, now=now), spell
+    )
+
+
+def _span(since: timedelta | None) -> str | None:
+    return None if since is None else _us(since)
+
+
+def _walk_rows() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for name, stream in _STREAMS:
+        events = [ev.value for ev in stream]
+        rows.append(
+            {
+                "k": "walk",
+                "name": name,
+                "events": [ev.spelled() for ev in stream],
+                "r": [_walk_answer(events, s, _RULES_NOW) for s in _WALK_SINCES],
+            }
+        )
+    edge = [_a(), _a(ts="0001-01-01T00:00:00Z"), _a(ts="junk")]
+    unread = [_a(ts="junk"), _a(ts=_DROP), _n(5)]
+    year1 = datetime.min.replace(tzinfo=UTC)
+    late = datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
+    ist = datetime(
+        2026, 11, 25, 17, 30, tzinfo=timezone(timedelta(hours=5, minutes=30))
+    )
+    naive = datetime(2026, 11, 25, 12, 0)
+    one_us = timedelta(microseconds=1)
+    cases: list[tuple[list[_Ev], timedelta | None, datetime]] = [
+        (edge, _RULES_NOW - year1, _RULES_NOW),
+        (edge, _RULES_NOW - year1 + one_us, _RULES_NOW),
+        ([], _RULES_NOW - year1 + one_us, _RULES_NOW),
+        (edge, timedelta.max, _RULES_NOW),
+        (edge, timedelta.min, _RULES_NOW),
+        (edge, timedelta(days=-1), _RULES_NOW),
+        (edge, timedelta(0), _RULES_NOW),
+        (edge, -one_us, late),
+        (edge, timedelta(0), late),
+        (edge, timedelta(days=1), year1),
+        (edge, timedelta(days=1), ist),
+        (edge, _SINCE_30D, naive),
+        (unread, _SINCE_30D, naive),
+        (edge, None, naive),
+    ]
+    for stream, since, now in cases:
+        events = [ev.value for ev in stream]
+        rows.append(
+            {
+                "k": "walk_at",
+                "events": [ev.spelled() for ev in stream],
+                "since": _span(since),
+                "now": _fields(now),
+                **_walk_answer(events, since, now),
+            }
+        )
+    return rows
+
+
+_PROBES: list[Any] = [
+    _DROP,
+    None,
+    "",
+    "abc",
+    "é\U0001d11e",
+    "\ud800x",
+    {"preview": "p", "len": 5, "hash": "h"},
+    {"preview": 5, "len": True, "hash": None},
+    {"len": 2**70},
+    {"len": -1},
+    {"len": 1.0},
+    {"len": "3"},
+    {"preview": "\ud800", "hash": "\U0001d11e"},
+    {},
+    5,
+    [],
+    ["a"],
+    True,
+    1.5,
+]
+
+
+def _probe_rows() -> list[dict[str, Any]]:
+    rows = []
+    for value in _PROBES:
+        given = None if value is _DROP else value
+        spelled = {} if value is _DROP else {"v": neutral(value)}
+        rows.append(
+            {
+                "k": "probe",
+                **spelled,
+                "r": [neutral(x) for x in em._probe_query_display(given)],
+            }
+        )
+    return rows
+
+
+_DESC_W2 = em.WIDENING_RULES["w2_top1_v2_high_from_medium"].description
+
+
+def _turn(**kw: Any) -> em.WideningFlaggedTurn:
+    fields: dict[str, Any] = {
+        "ts": None,
+        "session_id": None,
+        "client_model": None,
+        "probe_query_preview": None,
+        "probe_query_len": None,
+        "probe_query_hash": None,
+        "top_hit_id": "?",
+        "top_hit_score": None,
+        "relevance_v1": None,
+        "relevance_v2": None,
+        "matched_unique": None,
+        "query_unique": None,
+        "v1_also_flagged": False,
+        "memory_status": "unknown",
+        "memory_summary": None,
+        "memory_scopes": None,
+    }
+    fields.update(kw)
+    return em.WideningFlaggedTurn(**fields)
+
+
+_TURN_FULL = _turn(
+    ts=_NOV20,
+    session_id="s1",
+    client_model="model-a",
+    probe_query_preview="how do I →",
+    probe_query_len=2**70,
+    probe_query_hash="ab12",
+    top_hit_id="m1",
+    top_hit_score=1e308,
+    relevance_v1="medium",
+    relevance_v2="high",
+    matched_unique=-1,
+    query_unique=4,
+    v1_also_flagged=True,
+    memory_status="active",
+    memory_summary="a summary",
+    memory_scopes=["repo:a", "global"],
+)
+_TURN_EMPTY = _turn(top_hit_score=-0.0, memory_scopes=[])
+_ROLLUPS = [
+    em.WideningMemoryRollup("m1", 3, 2, "active", "s", ["a"], 0.5, 60.0),
+    em.WideningMemoryRollup("?", 1, 0, "unknown", None, None, None, None),
+]
+
+
+def _fields_of(obj: Any) -> list[Any]:
+    """A dataclass's field values in order."""
+    return [getattr(obj, f) for f in obj.__dataclass_fields__]
+
+
+def _dict_rows() -> list[dict[str, Any]]:
+    objs: list[tuple[str, Any]] = [
+        ("sweep_row", em.ThresholdSweepRow("v1_top1_high", "d", 3, 0, 1.0)),
+        ("sweep_row", em.ThresholdSweepRow("w2", _DESC_W2, 0, -3, None)),
+        ("sweep_row", em.ThresholdSweepRow("v3", "", 5, 2, 5 / 3)),
+        ("turn", _TURN_FULL),
+        ("turn", _TURN_EMPTY),
+        *[("rollup", r) for r in _ROLLUPS],
+        ("detail", em.WideningRuleDetail("w1", "d", 0, 0)),
+        (
+            "detail",
+            em.WideningRuleDetail(
+                "w2", _DESC_W2, 2, 1, [_TURN_FULL, _TURN_EMPTY], list(_ROLLUPS)
+            ),
+        ),
+    ]
+    rows = []
+    for kind, obj in objs:
+        values = _fields_of(obj)
+        if kind == "detail":
+            values[4] = [_fields_of(t) for t in obj.turns]
+            values[5] = [_fields_of(m) for m in obj.by_memory]
+        rows.append(
+            {
+                "k": "dict",
+                "type": kind,
+                "in": neutral(values),
+                "r": neutral(obj.to_dict()),
+            }
+        )
+    return rows
+
+
+# The sweep's tables. A score, a relevance or a second-level value of
+# `None` in a table means the key is left out (`_DROP`).
+_SW_RELS: list[Any] = [
+    _DROP,
+    "high",
+    "high",
+    "high",
+    "medium",
+    "medium",
+    "low",
+    "HIGH",
+    5,
+    None,
+]
+_SW_SCORES: list[Any] = [
+    _DROP,
+    None,
+    0,
+    50,
+    49,
+    2**53 + 1,
+    2**53 + 3,
+    2**1030,
+    -(2**1030),
+    49.999999999999993,
+    50.0,
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+    -0.0,
+    0.0,
+    1e308,
+    float(2**52 + 2),
+    "60",
+]
+_SW_NON_DICTS: list[Any] = ["junk", None, 5, [], [{"relevance": "high"}]]
+_SW_RECENTS: list[int] = [0, 0, 0, 0, 1, -1, 10**30, -(10**30)]
+
+
+def _sw_spell(table: list[Any]) -> list[Any]:
+    return [None if v is _DROP else neutral(v) for v in table]
+
+
+def draw_score(d: _Draw) -> Any:
+    mode = d.pick(4)
+    if mode == 0:
+        return d.pick(200) - 50
+    if mode == 1:
+        return (d.pick(1601) - 400) / 8
+    if mode == 2:
+        return d.pick(2) == 1
+    return _SW_SCORES[d.pick(len(_SW_SCORES))]
+
+
+def draw_hit(d: _Draw) -> Any:
+    if d.pick(10) == 0:
+        return _SW_NON_DICTS[d.pick(len(_SW_NON_DICTS))]
+    hit: dict[str, Any] = {}
+    for key in ("relevance", "relevance_v2"):
+        value = _SW_RELS[d.pick(len(_SW_RELS))]
+        if value is not _DROP:
+            hit[key] = value
+    score = draw_score(d)
+    if score is not _DROP:
+        hit["score"] = score
+    return hit
+
+
+def draw_case(d: _Draw) -> tuple[list[Any], int]:
+    hits = [draw_hit(d) for _ in range(d.pick(4))]
+    return hits, _SW_RECENTS[d.pick(len(_SW_RECENTS))]
+
+
+def _sweep_word(answer: Any) -> str:
+    if answer is True:
+        return "1"
+    if answer is False:
+        return "0"
+    return f"{answer['x']}:{answer['msg']}"
+
+
+def rules_sweep_digest() -> str:
+    d = _Draw(RULES_SEED)
+    lines = []
+    for _ in range(RULES_COUNT):
+        hits, recent = draw_case(d)
+        words = [_sweep_word(_rule_answer(r, hits, recent)) for r in _all_rules()]
+        lines.append(" ".join(words))
+    return hashlib.sha256("\n".join(lines).encode("ascii")).hexdigest()
+
+
+def generate_rules() -> dict[str, bytes]:
+    """``eval_model_rules.jsonl``, read in
+    ``native/crates/bettermemory-core/src/eval_model/rules.rs``.
+
+    The header holds the two registries (``[key, name, description]``),
+    ``audit_base`` (neutral), ``walk_sinces`` (microseconds as text, or
+    null) and ``now`` (fields). Then one row per case under ``k``:
+
+    - ``rule``: ``hits`` (neutral), ``recent`` (decimal) and ``r``, the
+      answer of each rule in registry order (v1 to v4, w1, w2): a bool or
+      the exception (``x``, ``msg``);
+    - ``walk``: ``name``, ``events`` and ``r``, `_collect_replayable_audits`
+      under each of ``walk_sinces`` at the header's ``now``; ``walk_at``:
+      ``events``, ``since``, ``now`` and the answer (``r`` or the
+      exception). An event is ``{"n": neutral}`` or ``{"w": [[key,
+      neutral or null], ...]}``, ``audit_base`` with each key set in turn
+      (an existing key keeps its place, a new one goes last, null drops
+      it). An answer is the counters and ``rows``, ``[index, recent]``
+      per row, the index of its event in the stream;
+    - ``probe``: ``v`` (neutral; absent for a missing key) and ``r``, the
+      three values of `_probe_query_display` (neutral);
+    - ``dict``: ``type``, ``in`` (the fields in order, neutral; a
+      detail's turns and rollups as their fields) and ``r``, `to_dict`
+      (neutral).
+
+    The last line is the sweep: ``count`` cases drawn with `_Draw` from
+    ``seed`` by `draw_case` over the tables the line holds (null for a
+    key left out), the SHA-256 of one line per case of the six answers
+    (``1``, ``0`` or ``<class>:<message>``) joined by spaces.
+
+    Not gated: the text is ASCII, the floats' ``repr`` is the same under
+    every release, and the timestamps are forms `fromisoformat` reads
+    alike under 3.11 to 3.14.
+    """
+    rows = [*_rule_rows(), *_walk_rows(), *_probe_rows(), *_dict_rows()]
+    header = {
+        "fixture": "eval_model_rules",
+        "count": len(rows),
+        "threshold_rules": [
+            [k, r.name, r.description] for k, r in em.THRESHOLD_RULES.items()
+        ],
+        "widening_rules": [
+            [k, r.name, r.description] for k, r in em.WIDENING_RULES.items()
+        ],
+        "audit_base": neutral(_AUDIT_BASE),
+        "walk_sinces": [_span(s) for s in _WALK_SINCES],
+        "now": _fields(_RULES_NOW),
+    }
+    sweep = {
+        "k": "sweep",
+        "seed": RULES_SEED,
+        "count": RULES_COUNT,
+        "rels": _sw_spell(_SW_RELS),
+        "scores": _sw_spell(_SW_SCORES),
+        "non_dicts": _sw_spell(_SW_NON_DICTS),
+        "recents": [str(r) for r in _SW_RECENTS],
+        "sha256": rules_sweep_digest(),
+    }
+    return {"eval_model_rules.jsonl": jsonl([header, *rows, sweep])}

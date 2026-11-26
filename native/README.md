@@ -25,7 +25,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `admission` | `admission.py` 59-127 beside `store::caller`'s `Admission` and `NO_RESOLUTION` (re-exported): `DriftScope`, `CountedRecords`, `EveryRecord` (with `admits_row`), `EVERY_RECORD`, `admitted_nothing` | unit tests |
 | `health_summary` | `health_summary.py` whole: `section_names`, `health_summary` (with `_empty`, `_attention`), `health_section`, `SUMMARY_IDS`, `HEADLINE_KEYS` | `health_summary.jsonl` |
 | `health_model` | units health_model-1 and health_model-2 of `health_model.py`: `_ENDORSEMENT_GRACE_DAYS`, `_freshest_touch_ts`, `_has_unresolved_contradiction`, `_is_dead_weight`, `is_hook_telemetry_event`, `applied_tier`, `endorsement_tier`, `TelemetryCoverage`, `_HOOKLESS_REASON`, `MemoryStats`, `MarkerStats`, `ScopeHealth`, `ActorSlice` (each `to_dict`), `explicit_ratio`, `_iso`; `round(x, 3)` through `search::num::round_digits`; unit 2 (`health_model::debt`): `ActorSlices`, `VerificationDebt`, `CommitDriftRow`, `CommitDriftDebt`, `CrossRepoDriftGroup`, `CrossRepoDrift`, `ColdEndorsementMemories`, `SilentMissStats`, `RecentSilentMiss` (each `to_dict`), `clamp_ratio_threshold`, `weakly_endorsed`, `_is_weakly_endorsed`, `unread_fields`, `_unread_dict` and the six caps | `health_model.jsonl`, `health_model_debt.jsonl` |
-| `eval_model` | unit eval_model-1 of `eval_model.py`: `DEFAULT_SINCE_SPEC`, `DEFAULT_ENDORSEMENT_MIN_RETRIEVALS`, `DEFAULT_SILENT_MISS_LIMIT`, `_WILSON_Z`, `_SINCE_PATTERN` (on the engine), `_SINCE_UNIT_TO_SECONDS`, `_EARLIEST_START`, `EARLIER_RULES`, `RateCI` (`from_counts`, `to_dict`), `_wilson_interval`, `ColdEndorsementMemoriesRow` (`endorsement_ratio`, `to_dict`), `SilentMissCandidate`, `parse_since`, `parse_timestamp_utc`, `parse_window_bound` (`now` an argument), `resolve_window`, `_show_in_window`, `_canonical_top_hit_id`, `_silent_miss_from_event` | `eval_model.jsonl`, `eval_model_python.jsonl` |
+| `eval_model` | unit eval_model-1 of `eval_model.py`: `DEFAULT_SINCE_SPEC`, `DEFAULT_ENDORSEMENT_MIN_RETRIEVALS`, `DEFAULT_SILENT_MISS_LIMIT`, `_WILSON_Z`, `_SINCE_PATTERN` (on the engine), `_SINCE_UNIT_TO_SECONDS`, `_EARLIEST_START`, `EARLIER_RULES`, `RateCI` (`from_counts`, `to_dict`), `_wilson_interval`, `ColdEndorsementMemoriesRow` (`endorsement_ratio`, `to_dict`), `SilentMissCandidate`, `parse_since`, `parse_timestamp_utc`, `parse_window_bound` (`now` an argument), `resolve_window`, `_show_in_window`, `_canonical_top_hit_id`, `_silent_miss_from_event`; unit 2 (`eval_model::rules`): `ThresholdRule`, the rules v1 to v4 and w1, w2, `THRESHOLD_RULES`, `WIDENING_RULES`, `ThresholdSweepRow`, `_ReplayableAudits`, `_collect_replayable_audits`, `_probe_query_display`, `WideningFlaggedTurn`, `WideningMemoryRollup`, `WideningRuleDetail` (each `to_dict`); `_package_version` is the caller's argument | `eval_model.jsonl`, `eval_model_python.jsonl`, `eval_model_rules.jsonl` |
 | `eval` | unit 1 of `eval.py`: `EvalReport` (the reference's fields and defaults, `NO_RATE`) and its `to_dict` | `eval_render.jsonl`, `eval_render_unicode.jsonl` |
 | `eval_render` | unit eval_render-1 of `eval_render.py` (lines 49-384): `render_text`, `_text`, `_review_text_lines`, `_rate_from_dict`, `_SURFACE_RATES`, `_surface_text_lines`, `_rule_split_text_lines`, `_format_rate`, `_bar`, `_truncate`, `_humanize_seconds`, `_short_ts` | `eval_render.jsonl`, `eval_render_unicode.jsonl` |
 | `health_roots` | `health_roots.py` 21-73: `EstateProgress` (`ordered`, `attempt`), `_LAST_CHECKED_CAP`; `progress_for_store` is the open Store's own `EstateProgress` | `health_roots.jsonl` |
@@ -4079,7 +4079,8 @@ and `time_utils.parse_event_ts` (built, `datetime::parse_event_ts`).
 Nothing in unit 1 asks the machine: the clock (`now`) and every event
 are arguments. It is cut into four units, leaves first; unit
 eval_model-1 is built (`src/eval_model.rs`, 574 lines of Rust outside
-tests).
+tests), and unit eval_model-2 (`src/eval_model/rules.rs`, a child module
+re-exported from `eval_model`).
 
 | function | reference lines | needs | unit, status |
 | --- | --- | --- | --- |
@@ -4099,10 +4100,10 @@ tests).
 | `_canonical_top_hit_id` (`canonical_top_hit_id`) | 532-554 | nothing | 1, built |
 | `_silent_miss_from_event` (`silent_miss_from_event`) | 557-608 | nothing | 1, built |
 | `_with_rule_split`, `surface_rule_split` | 376-389, 404-494 | `recall_counters` (`compute_surface_report`, `SURFACES`, `is_surface_show`, `shown_ids`), `recall.RULE` (`recall_settle::RULE`) | 1b, after recall_counters-1 |
-| `_package_version` | 611-650 | the installed package's metadata | 2 |
-| `ThresholdRule`, the four threshold rules, `THRESHOLD_RULES`, `ThresholdSweepRow` | 653-786 | nothing | 2 |
-| the two widening rules, `WIDENING_RULES`, `_ReplayableAudits`, `_collect_replayable_audits`, `_probe_query_display` | 788-1021 | the audited turns' events | 2 |
-| `WideningFlaggedTurn`, `WideningMemoryRollup`, `WideningRuleDetail` | 1024-1116 | nothing | 2 |
+| `_package_version` | 611-625 | the installed package's metadata | 2, the caller's argument (not ported) |
+| `ThresholdRule`, the four threshold rules, `THRESHOLD_RULES`, `ThresholdSweepRow` | 653-786 | nothing | 2, built |
+| the two widening rules, `WIDENING_RULES`, `_ReplayableAudits`, `_collect_replayable_audits`, `_probe_query_display` | 788-1021 | the audited turns' events, the caller's `now` | 2, built |
+| `WideningFlaggedTurn`, `WideningMemoryRollup`, `WideningRuleDetail` | 1024-1116 | nothing | 2, built |
 | `_TOOL_EVENT_KIND_TO_TOOL`, `TOOLS_WITHOUT_TELEMETRY`, `_KNOWN_SIDE_EFFECT_KINDS`, `_IN_SESSION_SIDE_EFFECT_KINDS`, `ToolUsageRow` | 1117-1320 | nothing | 3 |
 
 Unit eval_model-1b is lines 376-494 less `EARLIER_RULES` and
@@ -4265,8 +4266,140 @@ Known costs, measured in release against CPython 3.13.13 on one machine
   read from the end for each key, the crate-wide representation, and
   building such an input is linear already.
 
-Left for later: units eval_model-1b, eval_model-2 and eval_model-3 as
-mapped above.
+Left for later: units eval_model-1b and eval_model-3 as mapped above.
+Unit eval_model-2 is built (below).
+
+### Unit 2, built (`eval_model::rules`)
+
+`src/eval_model/rules.rs` (550 lines outside tests) is a child module of
+`eval_model`, declared there with `mod rules;` and re-exported with
+`pub use rules::*;`, so later units of `eval_model.rs` leave it alone. It
+reproduces lines 653-1116: `ThresholdRule`, `_rule_v1_top1_high`,
+`_rule_v2_top1_high_score_50`, `_rule_v3_top1_high_dominant`,
+`_rule_v4_top1_high_strict_combined`, `THRESHOLD_RULES`,
+`ThresholdSweepRow`, `_rule_w1_top1_v2_high`,
+`_rule_w2_top1_v2_high_from_medium`, `WIDENING_RULES`,
+`_ReplayableAudits` (`ReplayableAudits`, `ReplayableRow`),
+`_collect_replayable_audits`, `_probe_query_display`,
+`WideningFlaggedTurn`, `WideningMemoryRollup` and `WideningRuleDetail`
+(each `to_dict`). Nothing in it asks the machine: the events and `now`
+are arguments.
+
+- `_package_version` (611-625) reads the installed package's metadata.
+  It is not ported here: the version is the caller's argument. eval-1
+  passes the version `store::create::Provider` and `--version` already
+  carry, so the report and the binary cannot disagree.
+- A rule is `fn(&[PyValue], &str) -> Result<bool, EvalModelError>`
+  (`RuleCheck`): the hits as the event holds them, of any value, and
+  `recent_retrieval_count` as an `int`'s canonical decimal text of any
+  size (the sweep, `eval._buffer_sweep_misses`, passes each event's own
+  count; the replay an `int` that is not a `bool`, else 0). `recent > 0` is a
+  sign test on that text. `top_hits[i].get(...)` of a value that is not a
+  dict raises AttributeError with its type's name, as `dict_of` does in
+  unit 1. `top.get("relevance") == "high"` holds for a `str` of those
+  code points only.
+- Scores are Python's mixed numbers. `isinstance(score, (int, float))`
+  takes a `bool` (True is 1). An `int` against a float compares exactly
+  through `pyvalue::cmp_int_float` (made `pub(crate)` for this unit), so
+  `10**400 >= 50.0` is True with no overflow and `2**53 + 3` is less
+  than `2.0 * float(2**52 + 2)`, though the `int` read as an `f64` is
+  not. Two `int`s compare as decimal text (`cmp_int_text`). A NaN
+  compares false everywhere: v2 refuses a NaN score; a NaN second score
+  is not `<= 0`, so v3 reaches `top_score >= 2 * second_score` and
+  answers False. `2 * second_score` doubles an `int` (or `bool`) exactly
+  as decimal text and a float as a float (`2 * 1e308` is infinity).
+  `len(top_hits) < 2` answers True before the second hit is read; v4 is
+  `v2 and v3`, v3 read only when v2 holds.
+- The registries are `static` arrays in the reference's insertion order
+  (v1, v2, v3, v4; w1, w2), each rule with its name, its description
+  byte for byte (w2's `→` included) and a function pointer;
+  `rule_named` is the registry's `dict.get`.
+- `_collect_replayable_audits(events, since, now)` takes `since` as
+  microseconds (`parse_since`'s `i128`). `now - since` is
+  `DateTime::minus_micros`, OverflowError outside the calendar before any
+  event is read (a span past `i64` microseconds too); a naive `now`
+  raises TypeError at the first readable stamp compared with it. A value
+  that is not a dict is skipped before it is counted. `events_in_window`
+  counts every dict without a window, else those whose readable `ts` is
+  at or after the window's start. A `silent_miss_cutoff` row moves the
+  latest cutoff when its `cutoff_ts` is readable and strictly later,
+  wherever it sits and whatever the window, and is never a candidate.
+  A `turn_audited` row in the window is then skipped as a repeat when
+  `repeat` is truthy (`events::truthy`), dropped silently for
+  `verdict == "no_signal"`, and counted without features when `top_hits`
+  is not a non-empty list or its first entry is not a dict. After the
+  walk, with a cutoff, a candidate whose stamp is unreadable or earlier
+  is retracted. A row keeps its event by index and by reference
+  (`ReplayableRow::index`, `event`), its `top_hits` as a slice of the
+  event's list, and its count as decimal text.
+- `_probe_query_display` answers `(preview, length, hash)`: a `str` is
+  its own preview with its length in code points; a dict gives
+  `preview` and `hash` when `str` and `len` when an `int` that is not a
+  `bool`, of any size, as decimal text; anything else, a missing key
+  included, gives nothing.
+- The four report types are plain structs; `to_dict` answers a
+  `PyValue::Dict` in the reference's key order, floats as
+  `PyValue::Float` and None kept. Text fields are `PyStr`; the `int`
+  fields an event supplies (`probe_query_len`, `matched_unique`,
+  `query_unique`) keep any size as decimal text; counts are `i64`.
+- No regular expression is added to the engine's inventory.
+
+Reference findings, reproduced: (1) `_rule_w2_top1_v2_high_from_medium`
+asks v1 first, so its own `isinstance(top, dict)` guard never decides:
+`_rule_w2_top1_v2_high_from_medium(["junk"], 0)` raises AttributeError
+(`'str' object has no attribute 'get'`) in v1, and with a recent
+retrieval v1 and the `recent > 0` test answer False first. The walk
+guards the first entry, so only a direct caller meets it. (2) v3's
+docstring reads a missing or non-positive second score as dominance
+satisfied, but a NaN second score is neither and suppresses the flag:
+`[{"relevance": "high", "score": 60}, {"score": nan}]` is False while
+`[..., {"score": None}]` is True. (3) v2 and v3 take a `bool` score as
+a number (`True` is 1), though the module refuses a `bool` count in the
+same events.
+
+Fixtures and tests: `gen_eval_model.generate_rules` writes
+`eval_model_rules.jsonl` (not gated: ASCII text and floats whose `repr`
+no release changes, `fromisoformat` forms every release reads alike;
+175 rows and a sweep, 78 KB). It holds the six rules over 115 hand-built
+`top_hits` (empty, one hit, a first or second entry that is not a dict,
+relevance spellings, scores as `bool`, `int` at 50 and past 2**1024 and
+10**400, floats at 49.999999999999993 and 50.0, NaN, both infinities,
+-0.0, second scores zero, negative, NaN, 1e308 and `str`, the f64
+boundaries past 2**53) at `recent` 0, 1, -1 and plus and minus 10**30;
+the registries' names and descriptions; the walk over 18 scripted
+streams under no window, 30 days and one day (non-dict events, stamps at
+the window's edge, with offsets, naive and unreadable, every `repeat`,
+`verdict`, `top_hits` and `recent_retrieval_count` shape, other kinds, a
+cutoff before, inside and after the window, two out of order,
+unreadable cutoffs, a cutoff with an offset or naive, unreadable rows
+under a cutoff) and 14 more at the calendar's edges (`since` reaching
+exactly the year 1 and a microsecond past it, `timedelta.max` and
+`.min`, negative and zero spans, `now` at years 1 and 9999, with an
+offset and naive); `_probe_query_display` over 19 shapes; `to_dict` of
+each type (9 rows); and a sweep of 20,000 drawn `(top_hits, recent)`
+pairs through all six rules, pinned by count and SHA-256 of the answers.
+`golden_eval_model_rules.rs` checks every row, the registries and the
+sweep (drawn by the generator's rule from the tables the sweep row
+holds); `eval_model_rules_kills.rs` holds the cases a plausible wrong
+port fails (an `int` score through `f64`, `2 * second` in floats for an
+`int`, a NaN read as a number, a `bool` score refused, w2's guard before
+v1's raise, the cutoff by stream position, an unreadable stamp kept
+under a cutoff, non-dicts counted in the window, `repeat` read as `is
+True`, a length in UTF-16 units, the window's edge);
+`eval_model_rules_robustness.rs` walks a million events within linear
+growth (`tests/timing`), compares scores of 4,300 digits and past
+2**1024 against every extreme float, reads `top_hits` of 100,000
+entries, and takes spans at both ends of `i128` with `now` at years 1
+and 9999.
+
+Unit 2's known costs, release against CPython 3.13.13, each linear in
+the input: a score of 10**6 digits is read 11 to 12 times slower than
+the reference (`num` copies the int's text on each read and doubling
+works one decimal digit at a time), and about 97 times slower against a
+float second score; hits holding 10**6 keys are about 19,000 times
+slower (the crate's dict as a list of pairs, unit 1's known cost); the
+probe display of a 10**6 code-point text about 870 times. Real scores
+are floats and hits hold a few keys.
 
 ## The eval family's renderers (`eval_render.py`)
 
