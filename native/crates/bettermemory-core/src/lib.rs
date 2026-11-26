@@ -111,9 +111,11 @@
 //!   records, the text one related entry shows, the roster line, and the
 //!   answers with their readers, teaching errors and two checks, and the
 //!   pure write decision, its replacement IDs and its event fields;
-//! - [`review_counters`]: `review_counters.py`'s first unit: its tables,
-//!   its field readers, the three row readers of the event log
-//!   (`IssuedRow`, `DecidedRow`, `GradeRow`) and `is_review_row`;
+//! - [`review_counters`]: `review_counters.py`'s first two units: its
+//!   tables, its field readers, the three row readers of the event log
+//!   (`IssuedRow`, `DecidedRow`, `GradeRow`) and `is_review_row`; and the
+//!   review chains with the closing rule, their window, the per-bucket
+//!   tally (`_Tally`), `_share`, `_median` and `_iso_week`;
 //! - [`mirror_format`]: the v8 file names and frontmatter the mirror
 //!   writes (`mirror_format.py` whole);
 //! - [`lexicon`]: the search tokenizer and its fingerprint;

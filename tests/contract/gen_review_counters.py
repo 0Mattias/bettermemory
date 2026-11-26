@@ -1,5 +1,6 @@
 """Fixtures: the write review's counters, unit review_counters-1a
-(``review_counters_rows.jsonl``).
+(``review_counters_rows.jsonl``) and unit review_counters-1b
+(``review_counters_chains.jsonl``, `generate_chains`, described above it).
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/review_counters.rs``. This pins it
@@ -48,7 +49,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from bettermemory import review as rv
@@ -598,3 +599,696 @@ def generate() -> dict[str, bytes]:
         "pools": [[key, [neutral(v) for v in pool]] for key, pool in POOLS],
     }
     return {"review_counters_rows.jsonl": jsonl([header, *rows])}
+
+
+# ---------------------------------------------------------------------------
+# review_counters-1b: the chains (``review_counters_chains.jsonl``)
+# ---------------------------------------------------------------------------
+#
+# The header holds ``logs``: each a list of events, an event a JSON object,
+# or a JSON text (`json.loads` reads it: the one way to hold an `int` past
+# the float range). Then one row per case, its kind under ``k``:
+#
+# - ``chains``: `build_chains(logs[log], now=now, horizon=horizon)`;
+# - ``window``: `chains_in_window(logs[log], start=, end=, now=)`;
+# - ``tally``: a `_Tally` that adds every chain of that window, its
+#   `response_chars` set to ``chars`` (`int` texts), and its `to_dict()`;
+# - ``rate``: a `_Tally` with ``committed`` commits, ``filings`` counts and
+#   ``calls`` committed calls: `filings_per_100()` and `to_dict()`'s
+#   `calls_per_committed_write`;
+# - ``share``: `_share(n, d)`; ``median``: `_median` of ``v`` (`int`
+#   texts); ``week``: `_iso_week(datetime.fromisoformat(ts))`.
+#
+# A chain is spelled by `_chain`; a dict as ``[[key, value], ...]`` in its
+# order; a float as its `repr`; an exception as ``{"x": class}``. Times
+# are written as `isoformat()`. The last line is a sweep: ``count`` logs
+# drawn by `_chain_log` from ``seed``, the SHA-256 of `_sweep_answer` of
+# each as `_common.dumps_line` and a newline.
+#
+# Not gated: every text is ASCII, every time an aware `fromisoformat` form
+# 3.11 to 3.14 read alike, the floats are correctly rounded quotients and
+# `round` on them, alike everywhere, and the overflows are datetime's range
+# and `float(int)`'s, not the interpreter's recursion.
+
+CHAINS_SEED = 20261126
+CHAINS_COUNT = 5000
+_T0 = datetime(2026, 11, 21, 10, 0, tzinfo=timezone.utc)
+_EDGE = 2**1024 - 2**970
+
+
+def _at(minutes: float = 0, us: int = 0) -> str:
+    return (_T0 + timedelta(minutes=minutes, microseconds=us)).isoformat()
+
+
+def _iss(
+    rid: str,
+    ts: str,
+    *,
+    parent: str | None = None,
+    session: str = "s1",
+    client: str = "c1",
+    related: tuple[str, ...] = (),
+    pre: bool = False,
+    roster: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    ev: dict[str, Any] = {"kind": "review_issued", "review_id": rid, "ts": ts}
+    if parent is not None:
+        ev["parent_review_id"] = parent
+    ev.update(session=session, client=client, model="m-" + client)
+    if related:
+        ev["related"] = list(related)
+    if pre:
+        ev["pre_answered"] = True
+    if roster:
+        ev["roster"] = list(roster)
+    return ev
+
+
+def _dec(
+    rid: str,
+    ts: str,
+    action: str = "committed",
+    *,
+    relation: dict[str, str] | None = None,
+    session: str = "s1",
+    client: str = "c1",
+    scores: tuple[int, int] | None = None,
+    links: tuple[str, ...] = (),
+    upd: tuple[str, ...] = (),
+    filings: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    ev: dict[str, Any] = {
+        "kind": "write",
+        "review_id": rid,
+        "ts": ts,
+        "status": "committed",
+        "review_action": action,
+        "session": session,
+        "client": client,
+    }
+    answers: dict[str, Any] = {}
+    if relation is not None:
+        answers["relation"] = relation
+    if scores is not None:
+        answers["unsafe"], answers["secret"] = scores
+    if answers:
+        ev["review_answers"] = answers
+    if links:
+        ev["supersedes_reviewed"] = list(links)
+    if upd:
+        ev["update_suggested"] = list(upd)
+    if filings:
+        ev["review_filings"] = [{"id": "t", "detector": d} for d in filings]
+    return ev
+
+
+def _close_log(**over: Any) -> list[Any]:
+    """An open chain `a` (related x, y) and a closing call `z`."""
+    dec_at = over.pop("dec_at", _at(10))
+    relation = over.pop("relation", {"x": "unrelated", "y": "update", "w": "a"})
+    z = {"session": "s1", "client": "c1", **over}
+    return [
+        _iss("a", _at(0), related=("x", "y")),
+        _iss("z", _at(1), pre=True, session=z["session"], client=z["client"]),
+        _dec("z", dec_at, relation=relation, session="s9", client=z["client"]),
+    ]
+
+
+_LATE = "9999-12-31T23:45:00+00:00"
+
+CHAIN_LOGS: dict[str, list[Any]] = {
+    "empty": [],
+    "window_edge": [
+        _iss("a", _at(0)),
+        _dec("a", _at(30)),
+        _iss("b", _at(1)),
+        _dec("b", _at(31, 1)),
+    ],
+    "orphan_parent": [
+        _iss("f", _at(0), parent="p"),
+        _dec("p", _at(5)),
+        _iss("g", _at(1), parent="q"),
+        _dec("g", _at(2), "refused_secret"),
+        _dec("nobody", _at(3)),
+    ],
+    "standing_retry": [
+        _iss("a", _at(0)),
+        _dec("a", _at(5), "refused_standing"),
+        _dec("a", _at(10)),
+    ],
+    "two_retries": [
+        _iss("a", _at(0)),
+        _dec("a", _at(5), "refused_standing"),
+        _dec("a", _at(10), "refused_standing"),
+        _dec("a", _at(15)),
+        _dec("a", _at(20), "refused_unsafe"),
+    ],
+    "refusal_then_standing": [
+        _iss("a", _at(0)),
+        _dec("a", _at(5), "refused_secret"),
+        _dec("a", _at(10), "refused_standing"),
+    ],
+    "standing_left": [
+        _iss("a", _at(0)),
+        _dec("a", _at(5), "refused_standing"),
+        _dec("a", _at(40)),
+    ],
+    "standing_reissued": [
+        _iss("a", _at(0)),
+        _dec("a", _at(5), "refused_standing"),
+        _iss("a2", _at(35), parent="a"),
+        _dec("a2", _at(40)),
+    ],
+    "last_before": [
+        _iss("r", _at(0)),
+        _iss("r2", _at(20), parent="r"),
+        _iss("r3", _at(60), parent="r"),
+        _dec("r", _at(55)),
+        _iss("q", _at(1)),
+        _iss("q2", _at(20), parent="q"),
+        _iss("q3", _at(70), parent="q"),
+        _dec("q3", _at(45)),
+    ],
+    "close_match": _close_log(),
+    "close_session": _close_log(session="s2"),
+    "close_client": _close_log(client="c2"),
+    "close_related": _close_log(relation={"x": "unrelated"}),
+    "close_values": _close_log(relation={"k1": "x", "k2": "y"}),
+    "close_at_window": _close_log(dec_at=_at(30)),
+    "close_past_window": _close_log(dec_at=_at(30, 1)),
+    "close_same_instant": _close_log(dec_at=_at(0)),
+    "close_refused": [
+        _iss("a", _at(0)),
+        _iss("z", _at(1), pre=True),
+        _dec("z", _at(2), "refused_secret"),
+    ],
+    "closer_order": [
+        _iss("a", _at(0), related=("x",)),
+        _iss("z2", _at(1), pre=True),
+        _iss("z1", _at(2), pre=True),
+        _dec("z1", _at(5), relation={"x": "unrelated"}),
+        _dec("z2", _at(4), relation={}),
+        _dec("z2", _at(8), relation={"x": "unrelated"}),
+    ],
+    "two_open": [
+        _iss("a", _at(0)),
+        _iss("b", _at(1)),
+        _iss("z", _at(2), pre=True),
+        _dec("z", _at(5)),
+    ],
+    "two_closers_two_open": [
+        _iss("a", _at(0)),
+        _iss("b", _at(1)),
+        _iss("z1", _at(2), pre=True),
+        _iss("z2", _at(3), pre=True),
+        _dec("z1", _at(5)),
+        _dec("z2", _at(6)),
+    ],
+    "roster": [
+        _iss("a", _at(0), roster=("m1",)),
+        _iss("z", _at(1), pre=True),
+        _dec("z", _at(5)),
+    ],
+    "roster_follow_up": [
+        _iss("a", _at(0), roster=("m1",)),
+        _iss("a2", _at(2), parent="a"),
+        _iss("z", _at(3), pre=True),
+        _dec("z", _at(5)),
+    ],
+    "pending": [_iss("a", _at(0)), _iss("b", _at(10)), _iss("b2", _at(20), parent="b")],
+    "horizon": [
+        _iss("a", _at(0)),
+        _dec("a", _at(20)),
+        _iss("b", _at(15)),
+        _dec("c", _at(5)),
+        _iss("c", _at(1)),
+    ],
+    "equal_instants": [
+        _iss("b", "2026-11-21T11:00:00+01:00"),
+        _iss("a", "2026-11-21T10:00:00Z"),
+        _iss("c", "2026-11-21T09:00:00-01:00"),
+        _iss("d", "2026-11-21T10:05:00Z"),
+        _dec("d", "2026-11-21T10:10:00+00:00", "refused_standing"),
+        _dec("d", "2026-11-21T11:10:00+01:00"),
+        _iss("e", "2026-11-21T10:06:00Z"),
+        _dec("e", "2026-11-21T11:10:00+01:00"),
+        _dec("e", "2026-11-21T10:10:00+00:00", "refused_standing"),
+    ],
+    "reroot": [
+        _iss("a", _at(0)),
+        _iss("b", _at(1), parent="a"),
+        _iss("a", _at(2), parent="x"),
+        _dec("a", _at(3)),
+        _dec("b", _at(4), "refused_unsafe"),
+    ],
+    "window_roots": [
+        _iss("a", _at(0)),
+        _iss("b", _at(10)),
+        _iss("c", _at(20)),
+        _dec("c", _at(50)),
+        _iss("d", _at(19)),
+        _dec("d", _at(50, 1)),
+        _iss("z", _at(15), pre=True),
+        _dec("z", _at(16)),
+    ],
+    "late": [_iss("a", _LATE)],
+    "late_offset": [_iss("a", "9999-12-31T23:45:00+05:00")],
+    "late_answered": [_iss("a", _LATE), _dec("a", "9999-12-31T23:50:00Z")],
+    "late_close": [
+        _iss("a", "9999-12-31T23:40:00Z"),
+        _iss("z", "9999-12-31T23:41:00Z", pre=True),
+        _dec("z", "9999-12-31T23:50:00Z"),
+    ],
+    "late_close_same": [
+        _iss("a", "9999-12-31T23:40:00Z"),
+        _iss("z", "9999-12-31T23:41:00Z", pre=True),
+        _dec("z", "9999-12-31T23:40:00Z"),
+        _dec("a", "9999-12-31T23:41:00Z"),
+    ],
+    "early": [
+        _iss("a", "0001-01-01T00:00:00+00:00"),
+        _iss("b", "0001-01-01T00:30:00+01:00"),
+        _dec("b", "0001-01-01T00:10:00Z"),
+    ],
+    "huge_score": [
+        _iss("a", _at(0)),
+        '{"kind": "write", "review_id": "a", "ts": "2027-01-01T00:00:00Z", '
+        '"status": "committed", "review_answers": {"unsafe": ' + str(_EDGE) + "}}",
+    ],
+    "not_dicts": [
+        [1],
+        "a",
+        None,
+        _iss("a", _at(0)),
+        {"kind": 5, "review_id": "a", "ts": _at(1)},
+        {"kind": "write", "review_id": 5, "ts": _at(1), "status": "committed"},
+        {"kind": "write", "review_id": "a", "ts": _at(1)},
+        {"kind": "review_issued", "review_id": "b", "ts": _at(2), "door": False},
+    ],
+    "tally_mix": [
+        _iss("c1", _at(0), related=("x",)),
+        _dec(
+            "c1",
+            _at(1),
+            links=("l1", "l2"),
+            upd=("u",),
+            filings=("review", "zz", "total", "zz"),
+        ),
+        _iss("c2", _at(1)),
+        _dec("c2", _at(2), "refused_secret"),
+        _iss("c3", _at(2)),
+        _dec("c3", _at(3), "refused_standing"),
+        _iss("c4", _at(3)),
+        _dec("c4", _at(4), "odd"),
+        _iss("c5", _at(4)),
+        _dec("c5", _at(5), "refused_standing"),
+        _dec("c5", _at(6), "restates"),
+        _iss("c6", _at(5), pre=True),
+        _dec(
+            "c6",
+            _at(6),
+            relation={"q": "unrelated"},
+            scores=(0, 0),
+            filings=("review-disagrees",),
+        ),
+        _iss("c7", _at(6), pre=True),
+        _dec("c7", _at(7), relation={"q": "update"}, scores=(0, 0)),
+        _iss("c8", _at(7), session="s2"),
+        _iss("c8b", _at(8), parent="c8", session="s2", related=("x",)),
+        _iss("c9", _at(9), pre=True, session="s2"),
+        _dec("c9", _at(10), relation={"x": "unrelated"}, scores=(0, 0)),
+        _iss("c10", _at(10)),
+        _iss("c10b", _at(11), parent="c10"),
+        _iss("c11", _at(40)),
+        _iss("c12", _at(41), pre=True),
+    ],
+}
+
+
+def _cdt(dt: datetime) -> str:
+    return dt.isoformat()
+
+
+def _chain(c: rc.ReviewChain) -> dict[str, Any]:
+    d = c.decided
+    return {
+        "key": c.key,
+        "ids": c.review_ids,
+        "rel": c.related,
+        "rows": [[r.review_id, _cdt(r.ts)] for r in c.issued],
+        "state": c.state,
+        "closed": c.closed,
+        "absorbed": c.absorbed,
+        "retries": c.standing_retries,
+        "calls": c.calls,
+        "d": None if d is None else [d.review_id, _cdt(d.ts), d.action],
+        "out": c.outcome,
+        "session": c.session,
+        "client": c.client,
+        "model": c.model,
+        "pre": c.pre_answered,
+    }
+
+
+def _spell(value: Any) -> Any:
+    if isinstance(value, dict):
+        return [[k, _spell(v)] for k, v in value.items()]
+    if isinstance(value, float):
+        return repr(value)
+    return value
+
+
+def _chains_of(fn: Any) -> Any:
+    try:
+        return [_chain(c) for c in fn()]
+    except Exception as exc:  # the class is the answer
+        return {"x": type(exc).__name__}
+
+
+def _iso(text: str | None) -> datetime | None:
+    return None if text is None else datetime.fromisoformat(text)
+
+
+def _events(log: list[Any]) -> list[Any]:
+    return [
+        json.loads(e) if isinstance(e, str) and e.startswith("{") else e for e in log
+    ]
+
+
+def _window_tally(
+    events: list[Any], start: Any, end: Any, now: Any, chars: list[int]
+) -> Any:
+    def run() -> Any:
+        tally = rc._Tally()
+        for chain in rc.chains_in_window(events, start=start, end=end, now=now):
+            tally.add(chain)
+        tally.response_chars.extend(chars)
+        return _spell(tally.to_dict())
+
+    return _try(run, lambda v: v)
+
+
+def _chain_rows() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    now = _at(60)
+    plain = [
+        "empty", "window_edge", "orphan_parent", "standing_retry", "two_retries",
+        "refusal_then_standing", "standing_left", "standing_reissued", "last_before",
+        "close_match", "close_session", "close_client", "close_related", "close_values",
+        "close_at_window", "close_past_window", "close_same_instant", "close_refused",
+        "closer_order", "two_open", "two_closers_two_open", "roster", "roster_follow_up",
+        "equal_instants", "reroot", "window_roots", "late", "late_offset", "late_answered",
+        "late_close", "late_close_same", "early", "huge_score", "not_dicts", "tally_mix",
+    ]  # fmt: skip
+    calls: list[tuple[str, str, str | None]] = [(name, now, None) for name in plain]
+    calls += [
+        ("window_edge", _at(29), None),
+        ("pending", _at(30), None),
+        ("pending", _at(30, -1), None),
+        ("pending", _at(50), None),
+        ("pending", _at(50, -1), None),
+        ("horizon", now, _at(10)),
+        ("horizon", now, _at(20)),
+        ("horizon", now, _at(15, -1)),
+        ("close_at_window", now, _at(29)),
+        ("early", "0001-01-01T00:20:00+00:00", None),
+        ("late", "9999-12-31T23:59:59.999999+00:00", "9999-12-31T00:00:00+00:00"),
+    ]
+    for name, at, horizon in calls:
+        events = _events(CHAIN_LOGS[name])
+        rows.append(
+            {
+                "k": "chains",
+                "log": name,
+                "now": at,
+                "horizon": horizon,
+                "r": _chains_of(
+                    lambda e=events, n=at, h=horizon: rc.build_chains(
+                        e, now=datetime.fromisoformat(n), horizon=_iso(h)
+                    )
+                ),
+            }
+        )
+    windows: list[tuple[str, str | None, str | None, str]] = [
+        ("window_roots", _at(10), _at(20), now),
+        ("window_roots", _at(10), _at(20, -1), now),
+        ("window_roots", _at(10, 1), None, now),
+        ("window_roots", None, _at(10), now),
+        ("window_roots", None, None, now),
+        ("window_roots", _at(19), _at(20), _at(55)),
+        ("window_roots", _at(19), _at(20, 1), _at(55)),
+        ("window_roots", _at(15), _at(16), now),
+        ("close_match", None, _at(5), now),
+        ("close_match", None, _at(0, 1), now),
+        ("horizon", _at(0), _at(1), now),
+        ("empty", None, _LATE, now),
+        ("empty", None, "9999-12-31T23:29:59.999999+00:00", now),
+        ("empty", None, "9999-12-31T22:00:00-01:00", now),
+        ("late", None, "9999-12-31T23:00:00+00:00", "9999-12-31T23:59:00+00:00"),
+    ]
+    for name, start, end, at in windows:
+        events = _events(CHAIN_LOGS[name])
+        rows.append(
+            {
+                "k": "window",
+                "log": name,
+                "start": start,
+                "end": end,
+                "now": at,
+                "r": _chains_of(
+                    lambda e=events, s=start, t=end, n=at: rc.chains_in_window(
+                        e, start=_iso(s), end=_iso(t), now=datetime.fromisoformat(n)
+                    )
+                ),
+            }
+        )
+    tallies: list[tuple[str, str | None, str | None, str, list[int]]] = [
+        ("empty", None, None, now, []),
+        ("tally_mix", None, None, _at(45), [5, 3, 9, 2**80]),
+        ("tally_mix", _at(1), _at(9), _at(45), []),
+        ("tally_mix", None, None, _at(80), [_EDGE]),
+        ("tally_mix", None, None, _at(80), [_EDGE, _EDGE]),
+        ("window_edge", None, None, now, [1]),
+        ("two_retries", None, None, now, []),
+        ("standing_left", None, None, now, []),
+        ("close_match", None, None, now, []),
+        ("orphan_parent", None, None, now, []),
+        ("roster", None, None, now, []),
+    ]
+    for name, start, end, at, chars in tallies:
+        events = _events(CHAIN_LOGS[name])
+        rows.append(
+            {
+                "k": "tally",
+                "log": name,
+                "start": start,
+                "end": end,
+                "now": at,
+                "chars": [str(c) for c in chars],
+                "r": _window_tally(events, _iso(start), _iso(end), _iso(at), chars),
+            }
+        )
+    rates: list[tuple[int, list[tuple[str, int]], int]] = [
+        (0, [("zz", 3)], 5),
+        (800, [], 100),
+        (800, [("review", 1)], 1),
+        (20000, [("review", 203), ("review-disagrees", 201)], 20001),
+        (3, [("review", 1), ("zz", 2)], 10),
+        (7, [("total", 1), ("zz", 2)], 10),
+        (16, [], 1),
+        (8, [], 1),
+        (2000, [], 2001),
+        (2000, [], 2003),
+        (1000, [("review", 2675)], 2675),
+    ]
+    for committed, counts, committed_calls in rates:
+        tally = rc._Tally()
+        tally.actions[rv.ACTION_COMMIT] = committed
+        for detector, n in counts:
+            tally.filings[detector] = n
+        tally.committed_calls = committed_calls
+        rows.append(
+            {
+                "k": "rate",
+                "committed": committed,
+                "filings": [list(p) for p in counts],
+                "calls": committed_calls,
+                "r": [
+                    _spell(tally.filings_per_100()),
+                    _spell(tally.to_dict()["calls_per_committed_write"]),
+                ],
+            }
+        )
+    for n, d in [
+        (0, 0), (1, 0), (0, 5), (1, 1), (7, 7), (2, 3), (5, 7), (1, 32), (3, 32),
+        (3, 20000), (1, 20000), (5, 6), (1, 3), (12345, 99999),
+    ]:  # fmt: skip
+        rows.append({"k": "share", "n": n, "d": d, "r": _spell(rc._share(n, d))})
+    medians: list[list[int]] = [
+        [],
+        [5],
+        [3, 1],
+        [3, 1, 2],
+        [4, 1, 3, 2],
+        [-3, 1],
+        [-1, 0],
+        [-1, 1],
+        [-2, -1],
+        [7, 7, 7, 8],
+        [10**30, 10**30 + 1],
+        [2**53, 2**53 + 1],
+        [2**53, 2**53 + 2],
+        [2**53 + 2, 2**53 + 4],
+        [2**53 + 2, 2**53 + 5],
+        [2**54 + 1, 2**54 + 2],
+        [_EDGE],
+        [_EDGE - 1],
+        [_EDGE, _EDGE],
+        [_EDGE - 1, _EDGE - 1],
+        [_EDGE - 1, _EDGE],
+        [_EDGE, -_EDGE],
+        [2 * _EDGE, 0],
+        [2**1024, 2**1023],
+        [10**400, -(10**400), 5],
+        [10**400, -(10**400), 5, 6],
+        [-(10**400), -(10**400)],
+    ]
+    for values in medians:
+        rows.append(
+            {
+                "k": "median",
+                "v": [str(v) for v in values],
+                "r": _try(lambda v=values: rc._median(v), _spell),
+            }
+        )
+    for ts in [
+        "2026-11-21T10:00:00+00:00",
+        "2020-12-31T12:00:00+00:00",
+        "2021-01-03T12:00:00+00:00",
+        "2021-01-04T00:00:00+00:00",
+        "2024-12-30T00:00:00+00:00",
+        "2024-12-29T23:59:59.999999+00:00",
+        "2004-12-31T00:00:00+00:00",
+        "2008-12-29T00:00:00+00:00",
+        "2010-01-03T00:00:00+00:00",
+        "2015-12-31T00:00:00+00:00",
+        "2021-01-04T00:30:00+01:00",
+        "2021-01-03T23:30:00-01:00",
+        "2026-11-23T05:00:00+06:00",
+        "2026-11-22T20:00:00-05:00",
+        "0001-01-01T00:00:00+00:00",
+        "0001-01-07T23:59:59+00:00",
+        "0001-01-08T00:00:00+00:00",
+        "0001-01-01T00:30:00+01:00",
+        "0001-01-01T23:00:00+23:59",
+        "9999-12-31T23:59:59.999999+00:00",
+        "9999-12-27T00:00:00+00:00",
+        "9999-12-26T23:59:59+00:00",
+        "9999-12-31T00:30:00+01:00",
+        "9999-12-31T23:30:00-01:00",
+        "9999-01-01T00:00:00+00:00",
+    ]:
+        rows.append(
+            {
+                "k": "week",
+                "ts": ts,
+                "r": _try(
+                    lambda t=ts: rc._iso_week(datetime.fromisoformat(t)), lambda v: v
+                ),
+            }
+        )
+    return rows
+
+
+# The sweep's pools, in the order `_chain_log` draws from them.
+SW_IDS = ["a", "b", "c", "d"]
+SW_PARENTS = [None, "a", "b"]
+SW_MINUTES = [0, 5, 29, 30, 31, 45, 60, 61]
+SW_OFFSETS = ["Z", "+01:00"]
+SW_SESSIONS = ["s1", "s2"]
+SW_ACTIONS = ["committed", "committed", "refused_standing", "refused_secret", "odd"]
+SW_DETECTORS = [None, "review", "zz"]
+
+
+def _sw_ts(draw: _Draw) -> str:
+    minute = SW_MINUTES[draw.pick(len(SW_MINUTES))]
+    us = draw.pick(2)
+    offset = SW_OFFSETS[draw.pick(len(SW_OFFSETS))]
+    hour = 10 + minute // 60 + (1 if offset == "+01:00" else 0)
+    return f"2026-11-21T{hour:02d}:{minute % 60:02d}:00.{us:06d}{offset}"
+
+
+def _chain_log(draw: _Draw) -> list[dict[str, Any]]:
+    """1 to 8 events; each drawn field by field in this order."""
+    events: list[dict[str, Any]] = []
+    for _ in range(1 + draw.pick(8)):
+        write = draw.pick(3) == 2
+        rid = SW_IDS[draw.pick(len(SW_IDS))]
+        ts = _sw_ts(draw)
+        session = SW_SESSIONS[draw.pick(2)]
+        ev: dict[str, Any] = {"ts": ts, "review_id": rid, "session": session}
+        keys = [k for k in ("x", "y") if draw.pick(2)]
+        if write:
+            ev["kind"] = "write"
+            ev["status"] = "committed"
+            ev["review_action"] = SW_ACTIONS[draw.pick(len(SW_ACTIONS))]
+            ev["review_answers"] = {
+                "relation": {k: "unrelated" for k in keys},
+                "unsafe": 0,
+                "secret": draw.pick(2),
+            }
+            detector = SW_DETECTORS[draw.pick(len(SW_DETECTORS))]
+            if detector is not None:
+                ev["review_filings"] = [{"id": "t", "detector": detector}]
+            if draw.pick(2):
+                ev["supersedes_reviewed"] = ["l"]
+        else:
+            ev["kind"] = "review_issued"
+            parent = SW_PARENTS[draw.pick(len(SW_PARENTS))]
+            if parent is not None:
+                ev["parent_review_id"] = parent
+            ev["related"] = keys
+            ev["pre_answered"] = draw.pick(3) == 0
+            if draw.pick(6) == 0:
+                ev["roster"] = ["m"]
+        events.append(ev)
+    return events
+
+
+def _sweep_answer(events: list[Any]) -> Any:
+    start, end, now = _T0, _T0 + timedelta(minutes=45), _T0 + timedelta(minutes=70)
+    return {
+        "b": _chains_of(
+            lambda: rc.build_chains(events, now=_T0 + timedelta(minutes=50))
+        ),
+        "w": _chains_of(
+            lambda: rc.chains_in_window(events, start=start, end=end, now=now)
+        ),
+        "t": _window_tally(events, start, end, now, []),
+    }
+
+
+def _chains_sweep() -> dict[str, Any]:
+    draw = _Draw(CHAINS_SEED)
+    h = hashlib.sha256()
+    for _ in range(CHAINS_COUNT):
+        line = dumps_line(_sweep_answer(_chain_log(draw)))
+        h.update((line + "\n").encode("ascii"))
+    return {
+        "k": "sweep",
+        "seed": CHAINS_SEED,
+        "count": CHAINS_COUNT,
+        "sha256": h.hexdigest(),
+    }
+
+
+def generate_chains() -> dict[str, bytes]:
+    rows = _chain_rows()
+    rows.append(_chains_sweep())
+    header = {
+        "k": "header",
+        "count": len(rows),
+        "answer_window_us": rc.ANSWER_WINDOW // timedelta(microseconds=1),
+        "logs": CHAIN_LOGS,
+    }
+    return {"review_counters_chains.jsonl": jsonl([header, *rows])}

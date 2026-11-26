@@ -23,6 +23,9 @@ use crate::review::{
 };
 use crate::unicode::cps;
 
+mod chains;
+pub use chains::*;
+
 /// `ANSWER_WINDOW` (30 minutes), in microseconds.
 pub const ANSWER_WINDOW_US: i64 = 30 * 60 * 1_000_000;
 /// `REVIEW_GRADE`: the event kind `bettermemory review grade` writes.
