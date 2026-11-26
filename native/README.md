@@ -124,8 +124,8 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns; unit 2: `_first_file_root` (with `unquote(errors="surrogateescape")`), `workspace_declaration` | `identity_caller.jsonl`, `identity_caller_unicode.jsonl`, `identity_roots.jsonl`, `identity_roots_python.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `standing_guard` | `handlers/_guard.py` whole: `read_words`, `record`, `Held`, `check`, `guard` and the hints, over `GuardDeps` | `standing_guard.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); the event reads (`store::event_reads`: `iter_events`, `iter_events_backward`, `capture_rows`, `events_of_kinds`, `session_events_of_kinds`, `events_since`, `_window_floor`, `NAMING_BOUND`, `log.CAPTURE_KINDS`); the event writes (`store::record_event`: `record_event` with `_primary_code`, `_busy`, `_time_left`, `_waiting_until` and `EVENT_RETRY_PAUSE_SECONDS`, `import_event`, `imported_event_keys`, `_named_payload`, `record_migration`, `record_capture`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build, and the upkeep with the key present: `_close_foreign_tail`, `_settle_origin`, `_record_origin`, `_name_origin_key`, `_forget_segments`; and with the key missing or foreign: `_open_connected`'s dispatch (117-143), `_reclaim`, `_open_rekeyed`, `_take_over_origin`, `KeyRing.create_key`; `restore_rows.settle` after each path's upkeep; another connection, `Store.reopen` as `WritableStore::reopen` with `Store.open(allow_rekey=False)` on a writing connection, `_tell_drift` and `_first_told`; `Store.store_orphans` as `store::create::store_orphans`); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the keys a store opened without writing keeps (`store::key_read::open_reader`: `_open_connected`'s dispatch (82-116), `_open_reader`'s read key (146-203), `Store.has_key`, `Store._verify_key`, `Store.can_verify`); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `_ranked_batches`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`); a restore's late `store_restored` row (`store::restore_rows`, unit restore_rows-1a: `restore_record_path`, `pending`, `record_row`, `append_missing`, `append_for`, `settle`, with `_fill`, `_standing`, `_decide`, `_logged`, `_still_stands`, `_settle_one`, `_report_withheld`, `_said`, `_clock_reading`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_event_reads.jsonl`, `store_event_reads_naive.jsonl`, `store_record_event_posix.jsonl` (POSIX only), `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `store_open_upkeep.jsonl` (POSIX only), `store_open_upkeep_python.jsonl` (POSIX only), `store_open_rekey.jsonl` (POSIX only), `store_open_rekey_python.jsonl` (POSIX only), `store_orphans.jsonl` (POSIX only), `store_open_restore.jsonl` (POSIX only), `store_reopen.jsonl` (POSIX only), `restore_rows.jsonl` (POSIX only), `restore_rows_python.jsonl` (POSIX only), `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_open_reader.jsonl`, `store_open_reader_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
-| `store::docfreq` | the document frequency memo of `store_index.py`: `_memoised_document_frequencies`, `_current_inputs`, `_patched_masks`, `_admitted_mask`, `_keep_doc_freqs`, `_row_mask`, `_DocFreqInputs` and the grouping of `Store._read_doc_freq_inputs`, the memoised half of `Store.ranking_statistics`; the store's side is the trait `DocFreqSource`, implemented over a store connection by `store::docfreq_store` (`_memory_head`, `digest_mark(build=False)`, `digest_admission_rows`, `Store._read_doc_freq_inputs`'s reads, `Store._term_masks`, `Store.document_frequencies`, `Store.ranking_statistics`, and `_advanced_inputs` with `_HEAD_KINDS` and `_ADVANCE_ROWS`, which carries an entry over a moved head) | `store_docfreq.jsonl`, `store_docfreq_store.jsonl`, `store_docfreq_store_b.jsonl`, `store_docfreq_advance.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); the event reads (`store::event_reads`: `iter_events`, `iter_events_backward`, `capture_rows`, `events_of_kinds`, `session_events_of_kinds`, `events_since`, `_window_floor`, `NAMING_BOUND`, `log.CAPTURE_KINDS`); the event writes (`store::record_event`: `record_event` with `_primary_code`, `_busy`, `_time_left`, `_waiting_until` and `EVENT_RETRY_PAUSE_SECONDS`, `import_event`, `imported_event_keys`, `_named_payload`, `record_migration`, `record_capture`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build, and the upkeep with the key present: `_close_foreign_tail`, `_settle_origin`, `_record_origin`, `_name_origin_key`, `_forget_segments`; and with the key missing or foreign: `_open_connected`'s dispatch (117-143), `_reclaim`, `_open_rekeyed`, `_take_over_origin`, `KeyRing.create_key`; `restore_rows.settle` after each path's upkeep; another connection, `Store.reopen` as `WritableStore::reopen` with `Store.open(allow_rekey=False)` on a writing connection, `_tell_drift` and `_first_told`; `Store.store_orphans` as `store::create::store_orphans`); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the keys a store opened without writing keeps (`store::key_read::open_reader`: `_open_connected`'s dispatch (82-116), `_open_reader`'s read key (146-203), `Store.has_key`, `Store._verify_key`, `Store.can_verify`); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `ranked_rows` with its limit, `_ranked_batches`, `newest_rows`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`); a restore's late `store_restored` row (`store::restore_rows`, unit restore_rows-1a: `restore_record_path`, `pending`, `record_row`, `append_missing`, `append_for`, `settle`, with `_fill`, `_standing`, `_decide`, `_logged`, `_still_stands`, `_settle_one`, `_report_withheld`, `_said`, `_clock_reading`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_event_reads.jsonl`, `store_event_reads_naive.jsonl`, `store_record_event_posix.jsonl` (POSIX only), `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `store_open_upkeep.jsonl` (POSIX only), `store_open_upkeep_python.jsonl` (POSIX only), `store_open_rekey.jsonl` (POSIX only), `store_open_rekey_python.jsonl` (POSIX only), `store_orphans.jsonl` (POSIX only), `store_open_restore.jsonl` (POSIX only), `store_reopen.jsonl` (POSIX only), `restore_rows.jsonl` (POSIX only), `restore_rows_python.jsonl` (POSIX only), `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_open_reader.jsonl`, `store_open_reader_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
+| `store::docfreq` | the document frequency memo of `store_index.py`: `_memoised_document_frequencies`, `_current_inputs`, `_patched_masks`, `_admitted_mask`, `_keep_doc_freqs`, `_row_mask`, `_DocFreqInputs` and the grouping of `Store._read_doc_freq_inputs`, the memoised half of `Store.ranking_statistics`; the store's side is the trait `DocFreqSource`, implemented over a store connection by `store::docfreq_store` (`_memory_head`, `digest_mark(build=False)`, `digest_admission_rows`, `Store._read_doc_freq_inputs`'s reads, `Store._term_masks`, `Store.document_frequencies`, `Store.ranking_statistics`, and `_advanced_inputs` with `_HEAD_KINDS` and `_ADVANCE_ROWS`, which carries an entry over a moved head; the rows a request admits, decided through the memo: `admitted_rows`, `_admitter`, `ranked_admitted_rows`, `admitted_share`, `_admitted_rows_read` in `docfreq_store::admitted`, which `store::pool` draws its pool through, unit poolmemo) | `store_docfreq.jsonl`, `store_docfreq_store.jsonl`, `store_docfreq_store_b.jsonl`, `store_docfreq_advance.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token`; unit 4 in `identity`: `_strings`, `_flag`, `_FULL_SHA`, `PortableIdentity` (`to_json`, `from_json`, `digest`), `ImportedProject` and the bounds and import words, and in `outcomes`: `Declaration`, `Declared`, `Why`, `UnresolvedProject`, `Health`, `EpisodeRef`, `Handoff`, `RecallAdmission` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl`, `membership_records_identity.jsonl`, `membership_records_identity_python.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks`; unit 2a in `membership::shared_heal`: `_carriers`, `_restamped`, `_healed`, `_chosen`, `retired_into`, `_folded`, and the `MembershipLog` trait; unit 2b in `membership::shared_ask`: `_ask_which`, `_retire_into`, `_asked_at`, `_asked_here`, `_unseen`, `_asked_plan` | `membership_shared.jsonl`, `membership_shared_python.jsonl`, `membership_shared_heal.jsonl`, `membership_shared_ask.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
@@ -4880,6 +4880,11 @@ legs with. `store_index.py` as it is now holds it at these lines:
 | `_advanced_inputs` | 474-602 | the log and the digest | built: `StoreDocFreq`'s `advanced_inputs` (`docfreq_store::advance`, store_index-advance); the trait's default stays None |
 | `_patched_masks` | 605-661 | the FTS table | built: `patched_masks` |
 | `_admitted_mask` | 664-677 | nothing | built: `admitted_mask` |
+| `admitted_rows` | 680-701 | the store's side, SQLite | built: `docfreq_store::admitted_rows` (poolmemo) |
+| `_admitter` | 704-733 | the store's side | built: `docfreq_store::Admitter` (`new`, `decide`), its head `DocFreqMemo::admitted_inputs` (poolmemo) |
+| `ranked_admitted_rows` | 736-760 | the FTS table | built: `docfreq_store::ranked_admitted_rows` over `index_reads::RankedQuery` (poolmemo) |
+| `admitted_share` | 763-777 | the store's side | built: `docfreq_store::admitted_share` (poolmemo) |
+| `_admitted_rows_read` | 780-811 | SQLite | built: in `docfreq_store::admitted` (poolmemo) |
 | `_keep_doc_freqs` | 814-839 | the lock | built: `DocFreqMemo::keep` |
 | `Store._read_doc_freq_inputs` | store.py 1766-1830 | the digest or the memory rows | built: the grouping `DocFreqInputs::from_rows`, the reads `StoreDocFreq::admission_rows` (store-2) |
 | `_memory_head` | 369-385 | SQLite | built: `StoreDocFreq::memory_head` (store-2) |
@@ -5123,9 +5128,10 @@ Not in this part, with owners: `Store.reopen` (store.py 1965-2002) is
 unit store-2b, built as `WritableStore::reopen` ("Opening a store for
 writing", "Another connection"); the unaccounted-id set it shares is the
 caller's `store::provenance::Provenance`. `_advanced_inputs` is unit store_index-advance's
-(below). `store_orphans` is store-1's. The read-only search pool (`store/pool.rs`) keeps its own
-inputs memo and statistics; routing it through `DocFreqMemo` over a
-`StoreDocFreq` is a later unit's. A `StoreFile` has no constructor of
+(below). `store_orphans` is store-1's. The read-only search pool (`store/pool.rs`)
+reads its rows' admission and its statistics through `DocFreqMemo` over
+a source of its own that is `StoreDocFreq` for every read but the
+digest's rows (unit poolmemo, below). A `StoreFile` has no constructor of
 its own: `over` takes its connection where a caller has one.
 
 Fixture: `tests/contract/gen_store_docfreq_store.py` makes each case's
@@ -5344,6 +5350,159 @@ A payload nested past the JSON limit is pinned in the robustness test
 and not in the fixture: where the decoder stops follows the release and
 the system (CPython 3.14 on Linux reads it), and the fixture has no
 Python-gated sibling.
+
+No regular expression is used.
+
+### A search pool's rows through the memo (unit poolmemo)
+
+`store::docfreq_store::admitted` (a child module of `docfreq_store`) is
+`store_index.admitted_rows`, `_admitter`, `ranked_admitted_rows`,
+`admitted_share` and `_admitted_rows_read` (store_index.py 680-811), each
+over any `DocFreqSource`, the connection the rows and the ranking are
+read on, and a `DocFreqMemo`; the predicate is `StoreAdmit` (scopes,
+home, actor), as `document_frequencies` takes it. `store::index_reads`
+gains `ranked_rows(conn, text, limit)` (215-236: the ranking's text, with
+` LIMIT ?` when a limit is given; nothing read for a blank text or an
+empty match query) and `newest_rows(conn, limit, offset)` (271-282: `...
+LIMIT ? OFFSET ?`), and `RankedQuery` now takes its statement from the
+connection's statement cache, as these do: the reference's `execute`
+goes through `sqlite3`'s.
+
+Step by step, as the reference:
+
+- `admitted_rows`: no row answers at once, before any input is read.
+- `Admitter::new` (`_admitter`): inside a transaction (`in_transaction`,
+  the reference's `_tx_depth or in_transaction`) it holds nothing and
+  every row is decided from its own columns. Outside, through
+  `DocFreqMemo::admitted_inputs`: `_current_inputs`, `_admitted_mask`,
+  and the entry kept with no terms when this call read it and the memory
+  head did not move meanwhile. The mask is read as `to_bytes((len(index)
+  + 7) // 8 or 1, "little")` reads it: a mask wider than those bytes is
+  OverflowError, a position past them IndexError (neither is reached by
+  inputs the grouping makes, which raises IndexError first).
+- `Admitter::decide`: the rows the inputs do not hold (a repeat kept) are
+  read first, all of them, by `_admitted_rows_read`; then each row in
+  its turn, a held row by its bit, another by that read.
+- `_admitted_rows_read`: `_ADMISSION_INPUTS WHERE m.rowid IN (?,...)`, one
+  statement per `_PROVENANCE_BATCH` (500) of the rows, each through the
+  statement cache. Every row a statement finds is fetched (each column
+  decoded: a text that is not UTF-8 is OperationalError) before any is
+  decided, a later row of one number replacing an earlier one; then each
+  row asked: one not found is admitted nowhere; its scopes are
+  `_load_json(column, None)` (NULL and a value that is not a list admit
+  nowhere; a text that is not JSON is JSONDecodeError, a number
+  TypeError, bytes read as `json.loads` reads them); its actor is
+  `Actor(client, model)` where either is set (a column pydantic refuses
+  is ValidationError); its home is the column as it is.
+- `ranked_admitted_rows`: the admitter first, then the ranking's one
+  statement read `batch` rows at a time, each batch decided, until
+  `size` rows are found; at most `size` are returned.
+- `admitted_share`: None inside a transaction; else the admitted count
+  and the inputs' row count.
+
+`store::pool` draws its pool as `handlers.search._admitted_candidates`
+(272-321) does, with `FIRST_READ` (`_FIRST_READ`, 800): an empty query
+(`str.strip` leaves nothing) pages `newest_rows(800, offset)` through
+`admitted_rows` until `size` rows or a short page; another asks
+`admitted_share` and, where the request admits enough of the store
+(`share is None or admitted * 800 >= size * rows`, in `u128`, which no
+`usize` operands overflow), reads `ranked_rows(query, 800)` through
+`admitted_rows`; where the share was narrow, or those rows fell short
+with 800 read, `ranked_admitted_rows(size, 800)` from the start. Then
+the stored tokenizer and `light_many(rows[:size])`.
+`SearchPool::statistics` is `docfreq_store::ranking_statistics_from`,
+read when called: the memo's four items outside a transaction, the
+uncached three and no average inside one. The predicate
+(`Filters::predicate`) is `_admit_predicate` over a group's inputs: a
+home in bytes is read as its `str()`, and a scope that is not a string
+refuses the call (TypeError, the pool's stated difference).
+
+The pool's source (`PoolSource`; the open point of the digest settled as
+option (a)) is `StoreDocFreq` over the pool's connection, keyed by the
+store's path as it was opened (`StoreFile::path`, never the private copy
+a read-only open may read) and meta's store id (read at a reader's first
+pool), for every read but two. The digest's rows come from
+`PoolReader::digest_rows`, which brings a digest that is behind forward
+in memory and writes nothing, where `StoreDocFreq::digest_mark` would
+write it (`BEGIN IMMEDIATE`, which a read-only connection refuses). And
+a kept entry is brought forward from the log (`_advanced_inputs`) only
+where the digest is current, so the advance's own `digest_mark` never
+writes; elsewhere the inputs are read again, to the same answer. The
+question is asked where the reference asks `digest_mark(build=False)`:
+after the log row at the entry's head and the log rows since are read
+(`StoreDocFreq::advanced_inputs_marked`, the store's advance with the
+digest's check given), so a digest that cannot serve the advance (its
+state gone, made under other rules, marked at a log row whose MAC is not
+the one it saw, or behind) costs those two reads on both sides, and a
+log payload nested past the parser's depth raises before it. Option
+(b), `StoreDocFreq` whole, was measured on `search_store.jsonl`'s twenty
+stores: on the eleven whose digest is behind and can be brought forward
+(`far behind`, `one put`, `restore`, `several puts`, `tombstone`,
+`unseen blob payload`, `unseen blob payload with bom`, `unseen id
+float`, `unseen id null`, `unseen id true`, `update`) it answers no
+average where the fixture pins one (the reference's generator brings
+the digest current), so those rankings would move; (a) keeps every
+answer. A digest fingerprint other than the one this build computes
+(`digest::fingerprint()`), or none, goes into the key after a NUL, which
+no store id holds, so inputs read under one set of rules are never
+handed to another.
+
+`PoolReader::new(&StoreFile)` reads through the process's memo
+(`docfreq::memo()`) and `PoolReader::with_memo(&StoreFile, &DocFreqMemo)`
+through another (the second open point: a test passes a memo of its
+own, and no caller's call changed). The reader's own inputs memo, its
+per-row read of a row the inputs lack, its whole-ranking and whole-newest
+reads and its per-term reads of the index are gone. `reads::term_masks_by`
+takes its statement from the statement cache, as `Store._term_masks`
+sends its one text through the reference's.
+
+Decisions:
+
+- A failure of the memo or of a row's own columns that names a Python
+  exception the crate models (`PyError`) is `PoolError::Store(Py)`, as
+  the pool raised it before; any other class (JSONDecodeError,
+  ValidationError, IndexError, `sqlite3`'s classes) is the new
+  `PoolError::Raised(class)`.
+- The share test is taken in `u128`: a pool size of `usize::MAX` reads
+  the whole ranking where an `i64` or `usize` product would overflow.
+- A pool's statistics are read through the memo each call, as the
+  reference's provider does, not from inputs the pool held when drawn.
+
+Left for later units: the error surface of a refused prepare (set-aside
+item 1), the hydrator and `seed_tokens` (the pool still tokenizes
+bodies), and a writable open's pool, whose digest the memo's source
+would bring current by writing it.
+
+Tests: `store_provenance_cache.rs`' pool cases, each against the
+reference (below, in "The store connection's statement cache");
+`store_pool_memo_kills` (inputs kept for another store of the same id or
+another memory head, the key naming the private copy, statistics from
+the memo inside a transaction, unknown rows read one by one or all in
+one statement (the texts a 600-row pool sends, by the statement cache),
+inputs read for no row, the share test past 64 bits (a wide then a
+narrow pool told apart by the texts they send), an empty query
+not paged, a narrow request and a short wide one not ranked whole, mask
+positions each side of the first two 64-row words; and by the texts a
+pool sends, the batch of 500 (stores of 500, 501 and 600 unknown rows),
+the share test at equality (50 of 50 rows for a pool of 800: wide), a
+first read that fills the pool exactly (not read again), the first
+read's 800 rows (a request whose rows start past them reads the
+ranking again), a pool inside a transaction reading the index's best
+rows first, a kept entry not advanced over a digest behind the log;
+rows the inputs lack decided by their own columns (scopes `null` and
+`{}` admitted nowhere; a writer with a model and no client, and client
+and model told apart), the empty query's pages reading each row once
+(the 800th newest row admitted), a scope that is not a string refused
+on the empty query's pages, `ranked_admitted_rows` called directly (it
+stops at its size at a batch's end, so a later row that does not load
+is never read, and cuts to its size), and `PoolReader::new` keeping its
+inputs in the process's memo) and
+`store_pool_memo_robustness` (100,000 rows with a request that admits
+one in 10,000, its time within `TENFOLD` of 10,000 rows' by the wall
+clock; 2,001 unknown rows, five statements of at most 500 rows; eight threads drawing
+pools through one memo; pool sizes 0 and `usize::MAX`), over copies of
+`store_files.jsonl`'s ``intact`` base (`tests/pool_memo`).
+`golden_search_store` and `golden_caller_admission` answer unchanged.
 
 No regular expression is used.
 
@@ -8121,18 +8280,24 @@ draws it, and `SearchPool::rank` ranks it as `_rank_pool` does
 (`search.search` over the pool, priced with the pool's statistics, the
 configured half-life and lane, no rescue leg):
 
-- `PoolReader::new(&StoreFile)`; `resolve_search_pool(query, &Filters,
-  size, digest_fingerprint) -> Result<SearchPool, PoolError>`: the first
-  `size` rows the request admits (`POOL_SIZE` 200) in the full-text index's
-  order for the query (`bm25()`, then row number), or newest first for a
-  query empty after `str.strip`, each read into the record model as
-  `light_many` reads it;
+- `PoolReader::new(&StoreFile)` (through the process's document
+  frequency memo) or `PoolReader::with_memo(&StoreFile, &DocFreqMemo)`;
+  `resolve_search_pool(query, &Filters, size, digest_fingerprint) ->
+  Result<SearchPool, PoolError>`: the first `size` rows the request
+  admits (`POOL_SIZE` 200) in the full-text index's order for the query
+  (`bm25()`, then row number), or newest first for a query empty after
+  `str.strip`, each read into the record model as `light_many` reads it,
+  the rows decided through the memo as `_admitted_candidates` decides
+  them (the index's best 800, or the whole ranking a batch at a time, or
+  the newest 800 at a time: unit poolmemo, in the memo's section);
 - `Filters` (scopes, excluded scopes, admission, client, model):
   `search.candidate_admitted` over each row's admission inputs (scopes, the
   project its `homes` row names, the declared writer);
-- `SearchPool::statistics(terms)`: `Store.ranking_statistics` (the admitted
-  collection's size, each term's document frequency in the body and in the
-  body or scopes, the admitted rows' average BM25 length from the digest);
+- `SearchPool::statistics(terms)`: `Store.ranking_statistics` through the
+  memo (the admitted collection's size, each term's document frequency in
+  the body and in the body or scopes, the admitted rows' average BM25
+  length from the digest; inside a transaction the uncached read, with no
+  average);
 - `SearchPool::rank(query, now, mode, max_results, stats_seen)`;
   `clamp_search_width`, `MAX_SEARCH_RESULTS`.
 
@@ -8157,9 +8322,9 @@ behind also when SQLite itself cannot write the store (a read-only file,
 a busy lock); a `Store.open` that the key ring marks read-only still
 catches the digest up and writes it. This port answers as a reference
 whose SQLite can write. The reference pays the catch-up once and writes
-it; this port, which never writes the digest, pays it once per
-`PoolReader` (each reader keeps what it brought forward, keyed by the
-memory head). Its cost is linear in the unseen rows
+it; this port, which never writes the digest, pays it each time the
+memo reads the store's inputs (once per memory head for the process,
+while the memo keeps the store). Its cost is linear in the unseen rows
 (`catching_up_is_linear_in_the_unseen_rows`); a payload of 20 MB in an
 unseen row costs about 300 MB while it is parsed. An unseen row's id is
 read through `str()` for a string, an int, null, a bool or a float, and
@@ -8170,9 +8335,10 @@ the reference answers: an id that is a list or an object, and a payload
 in UTF-16 or UTF-32 bytes. The
 digest fingerprint (`store_digest.fingerprint`, which reads the
 supersession rules) is passed in, not computed; with none the digest is
-never trusted. The reader keeps the rows' admission inputs keyed by the
-memory head and that fingerprint, and reads each term's hits from the
-index on every call. The reference reads pool records with
+never trusted. The rows' admission inputs and each term's hits are the
+process's document frequency memo's (`store::docfreq`), keyed by the
+store's path as opened and its id, at the memory head, with the
+fingerprint in the key where it is not the one this build computes. The reference reads pool records with
 `seed_tokens=index_spelled_here()` (token streams split from `body_fts`
 where the log's tokenizer stamp is this build's); this port reads the
 stamp as the reference does and tokenizes the body, which agrees wherever
@@ -26476,7 +26642,8 @@ so each counts as it does there:
 | `reads::scope_counts` | `store.py:1853-1874` | one |
 | `event_reads::iter_events`, `iter_events_backward`, `capture_rows`, `session_events_of_kinds` | `store_events.py:242`, `488`, `312`, `395` | one (per number of kinds) |
 | `event_reads::window_floor`, `events_since`, `events_of_kinds` | `store_events.py:459-485`, `429-456`, `342-392` | the window's floor, then the rows from it |
-| `PoolReader::resolve_search_pool` | `handlers/search.py:187-321` | the memory head, the ranking (or the newest rows), the stored tokenizer's read and the records' `IN (?,...)` text, which is `light_many`'s; before the ranking, when the reader does not hold the store's admission inputs, the digest's state, the log row at its mark, its head and its rows (the differences from the reference's count are listed below) |
+| `PoolReader::resolve_search_pool` | `handlers/search.py:187-321`, `store_index.py:680-811` | the memory head (none inside a transaction), the index's best rows (`... LIMIT ?`), the whole ranking for a narrow request, or the newest rows (`... LIMIT ? OFFSET ?`); the rows the memo's inputs do not hold, `_ADMISSION_INPUTS ... IN (?,...)` per batch size; the stored tokenizer's read and the records' `IN (?,...)` text, which is `light_many`'s; when the memo does not hold the store's inputs at its head, the digest's state, the log row at its mark, its head and its rows (each mutated record's home where it is behind), or the memory rows (the one difference from the reference's count is listed below); when it holds them at an older head over a current digest, the digest's state, the log row at its mark and its head, the log rows past the entry's head and the mutated records' digest rows (`... AND d.id IN (?,...)` per batch size) |
+| `SearchPool::statistics` | `store.py:1744-1764` | the memory head and each term the memo does not hold, one text (`Store._term_masks`'); inside a transaction the uncached read: the memory rows' admission inputs and, where any is admitted, one text for each term's matching ids (`... WHERE memories_fts MATCH ?`) |
 
 A statement is put back in the cache when its rows have been read, before
 the reader sends another: `select` collects its rows, and the log row a
@@ -26488,15 +26655,16 @@ before the schema changed is compiled again by SQLite when it is next
 stepped; the readers name their columns, and the record reads take theirs
 from the row.
 
-The pool reader kept its own statements (a map in `PoolReader`); they are
-the connection's now. For one request on one connection a pool sends as
-many texts as the reference's does where this unit measured it: three
-when the reader holds the admission inputs (the memory head, the ranking,
+The pool reader's statements are the connection's, and its admission
+inputs the process's document frequency memo's (unit poolmemo). For one
+request on one connection a pool sends as many texts as the reference's
+does: three when the memo holds the inputs (the memory head, the ranking,
 the stored tokenizer), seven when it reads them (the digest's state, the
 log row at its mark, its head and its rows besides), and its records by
-the text `light_many` sends for as many rows. It does not count as the
-reference's does across requests and connections: the differences are
-listed below. Two reads changed. The tokenizer the log names is read
+the text `light_many` sends for as many rows; across requests and
+connections it counts as the reference's does too, with the one
+difference listed below. An earlier unit changed two reads. The tokenizer
+the log names is read
 where the reference reads it, before a pool's records and for an empty
 pool too (`index_spelled_here`, `handlers/search.py:321`,
 `store_index.py:301-306`): it is `fold::stored_fingerprint`, whose
@@ -26524,44 +26692,66 @@ of the stamp (`open::stored_tokenizer`), not changed here: it refuses a
 payload in bytes as not ported, and reads a payload nested too deep as
 one that names none, where the reference raises RecursionError.
 
-What a pool sends that is not what the reference sends. Each line gives
+What a pool sends that is not what the reference sends. Each count is
 the number of distinct light reads after which a warmed full-record
-lookup is dropped. None of these is changed by this unit.
+lookup is dropped, by `store_provenance_cache.rs`' plan.
 
-- A connection opened after another connection of the process drew a
-  pool: native 121, reference 125. The reference keeps a store's
-  admission inputs for the process (`_DOC_FREQS`,
-  `store_index.py:114-169`, `436-455`) and sends three texts;
-  `PoolReader` keeps them in the reader and reads them again, seven.
-  `store::docfreq` ports that memo; the pool does not read through it.
-- A pool for a request that admits much of the store, then one for a
-  request that admits little: native 121, reference 120. The reference
-  sends `... LIMIT ?` for the first and the unlimited ranking for the
-  second (`handlers/search.py:311-320`); the port sends one text.
-- The digest behind the log on a read-only open: native 121, reference
-  113. The reference tries to bring it forward (`BEGIN IMMEDIATE`,
-  `INSERT INTO digest_records`, `ROLLBACK`) and falls back to the memory
-  rows; the port brings it forward in memory.
-- An empty query on a store with no memory row: native 121, reference
-  126. `admitted_rows([])` returns before `_current_inputs`
-  (`store_index.py:698-701`); the port reads the inputs first.
-- A pool ranked with its statistics: native 124, reference 125. The
-  reference memoises each term's hits; the port reads the index for each
-  term.
-- A pool drawn inside a transaction: native 121, reference 125. The
-  reference consults no memo there and decides each row from its own
-  columns (`store_index.py:711-712`).
+- The digest behind the log on a read-only open: native 120, reference
+  112. The reference tries to bring it current (its reads of the digest
+  and the log, `BEGIN IMMEDIATE`, which the read-only connection
+  refuses) and reads the memory rows: sixteen texts. The port brings it
+  forward in memory and writes nothing: eight (the memo's section, unit
+  poolmemo, says why; option (b) would move rankings).
+- Not a count but the same choice: while the digest is behind, an entry
+  the memo kept at an older head is read again from the digest brought
+  forward in memory, where the reference brings the digest current and
+  advances the entry (positions and scopes of unchanged rows kept from
+  the entry). The two agree wherever the digest's rows are what its
+  records give, which every store the reference writes holds (no
+  difference in 16,959 pools drawn over generated stores). A store
+  edited outside the log while the memo holds an entry for it (a
+  digest row's columns, or a record's) can answer otherwise, in its
+  statistics and in the pool's rows: the reference advances its entry
+  and keeps what it read of the rows the log does not name, where the
+  port reads the store as it stands, as a fresh reference process does.
+  With a sixth of a 1,099-record digest's scopes set to `null` while it
+  is behind, the reference's statistics count 1,099 rows where the
+  port's count 916; a digest row's scopes set to `null` leaves that
+  record out of the reference's newest pool and in the port's; and a
+  record's `actor_model` changed outside the log and changed back keeps
+  it out of the reference's pool under a model filter, in the port's.
 
-The first is held on both sides by `store_provenance_cache.rs` (the two
-differ after 122, 123 and 124 light reads). The other five were measured
-in the review of this unit; no test in the tree holds them. Also not the
-reference's, with the same count for the requests measured: the text of
-the digest's head (`MAX(seq) ... IN (?, ?, ?, ?)` for the reference's
-read per kind), of the digest's rows (with `d.id`) and of the newest rows
-(without `LIMIT ? OFFSET ?`). Not measured: rows the inputs do not hold
-(the reference reads them by one `IN (...)` text per batch, the port one
-by one) and an entry the reference brings forward from the log
-(`_advanced_inputs`).
+Closed by unit poolmemo, each held by a case run against the reference:
+a connection opened after another connection of the process drew a
+pool (125 on both: the memo keeps the inputs for the process); a wide
+request then a narrow one (124: the memory head, `... LIMIT ?`, the
+whole ranking, the stored tokenizer); the newest pool of a store with no
+memory row (126: `admitted_rows([])` answers before the inputs); a pool
+ranked with its statistics (124: the term's one read of the index, kept
+by the memo); a pool inside a transaction (125: no memory head, each row
+decided by `_ADMISSION_INPUTS ... IN (?)`); its statistics there (123:
+the uncached read's two texts, which `reads::document_frequencies` now
+takes from the cache, as the reference's `execute` sends them; the
+port sent them uncached and counted 125); a kept entry advanced over the
+log on a current digest, between two opens of one process (120: the
+log rows past the entry's head and the mutated record's digest row,
+`... AND d.id IN (?)`, which `docfreq_store`'s advance now takes from
+the cache too; it counted 121); the same entry over a digest that cannot
+serve the advance, its state gone, made under other rules, or marked at
+a log row whose MAC is not the one it saw (121 on both: the log row at
+the entry's head and the log rows past it, which the reference reads
+before it asks `digest_mark(build=False)` and the port now reads before
+it asks whether the digest is current; it counted 123, or 122 where the
+digest's own check reads the log row by MAC). The texts of the newest rows
+and of the rows the inputs do not hold are the reference's now (`...
+LIMIT ? OFFSET ?`; one `IN (?,...)` text per batch size, which
+`store_pool_memo_kills` holds natively for a pool of 600 such rows).
+Still not the reference's, with the same count for the requests
+measured: the text of the digest's head (`MAX(seq) ... IN (?, ?, ?, ?)`
+for the reference's read per kind) and of the digest's rows (with
+`d.id`). Not measured: an entry the reference brings forward from the
+log over a digest it first brings current (`_advanced_inputs` on a digest
+that is behind), which the port reads again (above).
 
 Not from the cache, as before, and not measured by this unit: the segment
 map's reads (`StoreFile::meta`, and its `first`, `rekeys` and `at_seq`,
@@ -26578,9 +26768,13 @@ five `n` around the reader's boundary, on `store_files.jsonl`'s signed
 ``intact`` base. `each_reader_counts_its_statements` holds each reader to
 its count; `the_reference_evicts_at_the_same_reads` runs the same plan
 through the reference's public `Store` on the same file
-(`BM_REFERENCE_PYTHON`) and compares every answer. Both hold the pool
-after another connection's to its two counts, as the one known
-difference. The other tests hold a lent connection's capacity, a store
+(`BM_REFERENCE_PYTHON`) and compares every answer; each case passes a
+memo of its own to every connection it opens, as the reference's side
+empties its memos before each case. Both hold every pool case on this
+store to the reference's count. `the_other_stores_count_their_statements`
+and `the_reference_counts_the_other_stores_the_same` do the same on a
+store with no memory row and on one whose digest is behind, that one
+held to its two counts, as the one known difference. The other tests hold a lent connection's capacity, a store
 opened for writing to the same count, a read under an open cursor, a read
 inside a transaction and after the schema changed. On stores edited
 after their digest was made current, each natively and against the

@@ -19,13 +19,26 @@
 //! compares every answer; `each_reader_counts_its_statements` holds the
 //! native side to the counts that run gave, without Python.
 //!
-//! One reader is known to count differently and is held to both counts
-//! ([`Owner::native`]): a pool on a connection opened after another
-//! connection of the process drew one. The reference keeps a store's
-//! admission inputs for the process (`store_index._DOC_FREQS`) and sends
-//! three texts; `PoolReader` keeps them in the reader, reads them again
-//! and sends seven, so it drops the lookup after 121 light reads where
-//! the reference drops it after 125.
+//! A pool decides its rows through the document frequency memo, which the
+//! reference keeps for the process (`store_index._DOC_FREQS`): each case
+//! passes a memo of its own ([`DocFreqMemo`]) to every connection it
+//! opens, as the reference's side empties its memos before each case. So
+//! a pool on a connection opened after another one drew a pool finds the
+//! inputs kept, on both sides. The pool's cases: inputs read and inputs
+//! held, one record and the newest two, a wide request then a narrow one
+//! (the index's best rows with `LIMIT ?`, then the whole ranking), a pool
+//! ranked with its statistics (each term's hits read once and kept), a
+//! pool inside a transaction (each row decided from its own columns) and
+//! its statistics there (the uncached read, its two texts through the
+//! statement cache), inputs kept at an older memory head and advanced
+//! over the log on a current digest (a plain connection's write between
+//! two opens, taken back after) and not advanced over a digest that
+//! cannot serve it (gone, made under other rules, marked at another log
+//! row: the log's two reads come first all the same), the
+//! newest pool of a store with no memory row (no input read), and the
+//! digest behind the log, which this port brings forward in memory where
+//! the reference's read-only open tries to write it and falls back to the
+//! memory rows: the one case held to two counts ([`Owner::native`]).
 //!
 //! The last tests are a pool's reads on stores whose rows are not what a
 //! store writes: the `store_created` payload as bytes, a payload that
@@ -37,6 +50,7 @@ use std::path::{Path, PathBuf};
 
 use bettermemory_core::datetime::DateTime;
 use bettermemory_core::log::KeyRing;
+use bettermemory_core::store::docfreq::DocFreqMemo;
 use bettermemory_core::store::fold::FoldError;
 use bettermemory_core::store::open::open_for_writing;
 use bettermemory_core::store::pool::{Filters, PoolError, PoolReader};
@@ -231,20 +245,55 @@ fn step(
             let (_, pools) = pools.expect("a pool reader");
             out.push(json!(pools.digest_current(digest::fingerprint())));
         }
-        "pool" => {
+        "pool" | "stats" => {
             let (_, pools) = pools.expect("a pool reader");
             let query = op[1].as_str().expect("a query");
             let size = op[2].as_u64().expect("a size") as usize;
-            let drawn = pools.resolve_search_pool(
-                query,
-                &Filters::default(),
-                size,
-                Some(digest::fingerprint()),
-            );
-            out.push(match drawn {
-                Ok(pool) => json!(pool.ids()),
-                Err(error) => json!({"raised": pool_error(&error)}),
+            // A pool for the scopes the plan names, when it names some.
+            let scopes: Option<Vec<String>> = op.get(3).map(|s| {
+                s.as_array()
+                    .expect("scopes")
+                    .iter()
+                    .map(|s| s.as_str().expect("a scope").to_owned())
+                    .collect()
             });
+            let filters = Filters {
+                scopes: scopes.as_deref(),
+                ..Filters::default()
+            };
+            let drawn =
+                pools.resolve_search_pool(query, &filters, size, Some(digest::fingerprint()));
+            out.push(match (&drawn, op[0] == "stats") {
+                (Ok(pool), false) => json!(pool.ids()),
+                // The statistics of the query's text as one term: the
+                // size, both document frequencies, whether an average.
+                (Ok(pool), true) => match pool.statistics(&[query.to_owned()]) {
+                    Ok(Some(found)) => json!([
+                        found.size,
+                        found.body_df,
+                        found.scope_df,
+                        found.avgdl.is_some()
+                    ]),
+                    Ok(None) => Value::Null,
+                    Err(error) => json!({"raised": pool_error(&error)}),
+                },
+                (Err(error), _) => json!({"raised": pool_error(error)}),
+            });
+        }
+        // A write by a plain connection of the process: the connection
+        // under test sends nothing.
+        "sql" => {
+            let plain = Connection::open(&fixture.file).expect("open");
+            plain
+                .execute_batch(op[1].as_str().expect("a script"))
+                .expect("the script");
+        }
+        // A transaction of the connection's own, as `execute` sends it.
+        "begin" => {
+            conn.prepare_cached("BEGIN")
+                .expect("begin")
+                .execute([])
+                .expect("begin");
         }
         "refold" => {
             let (store, _) = pools.expect("a store");
@@ -294,17 +343,20 @@ fn pool_error(error: &PoolError) -> String {
         // `sqlite3` cannot decode the column.
         PoolError::Store(StoreError::NotUtf8 { .. }) => "OperationalError".to_owned(),
         PoolError::Record(refused) => refused.class().to_owned(),
+        PoolError::Raised(class) => class.clone(),
         other => format!("{other:?}"),
     }
 }
 
-/// A case's answers: each of its opens is a fresh connection, in turn.
+/// A case's answers: each of its opens is a fresh connection, in turn,
+/// and all of them read through one memo of the case's own.
 fn native(fixture: &Fixture, case: &Value) -> Value {
     let mut out = Vec::new();
+    let memo = DocFreqMemo::new();
     for ops in case["opens"].as_array().expect("opens") {
         let store = StoreFile::open(&fixture.file).expect("open");
         let reader = Provenance::new(&store, &fixture.ring, true, false).expect("reader");
-        let pools = PoolReader::new(&store);
+        let pools = PoolReader::with_memo(&store, &memo);
         for op in ops.as_array().expect("ops") {
             step(
                 store.connection(),
@@ -427,12 +479,10 @@ fn owners() -> Vec<Owner> {
             first: 2,
             ..owner("newest pool, no one-row shape", draw(""), draw(""), 3)
         },
-        // Inputs another connection of the process read. The reference
-        // finds them in its process-wide memo and sends three texts; this
-        // port reads them again, seven (the module's notes).
+        // Inputs another connection of the process read and the memo
+        // kept: the memory head, the ranking and the stored tokenizer.
         Owner {
             earlier: Some(draw(NO_HIT)),
-            native: Some(7),
             ..owner(
                 "search pool after another connection's",
                 none(),
@@ -440,8 +490,136 @@ fn owners() -> Vec<Owner> {
                 3,
             )
         },
+        // A request the share says fills its pool from the index's best
+        // rows (`... LIMIT ?`), then one that admits nothing, which reads
+        // the whole ranking a batch at a time: the memory head, both
+        // rankings and the stored tokenizer.
+        owner(
+            "a wide pool, then a narrow one",
+            draw(NO_HIT),
+            json!([
+                ["pool", "postgres", 2],
+                ["pool", "postgres", 2, ["nowhere"]]
+            ]),
+            4,
+        ),
+        // The pool and its statistics: the memory head, the ranking, the
+        // stored tokenizer and the term's one read of the index.
+        owner(
+            "a pool ranked with its statistics",
+            draw(NO_HIT),
+            json!([["stats", "postgres", 2]]),
+            4,
+        ),
+        // Inside a transaction no memo is read: the ranking, the record's
+        // own admission inputs (`... WHERE m.rowid IN (?)`) and the stored
+        // tokenizer.
+        owner(
+            "a pool inside a transaction",
+            json!([["begin"]]),
+            draw("postgres"),
+            3,
+        ),
+        // Its statistics too, uncached: the memory rows' admission inputs
+        // and the term's matching ids, both through the statement cache.
+        owner(
+            "a pool ranked with its statistics inside a transaction",
+            json!([["begin"]]),
+            json!([["stats", "postgres", 2]]),
+            5,
+        ),
+        // Inputs kept at the memory head another connection saw, then a
+        // record mutation the digest has seen (the digest current, the
+        // head moved): the entry is advanced over the log. The memory
+        // head, the digest's state, the log row at its mark, the last
+        // record mutation, the log rows past the entry's head, the
+        // mutated ids' digest rows (`... AND d.id IN (?)`), the ranking
+        // and the stored tokenizer. The log row is taken back after.
+        Owner {
+            earlier: Some(json!([["pool", NO_HIT, 2], ["sql", ADVANCE]])),
+            ..owner(
+                "a pool whose kept inputs are advanced over the log",
+                none(),
+                json!([["pool", NO_HIT, 2], ["sql", ADVANCE_UNDONE]]),
+                8,
+            )
+        },
+        // The same entry over a digest that cannot serve the advance: its
+        // state gone, made under other rules, or marked at a log row whose
+        // MAC is not the one it saw. The log row at the entry's head and
+        // the log rows since are read before the digest is asked, and the
+        // inputs are then read again from the memory rows: the memory
+        // head, those two log reads, the digest's state, the memory rows,
+        // the ranking and the stored tokenizer.
+        unusable("whose state is gone", UNUSABLE_GONE, UNUSABLE_GONE_UNDONE),
+        unusable(
+            "made under other rules",
+            UNUSABLE_RULES,
+            UNUSABLE_RULES_UNDONE,
+        ),
+        unusable("marked at another log row", UNUSABLE_SEQ, ""),
     ]
 }
+
+/// A kept entry whose head moved over a digest `script` (run after
+/// [`ADVANCE`]) makes unusable, `undone` (run before [`ADVANCE_UNDONE`])
+/// taking it back; `how` names the digest.
+fn unusable(how: &str, script: &str, undone: &str) -> Owner {
+    let name = format!("a kept entry over a digest {how}").leak();
+    Owner {
+        earlier: Some(json!([
+            ["pool", NO_HIT, 2],
+            ["sql", format!("{ADVANCE} {script}")]
+        ])),
+        ..owner(
+            name,
+            json!([]),
+            json!([
+                ["pool", NO_HIT, 2],
+                ["sql", format!("{undone} {ADVANCE_UNDONE}")]
+            ]),
+            7,
+        )
+    }
+}
+
+/// The digest's state renamed out of its keys (`_built` finds no
+/// fingerprint), and back.
+const UNUSABLE_GONE: &str = "UPDATE digest_state SET key = 'gone ' || key;";
+const UNUSABLE_GONE_UNDONE: &str =
+    "UPDATE digest_state SET key = substr(key, 6) WHERE key LIKE 'gone %';";
+
+/// The digest's fingerprint another build's, and back.
+const UNUSABLE_RULES: &str =
+    "UPDATE digest_state SET value = 'other rules ' || value WHERE key = 'fingerprint';";
+const UNUSABLE_RULES_UNDONE: &str =
+    "UPDATE digest_state SET value = substr(value, 13) WHERE key = 'fingerprint';";
+
+/// The digest's mark set to the log's first row, whose MAC is not the
+/// one it records; [`ADVANCE_UNDONE`] sets the mark again.
+const UNUSABLE_SEQ: &str = "UPDATE digest_state SET value = '1' WHERE key = 'seq';";
+
+/// A copy of the log's last `memory_put` row a thousand rows on, which
+/// the digest is marked as having seen.
+const ADVANCE: &str = "INSERT INTO log (seq, ts, session, kind, payload, prev_mac, mac) \
+     SELECT seq + 1000, ts, session, kind, payload, mac, 'advancedmac' FROM log \
+     WHERE seq = (SELECT MAX(seq) FROM log WHERE kind = 'memory_put'); \
+     UPDATE digest_state SET value = (SELECT CAST(MAX(seq) AS TEXT) FROM log) WHERE key = 'seq'; \
+     UPDATE digest_state SET value = 'advancedmac' WHERE key = 'mac';";
+
+/// [`ADVANCE`] taken back: the row gone, the digest's mark the last
+/// record mutation again (`store_digest._KINDS`).
+const ADVANCE_UNDONE: &str = concat!(
+    "DELETE FROM log WHERE mac = 'advancedmac'; ",
+    "UPDATE digest_state SET value = (SELECT CAST(MAX(seq) AS TEXT) FROM log ",
+    "WHERE kind IN ",
+    "('memory_put', 'memory_delete', 'tombstone_put', 'tombstone_delete')",
+    ") WHERE key = 'seq'; ",
+    "UPDATE digest_state SET value = (SELECT mac FROM log WHERE seq = ",
+    "(SELECT MAX(seq) FROM log WHERE kind IN ",
+    "('memory_put', 'memory_delete', 'tombstone_put', 'tombstone_delete')",
+    ")) WHERE key = 'mac';"
+);
 
 /// A pool of two drawn for `query`.
 fn draw(query: &str) -> Value {
@@ -483,13 +661,8 @@ fn cases_of(owner: &Owner) -> Vec<Case> {
 }
 
 /// The cases on which this port is known to answer otherwise than the
-/// reference: a pool on a connection opened after another one drew a pool,
-/// after 122, 123 and 124 light reads.
-const KNOWN: [&str; 3] = [
-    "search pool after another connection's n=122",
-    "search pool after another connection's n=123",
-    "search pool after another connection's n=124",
-];
+/// reference on the store whose digest is current: none.
+const KNOWN: [&str; 0] = [];
 
 #[test]
 fn each_reader_counts_its_statements() {
@@ -579,11 +752,23 @@ def step(store, op, out):
         out.append(store.scope_counts(admit=lambda scopes, home: True)[0])
     elif name == "current":
         out.append(store.digest_mark(build=False) is not None)
-    elif name == "pool":
+    elif name in ("pool", "stats"):
+        scopes = op[3] if len(op) > 3 else None
         try:
-            out.append([m.id for m in resolve_search_pool(store, op[1], size=op[2]).memories])
+            pool = resolve_search_pool(store, op[1], size=op[2], scopes=scopes)
+            if name == "pool":
+                out.append([m.id for m in pool.memories])
+            else:
+                found = pool.corpus_stats_provider([op[1]])
+                out.append(None if found is None else [found.size, found.body_df, found.scope_df, found.avgdl is not None])
         except Exception as exc:
             out.append({"raised": type(exc).__name__})
+    elif name == "sql":
+        plain = sqlite3.connect(file)
+        plain.executescript(op[1])
+        plain.close()
+    elif name == "begin":
+        store._conn.execute("BEGIN")
     elif name == "refold":
         def tables(found):
             return [[k, len(v["unaccounted"]), len(v["missing"]), v["rows"]] for k, v in found.items()]
@@ -722,6 +907,105 @@ fn the_reference_evicts_at_the_same_reads() {
         native: json!(true),
     });
     assert_eq!(compare(&python, &fixture, &cases), KNOWN);
+}
+
+/// The store with no memory row, deleted by a plain connection (their
+/// index rows go with them, by the table's trigger).
+fn empty_fixture() -> Fixture {
+    fixture_with(|conn| conn.execute_batch("DELETE FROM memories").expect("delete"))
+}
+
+/// The store whose digest is behind the log: its mark set back to the
+/// log's first row, so every record mutation is after it.
+fn behind_fixture() -> Fixture {
+    fixture_with(|conn| {
+        conn.execute_batch(
+            "UPDATE digest_state SET value = (SELECT CAST(MIN(seq) AS TEXT) FROM log) \
+             WHERE key = 'seq';
+             UPDATE digest_state SET value = (SELECT mac FROM log WHERE seq = \
+             (SELECT MIN(seq) FROM log)) WHERE key = 'mac';",
+        )
+        .expect("the mark set back")
+    })
+}
+
+/// The stores other than the current digest's, each with its readers and
+/// the cases on which this port is known to count otherwise.
+fn other_stores() -> Vec<(&'static str, Fixture, Vec<Owner>, Vec<String>)> {
+    let behind = Owner {
+        native: Some(BEHIND_NATIVE),
+        ..owner(
+            "a pool with the digest behind the log",
+            json!([]),
+            draw(NO_HIT),
+            BEHIND_REFERENCE,
+        )
+    };
+    let known = cases_of(&behind)
+        .into_iter()
+        .filter(|case| case.native != case.reference)
+        .map(|case| case.plan["name"].as_str().expect("name").to_owned())
+        .collect();
+    vec![
+        (
+            "no memory row",
+            empty_fixture(),
+            // The newest rows and the stored tokenizer: `admitted_rows([])`
+            // answers before any input is read.
+            vec![owner(
+                "the newest pool of an empty store",
+                json!([]),
+                draw(""),
+                2,
+            )],
+            Vec::new(),
+        ),
+        ("the digest behind", behind_fixture(), vec![behind], known),
+    ]
+}
+
+/// The texts a first pool sends on a store whose digest is behind the log.
+/// The reference's read-only open tries to bring the digest current (its
+/// reads of the digest's state and the log, the write it begins and takes
+/// back) and then reads the memory rows: sixteen, with the memory head,
+/// the ranking and the stored tokenizer. This port reads the digest's
+/// state, the log row at its mark, its head, its rows and each mutated
+/// record's home, and brings them forward in memory: eight with the same
+/// three. So the lookup is dropped after 112 light reads there and 120
+/// here.
+const BEHIND_REFERENCE: usize = 16;
+const BEHIND_NATIVE: usize = 8;
+
+#[test]
+fn the_other_stores_count_their_statements() {
+    for (store, fixture, owners, known) in other_stores() {
+        let mut differing = Vec::new();
+        for case in owners.iter().flat_map(cases_of) {
+            let got = native(&fixture, &case.plan);
+            let got = got.as_array().expect("answers");
+            assert_eq!(
+                got.last(),
+                Some(&case.native),
+                "{store}: {}: {got:?}",
+                case.plan["name"]
+            );
+            if case.native != case.reference {
+                differing.push(case.plan["name"].as_str().expect("name").to_owned());
+            }
+        }
+        assert_eq!(differing, known, "{store}");
+    }
+}
+
+#[test]
+fn the_reference_counts_the_other_stores_the_same() {
+    let Some(python) = python("the_reference_counts_the_other_stores_the_same") else {
+        return;
+    };
+    for (store, fixture, owners, known) in other_stores() {
+        let cases: Vec<Case> = owners.iter().flat_map(cases_of).collect();
+        assert_eq!(compare(&python, &fixture, &cases), known, "{store}");
+    }
 }
 
 #[test]

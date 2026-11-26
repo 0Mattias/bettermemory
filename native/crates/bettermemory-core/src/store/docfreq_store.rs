@@ -20,8 +20,8 @@ use rusqlite::Connection;
 
 use super::digest::{self, DigestError};
 use super::docfreq::{
-    load_scopes, row_mask, AdmissionRow, DocActor, DocFreqError, DocFreqMemo, DocFreqSource, Head,
-    Mask, PyInt, Ranked, Statistics,
+    load_scopes, row_mask, AdmissionRow, DocActor, DocFreqError, DocFreqInputs, DocFreqMemo,
+    DocFreqSource, Head, Mask, PyInt, Ranked, Statistics,
 };
 use super::open::{require_current_writer, WritableStore};
 use super::provenance;
@@ -35,7 +35,10 @@ use crate::pyvalue::{PyError, PyValue};
 use crate::records::rows::{self, Row};
 use crate::unicode;
 
+mod admitted;
 mod advance;
+
+pub use admitted::{admitted_rows, admitted_share, ranked_admitted_rows, Admitter};
 
 /// `_memory_head`'s statement: five probes of `log_by_kind`.
 const MEMORY_HEAD: &str = "SELECT seq, mac FROM log WHERE seq = (SELECT MAX(s) FROM (\
@@ -555,6 +558,58 @@ impl<'c> StoreDocFreq<'c> {
         Ok(Some(out))
     }
 
+    /// `_advanced_inputs` with `marked` in place of `digest_mark(build=False)
+    /// is not None`, asked after the advance's two log reads: a source that
+    /// may not write (the pool) answers it without bringing the digest
+    /// current.
+    pub(crate) fn advanced_inputs_marked(
+        &self,
+        entry: &DocFreqInputs,
+        head: &Head,
+        marked: impl FnOnce() -> Result<bool, DocFreqError>,
+    ) -> Result<Option<DocFreqInputs>, DocFreqError> {
+        advance::advanced_inputs(self, entry, head, marked)
+    }
+
+    /// `_read_doc_freq_inputs`' rows where the digest did not answer:
+    /// `_ADMISSION_INPUTS` over the memory rows, with no lengths.
+    pub(crate) fn memory_admission_rows(&self) -> Result<Vec<AdmissionRow>, DocFreqError> {
+        let sqlite = |e: rusqlite::Error| source(sqlite_class(&e).0);
+        let mut statement = self.conn.prepare_cached(ADMISSION_INPUTS).map_err(sqlite)?;
+        let mut rows = statement.query([]).map_err(sqlite)?;
+        // A generator over sqlite3's rows: a row is grouped once the step
+        // to the next one succeeded, so a step or a conversion that fails
+        // raises after the rows before it were grouped.
+        let (mut raw, mut ahead) = (Vec::new(), None);
+        loop {
+            let row = rows.next();
+            if let (Ok(_), Some(c)) = (&row, ahead.take()) {
+                raw.push(digest_row(c, Some(PyInt::Small(0)))?);
+            }
+            let row = match row {
+                Ok(Some(row)) => row,
+                Ok(None) => break,
+                Err(e) => {
+                    grouped(&raw)?;
+                    return Err(sqlite(e));
+                }
+            };
+            // rid, scopes, home, client, model (the id is not read).
+            match cells(row) {
+                Ok(mut c) => {
+                    c.remove(1);
+                    c.push(SqlValue::Integer(0));
+                    ahead = Some(c);
+                }
+                Err(e) => {
+                    grouped(&raw)?;
+                    return Err(from_store(e));
+                }
+            }
+        }
+        typed(raw)
+    }
+
     fn not_read<T>(&self, e: &rusqlite::Error) -> Option<T> {
         let (class, code) = sqlite_class(e);
         self.warn(WarningKind::NotRead, class, code, e.to_string());
@@ -568,7 +623,7 @@ impl<'c> StoreDocFreq<'c> {
 /// 64 bits where the column holds one).
 pub type DigestRow = (PyInt, String, SqlValue, SqlValue, SqlValue, PyInt);
 
-fn cells(row: &rusqlite::Row<'_>) -> Result<Vec<SqlValue>, StoreError> {
+pub(crate) fn cells(row: &rusqlite::Row<'_>) -> Result<Vec<SqlValue>, StoreError> {
     (0..6)
         .map(|i| {
             row.get_ref(i)
@@ -580,7 +635,10 @@ fn cells(row: &rusqlite::Row<'_>) -> Result<Vec<SqlValue>, StoreError> {
 
 /// `(int(rid), str(scopes), home, client, model, int(length))`, the
 /// length 0 where `length` names it (`_ADMISSION_INPUTS`' rows).
-fn digest_row(c: Vec<SqlValue>, length: Option<PyInt>) -> Result<DigestRow, DocFreqError> {
+pub(crate) fn digest_row(
+    c: Vec<SqlValue>,
+    length: Option<PyInt>,
+) -> Result<DigestRow, DocFreqError> {
     let rid = py_int(&c[0])?;
     let length = match length {
         Some(n) => n,
@@ -626,7 +684,7 @@ fn admission_row((rid, scopes_text, home, client, model, length): DigestRow) -> 
 }
 
 /// The rows as `AdmissionRow`s, the grouping's failures raised first.
-fn typed(rows: Vec<DigestRow>) -> Result<Vec<AdmissionRow>, DocFreqError> {
+pub(crate) fn typed(rows: Vec<DigestRow>) -> Result<Vec<AdmissionRow>, DocFreqError> {
     grouped(&rows)?;
     Ok(rows.into_iter().map(admission_row).collect())
 }
@@ -664,40 +722,7 @@ impl DocFreqSource for StoreDocFreq<'_> {
         if let Some(rows) = self.digest_admission_rows()? {
             return Ok((typed(rows)?, true));
         }
-        let sqlite = |e: rusqlite::Error| source(sqlite_class(&e).0);
-        let mut statement = self.conn.prepare_cached(ADMISSION_INPUTS).map_err(sqlite)?;
-        let mut rows = statement.query([]).map_err(sqlite)?;
-        // A generator over sqlite3's rows: a row is grouped once the step
-        // to the next one succeeded, so a step or a conversion that fails
-        // raises after the rows before it were grouped.
-        let (mut raw, mut ahead) = (Vec::new(), None);
-        loop {
-            let row = rows.next();
-            if let (Ok(_), Some(c)) = (&row, ahead.take()) {
-                raw.push(digest_row(c, Some(PyInt::Small(0)))?);
-            }
-            let row = match row {
-                Ok(Some(row)) => row,
-                Ok(None) => break,
-                Err(e) => {
-                    grouped(&raw)?;
-                    return Err(sqlite(e));
-                }
-            };
-            // rid, scopes, home, client, model (the id is not read).
-            match cells(row) {
-                Ok(mut c) => {
-                    c.remove(1);
-                    c.push(SqlValue::Integer(0));
-                    ahead = Some(c);
-                }
-                Err(e) => {
-                    grouped(&raw)?;
-                    return Err(from_store(e));
-                }
-            }
-        }
-        Ok((typed(raw)?, false))
+        Ok((self.memory_admission_rows()?, false))
     }
 
     fn advanced_inputs(
@@ -705,7 +730,7 @@ impl DocFreqSource for StoreDocFreq<'_> {
         entry: &super::docfreq::DocFreqInputs,
         head: &Head,
     ) -> Result<Option<super::docfreq::DocFreqInputs>, DocFreqError> {
-        advance::advanced_inputs(self, entry, head)
+        advance::advanced_inputs(self, entry, head, || Ok(self.digest_mark()?.is_some()))
     }
 
     fn term_masks(
@@ -813,23 +838,36 @@ pub fn ranking_statistics(
     terms: &[String],
     admit: &mut StoreAdmit<'_>,
 ) -> Result<Option<Statistics>, DocFreqError> {
+    ranking_statistics_from(src, src, memo, terms, admit)
+}
+
+/// [`ranking_statistics`] with the memo's inputs read through `source`
+/// (a source over `store`'s connection that reads them its own way) and
+/// the uncached read through `store`.
+pub(crate) fn ranking_statistics_from(
+    source: &dyn DocFreqSource,
+    store: &StoreDocFreq<'_>,
+    memo: &DocFreqMemo,
+    terms: &[String],
+    admit: &mut StoreAdmit<'_>,
+) -> Result<Option<Statistics>, DocFreqError> {
     let unique = unique_terms(terms);
     if unique.is_empty() {
         return Ok(None);
     }
-    let found = if src.in_transaction() {
+    let found = if source.in_transaction() {
         Ranked::Uncached
     } else {
         let mut keyed =
             |s: &[PyValue], h: Option<&str>, a: Option<&DocActor>| with_home(h, |h| admit(s, h, a));
-        memo.ranking_statistics(src, &unique, &mut keyed)
+        memo.ranking_statistics(source, &unique, &mut keyed)
             .map_err(json_class)?
     };
     Ok(match found {
         Ranked::Found(statistics) => Some(statistics),
         Ranked::Nothing => None,
         Ranked::Uncached => {
-            uncached(src, &unique, admit)?.map(|(size, body, scope)| (size, body, scope, None))
+            uncached(store, &unique, admit)?.map(|(size, body, scope)| (size, body, scope, None))
         }
     })
 }

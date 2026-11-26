@@ -176,9 +176,11 @@
 //!   that no other connection holds the store (`store::upgrade`); the
 //!   document frequency memo with the store's side as a trait
 //!   (`store::docfreq`) and that side over a store connection with
-//!   `document_frequencies`, `ranking_statistics` and an entry carried
-//!   over a moved head by the log's record rows
-//!   (`store::docfreq_store`); the event and capture readers and the window
+//!   `document_frequencies`, `ranking_statistics`, an entry carried
+//!   over a moved head by the log's record rows and the rows a request
+//!   admits decided through it (`store::docfreq_store`: `admitted_rows`,
+//!   `admitted_share`, `ranked_admitted_rows`); the search pool a
+//!   request ranks, drawn through that memo (`store::pool`); the event and capture readers and the window
 //!   floor (`store::event_reads`); the plain reads of the index and the
 //!   records over a connection (`store::index_reads`,
 //!   `store::record_reads`); the event writes with their retry and

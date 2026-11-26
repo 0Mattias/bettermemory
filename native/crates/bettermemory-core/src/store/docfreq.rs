@@ -90,6 +90,14 @@ impl Mask {
     pub fn is_zero(&self) -> bool {
         self.0.iter().all(|w| *w == 0)
     }
+
+    /// `int.bit_length()`: one past the highest bit set, 0 for none.
+    pub fn bit_length(&self) -> usize {
+        self.0
+            .iter()
+            .rposition(|w| *w != 0)
+            .map_or(0, |i| i * 64 + 64 - self.0[i].leading_zeros() as usize)
+    }
 }
 
 /// `_row_mask`: the mask with bit `p` set for each position, built in a
@@ -591,6 +599,24 @@ impl DocFreqMemo {
             _ => None,
         };
         Ok(Some((size, body_df, scope_df, average)))
+    }
+
+    /// The head `_admitter` and `admitted_share` share: the inputs at the
+    /// store's memory head (`_current_inputs`), the mask of the rows
+    /// `admit` admits (`_admitted_mask`), and the entry kept when this
+    /// call made it and the head did not move meanwhile (`_keep_doc_freqs`
+    /// with no terms).
+    pub fn admitted_inputs(
+        &self,
+        source: &dyn DocFreqSource,
+        admit: &mut Admit<'_>,
+    ) -> Result<(Arc<Entry>, Mask), DocFreqError> {
+        let (entry, fresh, key, head) = self.current_inputs(source)?;
+        let (admitted, _) = admitted_mask(&entry.inputs, admit);
+        if fresh && source.memory_head()? == head {
+            self.keep(key, &entry, &[], true);
+        }
+        Ok((entry, admitted))
     }
 
     /// `_current_inputs`.

@@ -141,7 +141,8 @@ fn digest_rows(
              FROM digest_records d LEFT JOIN homes h ON h.record_id = d.id \
              WHERE d.removed = 0 AND d.id IN ({marks})"
         );
-        let Ok(mut statement) = src.conn.prepare(&sql) else {
+        // Through the statement cache, as `conn.execute` sends it.
+        let Ok(mut statement) = src.conn.prepare_cached(&sql) else {
             return Ok(None);
         };
         // sqlite3 binds after it prepares: an id holding a lone surrogate
@@ -175,11 +176,15 @@ fn digest_rows(
 
 /// `_advanced_inputs(self, entry, head)`: `entry` brought to `head`, or
 /// None where the inputs have to be read from the store. The entry's
-/// terms are the memo's to copy.
+/// terms are the memo's to copy. `marked` is `digest_mark(build=False)
+/// is not None`, asked where the reference asks it: after the log row at
+/// the entry's head and the log rows since are read, so a digest that
+/// cannot serve the advance still costs those two reads.
 pub(super) fn advanced_inputs(
     src: &StoreDocFreq<'_>,
     entry: &DocFreqInputs,
     head: &Head,
+    marked: impl FnOnce() -> Result<bool, DocFreqError>,
 ) -> Result<Option<DocFreqInputs>, DocFreqError> {
     let (Some(lengths), Some(group_of), Some(length_of)) =
         (&entry.lengths, &entry.group_of, &entry.length_of)
@@ -204,7 +209,7 @@ pub(super) fn advanced_inputs(
     let Some(ids) = span_ids(src, seq, head.0, entry.changed.len())? else {
         return Ok(None);
     };
-    if src.digest_mark()?.is_none() {
+    if !marked()? {
         return Ok(None);
     }
     let Some(read) = digest_rows(src, &ids)? else {

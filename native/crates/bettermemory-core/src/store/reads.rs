@@ -335,7 +335,9 @@ pub fn document_frequencies(
         return Ok(None);
     }
     let mut admitted: HashSet<String> = HashSet::new();
-    let mut statement = conn.prepare(
+    // Both texts through the statement cache, as the reference's
+    // `self._conn.execute` sends them.
+    let mut statement = conn.prepare_cached(
         "SELECT m.rowid AS rid, m.id AS id, m.scopes_json AS scopes_json, \
          h.project AS home_project, \
          m.actor_client AS actor_client, m.actor_model AS actor_model \
@@ -364,7 +366,7 @@ pub fn document_frequencies(
     if admitted.is_empty() {
         return Ok(None);
     }
-    let mut matching = conn.prepare(
+    let mut matching = conn.prepare_cached(
         "SELECT m.id AS id FROM memories m \
          JOIN memories_fts f ON f.rowid = m.rowid \
          WHERE memories_fts MATCH ?",
@@ -415,8 +417,9 @@ pub fn term_masks_by(
     index: &dyn Fn(i64) -> Option<usize>,
     width: usize,
 ) -> Result<(Vec<bool>, Vec<bool>), ReadError> {
+    // Through the statement cache, as `Store._term_masks` sends it.
     let mut statement =
-        conn.prepare("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?")?;
+        conn.prepare_cached("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?")?;
     let mut rows_matching = |expr: &str| -> Result<Vec<bool>, ReadError> {
         let mut mask = vec![false; width];
         let mut rows = statement.query([expr])?;

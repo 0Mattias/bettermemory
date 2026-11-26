@@ -2,9 +2,9 @@
 //! without writing to it: `handlers.search.resolve_search_pool` and what
 //! it calls (`_admitted_candidates`, `_admit_predicate`,
 //! `_corpus_stats_provider`, `Store.ranked_rows`, `newest_rows`,
-//! `admitted_rows`, `light_many`, `ranking_statistics`), and the ranking
-//! `_rank_pool` makes of it (`search.search` over the pool with the pool's
-//! statistics).
+//! `admitted_share`, `admitted_rows`, `ranked_admitted_rows`,
+//! `light_many`, `ranking_statistics`), and the ranking `_rank_pool` makes
+//! of it (`search.search` over the pool with the pool's statistics).
 //!
 //! The caller arrives resolved, as data: an [`Admission`] holds what the
 //! reference's `admission.Admission` answers for the rows of one store
@@ -12,33 +12,43 @@
 //! reaches only each hit's drift report, never a score, an order, a
 //! relevance or a match term.
 //!
+//! A pool decides its rows, and its statistics price them, through the
+//! document frequency memo ([`DocFreqMemo`], the process's own
+//! [`docfreq::memo`] unless the reader is given another) as the reference
+//! does: the memo's inputs are kept for the process by store and memory
+//! head, brought forward from the log where an entry is behind
+//! (`_advanced_inputs`), and each term's hits are kept beside them. Inside
+//! a transaction no memo is read: each row is decided from its own
+//! columns and the statistics are the uncached read, with no average.
+//!
 //! What differs from the reference, by design of a read-only port:
 //!
-//! - The statistics' average BM25 length comes from the digest. Where the
+//! - The memo's inputs come from the digest where it answers. Where the
 //!   digest is behind the log (the state any write leaves it in), the
 //!   reference's search brings it current (`digest_mark(build=False)`,
-//!   `_ingest`: a write) and reads its lengths; this port brings the rows
+//!   `_ingest`: a write) and reads its rows; this port brings the rows
 //!   forward in memory over the same log rows (`PoolReader::digest_rows`)
-//!   and writes nothing. Where `digest_mark` answers None (no digest state,
-//!   another fingerprint, a log that does not hold the row the digest saw,
-//!   a mutation payload or record that does not read) there is no average
-//!   here either. Not reproduced: where SQLite itself cannot write the
-//!   store (a read-only file, a busy lock) the reference also answers None
-//!   for a digest that is behind; this port answers as a reference whose
-//!   SQLite can write (a `Store.open` the key ring marks read-only still
-//!   catches up and writes). Ids are read through `str()` for scalars; an
-//!   id that is a list or an object, and a payload in UTF-16 or UTF-32
-//!   bytes, give no average here where the reference answers.
+//!   and writes nothing, and an entry kept at an older head is brought
+//!   forward from the log only where the digest is current (else it is
+//!   read again, to the same inputs, after the log reads the reference's
+//!   advance sends before it asks for the digest). Where `digest_mark` answers None (no
+//!   digest state, another fingerprint, a log that does not hold the row
+//!   the digest saw, a mutation payload or record that does not read) the
+//!   inputs are the memory rows', with no average. Not reproduced: where
+//!   SQLite itself cannot write the store (a read-only file, a busy lock)
+//!   the reference also answers None for a digest that is behind; this
+//!   port answers as a reference whose SQLite can write (a `Store.open`
+//!   the key ring marks read-only still catches up and writes). Ids are
+//!   read through `str()` for scalars; an id that is a list or an object,
+//!   and a payload in UTF-16 or UTF-32 bytes, give no average here where
+//!   the reference answers.
 //! - The digest's fingerprint (`store_digest.fingerprint`, which reads the
-//!   supersession rules) is not computed here: the caller passes the one
-//!   the reference names, and with none the digest is never trusted.
-//! - The document frequency memo keeps the rows' admission inputs per
-//!   [`PoolReader`], keyed by the memory head (as the reference keys it)
-//!   and the digest fingerprint passed, but not each term's hits: each call
-//!   reads the index for its terms (the reference's memo answers as the
-//!   uncached read does). The reference brings a memo kept at an older
-//!   head forward from the log rows since (`_advanced_inputs`); this one
-//!   reads the inputs again.
+//!   supersession rules) is passed by the caller; with none the digest is
+//!   never trusted. The memo is keyed as the reference keys it (the
+//!   store's path as it was opened, not a private copy's, and its store
+//!   id) under the fingerprint this build computes
+//!   ([`digest::fingerprint`]); under any other, or none, the key carries
+//!   it, so inputs read under one are never handed to another.
 //! - The reference reads a pool's records with `seed_tokens` set to
 //!   `index_spelled_here()`: where the tokenizer stamp the log names is
 //!   this build's, each record's token streams are split from its row's
@@ -52,30 +62,32 @@
 //! - A row whose scope list holds anything but strings is refused
 //!   (TypeError) where the reference's predicate may answer or raise
 //!   another exception; a store the reference writes holds strings only.
-//!   A row number or BM25 length past 64 bits is OverflowError here, where
-//!   the reference's `int()` would carry it.
 
-use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
-use std::rc::Rc;
+use std::cell::{Cell, OnceCell, RefCell};
+use std::collections::HashMap;
 
 use rusqlite::types::ValueRef;
 use rusqlite::Statement;
 
 use super::digest::{self, DIGEST_KINDS};
-use super::{sql_value, SqlValue, StoreError, StoreFile};
+use super::docfreq::{self, DocActor, DocFreqError, DocFreqInputs, DocFreqMemo, DocFreqSource};
+use super::docfreq::{AdmissionRow, Head, Mask};
+use super::docfreq_store::{self, DigestRow, Home, StoreDocFreq};
+use super::{index_reads, record_reads, sql_value, SqlValue, StoreError, StoreFile};
 use crate::datetime::DateTime;
 use crate::pyvalue::{PyError, PyValue};
 use crate::records::rows;
 use crate::records::RecordError;
-use crate::search::num::int_true_div;
 use crate::search::{Corpus, CorpusStats, Hit, Mode, Options, Record, SearchError};
-use crate::unicode;
-use crate::{json, lexicon};
+use crate::{json, unicode};
 
 /// `handlers.search.POOL_SIZE`: how many admitted candidates one search
 /// ranks.
 pub const POOL_SIZE: usize = 200;
+
+/// `handlers.search._FIRST_READ`: the rows of the index's ranking, or of
+/// the newest, read at a time.
+pub const FIRST_READ: usize = 4 * POOL_SIZE;
 
 /// `handlers.search.MAX_SEARCH_RESULTS`.
 pub const MAX_SEARCH_RESULTS: i64 = 50;
@@ -100,6 +112,10 @@ pub enum PoolError {
     Record(RecordError),
     /// The ranking refused (`search.search`'s exceptions).
     Search(SearchError),
+    /// The memo or a row's own columns raised: the reference's exception
+    /// by class (JSONDecodeError, ValidationError, IndexError, sqlite3's
+    /// classes).
+    Raised(String),
 }
 
 impl From<StoreError> for PoolError {
@@ -117,6 +133,37 @@ impl From<rusqlite::Error> for PoolError {
 impl From<PyError> for PoolError {
     fn from(e: PyError) -> Self {
         PoolError::Store(e.into())
+    }
+}
+
+impl From<DocFreqError> for PoolError {
+    fn from(e: DocFreqError) -> Self {
+        const PY: [PyError; 6] = [
+            PyError::TypeError,
+            PyError::ValueError,
+            PyError::OverflowError,
+            PyError::UnicodeEncodeError,
+            PyError::UnicodeDecodeError,
+            PyError::RecursionError,
+        ];
+        match e {
+            DocFreqError::Py(p) => p.into(),
+            DocFreqError::Source(class) => match PY.into_iter().find(|p| p.name() == class) {
+                Some(p) => p.into(),
+                None => PoolError::Raised(class),
+            },
+            DocFreqError::IndexError => PoolError::Raised("IndexError".to_owned()),
+        }
+    }
+}
+
+impl From<record_reads::ReadError> for PoolError {
+    fn from(e: record_reads::ReadError) -> Self {
+        match e {
+            record_reads::ReadError::Sqlite(e) => e.into(),
+            record_reads::ReadError::Record(e) => PoolError::Record(e),
+            other => PoolError::Raised(other.class()),
+        }
     }
 }
 
@@ -161,18 +208,24 @@ pub struct Filters<'a> {
 
 impl Filters<'_> {
     /// `search.candidate_admitted` over a row's admission inputs.
-    fn admits(&self, row: &InputRow) -> bool {
-        if !self.excluded.is_empty() && row.scopes.iter().any(|s| self.excluded.contains(s)) {
+    fn admits(
+        &self,
+        scopes: &[String],
+        home: Option<&str>,
+        client: Option<&str>,
+        model: Option<&str>,
+    ) -> bool {
+        if !self.excluded.is_empty() && scopes.iter().any(|s| self.excluded.contains(s)) {
             return false;
         }
         if let Some(wanted) = self.scopes {
             // `set(scopes) if scopes else None`: an empty list filters nothing.
-            if !wanted.is_empty() && !row.scopes.iter().any(|s| wanted.contains(s)) {
+            if !wanted.is_empty() && !scopes.iter().any(|s| wanted.contains(s)) {
                 return false;
             }
         }
         if let Some(admission) = self.admission {
-            if !admission.admits_row(&row.scopes, row.home.as_deref()) {
+            if !admission.admits_row(scopes, home) {
                 return false;
             }
         }
@@ -180,34 +233,60 @@ impl Filters<'_> {
         if self.client.is_none() && self.model.is_none() {
             return true;
         }
-        if row.client.is_none() && row.model.is_none() {
+        if client.is_none() && model.is_none() {
             return false;
         }
-        if let Some(c) = self.client {
-            if row.client.as_deref() != Some(c) {
-                return false;
+        self.client.is_none_or(|c| client == Some(c)) && self.model.is_none_or(|m| model == Some(m))
+    }
+
+    /// `_admit_predicate(...)`: the predicate the store's row readers take,
+    /// over `(scopes, home project, actor)`. A scope that is not a string
+    /// admits nothing and sets `refused` (TypeError, the module's notes);
+    /// a home in bytes is read as its `str()`.
+    fn predicate<'p>(
+        &'p self,
+        refused: &'p Cell<bool>,
+    ) -> impl FnMut(&[PyValue], Option<Home<'_>>, Option<&DocActor>) -> bool + 'p {
+        move |scopes, home, actor| {
+            let mut strings = Vec::with_capacity(scopes.len());
+            for scope in scopes {
+                match scope {
+                    PyValue::Str(s) => match unicode::to_string(s) {
+                        Some(s) => strings.push(s),
+                        None => return refuse(refused),
+                    },
+                    _ => return refuse(refused),
+                }
             }
+            let spelled;
+            let home = match home {
+                None => None,
+                Some(Home::Text(t)) => Some(t),
+                Some(Home::Bytes(b)) => {
+                    spelled = SqlValue::Blob(b.to_vec()).py_str();
+                    Some(spelled.as_str())
+                }
+            };
+            let (client, model) = match actor {
+                Some(a) => (a.client.as_deref(), a.model.as_deref()),
+                None => (None, None),
+            };
+            self.admits(&strings, home, client, model)
         }
-        if let Some(m) = self.model {
-            if row.model.as_deref() != Some(m) {
-                return false;
-            }
-        }
-        true
     }
 }
 
-/// One memory row's admission inputs: its scopes, the project its
-/// ``homes`` row names, its declared writer, its BM25 length (0 where the
-/// digest did not answer).
-#[derive(Clone, Debug)]
-struct InputRow {
-    rid: i64,
-    scopes: Vec<String>,
-    home: Option<String>,
-    client: Option<String>,
-    model: Option<String>,
-    dl: i64,
+fn refuse(refused: &Cell<bool>) -> bool {
+    refused.set(true);
+    false
+}
+
+/// The predicate's refusal, raised after the call that met it.
+fn refused_check(refused: &Cell<bool>) -> Result<(), PoolError> {
+    if refused.get() {
+        return Err(PyError::TypeError.into());
+    }
+    Ok(())
 }
 
 /// `_load_json(text, None)` of a scope list: None when it is not a list;
@@ -229,13 +308,6 @@ pub(crate) fn scope_list(text: &str) -> Result<Option<Vec<String>>, StoreError> 
     }
 }
 
-/// `(seq, mac)` of the log's last memory, home or index-rebuild row.
-type MemoryHead = (i64, String);
-
-/// The memo: its memory head, the digest fingerprint it was read under,
-/// the inputs.
-type Memo = (MemoryHead, Option<String>, Rc<Inputs>);
-
 /// What a ranking's statistics calls are shown: the terms and the answer.
 pub type StatsSeen<'a> = &'a mut dyn FnMut(&[String], &Option<CorpusStats>);
 
@@ -244,23 +316,27 @@ pub type StatsSeen<'a> = &'a mut dyn FnMut(&[String], &Option<CorpusStats>);
 /// (preparing one costs about ten microseconds against this schema, more
 /// than most of a pool's reads), where the reference's `sqlite3`
 /// connection keeps its own, so a pool's reads and the store's other
-/// reads share the 128 statements the connection holds. A caller that
-/// draws many pools from a store holds one reader, which keeps the
-/// admission inputs.
+/// reads share the 128 statements the connection holds. The admission
+/// inputs are the memo's, which every reader of the process shares.
 pub struct PoolReader<'s> {
     store: &'s StoreFile,
-    /// The document frequency memo's inputs, the memory head they were
-    /// read at (`store_index._current_inputs`) and the digest fingerprint
-    /// they were read under: read again after the log's last memory, home
-    /// or index-rebuild row moved, or under another fingerprint.
-    memo: RefCell<Option<Memo>>,
+    memo: &'s DocFreqMemo,
+    /// Meta's `store_id`, read at the first pool.
+    store_id: OnceCell<String>,
 }
 
 impl<'s> PoolReader<'s> {
+    /// A reader through the process's memo ([`docfreq::memo`]).
     pub fn new(store: &'s StoreFile) -> PoolReader<'s> {
+        PoolReader::with_memo(store, docfreq::memo())
+    }
+
+    /// A reader through `memo`.
+    pub fn with_memo(store: &'s StoreFile, memo: &'s DocFreqMemo) -> PoolReader<'s> {
         PoolReader {
             store,
-            memo: RefCell::new(None),
+            memo,
+            store_id: OnceCell::new(),
         }
     }
 
@@ -359,31 +435,54 @@ impl<'s> PoolReader<'s> {
     /// as `_ingest` writes them (`_mutated_ids`, `_index_record`): each
     /// mutated id's active entry rewritten from its memory row (its row
     /// number, scopes, writer and BM25 length) or dropped when it has
-    /// none. None where the reference's `digest_mark` answers None: no
-    /// digest to bring forward, a payload or record that does not read,
-    /// an SQLite error.
-    fn digest_rows(&self, fingerprint: &str) -> Option<Vec<RawInput>> {
-        let (seen, head) = self.digest_built(fingerprint).ok()??;
-        let mut rows: Vec<(String, RawInput)> = self
-            .with(DIGEST_ROWS, |statement| {
-                let mut rows = statement.query([])?;
-                let mut out = Vec::new();
-                while let Some(row) = rows.next()? {
-                    let id = sql_value(row.get_ref(6)?).map(|v| v.py_str());
-                    out.push((id, raw_input(row)?));
-                }
-                Ok(out)
-            })
-            .ok()?
-            .into_iter()
-            .map(|(id, raw)| id.map(|id| (id, raw)))
-            .collect::<Result<_, _>>()
-            .ok()?;
-        if seen == head {
-            return Some(rows.into_iter().map(|(_, raw)| raw).collect());
+    /// none. None where the reference's `digest_mark` answers None (no
+    /// digest to bring forward, a payload or record that does not read)
+    /// or its read is caught (an SQLite error, a text that is not UTF-8);
+    /// `int()` of a row number or length that does not read raises.
+    fn digest_rows(&self, fingerprint: &str) -> Result<Option<Vec<DigestRow>>, DocFreqError> {
+        let Some((seen, head)) = self.digest_built(fingerprint).ok().flatten() else {
+            return Ok(None);
+        };
+        let read = self.with(DIGEST_ROWS, |statement| {
+            let mut rows = statement.query([])?;
+            let mut out = Vec::new();
+            while let Some(row) = rows.next()? {
+                out.push((sql_value(row.get_ref(6)?), docfreq_store::cells(row)));
+            }
+            Ok(out)
+        });
+        let Ok(read) = read else {
+            return Ok(None);
+        };
+        let mut rows: Vec<(String, Vec<SqlValue>)> = Vec::with_capacity(read.len());
+        for (id, cells) in read {
+            let (Ok(id), Ok(cells)) = (id, cells) else {
+                return Ok(None);
+            };
+            rows.push((id.py_str(), cells));
         }
+        if seen != head {
+            let Some(forward) = self.brought_forward(rows, seen) else {
+                return Ok(None);
+            };
+            rows = forward;
+        }
+        let mut out = Vec::with_capacity(rows.len());
+        for (_, cells) in rows {
+            out.push(docfreq_store::digest_row(cells, None)?);
+        }
+        Ok(Some(out))
+    }
+
+    /// The digest's `rows` brought forward over the log's record
+    /// mutations after `seen`; None where `_ingest` would raise.
+    fn brought_forward(
+        &self,
+        mut rows: Vec<(String, Vec<SqlValue>)>,
+        seen: i64,
+    ) -> Option<Vec<(String, Vec<SqlValue>)>> {
         let (ids, _) = digest::mutated_ids(self.store.connection(), seen).ok()?;
-        let mut entries: HashMap<String, Option<RawInput>> = HashMap::new();
+        let mut entries: HashMap<String, Option<Vec<SqlValue>>> = HashMap::new();
         for id in &ids {
             let entry = self.indexed_entry(id)?;
             // `_index_record(conn, True, id)` reads the tombstone through
@@ -392,20 +491,19 @@ impl<'s> PoolReader<'s> {
             entries.insert(id.clone(), entry);
         }
         rows.retain(|(id, _)| !entries.contains_key(id));
-        let mut out: Vec<RawInput> = rows.into_iter().map(|(_, raw)| raw).collect();
         for id in &ids {
-            if let Some(Some(raw)) = entries.remove(id) {
-                out.push(raw);
+            if let Some(Some(cells)) = entries.remove(id) {
+                rows.push((id.clone(), cells));
             }
         }
-        Some(out)
+        Some(rows)
     }
 
     /// `_index_record(conn, False, id)` in memory ([`digest::read_entry`]):
-    /// the active entry the digest holds for `id` once brought forward
-    /// (None: the memory row is gone), or None outright where the record
-    /// does not read.
-    fn indexed_entry(&self, id: &str) -> Option<Option<RawInput>> {
+    /// the digest's columns for `id` once brought forward (None: the
+    /// memory row is gone), or None outright where the record does not
+    /// read.
+    fn indexed_entry(&self, id: &str) -> Option<Option<Vec<SqlValue>>> {
         let Some(entry) = digest::read_entry(self.store.connection(), false, id).ok()? else {
             return Some(None);
         };
@@ -425,125 +523,43 @@ impl<'s> PoolReader<'s> {
         let dl = digest::features(&entry.body).dl;
         // `_put_entry` hashes the body as UTF-8: a lone surrogate raises.
         unicode::to_string(&entry.body)?;
-        Some(Some(RawInput {
-            rid: rusqlite::types::Value::Integer(entry.rid),
-            scopes: rusqlite::types::Value::Text(entry.scopes),
-            home: to_value(home),
-            client: to_value(entry.client),
-            model: to_value(entry.model),
-            dl: rusqlite::types::Value::Integer(i64::try_from(dl).ok()?),
-        }))
+        Some(Some(vec![
+            SqlValue::Integer(entry.rid),
+            SqlValue::Text(entry.scopes),
+            home,
+            entry.client,
+            entry.model,
+            SqlValue::Integer(i64::try_from(dl).ok()?),
+        ]))
     }
 
-    /// `store_index._memory_head`: the log's last memory, home or
-    /// index-rebuild row, `(seq, mac)`; `(0, "")` with none.
-    fn memory_head(&self) -> Result<MemoryHead, StoreError> {
-        let head = self.with(
-            "SELECT seq, mac FROM log WHERE seq = (SELECT MAX(s) FROM (\
-             SELECT MAX(seq) AS s FROM log WHERE kind = 'memory_put' \
-             UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'memory_delete' \
-             UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'home_put' \
-             UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'home_delete' \
-             UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'index_rebuilt'))",
-            |statement| {
-                let mut rows = statement.query([])?;
-                Ok(match rows.next()? {
-                    None => None,
-                    Some(row) => Some((
-                        match row.get_ref(0)? {
-                            ValueRef::Integer(i) => Some(i),
-                            _ => None,
-                        },
-                        sql_value(row.get_ref(1)?),
-                    )),
-                })
-            },
-        )?;
-        match head {
-            None => Ok((0, String::new())),
-            Some((Some(seq), Ok(mac))) => Ok((seq, mac.py_str())),
-            Some((None, _)) => Err(PyError::TypeError.into()),
-            Some((_, Err(e))) => Err(e),
-        }
-    }
-
-    /// The memo's inputs at the store's memory head (`_current_inputs`),
-    /// read when the head moved since they were.
-    fn current_inputs(&self, fingerprint: Option<&str>) -> Result<Rc<Inputs>, StoreError> {
-        let head = self.memory_head()?;
-        if let Some((seen, under, inputs)) = self.memo.borrow().as_ref() {
-            if *seen == head && under.as_deref() == fingerprint {
-                return Ok(Rc::clone(inputs));
+    /// The memo's source for a pool read under `fingerprint`.
+    fn source<'r>(&'r self, fingerprint: Option<&'r str>) -> Result<PoolSource<'r, 's>, PoolError> {
+        let store_id = match self.store_id.get() {
+            Some(id) => id.clone(),
+            None => {
+                let meta = self.store.meta()?;
+                let id = meta
+                    .into_iter()
+                    .find(|(k, _)| k == "store_id")
+                    .map_or_else(String::new, |(_, v)| v);
+                self.store_id.get_or_init(|| id).clone()
             }
-        }
-        let inputs = Rc::new(self.read_inputs(fingerprint)?);
-        *self.memo.borrow_mut() = Some((head, fingerprint.map(str::to_owned), Rc::clone(&inputs)));
-        Ok(inputs)
-    }
-
-    /// Every memory row's admission inputs (`Store._read_doc_freq_inputs`):
-    /// from the digest, brought forward, with each row's BM25 length where
-    /// it answers (`digest_rows`); else from the memory rows, with none. A
-    /// value `int()` refuses, or a scope list that does not parse, raises
-    /// as there.
-    fn read_inputs(&self, fingerprint: Option<&str>) -> Result<Inputs, StoreError> {
-        if let Some(raw) = fingerprint.and_then(|f| self.digest_rows(f)) {
-            return Ok(index(parse_rows(raw)?, true));
-        }
-        Ok(index(
-            parse_rows(self.raw_rows(ADMISSION_INPUTS_SELECT)?)?,
-            false,
-        ))
-    }
-
-    fn raw_rows(&self, sql: &'static str) -> Result<Vec<RawInput>, rusqlite::Error> {
-        self.with(sql, |statement| {
-            let mut rows = statement.query([])?;
-            let mut out = Vec::new();
-            while let Some(row) = rows.next()? {
-                out.push(raw_input(row)?);
-            }
-            Ok(out)
+        };
+        let inner = StoreDocFreq::over(self.store.connection(), self.store.path(), &store_id);
+        let (path, id) = inner.store_key();
+        // A NUL is in no store id a build writes (`_STORE_ID_PATTERN`).
+        let id = match fingerprint {
+            Some(f) if f == digest::fingerprint() => id,
+            Some(f) => format!("{id}\u{0}rules {f}"),
+            None => format!("{id}\u{0}no rules"),
+        };
+        Ok(PoolSource {
+            reader: self,
+            inner,
+            fingerprint,
+            key: (path, id),
         })
-    }
-
-    /// `ADMISSION_INPUTS_SELECT`'s row for `rid`, as `_admitted_rows_read`
-    /// reads a row the inputs do not hold.
-    fn own_input(&self, rid: i64) -> Result<Option<InputRow>, StoreError> {
-        let raw = self.with(ADMISSION_INPUT_OF_ROW, |statement| {
-            let mut rows = statement.query([rid])?;
-            match rows.next()? {
-                Some(row) => Ok(Some(raw_input(row)?)),
-                None => Ok(None),
-            }
-        })?;
-        Ok(match raw {
-            Some(raw) => parse_rows(vec![raw])?.pop(),
-            None => None,
-        })
-    }
-
-    /// `ranked_rows(query)`: the rows the query matches, by `bm25()` then
-    /// row number; none for a query with no token.
-    fn ranked_rows(&self, query: &str) -> Result<Vec<i64>, StoreError> {
-        let match_query = lexicon::fts_match_query(&unicode::cps(query));
-        if match_query.is_empty() {
-            return Ok(Vec::new());
-        }
-        Ok(self.with(
-            "SELECT rowid FROM memories_fts WHERE memories_fts MATCH ? \
-             ORDER BY bm25(memories_fts), rowid",
-            |statement| row_numbers(statement, [match_query.as_str()]),
-        )?)
-    }
-
-    /// `newest_rows` read whole: newest ``updated`` first, the greater id
-    /// first among equals.
-    fn newest_rows(&self) -> Result<Vec<i64>, StoreError> {
-        Ok(self.with(
-            "SELECT rowid FROM memories ORDER BY updated DESC, id DESC",
-            |statement| row_numbers(statement, []),
-        )?)
     }
 
     /// `light_many(rowids)`: the rows read by the store's light read (one
@@ -562,279 +578,176 @@ impl<'s> PoolReader<'s> {
         })
     }
 
-    /// The rows of the inputs `match_expr` matches, as a mask over
-    /// positions.
-    fn matching(&self, inputs: &Inputs, match_expr: &str) -> Result<Vec<bool>, StoreError> {
-        let rids = self.with(
-            "SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?",
-            |statement| row_numbers(statement, [match_expr]),
-        )?;
-        let mut mask = vec![false; inputs.rows.len()];
-        for rid in rids {
-            if let Some(&p) = inputs.index.get(&rid) {
-                mask[p] = true;
-            }
-        }
-        Ok(mask)
-    }
-
-    /// `resolve_search_pool(store, query, ...)` with the pool size `size`:
-    /// the first `size` rows the request admits, in the full-text index's
-    /// order for `query` (`ranked_rows`: `bm25()`, then row number), or
-    /// newest first for a query that is empty after `str.strip`, read as
-    /// `light_many` reads them. `digest_fingerprint` is the digest
-    /// fingerprint the reference's rules give (`store_digest.fingerprint()`);
-    /// None never trusts the digest.
-    pub fn resolve_search_pool(
-        &self,
+    /// `resolve_search_pool(store, query, ...)` with the pool size `size`
+    /// (`_admitted_candidates`): the first `size` rows the request admits,
+    /// in the full-text index's order for `query` (`bm25()`, then row
+    /// number), or newest first for a query that is empty after
+    /// `str.strip`, read as `light_many` reads them. A non-empty query
+    /// reads the index's best [`FIRST_READ`] rows where the request admits
+    /// enough of the store to fill the pool from them (`admitted_share`),
+    /// and the whole ranking a batch at a time where it does not or they
+    /// fell short (`ranked_admitted_rows`); an empty one pages the newest
+    /// rows [`FIRST_READ`] at a time. `digest_fingerprint` is the digest
+    /// fingerprint the reference's rules give
+    /// (`store_digest.fingerprint()`); None never trusts the digest.
+    pub fn resolve_search_pool<'r>(
+        &'r self,
         query: &str,
-        filters: &Filters<'_>,
+        filters: &Filters<'r>,
         size: usize,
-        digest_fingerprint: Option<&str>,
-    ) -> Result<SearchPool<'_, 's>, PoolError> {
-        let inputs = self.current_inputs(digest_fingerprint)?;
-        let admitted: Vec<bool> = inputs.rows.iter().map(|r| filters.admits(r)).collect();
-        let candidates = if query.chars().all(|c| unicode::is_space(c as u32)) {
-            self.newest_rows()?
-        } else {
-            self.ranked_rows(query)?
-        };
-        let mut rowids = Vec::new();
-        for rid in candidates {
-            if rowids.len() >= size {
-                break;
+        digest_fingerprint: Option<&'r str>,
+    ) -> Result<SearchPool<'r, 's>, PoolError> {
+        let source = self.source(digest_fingerprint)?;
+        let conn = self.store.connection();
+        let refused = Cell::new(false);
+        let mut admit = filters.predicate(&refused);
+        let first = FIRST_READ as i64;
+        let mut rows: Vec<i64> = Vec::new();
+        if query.chars().all(|c| unicode::is_space(c as u32)) {
+            let mut offset = 0;
+            while rows.len() < size {
+                let newest = index_reads::newest_rows(conn, first, offset)?;
+                rows.extend(docfreq_store::admitted_rows(
+                    &source, conn, self.memo, &newest, &mut admit,
+                )?);
+                refused_check(&refused)?;
+                if newest.len() < FIRST_READ {
+                    break;
+                }
+                offset += newest.len() as i64;
             }
-            let ok = match inputs.index.get(&rid) {
-                Some(&p) => admitted[p],
-                None => self.own_input(rid)?.is_some_and(|r| filters.admits(&r)),
-            };
-            if ok {
-                rowids.push(rid);
+        } else {
+            let share = docfreq_store::admitted_share(&source, self.memo, &mut admit)?;
+            refused_check(&refused)?;
+            // `share[0] * _FIRST_READ >= size * share[1]`, in Python ints.
+            let mut wide = share.is_none_or(|(admitted, all)| {
+                admitted as u128 * FIRST_READ as u128 >= size as u128 * all as u128
+            });
+            if wide {
+                let ranked = index_reads::ranked_rows(conn, &unicode::cps(query), Some(first))?;
+                rows = docfreq_store::admitted_rows(&source, conn, self.memo, &ranked, &mut admit)?;
+                refused_check(&refused)?;
+                wide = rows.len() >= size || ranked.len() < FIRST_READ;
+            }
+            if !wide {
+                rows = docfreq_store::ranked_admitted_rows(
+                    &source, conn, self.memo, query, &mut admit, size, first,
+                )?;
+                refused_check(&refused)?;
             }
         }
+        rows.truncate(size);
         // `index_spelled_here()`, which the reference asks before it reads
         // a pool's records, an empty pool's too: the tokenizer the log
         // names. Its answer is not used here (the module's notes).
-        super::fold::stored_fingerprint(self.store.connection())?;
-        let records = self.light_many(&rowids)?;
+        super::fold::stored_fingerprint(conn)?;
+        let records = self.light_many(&rows)?;
         Ok(SearchPool {
-            reader: self,
-            rowids,
+            source,
+            filters: *filters,
+            rowids: rows,
             records,
-            inputs,
-            admitted,
         })
     }
 }
 
-/// `ADMISSION_INPUTS_SELECT` for one row.
-const ADMISSION_INPUT_OF_ROW: &str = "SELECT m.rowid, m.scopes_json, h.project, m.actor_client, \
-     m.actor_model, 0 FROM memories m LEFT JOIN homes h ON h.record_id = m.id WHERE m.rowid = ?";
+/// The memo's source for a pool: the store's own ([`StoreDocFreq`]) for
+/// every read but the digest's rows, which come forward in memory
+/// ([`PoolReader::digest_rows`]) so that nothing is written, and the
+/// advance of a kept entry, which reads the log as the store's does and
+/// then is taken only where the digest is current.
+struct PoolSource<'r, 's> {
+    reader: &'r PoolReader<'s>,
+    inner: StoreDocFreq<'s>,
+    fingerprint: Option<&'r str>,
+    key: (String, String),
+}
 
-fn row_numbers<P: rusqlite::Params>(
-    statement: &mut Statement<'_>,
-    params: P,
-) -> Result<Vec<i64>, rusqlite::Error> {
-    let mut rows = statement.query(params)?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next()? {
-        if let ValueRef::Integer(i) = row.get_ref(0)? {
-            out.push(i);
-        }
+impl DocFreqSource for PoolSource<'_, '_> {
+    fn memory_head(&self) -> Result<Head, DocFreqError> {
+        self.inner.memory_head()
     }
-    Ok(out)
-}
 
-/// One admission-input row as SQLite gives it.
-struct RawInput {
-    rid: rusqlite::types::Value,
-    scopes: rusqlite::types::Value,
-    home: rusqlite::types::Value,
-    client: rusqlite::types::Value,
-    model: rusqlite::types::Value,
-    dl: rusqlite::types::Value,
-}
-
-fn raw_input(row: &rusqlite::Row<'_>) -> Result<RawInput, rusqlite::Error> {
-    Ok(RawInput {
-        rid: row.get(0)?,
-        scopes: row.get(1)?,
-        home: row.get(2)?,
-        client: row.get(3)?,
-        model: row.get(4)?,
-        dl: row.get(5)?,
-    })
-}
-
-fn opt_value(v: &rusqlite::types::Value) -> Result<Option<String>, StoreError> {
-    Ok(match sql_value(ValueRef::from(v))? {
-        SqlValue::Null => None,
-        other => Some(other.py_str()),
-    })
-}
-
-/// The rows whose scopes are a list (the others are left out, as the
-/// reference leaves them out), parsed: first every row's number and
-/// length through `int()` (the reference's list comprehension), then each
-/// row's scopes (its loop).
-fn parse_rows(raw: Vec<RawInput>) -> Result<Vec<InputRow>, StoreError> {
-    let mut numbers = Vec::with_capacity(raw.len());
-    for r in &raw {
-        numbers.push((py_int(&r.rid)?, py_int(&r.dl)?));
+    fn store_key(&self) -> (String, String) {
+        self.key.clone()
     }
-    let mut out = Vec::with_capacity(raw.len());
-    for (r, (rid, dl)) in raw.into_iter().zip(numbers) {
-        let text = sql_value(ValueRef::from(&r.scopes))?.py_str();
-        let Some(scopes) = scope_list(&text)? else {
-            continue;
-        };
-        out.push(InputRow {
-            rid,
-            scopes,
-            home: opt_value(&r.home)?,
-            client: opt_value(&r.client)?,
-            model: opt_value(&r.model)?,
-            dl,
-        });
-    }
-    Ok(out)
-}
 
-/// Python's `int()` of a value sqlite3 gives: an integer as it is, a real
-/// truncated toward zero, text or bytes read as an integer's spelling;
-/// ValueError, OverflowError or TypeError where `int()` raises them (a
-/// value past 64 bits is OverflowError here; the reference would carry it).
-fn py_int(v: &rusqlite::types::Value) -> Result<i64, StoreError> {
-    use rusqlite::types::Value;
-    let text = match v {
-        Value::Integer(i) => return Ok(*i),
-        Value::Real(f) => {
-            if f.is_nan() {
-                return Err(PyError::ValueError.into());
+    fn in_transaction(&self) -> bool {
+        self.inner.in_transaction()
+    }
+
+    fn admission_rows(&self) -> Result<(Vec<AdmissionRow>, bool), DocFreqError> {
+        if let Some(fingerprint) = self.fingerprint {
+            if let Some(rows) = self.reader.digest_rows(fingerprint)? {
+                return Ok((docfreq_store::typed(rows)?, true));
             }
-            let t = f.trunc();
-            if !(-9.223_372_036_854_776e18..9.223_372_036_854_776e18).contains(&t) {
-                return Err(PyError::OverflowError.into());
-            }
-            return Ok(t as i64);
         }
-        Value::Null => return Err(PyError::TypeError.into()),
-        Value::Text(t) => unicode::cps(t),
-        Value::Blob(b) => match std::str::from_utf8(b) {
-            Ok(t) if t.is_ascii() => unicode::cps(t),
-            _ => return Err(PyError::ValueError.into()),
-        },
-    };
-    match &crate::pyvalue::int_from_str(&text)? {
-        PyValue::Int(decimal) => decimal
-            .parse::<i64>()
-            .map_err(|_| PyError::OverflowError.into()),
-        _ => Err(PyError::ValueError.into()),
+        Ok((self.inner.memory_admission_rows()?, false))
     }
-}
 
-fn to_value(v: SqlValue) -> rusqlite::types::Value {
-    use rusqlite::types::Value;
-    match v {
-        SqlValue::Null => Value::Null,
-        SqlValue::Integer(i) => Value::Integer(i),
-        SqlValue::Real(f) => Value::Real(f),
-        SqlValue::Text(t) => Value::Text(t),
-        SqlValue::Blob(b) => Value::Blob(b),
+    fn advanced_inputs(
+        &self,
+        entry: &DocFreqInputs,
+        head: &Head,
+    ) -> Result<Option<DocFreqInputs>, DocFreqError> {
+        // The log row at the entry's head and the log rows since are read
+        // first, as the reference reads them before it asks
+        // `digest_mark(build=False)`; the digest is then trusted only where
+        // it is current under this build's rules, so that the store's own
+        // `digest_mark` reads and never writes.
+        self.inner
+            .advanced_inputs_marked(entry, head, || match self.fingerprint {
+                Some(f) if f == digest::fingerprint() && self.reader.digest_current(f) => {
+                    Ok(self.inner.digest_mark()?.is_some())
+                }
+                _ => Ok(false),
+            })
     }
-}
 
-/// Every memory row's admission inputs, by position, and whether they
-/// carry BM25 lengths.
-struct Inputs {
-    rows: Vec<InputRow>,
-    index: HashMap<i64, usize>,
-    lengths: bool,
-}
+    fn term_masks(&self, term: &str, inputs: &DocFreqInputs) -> Result<(Mask, Mask), DocFreqError> {
+        self.inner.term_masks(term, inputs)
+    }
 
-/// `store_index._ADMISSION_INPUTS`, its columns in the digest select's
-/// order.
-const ADMISSION_INPUTS_SELECT: &str = "SELECT m.rowid, m.scopes_json, h.project, m.actor_client, \
-     m.actor_model, 0 FROM memories m LEFT JOIN homes h ON h.record_id = m.id";
-
-fn index(rows: Vec<InputRow>, lengths: bool) -> Inputs {
-    let index = rows.iter().enumerate().map(|(i, r)| (r.rid, i)).collect();
-    Inputs {
-        rows,
-        index,
-        lengths,
+    fn fts_rowids(&self, expr: &str, low: i64, limit: usize) -> Result<Vec<i64>, DocFreqError> {
+        self.inner.fts_rowids(expr, low, limit)
     }
 }
 
 /// A drawn pool: its records in pool order, and what prices them.
 pub struct SearchPool<'r, 's> {
-    reader: &'r PoolReader<'s>,
+    source: PoolSource<'r, 's>,
+    filters: Filters<'r>,
     /// The pool's row numbers, in pool order.
     pub rowids: Vec<i64>,
     /// The pool's records as a ranking reads them, in pool order.
     pub records: Vec<Record>,
-    inputs: Rc<Inputs>,
-    /// Per position in `inputs`: admitted by the request.
-    admitted: Vec<bool>,
 }
 
 impl SearchPool<'_, '_> {
-    /// `Store.ranking_statistics(terms, admit=...)`: the admitted
-    /// collection's size, each term's document frequency in the body and
-    /// in the body or scopes, and the admitted rows' average BM25 length
-    /// where the digest answered. None for no term or nothing admitted.
-    pub fn statistics(&self, terms: &[String]) -> Result<Option<CorpusStats>, StoreError> {
-        let unique: BTreeSet<&String> = terms.iter().filter(|t| !t.is_empty()).collect();
-        if unique.is_empty() {
-            return Ok(None);
-        }
-        let size = self.admitted.iter().filter(|a| **a).count() as i64;
-        if size == 0 {
-            return Ok(None);
-        }
-        let mut body_df = HashMap::new();
-        let mut scope_df = HashMap::new();
-        for term in unique {
-            let quoted = format!("\"{}\"", term.replace('"', "\"\""));
-            let body = self
-                .reader
-                .matching(&self.inputs, &format!("body_fts : {quoted}"))?;
-            let scopes = self
-                .reader
-                .matching(&self.inputs, &format!("scopes_fts : {quoted}"))?;
-            let mut either = body.clone();
-            for (i, s) in scopes.iter().enumerate() {
-                either[i] |= *s;
-            }
-            let count = |mask: &[bool]| {
-                mask.iter()
-                    .zip(&self.admitted)
-                    .filter(|(m, a)| **m && **a)
-                    .count() as i64
-            };
-            let (b, e) = (count(&body), count(&either));
-            if b > 0 {
-                body_df.insert(term.clone(), b);
-            }
-            if e > 0 {
-                scope_df.insert(term.clone(), e);
-            }
-        }
-        let avgdl = self.inputs.lengths.then(|| {
-            let length: i64 = self
-                .inputs
-                .rows
-                .iter()
-                .zip(&self.admitted)
-                .filter(|(_, a)| **a)
-                .map(|(r, _)| r.dl)
-                .sum();
-            int_true_div(i128::from(length), i128::from(size))
-        });
-        Ok(Some(CorpusStats {
-            size,
-            body_df,
-            scope_df,
+    /// `Store.ranking_statistics(terms, admit=...)`, read when called: the
+    /// admitted collection's size, each term's document frequency in the
+    /// body and in the body or scopes, and the admitted rows' average BM25
+    /// length where the memo's inputs carry lengths. Through the memo
+    /// outside a transaction; inside one the uncached read, with no
+    /// average. None for no term or nothing admitted.
+    pub fn statistics(&self, terms: &[String]) -> Result<Option<CorpusStats>, PoolError> {
+        let refused = Cell::new(false);
+        let mut admit = self.filters.predicate(&refused);
+        let found = docfreq_store::ranking_statistics_from(
+            &self.source,
+            &self.source.inner,
+            self.source.reader.memo,
+            terms,
+            &mut admit,
+        )?;
+        refused_check(&refused)?;
+        let counts = |dfs: Vec<(String, usize)>| -> HashMap<String, i64> {
+            dfs.into_iter().map(|(t, n)| (t, n as i64)).collect()
+        };
+        Ok(found.map(|(size, body, scope, avgdl)| CorpusStats {
+            size: size as i64,
+            body_df: counts(body),
+            scope_df: counts(scope),
             avgdl,
         }))
     }
@@ -862,7 +775,7 @@ impl SearchPool<'_, '_> {
         stats_seen: StatsSeen<'_>,
     ) -> Result<Vec<Hit>, PoolError> {
         let corpus = Corpus::new(&self.records).map_err(PoolError::Search)?;
-        let failed: RefCell<Option<StoreError>> = RefCell::new(None);
+        let failed: RefCell<Option<PoolError>> = RefCell::new(None);
         let seen: RefCell<StatsSeen<'_>> = RefCell::new(stats_seen);
         let provider = |terms: &[String]| -> Option<CorpusStats> {
             match self.statistics(terms) {
@@ -888,7 +801,7 @@ impl SearchPool<'_, '_> {
         };
         let hits = corpus.search(&unicode::cps(query), now, &opts);
         if let Some(e) = failed.into_inner() {
-            return Err(PoolError::Store(e));
+            return Err(e);
         }
         hits.map_err(PoolError::Search)
     }
