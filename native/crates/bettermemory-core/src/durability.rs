@@ -15,8 +15,10 @@ use crate::unicode;
 use crate::verify_candidates::validate::is_lower;
 
 mod capture;
+mod markers;
 
 pub use capture::*;
+pub use markers::*;
 
 /// `SHA_MARKER`: the one name every commit-hash marker folds onto.
 pub const SHA_MARKER: &str = "sha:<commit>";

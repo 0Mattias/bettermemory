@@ -277,6 +277,10 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // past ASCII (`gen_durability`).
         "durability_unicode.jsonl" => &[Unicode],
         // IGNORECASE folding, `\b`, `\w`, `\s` and `\d` past ASCII in the
+        // transient-marker patterns, title case and the anchored `the new`
+        // (`gen_durability`).
+        "durability_markers_unicode.jsonl" => &[Unicode],
+        // IGNORECASE folding, `\b`, `\w`, `\s` and `\d` past ASCII in the
         // capture rules (`gen_durability`).
         "durability_capture_unicode.jsonl" => &[Unicode],
         "lexicon.jsonl"

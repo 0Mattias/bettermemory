@@ -160,7 +160,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json`, `store_restore_lock_hold_python.json`, `store_restore_lock_python.json` (POSIX only) |
 | `store::returned` | `store_returned.py`'s backfill half on the writable store: `missing_links`, `returned_rows`, `backfill`, `ensure_backfilled` (`has_key` given, its log lines returned); `Store._put_relinked` as `store::writers::put_relinked`; the `returned_put` row a backfill appends (`Transaction::mutate_returned_put`) | `store_returned.jsonl`, `store_returned_posix.jsonl` (POSIX only) |
-| `durability` | unit 1 of `durability.py`: `canonical_marker`, `quoted_spans`, `in_quoted_span`, `TransientMatch`, `_snippet_around`, `_at_sentence_start`, `_is_titlecase_name` with `str.istitle`, `sentence_around`. Unit 3 (`durability::capture`): `CaptureRuleHit` with `to_dict`, the capture patterns and word lists (`_SAYING_VERBS` to `_SUITE_WORD_RE`, on the engine), `_first_unquoted`, `_unanchored_test_total`, `find_capture_rule_hits` | `durability.jsonl`, `durability_unicode.jsonl`, `durability_capture.jsonl`, `durability_capture_unicode.jsonl` |
+| `durability` | unit 1 of `durability.py`: `canonical_marker`, `quoted_spans`, `in_quoted_span`, `TransientMatch`, `_snippet_around`, `_at_sentence_start`, `_is_titlecase_name` with `str.istitle`, `sentence_around`. Unit 2 (`durability::markers`): `TRANSIENT_PHRASE_MARKERS`, `_TITLECASE_SKIP_MARKERS`, `_AS_OF_DATE_RE`, `_IN_FLIGHT_WORK_OBJECT`, `_PATTERN_OVERRIDES` and `_PHRASE_REGEXES` (on the engine), `_anchored_new_reference`, `find_transient_markers`. Unit 3 (`durability::capture`): `CaptureRuleHit` with `to_dict`, the capture patterns and word lists (`_SAYING_VERBS` to `_SUITE_WORD_RE`, on the engine), `_first_unquoted`, `_unanchored_test_total`, `find_capture_rule_hits` | `durability.jsonl`, `durability_unicode.jsonl`, `durability_markers.jsonl`, `durability_markers_unicode.jsonl`, `durability_capture.jsonl`, `durability_capture_unicode.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
 is the reference's digest (the one the golden header pins), and
@@ -20966,17 +20966,17 @@ first.
 
 | function | reference lines | needs from the machine | status |
 | --- | --- | --- | --- |
-| `TRANSIENT_PHRASE_MARKERS` | 54-268 | nothing | unit 2 |
+| `TRANSIENT_PHRASE_MARKERS` | 54-268 | nothing | unit 2, built |
 | `SHA_MARKER`, `canonical_marker` (`_LEGACY_SHA_MARKER_RE`) | 270-298 | nothing | unit 1, built |
-| `_AS_OF_DATE_RE`, `_IN_FLIGHT_WORK_OBJECT`, `_PATTERN_OVERRIDES`, `_PHRASE_REGEXES`, `_TITLECASE_SKIP_MARKERS` | 303-406 | Unicode data (`\b`, `\w`, `\s`, `\d`, case folding) | unit 2 |
+| `_AS_OF_DATE_RE`, `_IN_FLIGHT_WORK_OBJECT`, `_PATTERN_OVERRIDES`, `_PHRASE_REGEXES`, `_TITLECASE_SKIP_MARKERS` | 303-406 | Unicode data (`\b`, `\w`, `\s`, `\d`, case folding) | unit 2, built |
 | `quoted_spans`, `in_quoted_span` (`_QUOTED_SPAN_RE`) | 447-466 | nothing | unit 1, built |
 | `TransientMatch` | 469-480 | nothing | unit 1, built |
 | `_snippet_around` (`_CONTEXT_CHARS`) | 488-505 | Unicode data (`\s`, `str.strip`) | unit 1, built |
 | `_at_sentence_start` (`_SENTENCE_BOUNDARY_CHARS`) | 508-526 | Unicode data (general category) | unit 1, built |
 | `_is_titlecase_name` (`_NEXT_WORD_RE`) | 529-555 | Unicode data (`str.istitle`, `str.split`, `\s`, `\w`) | unit 1, built |
 | `sentence_around` (`_SENTENCE_END_RE`) | 558-570 | Unicode data (`\d`) | unit 1, built |
-| `_anchored_new_reference` | 573-588 | `search._raw_content_token_set`, `supersession.change_cues` and `anchor_tokens` | unit 2 |
-| `find_transient_markers` | 591-641 | nothing | unit 2 |
+| `_anchored_new_reference` | 573-588 | `search._raw_content_token_set`, `supersession.change_cues` and `anchor_tokens` | unit 2, built |
+| `find_transient_markers` | 591-641 | nothing | unit 2, built |
 | `CaptureRuleHit` and the capture patterns (`_SAYING_VERBS` to `_SUITE_WORD_RE`) | 659-771 | Unicode data (IGNORECASE folding, `\b`, `\w`, `\s`, `\d`) | unit 3, built |
 | `_first_unquoted`, `_unanchored_test_total`, `find_capture_rule_hits` | 774-858 | nothing | unit 3, built |
 
@@ -21058,6 +21058,138 @@ quotes, the hidden digit, `So` against `Sm`, the circled capital that is
 upper but not `\w`); `durability_robustness.rs` holds unpaired quotes and
 long runs at 200,000 and 400,000 code points (the fastest of three runs at
 2n within four times n) and positions at `usize::MAX`.
+
+### Unit 2, built (`durability::markers`)
+
+`src/durability/markers.rs` (279 lines), a child of `durability.rs`,
+re-exported from it. A text is its code points and every position a code
+point index, as in unit 1.
+
+- The tables. `TRANSIENT_PHRASE_MARKERS` (52 phrases, in the reference's
+  order), `TITLECASE_SKIP_MARKERS` (the nine time words),
+  `AS_OF_DATE_MARKER`, `IN_FLIGHT_WORK_OBJECT` and `PATTERN_OVERRIDES`
+  (phrase, text, flags, in the dict's order) are constants; the two idiom
+  overrides splice the in-flight object with `concat!` from the same
+  macro, as the reference's f-strings do. The golden file pins each table
+  and each pattern's text and `re.Pattern.flags` against the reference.
+- The patterns. Every one is the engine's `Regex` built from the
+  reference's own text and flags, none by hand (decision rule 4):
+  `_AS_OF_DATE_RE` (IGNORECASE), the six overrides (`today`, `the new`
+  without IGNORECASE, `at the moment`, `temporarily`, `in the middle of`
+  and `halfway through`), and for each other phrase `\b` +
+  `re.escape(phrase)` + `\b(?!\.\w)` under IGNORECASE, built at run time
+  with `pyre::atom::escape`, the engine's port of 3.13's `re.escape`
+  (which escapes a space as `\ `). `phrase_pattern` answers the text and
+  flags `_PHRASE_REGEXES` holds for a phrase: `_PATTERN_OVERRIDES.get(phrase)
+  or re.compile(...)` takes the override wherever there is one, since a
+  compiled pattern is always true. All 53 texts are in the engine's
+  inventory already (`_AS_OF_DATE_RE`, `_PATTERN_OVERRIDES` to
+  `_PATTERN_OVERRIDES#6`, and the 46 instances of `_PHRASE_REGEXES`, in
+  `pyre_inventory.jsonl` and `pyre_unicode.jsonl`). They are compiled once
+  on first use; a pattern the engine refuses answers
+  `MarkerError::Pattern`, never a panic.
+- `_anchored_new_reference` (`anchored_new_reference`, taking the match's
+  start): `sentence_around` at the start; false when
+  `supersession::change_cues` finds no cue in it; else whether
+  `supersession::anchor_tokens` of the sentence and
+  `search_dedup::raw_content_token_set` of the sentence is non-empty. Both
+  readers take the sentence as it is (each lowers or tokenizes it
+  itself), as the reference passes it.
+- `find_transient_markers`: for each phrase in table order, its
+  `finditer` walked to the first match that is outside every quoted span,
+  is no title-case name (`_is_titlecase_name`, for the nine time words
+  only) and is no anchored `the new`; a skipped match goes on to the next
+  (`continue`, so a quoted or titled use followed by a plain one fires on
+  the plain one). Then the first `_AS_OF_DATE_RE` match outside every
+  quoted span, with no title-case or anchor test. Hits are in phrase
+  order, the date last, each with `_snippet_around` of its span. The
+  reference's `seen` set never holds a phrase still to come (the phrases
+  are distinct, a test holds it), so each phrase is read once.
+  `_is_titlecase_name` answers `None` only where the reference raises
+  `IndexError`, on a match with no word in it, which a phrase match never
+  is. The quoted test is `in_quoted_span` read by a binary search over
+  the spans in text order, as unit 3 reads it.
+- `MarkerError`: the engine's refusal (`Pattern`), a call that answered
+  no value (`Call`), and `SupersessionError` from the anchored test; none
+  is reachable from the reference's patterns as the engine builds them.
+
+#### What the reference does that looks wrong (reproduced, pinned)
+
+- The overrides other than `today` drop the generic `(?!\.\w)`
+  lookahead, so `see the new.io site`, `at the moment.io` and
+  `temporarily.io` fire while `tomorrow.io` does not.
+- `today`'s override exempts `today's` and `today’s` but not `today‘s`
+  (the left single quote) nor `today'` alone.
+- The generic patterns want exactly one ASCII space between words (the
+  escaped space is a literal): `right  now` and `right\u00a0now` do not
+  fire. `temporarily`'s and `at the moment`'s lookaheads read `\s+`, so a
+  no-break space before `blocks` or `of` still exempts.
+- `temporarily s` fires and `temporarily ss` does not: `\w+s\b` wants a
+  code point before the `s`. `in the middle of thing` fires (`th` +
+  `ing`), and `in the middle of a the migration` does not.
+- IGNORECASE folds one code point against one: `İ just` and `ı just` are
+  `i just`, `next weeK` (Kelvin sign) is `next week`, `is ſtashed` is
+  `is stashed`; `is in progreß` is no `is in progress`. `THE NEW SCHEMA`
+  does not fire (`[Tt]he new` has no IGNORECASE, a trade-off the
+  reference's comment accepts).
+- An anchor is the supersession vocabulary's: `We moved to Zürich with the
+  new office` fires (no anchor token past ASCII there), and a sentence
+  that ends at `。` or U+2028 does not end for `sentence_around`, so the
+  cue before it still anchors.
+- Two families are quadratic in the reference and linear here. A quoted
+  match is tested against every span (`any` over the spans): a body of
+  quoted phrases takes 0.083 s at 20,000 code points against 0.001 s at
+  2,000. The sentence of each `the new` is found by `finditer(text, 0,
+  pos)` from the body's start: a body of anchored `the new` sentences
+  takes 0.131 s at 20,000 against 0.002 s at 2,000. The port answers the
+  same; `durability_markers_robustness` holds both linear. One long
+  sentence of anchored matches is quadratic in both (3.3 s against
+  0.032 s in the reference), since each match reads the whole sentence
+  again.
+
+#### Fixtures and tests
+
+`gen_durability.generate_markers` writes `durability_markers.jsonl` (not
+gated: ASCII, the curly double quotes and lone surrogates): the tables;
+each pattern's text and flags; `find_transient_markers` on every phrase
+hit and missed at its edges (inside a longer word, before `.io`, at a
+sentence end, capitalised, upper case, quoted then unquoted, curly
+quoted, title-cased and lower-cased), each override's lookaheads
+(`today's`, `The New York`, `at the moment of`, `temporarily blocks`, the
+idioms' objects and `morning`), the anchored-new cases (a cue with a
+number, a proper noun or a three-part compound, a cue without an
+identifier, an identifier without a cue, a cue in another sentence), the
+dated form inside and outside quotes and at its edges, order, the
+snippet's window and lone surrogates, and a body holding every phrase;
+`_anchored_new_reference` alone; and a sweep of 20,000 bodies drawn by
+the capture sweep's LCG (seed 20261126) from the phrases and words near
+them, pinned by count, hits per marker and SHA-256.
+`generate_markers_unicode` writes `durability_markers_unicode.jsonl`
+(gated on the Unicode version): IGNORECASE folding past ASCII (the Kelvin
+sign, the long s, `İ`, `ı`, `ß`), `\b`, `\w`, `\s` and `\d` past ASCII,
+the curly apostrophe in `today’s`, title case past ASCII and the anchored
+test on non-ASCII sentences. No row follows the Python release or the
+platform.
+
+`golden_durability_markers.rs` checks every row of both files (the sweep
+regenerated by the same rule) and fails when the count checked is zero or
+differs from the file's. `durability_markers_kills.rs` holds the cases a
+plausible wrong port fails: `break` on a quoted or titled match, the
+title-case skip on every phrase, the anchored test on the body, an
+override shadowed by the generic pattern, IGNORECASE as ASCII only or as
+full folding, the date before the phrases or tested for title case, and
+the idioms without their object. `durability_markers_robustness.rs` holds
+the steps of the patterns with an unbounded repeat at 10,000, 100,000
+and 500,000 code points and at twice each, within a pinned multiple of
+the length and the steps at twice a length within 2.2 times those at the
+length: the idioms at 7 per code point (6.05 measured), `temporarily` at
+5 (4.00), `_AS_OF_DATE_RE` at 3 (2.69). The whole check runs over a
+megabyte of dense phrases, quoted phrases, anchored sentences, an
+unpaired quote, plain prose and lone surrogates with the reference's
+answers; ten times each body takes at most `TENFOLD` times as long (the
+thread's clock, least of several rounds); and one long sentence of
+anchored matches is held to its quadratic family (ten times the sentence
+within two hundred times the time).
 
 ### Unit 3, built (`durability::capture`)
 
@@ -21187,10 +21319,10 @@ thirty times as long (the thread's clock, least of several rounds); and
 the dated sentence of counts and of totals is held to its quadratic
 family (ten times the sentence within two hundred times the time).
 
-Left for later units: unit 2 (the marker tables, `_PHRASE_REGEXES`,
-`_anchored_new_reference`, `find_transient_markers`), and the write gate
-that calls `find_capture_rule_hits` (the `handlers/write_gates.py`
-units).
+Left for later units: the write gate that calls `find_transient_markers`
+and `find_capture_rule_hits` with its override (the
+`handlers/write_gates.py` units), and the marker rollups `health_stats`
+reads.
 
 ## How origin reads a repository's history (`origin_history.py`)
 
@@ -29716,9 +29848,7 @@ What the reference has and this build does not, by area:
   `ResponseBuilder`'s attach passes (`_stamp_hit_drift`,
   `attach_commit_drift_counts`: response-9) are not.
 - The write gates past the control tokens, the dedup and `credentials.py`
-  (built whole): `durability.py` past
-  its quoted spans and sentence helpers (the marker tables with
-  `find_transient_markers`: unit 2), and
+  (built whole, as is `durability.py`):
   the store-backed review chain and related-set construction. The review
   tables, answer validation and decision policy are built. The dedup's
   store side reads through a trait not yet wired to `store::digest`.

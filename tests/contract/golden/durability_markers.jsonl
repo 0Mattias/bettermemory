@@ -1,0 +1,837 @@
+{"cases":836,"k":"header"}
+{"as_of":"as of <date>","in_flight":"(?:(?!(?:morning|evening)\\b)\\w+ing\\b|(?:(?:a|an|the)\\s+)?(?:migration|refactor(?:ing)?|rewrite|upgrade|rollout|deploy(?:ment)?|rebase|merge|release)\\b)","k":"tables","overrides":["today","the new","at the moment","temporarily","in the middle of","halfway through"],"phrases":["currently","as of now","as of this writing","as of writing","right now","for now","temporarily","for the time being","at the moment","today","this morning","this afternoon","tonight","yesterday","tomorrow","this week","this month","last week","next week","next month","i just","we just","just shipped","the latest","was recently","were recently","has recently","have recently","recently switched","recently migrated","recently renamed","is in progress","are in progress","in the middle of","halfway through","unpushed","commits ahead","commits behind","has uncommitted changes","have uncommitted changes","has untracked files","have untracked files","are untracked files","is stashed","are stashed","the new","now uses","now use","now using","now relies","now rely","now relying"],"titlecase":["last week","next month","next week","this month","this week","today","tomorrow","tonight","yesterday"]}
+{"f":34,"id":"currently","k":"pat","p":"\\bcurrently\\b(?!\\.\\w)"}
+{"f":34,"id":"as of now","k":"pat","p":"\\bas\\ of\\ now\\b(?!\\.\\w)"}
+{"f":34,"id":"as of this writing","k":"pat","p":"\\bas\\ of\\ this\\ writing\\b(?!\\.\\w)"}
+{"f":34,"id":"as of writing","k":"pat","p":"\\bas\\ of\\ writing\\b(?!\\.\\w)"}
+{"f":34,"id":"right now","k":"pat","p":"\\bright\\ now\\b(?!\\.\\w)"}
+{"f":34,"id":"for now","k":"pat","p":"\\bfor\\ now\\b(?!\\.\\w)"}
+{"f":34,"id":"temporarily","k":"pat","p":"\\btemporarily\\b(?!\\s+\\w+s\\b)"}
+{"f":34,"id":"for the time being","k":"pat","p":"\\bfor\\ the\\ time\\ being\\b(?!\\.\\w)"}
+{"f":34,"id":"at the moment","k":"pat","p":"\\bat the moment\\b(?!\\s+(?:of|when|that)\\b)"}
+{"f":34,"id":"today","k":"pat","p":"\\btoday\\b(?!['\u2019]s|\\.\\w)"}
+{"f":34,"id":"this morning","k":"pat","p":"\\bthis\\ morning\\b(?!\\.\\w)"}
+{"f":34,"id":"this afternoon","k":"pat","p":"\\bthis\\ afternoon\\b(?!\\.\\w)"}
+{"f":34,"id":"tonight","k":"pat","p":"\\btonight\\b(?!\\.\\w)"}
+{"f":34,"id":"yesterday","k":"pat","p":"\\byesterday\\b(?!\\.\\w)"}
+{"f":34,"id":"tomorrow","k":"pat","p":"\\btomorrow\\b(?!\\.\\w)"}
+{"f":34,"id":"this week","k":"pat","p":"\\bthis\\ week\\b(?!\\.\\w)"}
+{"f":34,"id":"this month","k":"pat","p":"\\bthis\\ month\\b(?!\\.\\w)"}
+{"f":34,"id":"last week","k":"pat","p":"\\blast\\ week\\b(?!\\.\\w)"}
+{"f":34,"id":"next week","k":"pat","p":"\\bnext\\ week\\b(?!\\.\\w)"}
+{"f":34,"id":"next month","k":"pat","p":"\\bnext\\ month\\b(?!\\.\\w)"}
+{"f":34,"id":"i just","k":"pat","p":"\\bi\\ just\\b(?!\\.\\w)"}
+{"f":34,"id":"we just","k":"pat","p":"\\bwe\\ just\\b(?!\\.\\w)"}
+{"f":34,"id":"just shipped","k":"pat","p":"\\bjust\\ shipped\\b(?!\\.\\w)"}
+{"f":34,"id":"the latest","k":"pat","p":"\\bthe\\ latest\\b(?!\\.\\w)"}
+{"f":34,"id":"was recently","k":"pat","p":"\\bwas\\ recently\\b(?!\\.\\w)"}
+{"f":34,"id":"were recently","k":"pat","p":"\\bwere\\ recently\\b(?!\\.\\w)"}
+{"f":34,"id":"has recently","k":"pat","p":"\\bhas\\ recently\\b(?!\\.\\w)"}
+{"f":34,"id":"have recently","k":"pat","p":"\\bhave\\ recently\\b(?!\\.\\w)"}
+{"f":34,"id":"recently switched","k":"pat","p":"\\brecently\\ switched\\b(?!\\.\\w)"}
+{"f":34,"id":"recently migrated","k":"pat","p":"\\brecently\\ migrated\\b(?!\\.\\w)"}
+{"f":34,"id":"recently renamed","k":"pat","p":"\\brecently\\ renamed\\b(?!\\.\\w)"}
+{"f":34,"id":"is in progress","k":"pat","p":"\\bis\\ in\\ progress\\b(?!\\.\\w)"}
+{"f":34,"id":"are in progress","k":"pat","p":"\\bare\\ in\\ progress\\b(?!\\.\\w)"}
+{"f":34,"id":"in the middle of","k":"pat","p":"\\bin the middle of (?:(?!(?:morning|evening)\\b)\\w+ing\\b|(?:(?:a|an|the)\\s+)?(?:migration|refactor(?:ing)?|rewrite|upgrade|rollout|deploy(?:ment)?|rebase|merge|release)\\b)"}
+{"f":34,"id":"halfway through","k":"pat","p":"\\bhalfway through (?:(?!(?:morning|evening)\\b)\\w+ing\\b|(?:(?:a|an|the)\\s+)?(?:migration|refactor(?:ing)?|rewrite|upgrade|rollout|deploy(?:ment)?|rebase|merge|release)\\b)"}
+{"f":34,"id":"unpushed","k":"pat","p":"\\bunpushed\\b(?!\\.\\w)"}
+{"f":34,"id":"commits ahead","k":"pat","p":"\\bcommits\\ ahead\\b(?!\\.\\w)"}
+{"f":34,"id":"commits behind","k":"pat","p":"\\bcommits\\ behind\\b(?!\\.\\w)"}
+{"f":34,"id":"has uncommitted changes","k":"pat","p":"\\bhas\\ uncommitted\\ changes\\b(?!\\.\\w)"}
+{"f":34,"id":"have uncommitted changes","k":"pat","p":"\\bhave\\ uncommitted\\ changes\\b(?!\\.\\w)"}
+{"f":34,"id":"has untracked files","k":"pat","p":"\\bhas\\ untracked\\ files\\b(?!\\.\\w)"}
+{"f":34,"id":"have untracked files","k":"pat","p":"\\bhave\\ untracked\\ files\\b(?!\\.\\w)"}
+{"f":34,"id":"are untracked files","k":"pat","p":"\\bare\\ untracked\\ files\\b(?!\\.\\w)"}
+{"f":34,"id":"is stashed","k":"pat","p":"\\bis\\ stashed\\b(?!\\.\\w)"}
+{"f":34,"id":"are stashed","k":"pat","p":"\\bare\\ stashed\\b(?!\\.\\w)"}
+{"f":32,"id":"the new","k":"pat","p":"\\b[Tt]he new\\b"}
+{"f":34,"id":"now uses","k":"pat","p":"\\bnow\\ uses\\b(?!\\.\\w)"}
+{"f":34,"id":"now use","k":"pat","p":"\\bnow\\ use\\b(?!\\.\\w)"}
+{"f":34,"id":"now using","k":"pat","p":"\\bnow\\ using\\b(?!\\.\\w)"}
+{"f":34,"id":"now relies","k":"pat","p":"\\bnow\\ relies\\b(?!\\.\\w)"}
+{"f":34,"id":"now rely","k":"pat","p":"\\bnow\\ rely\\b(?!\\.\\w)"}
+{"f":34,"id":"now relying","k":"pat","p":"\\bnow\\ relying\\b(?!\\.\\w)"}
+{"f":34,"id":"_AS_OF_DATE_RE","k":"pat","p":"\\bas of \\d{4}-\\d{2}-\\d{2}\\b"}
+{"k":"hits","o":[],"t":""}
+{"k":"hits","o":[],"t":"A durable fact about the hook."}
+{"k":"hits","o":[],"t":"concurrently news renewal"}
+{"k":"hits","o":[],"t":"today's date"}
+{"k":"hits","o":[],"t":"TODAY'S date"}
+{"k":"hits","o":[],"t":"todays date"}
+{"k":"hits","o":[],"t":"today.dev is a site"}
+{"k":"hits","o":[{"m":"today","s":"merged earlier today"}],"t":"merged earlier today"}
+{"k":"hits","o":[{"m":"today","s":"Today, I merged it"}],"t":"Today, I merged it"}
+{"k":"hits","o":[{"m":"today","s":"today' is odd"}],"t":"today' is odd"}
+{"k":"hits","o":[{"m":"today","s":"today's and today"}],"t":"today's and today"}
+{"k":"hits","o":[],"t":"The New York office"}
+{"k":"hits","o":[{"m":"the new","s":"The new schema"}],"t":"The new schema"}
+{"k":"hits","o":[],"t":"THE NEW SCHEMA"}
+{"k":"hits","o":[],"t":"tHe new schema"}
+{"k":"hits","o":[],"t":"the New schema"}
+{"k":"hits","o":[{"m":"today","s":"the news today"}],"t":"the news today"}
+{"k":"hits","o":[],"t":"the newer one"}
+{"k":"hits","o":[{"m":"the new","s":"see the new.io site"}],"t":"see the new.io site"}
+{"k":"hits","o":[],"t":"athe new"}
+{"k":"hits","o":[],"t":"at the moment of release"}
+{"k":"hits","o":[],"t":"at the moment when it runs"}
+{"k":"hits","o":[],"t":"at the moment that it runs"}
+{"k":"hits","o":[{"m":"at the moment","s":"At the moment the plan is"}],"t":"At the moment the plan is"}
+{"k":"hits","o":[],"t":"at the moment  of release"}
+{"k":"hits","o":[],"t":"at the moment\tof release"}
+{"k":"hits","o":[],"t":"at the momentof release"}
+{"k":"hits","o":[{"m":"at the moment","s":"at the moment ofx release"}],"t":"at the moment ofx release"}
+{"k":"hits","o":[{"m":"at the moment","s":"at the moment.io"}],"t":"at the moment.io"}
+{"k":"hits","o":[{"m":"at the moment","s":"at the moment."}],"t":"at the moment."}
+{"k":"hits","o":[],"t":"AT THE MOMENT OF release"}
+{"k":"hits","o":[],"t":"the limiter temporarily blocks an IP"}
+{"k":"hits","o":[{"m":"temporarily","s":"temporarily disabled"}],"t":"temporarily disabled"}
+{"k":"hits","o":[{"m":"temporarily","s":"temporarily s"}],"t":"temporarily s"}
+{"k":"hits","o":[],"t":"temporarily ss"}
+{"k":"hits","o":[],"t":"temporarily blocks."}
+{"k":"hits","o":[{"m":"temporarily","s":"temporarily blocksx"}],"t":"temporarily blocksx"}
+{"k":"hits","o":[{"m":"temporarily","s":"temporarily.io"}],"t":"temporarily.io"}
+{"k":"hits","o":[],"t":"temporarily  blocks"}
+{"k":"hits","o":[],"t":"temporarily is"}
+{"k":"hits","o":[{"m":"temporarily","s":"temporarily"}],"t":"temporarily"}
+{"k":"hits","o":[],"t":"right  now"}
+{"k":"hits","o":[],"t":"right\tnow"}
+{"k":"hits","o":[{"m":"is in progress","s":"it is in progress"}],"t":"it is in progress"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of migrating the database"}],"t":"in the middle of migrating the database"}
+{"k":"hits","o":[],"t":"in the middle of morning"}
+{"k":"hits","o":[],"t":"in the middle of evening"}
+{"k":"hits","o":[],"t":"in the middle of mornings"}
+{"k":"hits","o":[],"t":"in the middle of morningx"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of thing"}],"t":"in the middle of thing"}
+{"k":"hits","o":[],"t":"in the middle of ing"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of a migration"}],"t":"in the middle of a migration"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of an upgrade"}],"t":"in the middle of an upgrade"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of the rollout"}],"t":"in the middle of the rollout"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of the rollout"}],"t":"in the middle of the  rollout"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of deploy"}],"t":"in the middle of deploy"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of deployment"}],"t":"in the middle of deployment"}
+{"k":"hits","o":[],"t":"in the middle of deployments"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of refactor"}],"t":"in the middle of refactor"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of refactoring"}],"t":"in the middle of refactoring"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of a rewrite"}],"t":"in the middle of a rewrite"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of a rebase"}],"t":"in the middle of a rebase"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of a merge"}],"t":"in the middle of a merge"}
+{"k":"hits","o":[{"m":"in the middle of","s":"in the middle of a release"}],"t":"in the middle of a release"}
+{"k":"hits","o":[],"t":"in the middle of a focus block"}
+{"k":"hits","o":[],"t":"in the middle of  migrating"}
+{"k":"hits","o":[],"t":"in the middle ofmigrating"}
+{"k":"hits","o":[{"m":"in the middle of","s":"In The Middle Of A Migration"}],"t":"In The Middle Of A Migration"}
+{"k":"hits","o":[],"t":"in the middle of migratingx1"}
+{"k":"hits","o":[],"t":"in the middle of a the migration"}
+{"k":"hits","o":[{"m":"halfway through","s":"halfway through rebasing"}],"t":"halfway through rebasing"}
+{"k":"hits","o":[{"m":"halfway through","s":"halfway through the upgrade"}],"t":"halfway through the upgrade"}
+{"k":"hits","o":[],"t":"the installer reboots halfway through"}
+{"k":"hits","o":[],"t":"halfway through evening"}
+{"k":"hits","o":[{"m":"halfway through","s":"halfway through a rewrite."}],"t":"halfway through a rewrite."}
+{"k":"hits","o":[{"m":"halfway through","s":"HALFWAY THROUGH A MERGE"}],"t":"HALFWAY THROUGH A MERGE"}
+{"k":"hits","o":[],"t":"We switched to Bugsnag with the new SDK release."}
+{"k":"hits","o":[],"t":"We upgraded to Python 3.13 with the new base image."}
+{"k":"hits","o":[{"m":"the new","s":"The new schema replaces the..."}],"t":"The new schema replaces the old layout."}
+{"k":"hits","o":[{"m":"the new","s":"Bugsnag ships the new SDK."}],"t":"Bugsnag ships the new SDK."}
+{"k":"hits","o":[{"m":"the new","s":"...witched to Bugsnag. The new schema is live."}],"t":"We switched to Bugsnag. The new schema is live."}
+{"k":"hits","o":[{"m":"the new","s":"The new schema is live. We..."}],"t":"The new schema is live. We switched to Bugsnag."}
+{"k":"hits","o":[],"t":"We moved to v2 and the new flow is live; it works."}
+{"k":"hits","o":[],"t":"We moved to the new flow on billing-db-green."}
+{"k":"hits","o":[{"m":"the new","s":"We moved to the new flow on read-only."}],"t":"We moved to the new flow on read-only."}
+{"k":"hits","o":[],"t":"We moved to the new flow on prod-hlx-2."}
+{"k":"hits","o":[],"t":"Now the new parser runs 3 passes."}
+{"k":"hits","o":[{"m":"the new","s":"...h the new SDK! Then the new cache landed."}],"t":"We moved to Bugsnag with the new SDK! Then the new cache landed."}
+{"k":"hits","o":[{"m":"the new","s":"...ag with the new SDK the new cache landed."}],"t":"We moved to Bugsnag with the new SDK\nthe new cache landed."}
+{"k":"hits","o":[],"t":"\"the new\" is quoted; we moved to Bugsnag with the new SDK."}
+{"k":"hits","o":[],"t":"Version 3.13 moved the new parser in"}
+{"k":"hits","o":[],"t":"WE MOVED TO V2 WITH THE NEW FLOW"}
+{"k":"hits","o":[],"t":"We MOVED to Bugsnag with the new SDK."}
+{"k":"hits","o":[],"t":"We moved 3.13's the new parser"}
+{"k":"hits","o":[],"t":"the Tomorrow Night theme"}
+{"k":"hits","o":[],"t":"Tomorrow Night is a theme"}
+{"k":"hits","o":[{"m":"tomorrow","s":"Tomorrow we ship"}],"t":"Tomorrow we ship"}
+{"k":"hits","o":[{"m":"yesterday","s":"Yesterday I broke the build"}],"t":"Yesterday I broke the build"}
+{"k":"hits","o":[],"t":"This Week in Rust is a newsletter"}
+{"k":"hits","o":[{"m":"this week","s":"This week in Rust"}],"t":"This week in Rust"}
+{"k":"hits","o":[],"t":"a USA Today column"}
+{"k":"hits","o":[{"m":"currently","s":"the Currently Show"}],"t":"the Currently Show"}
+{"k":"hits","o":[{"m":"right now","s":"the Right Now Show"}],"t":"the Right Now Show"}
+{"k":"hits","o":[{"m":"tomorrow","s":"Tomorrow Night and tomorrow"}],"t":"Tomorrow Night and tomorrow"}
+{"k":"hits","o":[{"m":"tomorrow","s":"Tomorrow Night. Tomorrow we ship."}],"t":"Tomorrow Night. Tomorrow we ship."}
+{"k":"hits","o":[],"t":"- Today Matters"}
+{"k":"hits","o":[],"t":"x - Today Matters"}
+{"k":"hits","o":[{"m":"this week","s":"THIS WEEK in Rust"}],"t":"THIS WEEK in Rust"}
+{"k":"hits","o":[{"m":"as of <date>","s":"as of 2025-01-01 the cluster is on k..."}],"t":"as of 2025-01-01 the cluster is on k8s"}
+{"k":"hits","o":[{"m":"as of <date>","s":"As Of 2025-01-01 Things Changed"}],"t":"As Of 2025-01-01 Things Changed"}
+{"k":"hits","o":[{"m":"as of <date>","s":"AS OF 2025-01-01"}],"t":"AS OF 2025-01-01"}
+{"k":"hits","o":[{"m":"as of <date>","s":"...of 2025-01-01\" and as of 2025-02-02"}],"t":"\"as of 2025-01-01\" and as of 2025-02-02"}
+{"k":"hits","o":[],"t":"\"as of 2025-01-01\" only"}
+{"k":"hits","o":[],"t":"\u201cas of 2025-01-01\u201d only"}
+{"k":"hits","o":[],"t":"as of 2025-1-01"}
+{"k":"hits","o":[],"t":"as of 20250-01-01"}
+{"k":"hits","o":[],"t":"xas of 2025-01-01"}
+{"k":"hits","o":[],"t":"as of 2025-01-012"}
+{"k":"hits","o":[],"t":"as of  2025-01-01"}
+{"k":"hits","o":[{"m":"as of <date>","s":"as of 2025-01-01.io"}],"t":"as of 2025-01-01.io"}
+{"k":"hits","o":[],"t":"as of 2.7.0 and as of Python 3.12"}
+{"k":"hits","o":[{"m":"currently","s":"as of 2025-01-01 currently"},{"m":"as of <date>","s":"as of 2025-01-01 currently"}],"t":"as of 2025-01-01 currently"}
+{"k":"hits","o":[{"m":"as of <date>","s":"as of 2025-01-01 and as of 2025-02-0..."}],"t":"as of 2025-01-01 and as of 2025-02-02"}
+{"k":"hits","o":[{"m":"today","s":"as of today and as of yesterday"},{"m":"yesterday","s":"...of today and as of yesterday"}],"t":"as of today and as of yesterday"}
+{"k":"hits","o":[{"m":"currently","s":"\"currently\" we are currently here"}],"t":"\"currently\" we are currently here"}
+{"k":"hits","o":[{"m":"currently","s":"\"currently we are\" here"}],"t":"\"currently\nwe are\" here"}
+{"k":"hits","o":[{"m":"currently","s":"odd \" currently"}],"t":"odd \" currently"}
+{"k":"hits","o":[{"m":"currently","s":"\"a\" currently \"b\""}],"t":"\"a\" currently \"b\""}
+{"k":"hits","o":[{"m":"currently","s":"\u201ccurrently\u201c later\u201d"}],"t":"\u201ccurrently\u201c later\u201d"}
+{"k":"hits","o":[{"m":"currently","s":"\u201dcurrently\u201c"}],"t":"\u201dcurrently\u201c"}
+{"k":"hits","o":[],"t":"\"currently \u201ccurrently\u201d\" x"}
+{"k":"hits","o":[],"t":"\"today\" \"currently\""}
+{"k":"hits","o":[],"t":"\"Tomorrow\" Night and Tomorrow Night"}
+{"k":"hits","o":[{"m":"currently","s":"the new thing, currently, today and as of 20..."},{"m":"today","s":"...w thing, currently, today and as of 2025-01-0..."},{"m":"the new","s":"the new thing, currently, t..."},{"m":"as of <date>","s":"...urrently, today and as of 2025-01-01"}],"t":"the new thing, currently, today and as of 2025-01-01"}
+{"k":"hits","o":[{"m":"currently","s":"currently currently currently"}],"t":"currently currently currently"}
+{"k":"hits","o":[{"m":"now uses","s":"...y now using now use now uses"},{"m":"now use","s":"...now rely now using now use now uses"},{"m":"now using","s":"...now relies now rely now using now use now uses"},{"m":"now relies","s":"now relying now relies now rely now using..."},{"m":"now rely","s":"...relying now relies now rely now using now use n..."},{"m":"now relying","s":"now relying now relies now rely..."}],"t":"now relying now relies now rely now using now use now uses"}
+{"k":"hits","o":[{"m":"i just","s":"i just did it; I just did;..."},{"m":"we just","s":"...did it; I just did; we just did"}],"t":"i just did it; I just did; we just did"}
+{"k":"hits","o":[{"m":"unpushed","s":"it is unpushed and stashed; it is..."},{"m":"is stashed","s":"...hed and stashed; it is stashed"}],"t":"it is unpushed and stashed; it is stashed"}
+{"k":"hits","o":[{"m":"currently","s":"...xxxxxxxxxxxxxxxxxxx currently yyyyyyyyyyyyyyyyyyy..."}],"t":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx currently yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"}
+{"k":"hits","o":[{"m":"currently","s":"line one currently spaced tabs line..."}],"t":"line one\ncurrently   spaced\t\ttabs\nline three"}
+{"k":"hits","o":[{"m":"currently","s_cps":[99,117,114,114,101,110,116,108,121,32,55296]}],"t_cps":[99,117,114,114,101,110,116,108,121,32,55296]}
+{"k":"hits","o":[{"m":"currently","s_cps":[55296,99,117,114,114,101,110,116,108,121,57343]}],"t_cps":[55296,99,117,114,114,101,110,116,108,121,57343]}
+{"k":"hits","o":[{"m":"today","s_cps":[55296,32,116,111,100,97,121,32,55296]}],"t_cps":[55296,32,116,111,100,97,121,32,55296]}
+{"k":"hits","o":[{"m":"currently","s_cps":[34,55296,99,117,114,114,101,110,116,108,121,34,32,99,117,114,114,101,110,116,108,121]}],"t_cps":[34,55296,99,117,114,114,101,110,116,108,121,34,32,99,117,114,114,101,110,116,108,121]}
+{"k":"hits","o":[{"m":"the new","s_cps":[116,104,101,32,110,101,119,32,55296,32,116,104,105,110,103]}],"t_cps":[116,104,101,32,110,101,119,32,55296,32,116,104,105,110,103]}
+{"k":"hits","o":[],"t_cps":[87,101,32,109,111,118,101,100,32,116,111,32,66,117,103,115,110,97,103,32,55296,32,119,105,116,104,32,116,104,101,32,110,101,119,32,83,68,75,46]}
+{"k":"hits","o":[{"m":"as of <date>","s_cps":[97,115,32,111,102,32,50,48,50,53,45,48,49,45,48,49,55296]}],"t_cps":[97,115,32,111,102,32,50,48,50,53,45,48,49,45,48,49,55296]}
+{"k":"hits","o":[{"m":"currently","s":"x currently y"}],"t":"x currently y"}
+{"k":"hits","o":[{"m":"currently","s":"Currently we said."}],"t":"Currently we said."}
+{"k":"hits","o":[{"m":"currently","s":"CURRENTLY"}],"t":"CURRENTLY"}
+{"k":"hits","o":[],"t":"xcurrently y"}
+{"k":"hits","o":[],"t":"x currentlyx"}
+{"k":"hits","o":[],"t":"see currently.io and currently.x"}
+{"k":"hits","o":[{"m":"currently","s":"Deploy currently."}],"t":"Deploy currently."}
+{"k":"hits","o":[{"m":"currently","s":"currently."}],"t":"currently.\n"}
+{"k":"hits","o":[{"m":"currently","s":"...currently\" and then currently"}],"t":"\"currently\" and then currently"}
+{"k":"hits","o":[],"t":"\u201ccurrently\u201d only"}
+{"k":"hits","o":[{"m":"currently","s":"the Currently Show"}],"t":"the Currently Show"}
+{"k":"hits","o":[{"m":"currently","s":"Currently We Ship"}],"t":"Currently We Ship"}
+{"k":"hits","o":[{"m":"as of now","s":"x as of now y"}],"t":"x as of now y"}
+{"k":"hits","o":[{"m":"as of now","s":"As of now we said."}],"t":"As of now we said."}
+{"k":"hits","o":[{"m":"as of now","s":"AS OF NOW"}],"t":"AS OF NOW"}
+{"k":"hits","o":[],"t":"xas of now y"}
+{"k":"hits","o":[],"t":"x as of nowx"}
+{"k":"hits","o":[],"t":"see as of now.io and as of now.x"}
+{"k":"hits","o":[{"m":"as of now","s":"Deploy as of now."}],"t":"Deploy as of now."}
+{"k":"hits","o":[{"m":"as of now","s":"as of now."}],"t":"as of now.\n"}
+{"k":"hits","o":[{"m":"as of now","s":"...as of now\" and then as of now"}],"t":"\"as of now\" and then as of now"}
+{"k":"hits","o":[],"t":"\u201cas of now\u201d only"}
+{"k":"hits","o":[{"m":"as of now","s":"the As Of Now Show"}],"t":"the As Of Now Show"}
+{"k":"hits","o":[{"m":"as of now","s":"As Of Now We Ship"}],"t":"As Of Now We Ship"}
+{"k":"hits","o":[{"m":"as of this writing","s":"x as of this writing y"}],"t":"x as of this writing y"}
+{"k":"hits","o":[{"m":"as of this writing","s":"As of this writing we said."}],"t":"As of this writing we said."}
+{"k":"hits","o":[{"m":"as of this writing","s":"AS OF THIS WRITING"}],"t":"AS OF THIS WRITING"}
+{"k":"hits","o":[],"t":"xas of this writing y"}
+{"k":"hits","o":[],"t":"x as of this writingx"}
+{"k":"hits","o":[],"t":"see as of this writing.io and as of this writing.x"}
+{"k":"hits","o":[{"m":"as of this writing","s":"Deploy as of this writing."}],"t":"Deploy as of this writing."}
+{"k":"hits","o":[{"m":"as of this writing","s":"as of this writing."}],"t":"as of this writing.\n"}
+{"k":"hits","o":[{"m":"as of this writing","s":"...s writing\" and then as of this writing"}],"t":"\"as of this writing\" and then as of this writing"}
+{"k":"hits","o":[],"t":"\u201cas of this writing\u201d only"}
+{"k":"hits","o":[{"m":"as of this writing","s":"the As Of This Writing Show"}],"t":"the As Of This Writing Show"}
+{"k":"hits","o":[{"m":"as of this writing","s":"As Of This Writing We Ship"}],"t":"As Of This Writing We Ship"}
+{"k":"hits","o":[{"m":"as of writing","s":"x as of writing y"}],"t":"x as of writing y"}
+{"k":"hits","o":[{"m":"as of writing","s":"As of writing we said."}],"t":"As of writing we said."}
+{"k":"hits","o":[{"m":"as of writing","s":"AS OF WRITING"}],"t":"AS OF WRITING"}
+{"k":"hits","o":[],"t":"xas of writing y"}
+{"k":"hits","o":[],"t":"x as of writingx"}
+{"k":"hits","o":[],"t":"see as of writing.io and as of writing.x"}
+{"k":"hits","o":[{"m":"as of writing","s":"Deploy as of writing."}],"t":"Deploy as of writing."}
+{"k":"hits","o":[{"m":"as of writing","s":"as of writing."}],"t":"as of writing.\n"}
+{"k":"hits","o":[{"m":"as of writing","s":"...f writing\" and then as of writing"}],"t":"\"as of writing\" and then as of writing"}
+{"k":"hits","o":[],"t":"\u201cas of writing\u201d only"}
+{"k":"hits","o":[{"m":"as of writing","s":"the As Of Writing Show"}],"t":"the As Of Writing Show"}
+{"k":"hits","o":[{"m":"as of writing","s":"As Of Writing We Ship"}],"t":"As Of Writing We Ship"}
+{"k":"hits","o":[{"m":"right now","s":"x right now y"}],"t":"x right now y"}
+{"k":"hits","o":[{"m":"right now","s":"Right now we said."}],"t":"Right now we said."}
+{"k":"hits","o":[{"m":"right now","s":"RIGHT NOW"}],"t":"RIGHT NOW"}
+{"k":"hits","o":[],"t":"xright now y"}
+{"k":"hits","o":[],"t":"x right nowx"}
+{"k":"hits","o":[],"t":"see right now.io and right now.x"}
+{"k":"hits","o":[{"m":"right now","s":"Deploy right now."}],"t":"Deploy right now."}
+{"k":"hits","o":[{"m":"right now","s":"right now."}],"t":"right now.\n"}
+{"k":"hits","o":[{"m":"right now","s":"...right now\" and then right now"}],"t":"\"right now\" and then right now"}
+{"k":"hits","o":[],"t":"\u201cright now\u201d only"}
+{"k":"hits","o":[{"m":"right now","s":"the Right Now Show"}],"t":"the Right Now Show"}
+{"k":"hits","o":[{"m":"right now","s":"Right Now We Ship"}],"t":"Right Now We Ship"}
+{"k":"hits","o":[{"m":"for now","s":"x for now y"}],"t":"x for now y"}
+{"k":"hits","o":[{"m":"for now","s":"For now we said."}],"t":"For now we said."}
+{"k":"hits","o":[{"m":"for now","s":"FOR NOW"}],"t":"FOR NOW"}
+{"k":"hits","o":[],"t":"xfor now y"}
+{"k":"hits","o":[],"t":"x for nowx"}
+{"k":"hits","o":[],"t":"see for now.io and for now.x"}
+{"k":"hits","o":[{"m":"for now","s":"Deploy for now."}],"t":"Deploy for now."}
+{"k":"hits","o":[{"m":"for now","s":"for now."}],"t":"for now.\n"}
+{"k":"hits","o":[{"m":"for now","s":"\"for now\" and then for now"}],"t":"\"for now\" and then for now"}
+{"k":"hits","o":[],"t":"\u201cfor now\u201d only"}
+{"k":"hits","o":[{"m":"for now","s":"the For Now Show"}],"t":"the For Now Show"}
+{"k":"hits","o":[{"m":"for now","s":"For Now We Ship"}],"t":"For Now We Ship"}
+{"k":"hits","o":[{"m":"temporarily","s":"x temporarily y"}],"t":"x temporarily y"}
+{"k":"hits","o":[{"m":"temporarily","s":"Temporarily we said."}],"t":"Temporarily we said."}
+{"k":"hits","o":[{"m":"temporarily","s":"TEMPORARILY"}],"t":"TEMPORARILY"}
+{"k":"hits","o":[],"t":"xtemporarily y"}
+{"k":"hits","o":[],"t":"x temporarilyx"}
+{"k":"hits","o":[{"m":"temporarily","s":"see temporarily.io and temporarily...."}],"t":"see temporarily.io and temporarily.x"}
+{"k":"hits","o":[{"m":"temporarily","s":"Deploy temporarily."}],"t":"Deploy temporarily."}
+{"k":"hits","o":[{"m":"temporarily","s":"temporarily."}],"t":"temporarily.\n"}
+{"k":"hits","o":[{"m":"temporarily","s":"...mporarily\" and then temporarily"}],"t":"\"temporarily\" and then temporarily"}
+{"k":"hits","o":[],"t":"\u201ctemporarily\u201d only"}
+{"k":"hits","o":[{"m":"temporarily","s":"the Temporarily Show"}],"t":"the Temporarily Show"}
+{"k":"hits","o":[{"m":"temporarily","s":"Temporarily We Ship"}],"t":"Temporarily We Ship"}
+{"k":"hits","o":[{"m":"for the time being","s":"x for the time being y"}],"t":"x for the time being y"}
+{"k":"hits","o":[{"m":"for the time being","s":"For the time being we said."}],"t":"For the time being we said."}
+{"k":"hits","o":[{"m":"for the time being","s":"FOR THE TIME BEING"}],"t":"FOR THE TIME BEING"}
+{"k":"hits","o":[],"t":"xfor the time being y"}
+{"k":"hits","o":[],"t":"x for the time beingx"}
+{"k":"hits","o":[],"t":"see for the time being.io and for the time being.x"}
+{"k":"hits","o":[{"m":"for the time being","s":"Deploy for the time being."}],"t":"Deploy for the time being."}
+{"k":"hits","o":[{"m":"for the time being","s":"for the time being."}],"t":"for the time being.\n"}
+{"k":"hits","o":[{"m":"for the time being","s":"...ime being\" and then for the time being"}],"t":"\"for the time being\" and then for the time being"}
+{"k":"hits","o":[],"t":"\u201cfor the time being\u201d only"}
+{"k":"hits","o":[{"m":"for the time being","s":"the For The Time Being Show"}],"t":"the For The Time Being Show"}
+{"k":"hits","o":[{"m":"for the time being","s":"For The Time Being We Ship"}],"t":"For The Time Being We Ship"}
+{"k":"hits","o":[{"m":"at the moment","s":"x at the moment y"}],"t":"x at the moment y"}
+{"k":"hits","o":[{"m":"at the moment","s":"At the moment we said."}],"t":"At the moment we said."}
+{"k":"hits","o":[{"m":"at the moment","s":"AT THE MOMENT"}],"t":"AT THE MOMENT"}
+{"k":"hits","o":[],"t":"xat the moment y"}
+{"k":"hits","o":[],"t":"x at the momentx"}
+{"k":"hits","o":[{"m":"at the moment","s":"see at the moment.io and at the momen..."}],"t":"see at the moment.io and at the moment.x"}
+{"k":"hits","o":[{"m":"at the moment","s":"Deploy at the moment."}],"t":"Deploy at the moment."}
+{"k":"hits","o":[{"m":"at the moment","s":"at the moment."}],"t":"at the moment.\n"}
+{"k":"hits","o":[{"m":"at the moment","s":"...he moment\" and then at the moment"}],"t":"\"at the moment\" and then at the moment"}
+{"k":"hits","o":[],"t":"\u201cat the moment\u201d only"}
+{"k":"hits","o":[{"m":"at the moment","s":"the At The Moment Show"}],"t":"the At The Moment Show"}
+{"k":"hits","o":[{"m":"at the moment","s":"At The Moment We Ship"}],"t":"At The Moment We Ship"}
+{"k":"hits","o":[{"m":"today","s":"x today y"}],"t":"x today y"}
+{"k":"hits","o":[{"m":"today","s":"Today we said."}],"t":"Today we said."}
+{"k":"hits","o":[{"m":"today","s":"TODAY"}],"t":"TODAY"}
+{"k":"hits","o":[],"t":"xtoday y"}
+{"k":"hits","o":[],"t":"x todayx"}
+{"k":"hits","o":[],"t":"see today.io and today.x"}
+{"k":"hits","o":[{"m":"today","s":"Deploy today."}],"t":"Deploy today."}
+{"k":"hits","o":[{"m":"today","s":"today."}],"t":"today.\n"}
+{"k":"hits","o":[{"m":"today","s":"\"today\" and then today"}],"t":"\"today\" and then today"}
+{"k":"hits","o":[],"t":"\u201ctoday\u201d only"}
+{"k":"hits","o":[],"t":"the Today Show"}
+{"k":"hits","o":[],"t":"Today We Ship"}
+{"k":"hits","o":[{"m":"this morning","s":"x this morning y"}],"t":"x this morning y"}
+{"k":"hits","o":[{"m":"this morning","s":"This morning we said."}],"t":"This morning we said."}
+{"k":"hits","o":[{"m":"this morning","s":"THIS MORNING"}],"t":"THIS MORNING"}
+{"k":"hits","o":[],"t":"xthis morning y"}
+{"k":"hits","o":[],"t":"x this morningx"}
+{"k":"hits","o":[],"t":"see this morning.io and this morning.x"}
+{"k":"hits","o":[{"m":"this morning","s":"Deploy this morning."}],"t":"Deploy this morning."}
+{"k":"hits","o":[{"m":"this morning","s":"this morning."}],"t":"this morning.\n"}
+{"k":"hits","o":[{"m":"this morning","s":"...s morning\" and then this morning"}],"t":"\"this morning\" and then this morning"}
+{"k":"hits","o":[],"t":"\u201cthis morning\u201d only"}
+{"k":"hits","o":[{"m":"this morning","s":"the This Morning Show"}],"t":"the This Morning Show"}
+{"k":"hits","o":[{"m":"this morning","s":"This Morning We Ship"}],"t":"This Morning We Ship"}
+{"k":"hits","o":[{"m":"this afternoon","s":"x this afternoon y"}],"t":"x this afternoon y"}
+{"k":"hits","o":[{"m":"this afternoon","s":"This afternoon we said."}],"t":"This afternoon we said."}
+{"k":"hits","o":[{"m":"this afternoon","s":"THIS AFTERNOON"}],"t":"THIS AFTERNOON"}
+{"k":"hits","o":[],"t":"xthis afternoon y"}
+{"k":"hits","o":[],"t":"x this afternoonx"}
+{"k":"hits","o":[],"t":"see this afternoon.io and this afternoon.x"}
+{"k":"hits","o":[{"m":"this afternoon","s":"Deploy this afternoon."}],"t":"Deploy this afternoon."}
+{"k":"hits","o":[{"m":"this afternoon","s":"this afternoon."}],"t":"this afternoon.\n"}
+{"k":"hits","o":[{"m":"this afternoon","s":"...afternoon\" and then this afternoon"}],"t":"\"this afternoon\" and then this afternoon"}
+{"k":"hits","o":[],"t":"\u201cthis afternoon\u201d only"}
+{"k":"hits","o":[{"m":"this afternoon","s":"the This Afternoon Show"}],"t":"the This Afternoon Show"}
+{"k":"hits","o":[{"m":"this afternoon","s":"This Afternoon We Ship"}],"t":"This Afternoon We Ship"}
+{"k":"hits","o":[{"m":"tonight","s":"x tonight y"}],"t":"x tonight y"}
+{"k":"hits","o":[{"m":"tonight","s":"Tonight we said."}],"t":"Tonight we said."}
+{"k":"hits","o":[{"m":"tonight","s":"TONIGHT"}],"t":"TONIGHT"}
+{"k":"hits","o":[],"t":"xtonight y"}
+{"k":"hits","o":[],"t":"x tonightx"}
+{"k":"hits","o":[],"t":"see tonight.io and tonight.x"}
+{"k":"hits","o":[{"m":"tonight","s":"Deploy tonight."}],"t":"Deploy tonight."}
+{"k":"hits","o":[{"m":"tonight","s":"tonight."}],"t":"tonight.\n"}
+{"k":"hits","o":[{"m":"tonight","s":"\"tonight\" and then tonight"}],"t":"\"tonight\" and then tonight"}
+{"k":"hits","o":[],"t":"\u201ctonight\u201d only"}
+{"k":"hits","o":[],"t":"the Tonight Show"}
+{"k":"hits","o":[],"t":"Tonight We Ship"}
+{"k":"hits","o":[{"m":"yesterday","s":"x yesterday y"}],"t":"x yesterday y"}
+{"k":"hits","o":[{"m":"yesterday","s":"Yesterday we said."}],"t":"Yesterday we said."}
+{"k":"hits","o":[{"m":"yesterday","s":"YESTERDAY"}],"t":"YESTERDAY"}
+{"k":"hits","o":[],"t":"xyesterday y"}
+{"k":"hits","o":[],"t":"x yesterdayx"}
+{"k":"hits","o":[],"t":"see yesterday.io and yesterday.x"}
+{"k":"hits","o":[{"m":"yesterday","s":"Deploy yesterday."}],"t":"Deploy yesterday."}
+{"k":"hits","o":[{"m":"yesterday","s":"yesterday."}],"t":"yesterday.\n"}
+{"k":"hits","o":[{"m":"yesterday","s":"...yesterday\" and then yesterday"}],"t":"\"yesterday\" and then yesterday"}
+{"k":"hits","o":[],"t":"\u201cyesterday\u201d only"}
+{"k":"hits","o":[],"t":"the Yesterday Show"}
+{"k":"hits","o":[],"t":"Yesterday We Ship"}
+{"k":"hits","o":[{"m":"tomorrow","s":"x tomorrow y"}],"t":"x tomorrow y"}
+{"k":"hits","o":[{"m":"tomorrow","s":"Tomorrow we said."}],"t":"Tomorrow we said."}
+{"k":"hits","o":[{"m":"tomorrow","s":"TOMORROW"}],"t":"TOMORROW"}
+{"k":"hits","o":[],"t":"xtomorrow y"}
+{"k":"hits","o":[],"t":"x tomorrowx"}
+{"k":"hits","o":[],"t":"see tomorrow.io and tomorrow.x"}
+{"k":"hits","o":[{"m":"tomorrow","s":"Deploy tomorrow."}],"t":"Deploy tomorrow."}
+{"k":"hits","o":[{"m":"tomorrow","s":"tomorrow."}],"t":"tomorrow.\n"}
+{"k":"hits","o":[{"m":"tomorrow","s":"\"tomorrow\" and then tomorrow"}],"t":"\"tomorrow\" and then tomorrow"}
+{"k":"hits","o":[],"t":"\u201ctomorrow\u201d only"}
+{"k":"hits","o":[],"t":"the Tomorrow Show"}
+{"k":"hits","o":[],"t":"Tomorrow We Ship"}
+{"k":"hits","o":[{"m":"this week","s":"x this week y"}],"t":"x this week y"}
+{"k":"hits","o":[{"m":"this week","s":"This week we said."}],"t":"This week we said."}
+{"k":"hits","o":[{"m":"this week","s":"THIS WEEK"}],"t":"THIS WEEK"}
+{"k":"hits","o":[],"t":"xthis week y"}
+{"k":"hits","o":[],"t":"x this weekx"}
+{"k":"hits","o":[],"t":"see this week.io and this week.x"}
+{"k":"hits","o":[{"m":"this week","s":"Deploy this week."}],"t":"Deploy this week."}
+{"k":"hits","o":[{"m":"this week","s":"this week."}],"t":"this week.\n"}
+{"k":"hits","o":[{"m":"this week","s":"...this week\" and then this week"}],"t":"\"this week\" and then this week"}
+{"k":"hits","o":[],"t":"\u201cthis week\u201d only"}
+{"k":"hits","o":[],"t":"the This Week Show"}
+{"k":"hits","o":[],"t":"This Week We Ship"}
+{"k":"hits","o":[{"m":"this month","s":"x this month y"}],"t":"x this month y"}
+{"k":"hits","o":[{"m":"this month","s":"This month we said."}],"t":"This month we said."}
+{"k":"hits","o":[{"m":"this month","s":"THIS MONTH"}],"t":"THIS MONTH"}
+{"k":"hits","o":[],"t":"xthis month y"}
+{"k":"hits","o":[],"t":"x this monthx"}
+{"k":"hits","o":[],"t":"see this month.io and this month.x"}
+{"k":"hits","o":[{"m":"this month","s":"Deploy this month."}],"t":"Deploy this month."}
+{"k":"hits","o":[{"m":"this month","s":"this month."}],"t":"this month.\n"}
+{"k":"hits","o":[{"m":"this month","s":"...his month\" and then this month"}],"t":"\"this month\" and then this month"}
+{"k":"hits","o":[],"t":"\u201cthis month\u201d only"}
+{"k":"hits","o":[],"t":"the This Month Show"}
+{"k":"hits","o":[],"t":"This Month We Ship"}
+{"k":"hits","o":[{"m":"last week","s":"x last week y"}],"t":"x last week y"}
+{"k":"hits","o":[{"m":"last week","s":"Last week we said."}],"t":"Last week we said."}
+{"k":"hits","o":[{"m":"last week","s":"LAST WEEK"}],"t":"LAST WEEK"}
+{"k":"hits","o":[],"t":"xlast week y"}
+{"k":"hits","o":[],"t":"x last weekx"}
+{"k":"hits","o":[],"t":"see last week.io and last week.x"}
+{"k":"hits","o":[{"m":"last week","s":"Deploy last week."}],"t":"Deploy last week."}
+{"k":"hits","o":[{"m":"last week","s":"last week."}],"t":"last week.\n"}
+{"k":"hits","o":[{"m":"last week","s":"...last week\" and then last week"}],"t":"\"last week\" and then last week"}
+{"k":"hits","o":[],"t":"\u201clast week\u201d only"}
+{"k":"hits","o":[],"t":"the Last Week Show"}
+{"k":"hits","o":[],"t":"Last Week We Ship"}
+{"k":"hits","o":[{"m":"next week","s":"x next week y"}],"t":"x next week y"}
+{"k":"hits","o":[{"m":"next week","s":"Next week we said."}],"t":"Next week we said."}
+{"k":"hits","o":[{"m":"next week","s":"NEXT WEEK"}],"t":"NEXT WEEK"}
+{"k":"hits","o":[],"t":"xnext week y"}
+{"k":"hits","o":[],"t":"x next weekx"}
+{"k":"hits","o":[],"t":"see next week.io and next week.x"}
+{"k":"hits","o":[{"m":"next week","s":"Deploy next week."}],"t":"Deploy next week."}
+{"k":"hits","o":[{"m":"next week","s":"next week."}],"t":"next week.\n"}
+{"k":"hits","o":[{"m":"next week","s":"...next week\" and then next week"}],"t":"\"next week\" and then next week"}
+{"k":"hits","o":[],"t":"\u201cnext week\u201d only"}
+{"k":"hits","o":[],"t":"the Next Week Show"}
+{"k":"hits","o":[],"t":"Next Week We Ship"}
+{"k":"hits","o":[{"m":"next month","s":"x next month y"}],"t":"x next month y"}
+{"k":"hits","o":[{"m":"next month","s":"Next month we said."}],"t":"Next month we said."}
+{"k":"hits","o":[{"m":"next month","s":"NEXT MONTH"}],"t":"NEXT MONTH"}
+{"k":"hits","o":[],"t":"xnext month y"}
+{"k":"hits","o":[],"t":"x next monthx"}
+{"k":"hits","o":[],"t":"see next month.io and next month.x"}
+{"k":"hits","o":[{"m":"next month","s":"Deploy next month."}],"t":"Deploy next month."}
+{"k":"hits","o":[{"m":"next month","s":"next month."}],"t":"next month.\n"}
+{"k":"hits","o":[{"m":"next month","s":"...ext month\" and then next month"}],"t":"\"next month\" and then next month"}
+{"k":"hits","o":[],"t":"\u201cnext month\u201d only"}
+{"k":"hits","o":[],"t":"the Next Month Show"}
+{"k":"hits","o":[],"t":"Next Month We Ship"}
+{"k":"hits","o":[{"m":"i just","s":"x i just y"}],"t":"x i just y"}
+{"k":"hits","o":[{"m":"i just","s":"I just we said."}],"t":"I just we said."}
+{"k":"hits","o":[{"m":"i just","s":"I JUST"}],"t":"I JUST"}
+{"k":"hits","o":[],"t":"xi just y"}
+{"k":"hits","o":[],"t":"x i justx"}
+{"k":"hits","o":[],"t":"see i just.io and i just.x"}
+{"k":"hits","o":[{"m":"i just","s":"Deploy i just."}],"t":"Deploy i just."}
+{"k":"hits","o":[{"m":"i just","s":"i just."}],"t":"i just.\n"}
+{"k":"hits","o":[{"m":"i just","s":"\"i just\" and then i just"}],"t":"\"i just\" and then i just"}
+{"k":"hits","o":[],"t":"\u201ci just\u201d only"}
+{"k":"hits","o":[{"m":"i just","s":"the I Just Show"}],"t":"the I Just Show"}
+{"k":"hits","o":[{"m":"i just","s":"I Just We Ship"}],"t":"I Just We Ship"}
+{"k":"hits","o":[{"m":"we just","s":"x we just y"}],"t":"x we just y"}
+{"k":"hits","o":[{"m":"we just","s":"We just we said."}],"t":"We just we said."}
+{"k":"hits","o":[{"m":"we just","s":"WE JUST"}],"t":"WE JUST"}
+{"k":"hits","o":[],"t":"xwe just y"}
+{"k":"hits","o":[],"t":"x we justx"}
+{"k":"hits","o":[],"t":"see we just.io and we just.x"}
+{"k":"hits","o":[{"m":"we just","s":"Deploy we just."}],"t":"Deploy we just."}
+{"k":"hits","o":[{"m":"we just","s":"we just."}],"t":"we just.\n"}
+{"k":"hits","o":[{"m":"we just","s":"\"we just\" and then we just"}],"t":"\"we just\" and then we just"}
+{"k":"hits","o":[],"t":"\u201cwe just\u201d only"}
+{"k":"hits","o":[{"m":"we just","s":"the We Just Show"}],"t":"the We Just Show"}
+{"k":"hits","o":[{"m":"we just","s":"We Just We Ship"}],"t":"We Just We Ship"}
+{"k":"hits","o":[{"m":"just shipped","s":"x just shipped y"}],"t":"x just shipped y"}
+{"k":"hits","o":[{"m":"just shipped","s":"Just shipped we said."}],"t":"Just shipped we said."}
+{"k":"hits","o":[{"m":"just shipped","s":"JUST SHIPPED"}],"t":"JUST SHIPPED"}
+{"k":"hits","o":[],"t":"xjust shipped y"}
+{"k":"hits","o":[],"t":"x just shippedx"}
+{"k":"hits","o":[],"t":"see just shipped.io and just shipped.x"}
+{"k":"hits","o":[{"m":"just shipped","s":"Deploy just shipped."}],"t":"Deploy just shipped."}
+{"k":"hits","o":[{"m":"just shipped","s":"just shipped."}],"t":"just shipped.\n"}
+{"k":"hits","o":[{"m":"just shipped","s":"...t shipped\" and then just shipped"}],"t":"\"just shipped\" and then just shipped"}
+{"k":"hits","o":[],"t":"\u201cjust shipped\u201d only"}
+{"k":"hits","o":[{"m":"just shipped","s":"the Just Shipped Show"}],"t":"the Just Shipped Show"}
+{"k":"hits","o":[{"m":"just shipped","s":"Just Shipped We Ship"}],"t":"Just Shipped We Ship"}
+{"k":"hits","o":[{"m":"the latest","s":"x the latest y"}],"t":"x the latest y"}
+{"k":"hits","o":[{"m":"the latest","s":"The latest we said."}],"t":"The latest we said."}
+{"k":"hits","o":[{"m":"the latest","s":"THE LATEST"}],"t":"THE LATEST"}
+{"k":"hits","o":[],"t":"xthe latest y"}
+{"k":"hits","o":[],"t":"x the latestx"}
+{"k":"hits","o":[],"t":"see the latest.io and the latest.x"}
+{"k":"hits","o":[{"m":"the latest","s":"Deploy the latest."}],"t":"Deploy the latest."}
+{"k":"hits","o":[{"m":"the latest","s":"the latest."}],"t":"the latest.\n"}
+{"k":"hits","o":[{"m":"the latest","s":"...he latest\" and then the latest"}],"t":"\"the latest\" and then the latest"}
+{"k":"hits","o":[],"t":"\u201cthe latest\u201d only"}
+{"k":"hits","o":[{"m":"the latest","s":"the The Latest Show"}],"t":"the The Latest Show"}
+{"k":"hits","o":[{"m":"the latest","s":"The Latest We Ship"}],"t":"The Latest We Ship"}
+{"k":"hits","o":[{"m":"was recently","s":"x was recently y"}],"t":"x was recently y"}
+{"k":"hits","o":[{"m":"was recently","s":"Was recently we said."}],"t":"Was recently we said."}
+{"k":"hits","o":[{"m":"was recently","s":"WAS RECENTLY"}],"t":"WAS RECENTLY"}
+{"k":"hits","o":[],"t":"xwas recently y"}
+{"k":"hits","o":[],"t":"x was recentlyx"}
+{"k":"hits","o":[],"t":"see was recently.io and was recently.x"}
+{"k":"hits","o":[{"m":"was recently","s":"Deploy was recently."}],"t":"Deploy was recently."}
+{"k":"hits","o":[{"m":"was recently","s":"was recently."}],"t":"was recently.\n"}
+{"k":"hits","o":[{"m":"was recently","s":"...recently\" and then was recently"}],"t":"\"was recently\" and then was recently"}
+{"k":"hits","o":[],"t":"\u201cwas recently\u201d only"}
+{"k":"hits","o":[{"m":"was recently","s":"the Was Recently Show"}],"t":"the Was Recently Show"}
+{"k":"hits","o":[{"m":"was recently","s":"Was Recently We Ship"}],"t":"Was Recently We Ship"}
+{"k":"hits","o":[{"m":"were recently","s":"x were recently y"}],"t":"x were recently y"}
+{"k":"hits","o":[{"m":"were recently","s":"Were recently we said."}],"t":"Were recently we said."}
+{"k":"hits","o":[{"m":"were recently","s":"WERE RECENTLY"}],"t":"WERE RECENTLY"}
+{"k":"hits","o":[],"t":"xwere recently y"}
+{"k":"hits","o":[],"t":"x were recentlyx"}
+{"k":"hits","o":[],"t":"see were recently.io and were recently.x"}
+{"k":"hits","o":[{"m":"were recently","s":"Deploy were recently."}],"t":"Deploy were recently."}
+{"k":"hits","o":[{"m":"were recently","s":"were recently."}],"t":"were recently.\n"}
+{"k":"hits","o":[{"m":"were recently","s":"...recently\" and then were recently"}],"t":"\"were recently\" and then were recently"}
+{"k":"hits","o":[],"t":"\u201cwere recently\u201d only"}
+{"k":"hits","o":[{"m":"were recently","s":"the Were Recently Show"}],"t":"the Were Recently Show"}
+{"k":"hits","o":[{"m":"were recently","s":"Were Recently We Ship"}],"t":"Were Recently We Ship"}
+{"k":"hits","o":[{"m":"has recently","s":"x has recently y"}],"t":"x has recently y"}
+{"k":"hits","o":[{"m":"has recently","s":"Has recently we said."}],"t":"Has recently we said."}
+{"k":"hits","o":[{"m":"has recently","s":"HAS RECENTLY"}],"t":"HAS RECENTLY"}
+{"k":"hits","o":[],"t":"xhas recently y"}
+{"k":"hits","o":[],"t":"x has recentlyx"}
+{"k":"hits","o":[],"t":"see has recently.io and has recently.x"}
+{"k":"hits","o":[{"m":"has recently","s":"Deploy has recently."}],"t":"Deploy has recently."}
+{"k":"hits","o":[{"m":"has recently","s":"has recently."}],"t":"has recently.\n"}
+{"k":"hits","o":[{"m":"has recently","s":"...recently\" and then has recently"}],"t":"\"has recently\" and then has recently"}
+{"k":"hits","o":[],"t":"\u201chas recently\u201d only"}
+{"k":"hits","o":[{"m":"has recently","s":"the Has Recently Show"}],"t":"the Has Recently Show"}
+{"k":"hits","o":[{"m":"has recently","s":"Has Recently We Ship"}],"t":"Has Recently We Ship"}
+{"k":"hits","o":[{"m":"have recently","s":"x have recently y"}],"t":"x have recently y"}
+{"k":"hits","o":[{"m":"have recently","s":"Have recently we said."}],"t":"Have recently we said."}
+{"k":"hits","o":[{"m":"have recently","s":"HAVE RECENTLY"}],"t":"HAVE RECENTLY"}
+{"k":"hits","o":[],"t":"xhave recently y"}
+{"k":"hits","o":[],"t":"x have recentlyx"}
+{"k":"hits","o":[],"t":"see have recently.io and have recently.x"}
+{"k":"hits","o":[{"m":"have recently","s":"Deploy have recently."}],"t":"Deploy have recently."}
+{"k":"hits","o":[{"m":"have recently","s":"have recently."}],"t":"have recently.\n"}
+{"k":"hits","o":[{"m":"have recently","s":"...recently\" and then have recently"}],"t":"\"have recently\" and then have recently"}
+{"k":"hits","o":[],"t":"\u201chave recently\u201d only"}
+{"k":"hits","o":[{"m":"have recently","s":"the Have Recently Show"}],"t":"the Have Recently Show"}
+{"k":"hits","o":[{"m":"have recently","s":"Have Recently We Ship"}],"t":"Have Recently We Ship"}
+{"k":"hits","o":[{"m":"recently switched","s":"x recently switched y"}],"t":"x recently switched y"}
+{"k":"hits","o":[{"m":"recently switched","s":"Recently switched we said."}],"t":"Recently switched we said."}
+{"k":"hits","o":[{"m":"recently switched","s":"RECENTLY SWITCHED"}],"t":"RECENTLY SWITCHED"}
+{"k":"hits","o":[],"t":"xrecently switched y"}
+{"k":"hits","o":[],"t":"x recently switchedx"}
+{"k":"hits","o":[],"t":"see recently switched.io and recently switched.x"}
+{"k":"hits","o":[{"m":"recently switched","s":"Deploy recently switched."}],"t":"Deploy recently switched."}
+{"k":"hits","o":[{"m":"recently switched","s":"recently switched."}],"t":"recently switched.\n"}
+{"k":"hits","o":[{"m":"recently switched","s":"...switched\" and then recently switched"}],"t":"\"recently switched\" and then recently switched"}
+{"k":"hits","o":[],"t":"\u201crecently switched\u201d only"}
+{"k":"hits","o":[{"m":"recently switched","s":"the Recently Switched Show"}],"t":"the Recently Switched Show"}
+{"k":"hits","o":[{"m":"recently switched","s":"Recently Switched We Ship"}],"t":"Recently Switched We Ship"}
+{"k":"hits","o":[{"m":"recently migrated","s":"x recently migrated y"}],"t":"x recently migrated y"}
+{"k":"hits","o":[{"m":"recently migrated","s":"Recently migrated we said."}],"t":"Recently migrated we said."}
+{"k":"hits","o":[{"m":"recently migrated","s":"RECENTLY MIGRATED"}],"t":"RECENTLY MIGRATED"}
+{"k":"hits","o":[],"t":"xrecently migrated y"}
+{"k":"hits","o":[],"t":"x recently migratedx"}
+{"k":"hits","o":[],"t":"see recently migrated.io and recently migrated.x"}
+{"k":"hits","o":[{"m":"recently migrated","s":"Deploy recently migrated."}],"t":"Deploy recently migrated."}
+{"k":"hits","o":[{"m":"recently migrated","s":"recently migrated."}],"t":"recently migrated.\n"}
+{"k":"hits","o":[{"m":"recently migrated","s":"...migrated\" and then recently migrated"}],"t":"\"recently migrated\" and then recently migrated"}
+{"k":"hits","o":[],"t":"\u201crecently migrated\u201d only"}
+{"k":"hits","o":[{"m":"recently migrated","s":"the Recently Migrated Show"}],"t":"the Recently Migrated Show"}
+{"k":"hits","o":[{"m":"recently migrated","s":"Recently Migrated We Ship"}],"t":"Recently Migrated We Ship"}
+{"k":"hits","o":[{"m":"recently renamed","s":"x recently renamed y"}],"t":"x recently renamed y"}
+{"k":"hits","o":[{"m":"recently renamed","s":"Recently renamed we said."}],"t":"Recently renamed we said."}
+{"k":"hits","o":[{"m":"recently renamed","s":"RECENTLY RENAMED"}],"t":"RECENTLY RENAMED"}
+{"k":"hits","o":[],"t":"xrecently renamed y"}
+{"k":"hits","o":[],"t":"x recently renamedx"}
+{"k":"hits","o":[],"t":"see recently renamed.io and recently renamed.x"}
+{"k":"hits","o":[{"m":"recently renamed","s":"Deploy recently renamed."}],"t":"Deploy recently renamed."}
+{"k":"hits","o":[{"m":"recently renamed","s":"recently renamed."}],"t":"recently renamed.\n"}
+{"k":"hits","o":[{"m":"recently renamed","s":"...y renamed\" and then recently renamed"}],"t":"\"recently renamed\" and then recently renamed"}
+{"k":"hits","o":[],"t":"\u201crecently renamed\u201d only"}
+{"k":"hits","o":[{"m":"recently renamed","s":"the Recently Renamed Show"}],"t":"the Recently Renamed Show"}
+{"k":"hits","o":[{"m":"recently renamed","s":"Recently Renamed We Ship"}],"t":"Recently Renamed We Ship"}
+{"k":"hits","o":[{"m":"is in progress","s":"x is in progress y"}],"t":"x is in progress y"}
+{"k":"hits","o":[{"m":"is in progress","s":"Is in progress we said."}],"t":"Is in progress we said."}
+{"k":"hits","o":[{"m":"is in progress","s":"IS IN PROGRESS"}],"t":"IS IN PROGRESS"}
+{"k":"hits","o":[],"t":"xis in progress y"}
+{"k":"hits","o":[],"t":"x is in progressx"}
+{"k":"hits","o":[],"t":"see is in progress.io and is in progress.x"}
+{"k":"hits","o":[{"m":"is in progress","s":"Deploy is in progress."}],"t":"Deploy is in progress."}
+{"k":"hits","o":[{"m":"is in progress","s":"is in progress."}],"t":"is in progress.\n"}
+{"k":"hits","o":[{"m":"is in progress","s":"...progress\" and then is in progress"}],"t":"\"is in progress\" and then is in progress"}
+{"k":"hits","o":[],"t":"\u201cis in progress\u201d only"}
+{"k":"hits","o":[{"m":"is in progress","s":"the Is In Progress Show"}],"t":"the Is In Progress Show"}
+{"k":"hits","o":[{"m":"is in progress","s":"Is In Progress We Ship"}],"t":"Is In Progress We Ship"}
+{"k":"hits","o":[{"m":"are in progress","s":"x are in progress y"}],"t":"x are in progress y"}
+{"k":"hits","o":[{"m":"are in progress","s":"Are in progress we said."}],"t":"Are in progress we said."}
+{"k":"hits","o":[{"m":"are in progress","s":"ARE IN PROGRESS"}],"t":"ARE IN PROGRESS"}
+{"k":"hits","o":[],"t":"xare in progress y"}
+{"k":"hits","o":[],"t":"x are in progressx"}
+{"k":"hits","o":[],"t":"see are in progress.io and are in progress.x"}
+{"k":"hits","o":[{"m":"are in progress","s":"Deploy are in progress."}],"t":"Deploy are in progress."}
+{"k":"hits","o":[{"m":"are in progress","s":"are in progress."}],"t":"are in progress.\n"}
+{"k":"hits","o":[{"m":"are in progress","s":"...progress\" and then are in progress"}],"t":"\"are in progress\" and then are in progress"}
+{"k":"hits","o":[],"t":"\u201care in progress\u201d only"}
+{"k":"hits","o":[{"m":"are in progress","s":"the Are In Progress Show"}],"t":"the Are In Progress Show"}
+{"k":"hits","o":[{"m":"are in progress","s":"Are In Progress We Ship"}],"t":"Are In Progress We Ship"}
+{"k":"hits","o":[],"t":"x in the middle of y"}
+{"k":"hits","o":[],"t":"In the middle of we said."}
+{"k":"hits","o":[],"t":"IN THE MIDDLE OF"}
+{"k":"hits","o":[],"t":"xin the middle of y"}
+{"k":"hits","o":[],"t":"x in the middle ofx"}
+{"k":"hits","o":[],"t":"see in the middle of.io and in the middle of.x"}
+{"k":"hits","o":[],"t":"Deploy in the middle of."}
+{"k":"hits","o":[],"t":"in the middle of.\n"}
+{"k":"hits","o":[],"t":"\"in the middle of\" and then in the middle of"}
+{"k":"hits","o":[],"t":"\u201cin the middle of\u201d only"}
+{"k":"hits","o":[],"t":"the In The Middle Of Show"}
+{"k":"hits","o":[],"t":"In The Middle Of We Ship"}
+{"k":"hits","o":[],"t":"x halfway through y"}
+{"k":"hits","o":[],"t":"Halfway through we said."}
+{"k":"hits","o":[],"t":"HALFWAY THROUGH"}
+{"k":"hits","o":[],"t":"xhalfway through y"}
+{"k":"hits","o":[],"t":"x halfway throughx"}
+{"k":"hits","o":[],"t":"see halfway through.io and halfway through.x"}
+{"k":"hits","o":[],"t":"Deploy halfway through."}
+{"k":"hits","o":[],"t":"halfway through.\n"}
+{"k":"hits","o":[],"t":"\"halfway through\" and then halfway through"}
+{"k":"hits","o":[],"t":"\u201chalfway through\u201d only"}
+{"k":"hits","o":[],"t":"the Halfway Through Show"}
+{"k":"hits","o":[],"t":"Halfway Through We Ship"}
+{"k":"hits","o":[{"m":"unpushed","s":"x unpushed y"}],"t":"x unpushed y"}
+{"k":"hits","o":[{"m":"unpushed","s":"Unpushed we said."}],"t":"Unpushed we said."}
+{"k":"hits","o":[{"m":"unpushed","s":"UNPUSHED"}],"t":"UNPUSHED"}
+{"k":"hits","o":[],"t":"xunpushed y"}
+{"k":"hits","o":[],"t":"x unpushedx"}
+{"k":"hits","o":[],"t":"see unpushed.io and unpushed.x"}
+{"k":"hits","o":[{"m":"unpushed","s":"Deploy unpushed."}],"t":"Deploy unpushed."}
+{"k":"hits","o":[{"m":"unpushed","s":"unpushed."}],"t":"unpushed.\n"}
+{"k":"hits","o":[{"m":"unpushed","s":"\"unpushed\" and then unpushed"}],"t":"\"unpushed\" and then unpushed"}
+{"k":"hits","o":[],"t":"\u201cunpushed\u201d only"}
+{"k":"hits","o":[{"m":"unpushed","s":"the Unpushed Show"}],"t":"the Unpushed Show"}
+{"k":"hits","o":[{"m":"unpushed","s":"Unpushed We Ship"}],"t":"Unpushed We Ship"}
+{"k":"hits","o":[{"m":"commits ahead","s":"x commits ahead y"}],"t":"x commits ahead y"}
+{"k":"hits","o":[{"m":"commits ahead","s":"Commits ahead we said."}],"t":"Commits ahead we said."}
+{"k":"hits","o":[{"m":"commits ahead","s":"COMMITS AHEAD"}],"t":"COMMITS AHEAD"}
+{"k":"hits","o":[],"t":"xcommits ahead y"}
+{"k":"hits","o":[],"t":"x commits aheadx"}
+{"k":"hits","o":[],"t":"see commits ahead.io and commits ahead.x"}
+{"k":"hits","o":[{"m":"commits ahead","s":"Deploy commits ahead."}],"t":"Deploy commits ahead."}
+{"k":"hits","o":[{"m":"commits ahead","s":"commits ahead."}],"t":"commits ahead.\n"}
+{"k":"hits","o":[{"m":"commits ahead","s":"...its ahead\" and then commits ahead"}],"t":"\"commits ahead\" and then commits ahead"}
+{"k":"hits","o":[],"t":"\u201ccommits ahead\u201d only"}
+{"k":"hits","o":[{"m":"commits ahead","s":"the Commits Ahead Show"}],"t":"the Commits Ahead Show"}
+{"k":"hits","o":[{"m":"commits ahead","s":"Commits Ahead We Ship"}],"t":"Commits Ahead We Ship"}
+{"k":"hits","o":[{"m":"commits behind","s":"x commits behind y"}],"t":"x commits behind y"}
+{"k":"hits","o":[{"m":"commits behind","s":"Commits behind we said."}],"t":"Commits behind we said."}
+{"k":"hits","o":[{"m":"commits behind","s":"COMMITS BEHIND"}],"t":"COMMITS BEHIND"}
+{"k":"hits","o":[],"t":"xcommits behind y"}
+{"k":"hits","o":[],"t":"x commits behindx"}
+{"k":"hits","o":[],"t":"see commits behind.io and commits behind.x"}
+{"k":"hits","o":[{"m":"commits behind","s":"Deploy commits behind."}],"t":"Deploy commits behind."}
+{"k":"hits","o":[{"m":"commits behind","s":"commits behind."}],"t":"commits behind.\n"}
+{"k":"hits","o":[{"m":"commits behind","s":"...ts behind\" and then commits behind"}],"t":"\"commits behind\" and then commits behind"}
+{"k":"hits","o":[],"t":"\u201ccommits behind\u201d only"}
+{"k":"hits","o":[{"m":"commits behind","s":"the Commits Behind Show"}],"t":"the Commits Behind Show"}
+{"k":"hits","o":[{"m":"commits behind","s":"Commits Behind We Ship"}],"t":"Commits Behind We Ship"}
+{"k":"hits","o":[{"m":"has uncommitted changes","s":"x has uncommitted changes y"}],"t":"x has uncommitted changes y"}
+{"k":"hits","o":[{"m":"has uncommitted changes","s":"Has uncommitted changes we said."}],"t":"Has uncommitted changes we said."}
+{"k":"hits","o":[{"m":"has uncommitted changes","s":"HAS UNCOMMITTED CHANGES"}],"t":"HAS UNCOMMITTED CHANGES"}
+{"k":"hits","o":[],"t":"xhas uncommitted changes y"}
+{"k":"hits","o":[],"t":"x has uncommitted changesx"}
+{"k":"hits","o":[],"t":"see has uncommitted changes.io and has uncommitted changes.x"}
+{"k":"hits","o":[{"m":"has uncommitted changes","s":"Deploy has uncommitted changes."}],"t":"Deploy has uncommitted changes."}
+{"k":"hits","o":[{"m":"has uncommitted changes","s":"has uncommitted changes."}],"t":"has uncommitted changes.\n"}
+{"k":"hits","o":[{"m":"has uncommitted changes","s":"...d changes\" and then has uncommitted changes"}],"t":"\"has uncommitted changes\" and then has uncommitted changes"}
+{"k":"hits","o":[],"t":"\u201chas uncommitted changes\u201d only"}
+{"k":"hits","o":[{"m":"has uncommitted changes","s":"the Has Uncommitted Changes Show"}],"t":"the Has Uncommitted Changes Show"}
+{"k":"hits","o":[{"m":"has uncommitted changes","s":"Has Uncommitted Changes We Ship"}],"t":"Has Uncommitted Changes We Ship"}
+{"k":"hits","o":[{"m":"have uncommitted changes","s":"x have uncommitted changes y"}],"t":"x have uncommitted changes y"}
+{"k":"hits","o":[{"m":"have uncommitted changes","s":"Have uncommitted changes we said."}],"t":"Have uncommitted changes we said."}
+{"k":"hits","o":[{"m":"have uncommitted changes","s":"HAVE UNCOMMITTED CHANGES"}],"t":"HAVE UNCOMMITTED CHANGES"}
+{"k":"hits","o":[],"t":"xhave uncommitted changes y"}
+{"k":"hits","o":[],"t":"x have uncommitted changesx"}
+{"k":"hits","o":[],"t":"see have uncommitted changes.io and have uncommitted changes.x"}
+{"k":"hits","o":[{"m":"have uncommitted changes","s":"Deploy have uncommitted changes."}],"t":"Deploy have uncommitted changes."}
+{"k":"hits","o":[{"m":"have uncommitted changes","s":"have uncommitted changes."}],"t":"have uncommitted changes.\n"}
+{"k":"hits","o":[{"m":"have uncommitted changes","s":"...d changes\" and then have uncommitted changes"}],"t":"\"have uncommitted changes\" and then have uncommitted changes"}
+{"k":"hits","o":[],"t":"\u201chave uncommitted changes\u201d only"}
+{"k":"hits","o":[{"m":"have uncommitted changes","s":"the Have Uncommitted Changes Show"}],"t":"the Have Uncommitted Changes Show"}
+{"k":"hits","o":[{"m":"have uncommitted changes","s":"Have Uncommitted Changes We Ship"}],"t":"Have Uncommitted Changes We Ship"}
+{"k":"hits","o":[{"m":"has untracked files","s":"x has untracked files y"}],"t":"x has untracked files y"}
+{"k":"hits","o":[{"m":"has untracked files","s":"Has untracked files we said."}],"t":"Has untracked files we said."}
+{"k":"hits","o":[{"m":"has untracked files","s":"HAS UNTRACKED FILES"}],"t":"HAS UNTRACKED FILES"}
+{"k":"hits","o":[],"t":"xhas untracked files y"}
+{"k":"hits","o":[],"t":"x has untracked filesx"}
+{"k":"hits","o":[],"t":"see has untracked files.io and has untracked files.x"}
+{"k":"hits","o":[{"m":"has untracked files","s":"Deploy has untracked files."}],"t":"Deploy has untracked files."}
+{"k":"hits","o":[{"m":"has untracked files","s":"has untracked files."}],"t":"has untracked files.\n"}
+{"k":"hits","o":[{"m":"has untracked files","s":"...ked files\" and then has untracked files"}],"t":"\"has untracked files\" and then has untracked files"}
+{"k":"hits","o":[],"t":"\u201chas untracked files\u201d only"}
+{"k":"hits","o":[{"m":"has untracked files","s":"the Has Untracked Files Show"}],"t":"the Has Untracked Files Show"}
+{"k":"hits","o":[{"m":"has untracked files","s":"Has Untracked Files We Ship"}],"t":"Has Untracked Files We Ship"}
+{"k":"hits","o":[{"m":"have untracked files","s":"x have untracked files y"}],"t":"x have untracked files y"}
+{"k":"hits","o":[{"m":"have untracked files","s":"Have untracked files we said."}],"t":"Have untracked files we said."}
+{"k":"hits","o":[{"m":"have untracked files","s":"HAVE UNTRACKED FILES"}],"t":"HAVE UNTRACKED FILES"}
+{"k":"hits","o":[],"t":"xhave untracked files y"}
+{"k":"hits","o":[],"t":"x have untracked filesx"}
+{"k":"hits","o":[],"t":"see have untracked files.io and have untracked files.x"}
+{"k":"hits","o":[{"m":"have untracked files","s":"Deploy have untracked files."}],"t":"Deploy have untracked files."}
+{"k":"hits","o":[{"m":"have untracked files","s":"have untracked files."}],"t":"have untracked files.\n"}
+{"k":"hits","o":[{"m":"have untracked files","s":"...ked files\" and then have untracked files"}],"t":"\"have untracked files\" and then have untracked files"}
+{"k":"hits","o":[],"t":"\u201chave untracked files\u201d only"}
+{"k":"hits","o":[{"m":"have untracked files","s":"the Have Untracked Files Show"}],"t":"the Have Untracked Files Show"}
+{"k":"hits","o":[{"m":"have untracked files","s":"Have Untracked Files We Ship"}],"t":"Have Untracked Files We Ship"}
+{"k":"hits","o":[{"m":"are untracked files","s":"x are untracked files y"}],"t":"x are untracked files y"}
+{"k":"hits","o":[{"m":"are untracked files","s":"Are untracked files we said."}],"t":"Are untracked files we said."}
+{"k":"hits","o":[{"m":"are untracked files","s":"ARE UNTRACKED FILES"}],"t":"ARE UNTRACKED FILES"}
+{"k":"hits","o":[],"t":"xare untracked files y"}
+{"k":"hits","o":[],"t":"x are untracked filesx"}
+{"k":"hits","o":[],"t":"see are untracked files.io and are untracked files.x"}
+{"k":"hits","o":[{"m":"are untracked files","s":"Deploy are untracked files."}],"t":"Deploy are untracked files."}
+{"k":"hits","o":[{"m":"are untracked files","s":"are untracked files."}],"t":"are untracked files.\n"}
+{"k":"hits","o":[{"m":"are untracked files","s":"...ked files\" and then are untracked files"}],"t":"\"are untracked files\" and then are untracked files"}
+{"k":"hits","o":[],"t":"\u201care untracked files\u201d only"}
+{"k":"hits","o":[{"m":"are untracked files","s":"the Are Untracked Files Show"}],"t":"the Are Untracked Files Show"}
+{"k":"hits","o":[{"m":"are untracked files","s":"Are Untracked Files We Ship"}],"t":"Are Untracked Files We Ship"}
+{"k":"hits","o":[{"m":"is stashed","s":"x is stashed y"}],"t":"x is stashed y"}
+{"k":"hits","o":[{"m":"is stashed","s":"Is stashed we said."}],"t":"Is stashed we said."}
+{"k":"hits","o":[{"m":"is stashed","s":"IS STASHED"}],"t":"IS STASHED"}
+{"k":"hits","o":[],"t":"xis stashed y"}
+{"k":"hits","o":[],"t":"x is stashedx"}
+{"k":"hits","o":[],"t":"see is stashed.io and is stashed.x"}
+{"k":"hits","o":[{"m":"is stashed","s":"Deploy is stashed."}],"t":"Deploy is stashed."}
+{"k":"hits","o":[{"m":"is stashed","s":"is stashed."}],"t":"is stashed.\n"}
+{"k":"hits","o":[{"m":"is stashed","s":"...s stashed\" and then is stashed"}],"t":"\"is stashed\" and then is stashed"}
+{"k":"hits","o":[],"t":"\u201cis stashed\u201d only"}
+{"k":"hits","o":[{"m":"is stashed","s":"the Is Stashed Show"}],"t":"the Is Stashed Show"}
+{"k":"hits","o":[{"m":"is stashed","s":"Is Stashed We Ship"}],"t":"Is Stashed We Ship"}
+{"k":"hits","o":[{"m":"are stashed","s":"x are stashed y"}],"t":"x are stashed y"}
+{"k":"hits","o":[{"m":"are stashed","s":"Are stashed we said."}],"t":"Are stashed we said."}
+{"k":"hits","o":[{"m":"are stashed","s":"ARE STASHED"}],"t":"ARE STASHED"}
+{"k":"hits","o":[],"t":"xare stashed y"}
+{"k":"hits","o":[],"t":"x are stashedx"}
+{"k":"hits","o":[],"t":"see are stashed.io and are stashed.x"}
+{"k":"hits","o":[{"m":"are stashed","s":"Deploy are stashed."}],"t":"Deploy are stashed."}
+{"k":"hits","o":[{"m":"are stashed","s":"are stashed."}],"t":"are stashed.\n"}
+{"k":"hits","o":[{"m":"are stashed","s":"...e stashed\" and then are stashed"}],"t":"\"are stashed\" and then are stashed"}
+{"k":"hits","o":[],"t":"\u201care stashed\u201d only"}
+{"k":"hits","o":[{"m":"are stashed","s":"the Are Stashed Show"}],"t":"the Are Stashed Show"}
+{"k":"hits","o":[{"m":"are stashed","s":"Are Stashed We Ship"}],"t":"Are Stashed We Ship"}
+{"k":"hits","o":[{"m":"the new","s":"x the new y"}],"t":"x the new y"}
+{"k":"hits","o":[{"m":"the new","s":"The new we said."}],"t":"The new we said."}
+{"k":"hits","o":[],"t":"THE NEW"}
+{"k":"hits","o":[],"t":"xthe new y"}
+{"k":"hits","o":[],"t":"x the newx"}
+{"k":"hits","o":[{"m":"the new","s":"see the new.io and the new.x"}],"t":"see the new.io and the new.x"}
+{"k":"hits","o":[{"m":"the new","s":"Deploy the new."}],"t":"Deploy the new."}
+{"k":"hits","o":[{"m":"the new","s":"the new."}],"t":"the new.\n"}
+{"k":"hits","o":[{"m":"the new","s":"\"the new\" and then the new"}],"t":"\"the new\" and then the new"}
+{"k":"hits","o":[],"t":"\u201cthe new\u201d only"}
+{"k":"hits","o":[],"t":"the The New Show"}
+{"k":"hits","o":[],"t":"The New We Ship"}
+{"k":"hits","o":[{"m":"now uses","s":"x now uses y"}],"t":"x now uses y"}
+{"k":"hits","o":[{"m":"now uses","s":"Now uses we said."}],"t":"Now uses we said."}
+{"k":"hits","o":[{"m":"now uses","s":"NOW USES"}],"t":"NOW USES"}
+{"k":"hits","o":[],"t":"xnow uses y"}
+{"k":"hits","o":[],"t":"x now usesx"}
+{"k":"hits","o":[],"t":"see now uses.io and now uses.x"}
+{"k":"hits","o":[{"m":"now uses","s":"Deploy now uses."}],"t":"Deploy now uses."}
+{"k":"hits","o":[{"m":"now uses","s":"now uses."}],"t":"now uses.\n"}
+{"k":"hits","o":[{"m":"now uses","s":"\"now uses\" and then now uses"}],"t":"\"now uses\" and then now uses"}
+{"k":"hits","o":[],"t":"\u201cnow uses\u201d only"}
+{"k":"hits","o":[{"m":"now uses","s":"the Now Uses Show"}],"t":"the Now Uses Show"}
+{"k":"hits","o":[{"m":"now uses","s":"Now Uses We Ship"}],"t":"Now Uses We Ship"}
+{"k":"hits","o":[{"m":"now use","s":"x now use y"}],"t":"x now use y"}
+{"k":"hits","o":[{"m":"now use","s":"Now use we said."}],"t":"Now use we said."}
+{"k":"hits","o":[{"m":"now use","s":"NOW USE"}],"t":"NOW USE"}
+{"k":"hits","o":[],"t":"xnow use y"}
+{"k":"hits","o":[],"t":"x now usex"}
+{"k":"hits","o":[],"t":"see now use.io and now use.x"}
+{"k":"hits","o":[{"m":"now use","s":"Deploy now use."}],"t":"Deploy now use."}
+{"k":"hits","o":[{"m":"now use","s":"now use."}],"t":"now use.\n"}
+{"k":"hits","o":[{"m":"now use","s":"\"now use\" and then now use"}],"t":"\"now use\" and then now use"}
+{"k":"hits","o":[],"t":"\u201cnow use\u201d only"}
+{"k":"hits","o":[{"m":"now use","s":"the Now Use Show"}],"t":"the Now Use Show"}
+{"k":"hits","o":[{"m":"now use","s":"Now Use We Ship"}],"t":"Now Use We Ship"}
+{"k":"hits","o":[{"m":"now using","s":"x now using y"}],"t":"x now using y"}
+{"k":"hits","o":[{"m":"now using","s":"Now using we said."}],"t":"Now using we said."}
+{"k":"hits","o":[{"m":"now using","s":"NOW USING"}],"t":"NOW USING"}
+{"k":"hits","o":[],"t":"xnow using y"}
+{"k":"hits","o":[],"t":"x now usingx"}
+{"k":"hits","o":[],"t":"see now using.io and now using.x"}
+{"k":"hits","o":[{"m":"now using","s":"Deploy now using."}],"t":"Deploy now using."}
+{"k":"hits","o":[{"m":"now using","s":"now using."}],"t":"now using.\n"}
+{"k":"hits","o":[{"m":"now using","s":"...now using\" and then now using"}],"t":"\"now using\" and then now using"}
+{"k":"hits","o":[],"t":"\u201cnow using\u201d only"}
+{"k":"hits","o":[{"m":"now using","s":"the Now Using Show"}],"t":"the Now Using Show"}
+{"k":"hits","o":[{"m":"now using","s":"Now Using We Ship"}],"t":"Now Using We Ship"}
+{"k":"hits","o":[{"m":"now relies","s":"x now relies y"}],"t":"x now relies y"}
+{"k":"hits","o":[{"m":"now relies","s":"Now relies we said."}],"t":"Now relies we said."}
+{"k":"hits","o":[{"m":"now relies","s":"NOW RELIES"}],"t":"NOW RELIES"}
+{"k":"hits","o":[],"t":"xnow relies y"}
+{"k":"hits","o":[],"t":"x now reliesx"}
+{"k":"hits","o":[],"t":"see now relies.io and now relies.x"}
+{"k":"hits","o":[{"m":"now relies","s":"Deploy now relies."}],"t":"Deploy now relies."}
+{"k":"hits","o":[{"m":"now relies","s":"now relies."}],"t":"now relies.\n"}
+{"k":"hits","o":[{"m":"now relies","s":"...ow relies\" and then now relies"}],"t":"\"now relies\" and then now relies"}
+{"k":"hits","o":[],"t":"\u201cnow relies\u201d only"}
+{"k":"hits","o":[{"m":"now relies","s":"the Now Relies Show"}],"t":"the Now Relies Show"}
+{"k":"hits","o":[{"m":"now relies","s":"Now Relies We Ship"}],"t":"Now Relies We Ship"}
+{"k":"hits","o":[{"m":"now rely","s":"x now rely y"}],"t":"x now rely y"}
+{"k":"hits","o":[{"m":"now rely","s":"Now rely we said."}],"t":"Now rely we said."}
+{"k":"hits","o":[{"m":"now rely","s":"NOW RELY"}],"t":"NOW RELY"}
+{"k":"hits","o":[],"t":"xnow rely y"}
+{"k":"hits","o":[],"t":"x now relyx"}
+{"k":"hits","o":[],"t":"see now rely.io and now rely.x"}
+{"k":"hits","o":[{"m":"now rely","s":"Deploy now rely."}],"t":"Deploy now rely."}
+{"k":"hits","o":[{"m":"now rely","s":"now rely."}],"t":"now rely.\n"}
+{"k":"hits","o":[{"m":"now rely","s":"\"now rely\" and then now rely"}],"t":"\"now rely\" and then now rely"}
+{"k":"hits","o":[],"t":"\u201cnow rely\u201d only"}
+{"k":"hits","o":[{"m":"now rely","s":"the Now Rely Show"}],"t":"the Now Rely Show"}
+{"k":"hits","o":[{"m":"now rely","s":"Now Rely We Ship"}],"t":"Now Rely We Ship"}
+{"k":"hits","o":[{"m":"now relying","s":"x now relying y"}],"t":"x now relying y"}
+{"k":"hits","o":[{"m":"now relying","s":"Now relying we said."}],"t":"Now relying we said."}
+{"k":"hits","o":[{"m":"now relying","s":"NOW RELYING"}],"t":"NOW RELYING"}
+{"k":"hits","o":[],"t":"xnow relying y"}
+{"k":"hits","o":[],"t":"x now relyingx"}
+{"k":"hits","o":[],"t":"see now relying.io and now relying.x"}
+{"k":"hits","o":[{"m":"now relying","s":"Deploy now relying."}],"t":"Deploy now relying."}
+{"k":"hits","o":[{"m":"now relying","s":"now relying."}],"t":"now relying.\n"}
+{"k":"hits","o":[{"m":"now relying","s":"...w relying\" and then now relying"}],"t":"\"now relying\" and then now relying"}
+{"k":"hits","o":[],"t":"\u201cnow relying\u201d only"}
+{"k":"hits","o":[{"m":"now relying","s":"the Now Relying Show"}],"t":"the Now Relying Show"}
+{"k":"hits","o":[{"m":"now relying","s":"Now Relying We Ship"}],"t":"Now Relying We Ship"}
+{"k":"hits","o":[{"m":"currently","s":"currently. as of now. as of t..."},{"m":"as of now","s":"currently. as of now. as of this writing..."},{"m":"as of this writing","s":"...rrently. as of now. as of this writing. as of writing. rig..."},{"m":"as of writing","s":"...as of this writing. as of writing. right now. for now..."},{"m":"right now","s":"...ing. as of writing. right now. for now. temporari..."},{"m":"for now","s":"...writing. right now. for now. temporarily. for t..."},{"m":"temporarily","s":"...right now. for now. temporarily. for the time being..."},{"m":"for the time being","s":"...r now. temporarily. for the time being. at the moment. tod..."},{"m":"at the moment","s":"...for the time being. at the moment. today. this mornin..."},{"m":"today","s":"...ing. at the moment. today. this morning. this..."},{"m":"this morning","s":"...the moment. today. this morning. this afternoon. to..."},{"m":"this afternoon","s":"...oday. this morning. this afternoon. tonight. yesterday..."},{"m":"tonight","s":"...ng. this afternoon. tonight. yesterday. tomorro..."},{"m":"yesterday","s":"...afternoon. tonight. yesterday. tomorrow. this wee..."},{"m":"tomorrow","s":"...tonight. yesterday. tomorrow. this week. this mo..."},{"m":"this week","s":"...esterday. tomorrow. this week. this month. last w..."},{"m":"this month","s":"...omorrow. this week. this month. last week. next we..."},{"m":"last week","s":"...s week. this month. last week. next week. next mo..."},{"m":"next week","s":"...s month. last week. next week. next month. i just..."},{"m":"next month","s":"...st week. next week. next month. i just. we just. j..."},{"m":"i just","s":"...t week. next month. i just. we just. just ship..."},{"m":"we just","s":"...next month. i just. we just. just shipped. the..."},{"m":"just shipped","s":"...h. i just. we just. just shipped. the latest. was re..."},{"m":"the latest","s":"...just. just shipped. the latest. was recently. were..."},{"m":"was recently","s":"...hipped. the latest. was recently. were recently. has..."},{"m":"were recently","s":"...test. was recently. were recently. has recently. have..."},{"m":"has recently","s":"...tly. were recently. has recently. have recently. rec..."},{"m":"have recently","s":"...ntly. has recently. have recently. recently switched...."},{"m":"recently switched","s":"...tly. have recently. recently switched. recently migrated...."},{"m":"recently migrated","s":"...recently switched. recently migrated. recently renamed...."},{"m":"recently renamed","s":"...recently migrated. recently renamed. is in progress. ar..."},{"m":"is in progress","s":".... recently renamed. is in progress. are in progress. i..."},{"m":"are in progress","s":"...ed. is in progress. are in progress. in the middle of m..."},{"m":"in the middle of","s":"...s. are in progress. in the middle of migrating. halfway through a..."},{"m":"halfway through","s":"...iddle of migrating. halfway through a merge. unpushed. commits..."},{"m":"unpushed","s":"...ay through a merge. unpushed. commits ahead. com..."},{"m":"commits ahead","s":"...a merge. unpushed. commits ahead. commits behind. ha..."},{"m":"commits behind","s":"...hed. commits ahead. commits behind. has uncommitted ch..."},{"m":"has uncommitted changes","s":"...ad. commits behind. has uncommitted changes. have uncommitted c..."},{"m":"have uncommitted changes","s":"...ncommitted changes. have uncommitted changes. has untracked file..."},{"m":"has untracked files","s":"...ncommitted changes. has untracked files. have untracked fil..."},{"m":"have untracked files","s":"...as untracked files. have untracked files. are untracked file..."},{"m":"are untracked files","s":"...ve untracked files. are untracked files. is stashed. are st..."},{"m":"is stashed","s":"...re untracked files. is stashed. are stashed. the n..."},{"m":"are stashed","s":"...files. is stashed. are stashed. the new. now uses...."},{"m":"the new","s":"...ashed. are stashed. the new. now uses. now use...."},{"m":"now uses","s":"...e stashed. the new. now uses. now use. now using..."},{"m":"now use","s":"...the new. now uses. now use. now using. now rel..."},{"m":"now using","s":"...now uses. now use. now using. now relies. now re..."},{"m":"now relies","s":"...now use. now using. now relies. now rely. now rely..."},{"m":"now rely","s":"...using. now relies. now rely. now relying. as of..."},{"m":"now relying","s":"...w relies. now rely. now relying. as of 2025-01-01."},{"m":"as of <date>","s":"...rely. now relying. as of 2025-01-01."}],"t":"currently. as of now. as of this writing. as of writing. right now. for now. temporarily. for the time being. at the moment. today. this morning. this afternoon. tonight. yesterday. tomorrow. this week. this month. last week. next week. next month. i just. we just. just shipped. the latest. was recently. were recently. has recently. have recently. recently switched. recently migrated. recently renamed. is in progress. are in progress. in the middle of migrating. halfway through a merge. unpushed. commits ahead. commits behind. has uncommitted changes. have uncommitted changes. has untracked files. have untracked files. are untracked files. is stashed. are stashed. the new. now uses. now use. now using. now relies. now rely. now relying. as of 2025-01-01."}
+{"k":"anc","o":true,"s":28,"t":"We switched to Bugsnag with the new SDK release."}
+{"k":"anc","o":false,"s":0,"t":"The new schema replaces the old layout."}
+{"k":"anc","o":false,"s":14,"t":"Bugsnag ships the new SDK."}
+{"k":"anc","o":false,"s":24,"t":"We switched to Bugsnag. The new schema is live."}
+{"k":"anc","o":false,"s":22,"t":"Python 3.13. We moved the new parser"}
+{"k":"anc","o":true,"s":19,"t":"We moved 3.13 with the new parser"}
+{"k":"anc","o":false,"s":22,"t":"no cue and no anchor: the new thing"}
+{"k":"anc","o":false,"s":4,"t":"now the new thing"}
+{"k":"anc","o":true,"s":4,"t":"Now the New Thing is here"}
+{"count":20000,"k":"sweep","markers":{"are in progress":1380,"are stashed":1326,"are untracked files":1334,"as of <date>":1433,"as of now":1403,"as of this writing":1301,"as of writing":1421,"at the moment":1346,"commits ahead":1352,"commits behind":1393,"currently":1391,"for now":1386,"for the time being":1391,"halfway through":13,"has recently":1393,"has uncommitted changes":1330,"has untracked files":1371,"have recently":1447,"have uncommitted changes":1364,"have untracked files":1368,"i just":1442,"in the middle of":11,"is in progress":1391,"is stashed":1393,"just shipped":1421,"last week":1256,"next month":1432,"next week":1375,"now relies":1403,"now rely":1302,"now relying":1405,"now use":1375,"now uses":1340,"now using":1392,"recently migrated":1346,"recently renamed":1425,"recently switched":1440,"right now":1330,"temporarily":1193,"the latest":1416,"the new":2255,"this afternoon":1381,"this month":1344,"this morning":1433,"this week":1364,"today":2094,"tomorrow":1448,"tonight":1409,"unpushed":1390,"was recently":1367,"we just":1387,"were recently":1417,"yesterday":1411},"most":12,"seed":20261126,"seps":[" "," "," "," ",". ","\n",", ","\"","-"],"sha":"22b22c2c355b917bd9952f23a5eacd39c1bdbe1344f8e7876c96140607ca754b","words":["currently","as of now","as of this writing","as of writing","right now","for now","temporarily","for the time being","at the moment","today","this morning","this afternoon","tonight","yesterday","tomorrow","this week","this month","last week","next week","next month","i just","we just","just shipped","the latest","was recently","were recently","has recently","have recently","recently switched","recently migrated","recently renamed","is in progress","are in progress","in the middle of","halfway through","unpushed","commits ahead","commits behind","has uncommitted changes","have uncommitted changes","has untracked files","have untracked files","are untracked files","is stashed","are stashed","the new","now uses","now use","now using","now relies","now rely","now relying","Today","Tomorrow Night","This Week","The new","The New","THE NEW","today's","tomorrow.io","concurrently","news","of","when","blocks","disabled","migrating","a migration","morning","switched to","moved","now","Bugsnag","3.13","v2","the","I","is","as of 2025-01-01","as of","2025-01-01","\"","\u201c","\u201d","x"]}

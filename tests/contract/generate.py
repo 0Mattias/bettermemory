@@ -628,6 +628,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "ulid": gen_ulid.generate,
     "durability": gen_durability.generate,
     "durability_unicode": gen_durability.generate_unicode,
+    "durability_markers": gen_durability.generate_markers,
+    "durability_markers_unicode": gen_durability.generate_markers_unicode,
     "durability_capture": gen_durability.generate_capture,
     "durability_capture_unicode": gen_durability.generate_capture_unicode,
     "verify_status": gen_verify_status.generate,
@@ -837,6 +839,10 @@ UNICODE_GATED = frozenset(
         "eval_render_unicode",
         "machine_facts_unicode",
         "durability_unicode",
+        # IGNORECASE folding, `\b`, `\w`, `\s` and `\d` past ASCII in the
+        # transient-marker patterns, title case and the anchored `the new`
+        # (`gen_durability`).
+        "durability_markers_unicode",
         # IGNORECASE folding, `\b`, `\w`, `\s` and `\d` past ASCII in the
         # capture rules (`gen_durability`).
         "durability_capture_unicode",

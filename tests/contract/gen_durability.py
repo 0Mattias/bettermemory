@@ -1,8 +1,9 @@
 """Fixtures: the transient markers' helpers, unit 1 of ``durability.py``
-(``durability.jsonl``, ``durability_unicode.jsonl``), and the capture
-rules, unit 3 (``durability_capture.jsonl``,
-``durability_capture_unicode.jsonl``, described where their rows are
-made below).
+(``durability.jsonl``, ``durability_unicode.jsonl``), the transient
+markers, unit 2 (``durability_markers.jsonl``,
+``durability_markers_unicode.jsonl``), and the capture rules, unit 3
+(``durability_capture.jsonl``, ``durability_capture_unicode.jsonl``); the
+files of units 2 and 3 are described where their rows are made below.
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/durability.rs``. This pins
@@ -848,6 +849,479 @@ def generate_capture_unicode() -> dict[str, bytes]:
     rows = _capture_rows(unicode=True)
     return {
         "durability_capture_unicode.jsonl": jsonl(
+            [{"k": "header", "cases": len(rows)}, *rows]
+        )
+    }
+
+
+# ---------------------------------------------------------------------------
+# Unit 2: the transient markers.
+# ---------------------------------------------------------------------------
+#
+# ``durability_markers.jsonl`` (not gated) and
+# ``durability_markers_unicode.jsonl`` (gated on the Unicode version) pin
+# the marker tables, every pattern of `_PHRASE_REGEXES` and
+# `_AS_OF_DATE_RE` by its text and flags, `_anchored_new_reference` and
+# `find_transient_markers`. One JSON object per line, keys sorted, ASCII,
+# a header first with the count of the lines after it. Every other line is
+# one of:
+#
+# - ``{"k": "tables", "phrases": [...], "titlecase": [...], "overrides":
+#   [...], "in_flight": text, "as_of": text}``: `TRANSIENT_PHRASE_MARKERS`
+#   in order, `_TITLECASE_SKIP_MARKERS` sorted, `_PATTERN_OVERRIDES`' keys
+#   in order, `_IN_FLIGHT_WORK_OBJECT` and `_AS_OF_DATE_MARKER`;
+# - ``{"k": "pat", "id": phrase or "_AS_OF_DATE_RE", "p": text, "f":
+#   flags}``: the pattern's `.pattern` and `.flags`;
+# - ``{"k": "hits", "t": text, "o": [{"m": marker, "s": snippet}, ...]}``:
+#   `find_transient_markers`;
+# - ``{"k": "anc", "t": text, "s": start, "o": bool}``:
+#   `_anchored_new_reference` of the match ``the new`` at ``s``;
+# - ``{"k": "sweep", "seed", "count", "most", "words", "seps", "markers",
+#   "sha"}`` (first file only): 20,000 bodies drawn by the LCG of the
+#   capture sweep from a word pool rich in the phrases, pinned by count,
+#   hits per marker and the SHA-256 of ``marker|snippet\n`` per hit with a
+#   NUL after each body.
+#
+# A text (``t``, ``s``) is a string or, where it holds a surrogate, its
+# code points (``t_cps``, ``s_cps``). The first file's texts are ASCII,
+# the curly double quotes and lone surrogates, whose readings (`\b`, `\w`,
+# `\s`, IGNORECASE on ASCII, `str.istitle`, the general category, the
+# tokenizer) no Unicode version changes; every other text is in the
+# second. No answer depends on the Python release or the platform.
+
+_MARKER_STABLE = frozenset({0x201C, 0x201D})
+
+
+def _marker_stable(text: str) -> bool:
+    return all(
+        ord(ch) < 0x80 or ord(ch) in _MARKER_STABLE or 0xD800 <= ord(ch) <= 0xDFFF
+        for ch in text
+    )
+
+
+def _phrase_texts(phrase: str) -> Iterator[str]:
+    """Each phrase hit and missed at its edges."""
+    title = " ".join(w.capitalize() for w in phrase.split())
+    yield f"x {phrase} y"
+    yield f"{phrase.capitalize()} we said."
+    yield phrase.upper()
+    yield f"x{phrase} y"
+    yield f"x {phrase}x"
+    yield f"see {phrase}.io and {phrase}.x"
+    yield f"Deploy {phrase}."
+    yield f"{phrase}.\n"
+    yield f'"{phrase}" and then {phrase}'
+    yield f"“{phrase}” only"
+    yield f"the {title} Show"
+    yield f"{title} We Ship"
+
+
+_MARKER_TEXTS: list[str] = [
+    "",
+    "A durable fact about the hook.",
+    "concurrently news renewal",
+    # today's override: the possessive and the domain.
+    "today's date",
+    "TODAY'S date",
+    "todays date",
+    "today.dev is a site",
+    "merged earlier today",
+    "Today, I merged it",
+    "today' is odd",
+    "today's and today",
+    # the new: lowercase new only, [Tt] only, no domain lookahead.
+    "The New York office",
+    "The new schema",
+    "THE NEW SCHEMA",
+    "tHe new schema",
+    "the New schema",
+    "the news today",
+    "the newer one",
+    "see the new.io site",
+    "athe new",
+    # at the moment: the event-trigger heads.
+    "at the moment of release",
+    "at the moment when it runs",
+    "at the moment that it runs",
+    "At the moment the plan is",
+    "at the moment  of release",
+    "at the moment\tof release",
+    "at the momentof release",
+    "at the moment ofx release",
+    "at the moment.io",
+    "at the moment.",
+    "AT THE MOMENT OF release",
+    # temporarily: the habitual third-person form.
+    "the limiter temporarily blocks an IP",
+    "temporarily disabled",
+    "temporarily s",
+    "temporarily ss",
+    "temporarily blocks.",
+    "temporarily blocksx",
+    "temporarily.io",
+    "temporarily  blocks",
+    "temporarily is",
+    "temporarily",
+    # The escaped space is one ASCII space.
+    "right  now",
+    "right\tnow",
+    "it is in progress",
+    # the two idioms: an in-flight-work object only.
+    "in the middle of migrating the database",
+    "in the middle of morning",
+    "in the middle of evening",
+    "in the middle of mornings",
+    "in the middle of morningx",
+    "in the middle of thing",
+    "in the middle of ing",
+    "in the middle of a migration",
+    "in the middle of an upgrade",
+    "in the middle of the rollout",
+    "in the middle of the  rollout",
+    "in the middle of deploy",
+    "in the middle of deployment",
+    "in the middle of deployments",
+    "in the middle of refactor",
+    "in the middle of refactoring",
+    "in the middle of a rewrite",
+    "in the middle of a rebase",
+    "in the middle of a merge",
+    "in the middle of a release",
+    "in the middle of a focus block",
+    "in the middle of  migrating",
+    "in the middle ofmigrating",
+    "In The Middle Of A Migration",
+    "in the middle of migratingx1",
+    "in the middle of a the migration",
+    "halfway through rebasing",
+    "halfway through the upgrade",
+    "the installer reboots halfway through",
+    "halfway through evening",
+    "halfway through a rewrite.",
+    "HALFWAY THROUGH A MERGE",
+    # Anchored "the new": a cue and an identifier in the match's sentence.
+    "We switched to Bugsnag with the new SDK release.",
+    "We upgraded to Python 3.13 with the new base image.",
+    "The new schema replaces the old layout.",
+    "Bugsnag ships the new SDK.",
+    "We switched to Bugsnag. The new schema is live.",
+    "The new schema is live. We switched to Bugsnag.",
+    "We moved to v2 and the new flow is live; it works.",
+    "We moved to the new flow on billing-db-green.",
+    "We moved to the new flow on read-only.",
+    "We moved to the new flow on prod-hlx-2.",
+    "Now the new parser runs 3 passes.",
+    "We moved to Bugsnag with the new SDK! Then the new cache landed.",
+    "We moved to Bugsnag with the new SDK\nthe new cache landed.",
+    '"the new" is quoted; we moved to Bugsnag with the new SDK.',
+    "Version 3.13 moved the new parser in",
+    "WE MOVED TO V2 WITH THE NEW FLOW",
+    "We MOVED to Bugsnag with the new SDK.",
+    "We moved 3.13's the new parser",
+    # The title-case skip: the time words only.
+    "the Tomorrow Night theme",
+    "Tomorrow Night is a theme",
+    "Tomorrow we ship",
+    "Yesterday I broke the build",
+    "This Week in Rust is a newsletter",
+    "This week in Rust",
+    "a USA Today column",
+    "the Currently Show",
+    "the Right Now Show",
+    "Tomorrow Night and tomorrow",
+    "Tomorrow Night. Tomorrow we ship.",
+    "- Today Matters",
+    "x - Today Matters",
+    "THIS WEEK in Rust",
+    # The dated form.
+    "as of 2025-01-01 the cluster is on k8s",
+    "As Of 2025-01-01 Things Changed",
+    "AS OF 2025-01-01",
+    '"as of 2025-01-01" and as of 2025-02-02',
+    '"as of 2025-01-01" only',
+    "“as of 2025-01-01” only",
+    "as of 2025-1-01",
+    "as of 20250-01-01",
+    "xas of 2025-01-01",
+    "as of 2025-01-012",
+    "as of  2025-01-01",
+    "as of 2025-01-01.io",
+    "as of 2.7.0 and as of Python 3.12",
+    "as of 2025-01-01 currently",
+    "as of 2025-01-01 and as of 2025-02-02",
+    "as of today and as of yesterday",
+    # Quotes: line-bounded, unpaired, curly, the quoted use then the use.
+    '"currently" we are currently here',
+    '"currently\nwe are" here',
+    'odd " currently',
+    '"a" currently "b"',
+    "“currently“ later”",
+    "”currently“",
+    '"currently “currently”" x',
+    '"today" "currently"',
+    '"Tomorrow" Night and Tomorrow Night',
+    # Order: phrases in table order, the date last; one hit per phrase.
+    "the new thing, currently, today and as of 2025-01-01",
+    "currently currently currently",
+    "now relying now relies now rely now using now use now uses",
+    "i just did it; I just did; we just did",
+    "it is unpushed and stashed; it is stashed",
+    # The snippet's window.
+    "x" * 30 + " currently " + "y" * 30,
+    "line one\ncurrently   spaced\t\ttabs\nline three",
+    # Lone surrogates.
+    "currently \ud800",
+    "\ud800currently\udfff",
+    "\ud800 today \ud800",
+    '"\ud800currently" currently',
+    "the new \ud800 thing",
+    "We moved to Bugsnag \ud800 with the new SDK.",
+    "as of 2025-01-01\ud800",
+]
+
+
+def _every_phrase_body() -> str:
+    objects = {
+        "in the middle of": "in the middle of migrating",
+        "halfway through": "halfway through a merge",
+    }
+    parts = [objects.get(p, p) for p in d.TRANSIENT_PHRASE_MARKERS]
+    return ". ".join(parts) + ". as of 2025-01-01."
+
+
+def _anc_texts() -> list[str]:
+    return [
+        "We switched to Bugsnag with the new SDK release.",
+        "The new schema replaces the old layout.",
+        "Bugsnag ships the new SDK.",
+        "We switched to Bugsnag. The new schema is live.",
+        "Python 3.13. We moved the new parser",
+        "We moved 3.13 with the new parser",
+        "no cue and no anchor: the new thing",
+        "now the new thing",
+        "Now the New Thing is here",
+    ]
+
+
+def _marker_hits(text: str) -> list[dict[str, Any]]:
+    out = []
+    for hit in d.find_transient_markers(text):
+        assert isinstance(hit, d.TransientMatch)
+        out.append({"m": hit.marker, **text_field("s", hit.snippet)})
+    return out
+
+
+_THE_NEW = re.compile(r"the new", re.IGNORECASE)
+
+
+def _anc_rows(texts: list[str]) -> list[dict[str, Any]]:
+    rows = []
+    for t in texts:
+        for m in _THE_NEW.finditer(t):
+            rows.append(
+                {
+                    "k": "anc",
+                    **text_field("t", t),
+                    "s": m.start(),
+                    "o": d._anchored_new_reference(t, m),
+                }
+            )
+    return rows
+
+
+_MARKER_SWEEP_WORDS: list[str] = [
+    *d.TRANSIENT_PHRASE_MARKERS,
+    "Today",
+    "Tomorrow Night",
+    "This Week",
+    "The new",
+    "The New",
+    "THE NEW",
+    "today's",
+    "tomorrow.io",
+    "concurrently",
+    "news",
+    "of",
+    "when",
+    "blocks",
+    "disabled",
+    "migrating",
+    "a migration",
+    "morning",
+    "switched to",
+    "moved",
+    "now",
+    "Bugsnag",
+    "3.13",
+    "v2",
+    "the",
+    "I",
+    "is",
+    "as of 2025-01-01",
+    "as of",
+    "2025-01-01",
+    '"',
+    "“",
+    "”",
+    "x",
+]
+_MARKER_SWEEP_SEPS: list[str] = [" ", " ", " ", " ", ". ", "\n", ", ", '"', "-"]
+_MARKER_SWEEP_SEED = 20261126
+_MARKER_SWEEP_COUNT = 20000
+_MARKER_SWEEP_MOST = 12
+
+
+def marker_sweep_bodies() -> Iterator[str]:
+    state = _MARKER_SWEEP_SEED
+    for _ in range(_MARKER_SWEEP_COUNT):
+        state = _lcg(state)
+        n = 1 + (state >> 33) % _MARKER_SWEEP_MOST
+        parts: list[str] = []
+        for _ in range(n):
+            state = _lcg(state)
+            parts.append(_MARKER_SWEEP_WORDS[(state >> 33) % len(_MARKER_SWEEP_WORDS)])
+            state = _lcg(state)
+            parts.append(_MARKER_SWEEP_SEPS[(state >> 33) % len(_MARKER_SWEEP_SEPS)])
+        yield "".join(parts)
+
+
+def _marker_sweep() -> dict[str, Any]:
+    h = hashlib.sha256()
+    markers: dict[str, int] = {}
+    count = 0
+    for body in marker_sweep_bodies():
+        count += 1
+        for hit in d.find_transient_markers(body):
+            markers[hit.marker] = markers.get(hit.marker, 0) + 1
+            h.update(f"{hit.marker}|{hit.snippet}\n".encode())
+        h.update(b"\0")
+    assert all(_marker_stable(w) for w in _MARKER_SWEEP_WORDS + _MARKER_SWEEP_SEPS)
+    return {
+        "k": "sweep",
+        "seed": _MARKER_SWEEP_SEED,
+        "count": count,
+        "most": _MARKER_SWEEP_MOST,
+        "words": _MARKER_SWEEP_WORDS,
+        "seps": _MARKER_SWEEP_SEPS,
+        "markers": markers,
+        "sha": h.hexdigest(),
+    }
+
+
+def _unicode_marker_texts() -> Iterator[str]:
+    # IGNORECASE as `re` folds one code point against one.
+    yield "next weeK we ship"
+    yield "it is ſtashed"
+    yield "yeſterday it broke"
+    yield "İ just did it"
+    yield "ı just did it"
+    yield "now uſes it"
+    yield "THE NEW ſCHEMA"
+    yield "at the moment ſf release"
+    yield "temporarily blockſ an IP"
+    yield "in the middle of migratİng"
+    yield "in the middle of a migratıon"
+    yield "Keep it for now"
+    yield "commits aħead"
+    yield "the latest straße"
+    # \b and \w past ASCII.
+    yield "écurrently"
+    yield "currentlyé"
+    yield "—currently"
+    yield "currently.é"
+    yield "currently.—"
+    yield "tomorrow.ио"
+    yield "١currently"
+    yield "currentlỳ"
+    yield "in the middle of réstoring it"
+    yield "in the middle of migratingé"
+    yield "in the middle of migratéing"
+    yield "halfway through ١ing"
+    yield "temporarily és"
+    yield "as of ٢٠٢٥-٠١-٠١"
+    yield "as of 2025-01-01é"
+    yield "as of ２０２５-01-01"
+    # \s past ASCII in the lookaheads; the generic patterns' escaped space.
+    yield "at the moment of release"
+    yield "at the moment when"
+    yield "temporarily blocks"
+    yield "the limiter temporarily blocks"
+    yield "right now"
+    yield "in the middle of the rollout"
+    # The curly apostrophe.
+    yield "today’s date"
+    yield "Today’s date and today"
+    yield "today‘s date"
+    # Title case past ASCII.
+    yield "Today Été Fest"
+    yield "Today été fest"
+    yield "Today ǅungla"
+    yield "x — Today Night"
+    yield "x → Today Night"
+    yield "\U0001f680 Today Night"
+    yield "This ǅeek"
+    yield "É Tomorrow Night"
+    # Anchored "the new" past ASCII.
+    yield "We moved to Python ٣.١٣ with the new image."
+    yield "We moved to Zürich with the new office."
+    yield "We moved to v2。the new flow is live"
+    yield "We moved to v2 the new flow is live"
+    # Quotes and snippets past ASCII.
+    yield "“currently” é currently"
+    yield "é" * 30 + " today " + "é" * 30
+    yield "　today　"
+
+
+def _marker_rows(unicode: bool) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not unicode:
+        rows.append(
+            {
+                "k": "tables",
+                "phrases": list(d.TRANSIENT_PHRASE_MARKERS),
+                "titlecase": sorted(d._TITLECASE_SKIP_MARKERS),
+                "overrides": list(d._PATTERN_OVERRIDES),
+                "in_flight": d._IN_FLIGHT_WORK_OBJECT,
+                "as_of": d._AS_OF_DATE_MARKER,
+            }
+        )
+        pats = [*d._PHRASE_REGEXES, ("_AS_OF_DATE_RE", d._AS_OF_DATE_RE)]
+        for name, pattern in pats:
+            rows.append(
+                {"k": "pat", "id": name, "p": pattern.pattern, "f": pattern.flags}
+            )
+    if unicode:
+        texts = list(_unicode_marker_texts())
+    else:
+        texts = [
+            *_MARKER_TEXTS,
+            *[t for p in d.TRANSIENT_PHRASE_MARKERS for t in _phrase_texts(p)],
+            _every_phrase_body(),
+        ]
+    for t in texts:
+        assert _marker_stable(t) != unicode, t
+        rows.append({"k": "hits", **text_field("t", t), "o": _marker_hits(t)})
+    if not unicode:
+        rows.extend(_anc_rows(_anc_texts()))
+        rows.append(_marker_sweep())
+    else:
+        rows.extend(_anc_rows([t for t in texts if "the new" in t.lower()]))
+    return rows
+
+
+def generate_markers() -> dict[str, bytes]:
+    """``durability_markers.jsonl``: not gated."""
+    rows = _marker_rows(unicode=False)
+    return {
+        "durability_markers.jsonl": jsonl([{"k": "header", "cases": len(rows)}, *rows])
+    }
+
+
+def generate_markers_unicode() -> dict[str, bytes]:
+    """``durability_markers_unicode.jsonl``: gated on the Unicode version."""
+    rows = _marker_rows(unicode=True)
+    return {
+        "durability_markers_unicode.jsonl": jsonl(
             [{"k": "header", "cases": len(rows)}, *rows]
         )
     }
