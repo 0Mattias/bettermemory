@@ -1,0 +1,103 @@
+{"c_recursion_limit":10000,"fixture":"pysyntax_stmt_posix","python":"3.13.13","rows":102}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"3d022c864a15f7d541b0de22cba74d59ac4d205916a2ccfbeea1c93419193478","n":83576},"t":{"r":[["x = ",1],["-",5967],["x\n",1]]},"top":["x"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":{"h":"2bd12ff7d73cfac0fe4a9da882babbc95b9b4dacdcc40a2655f6a2a27422fdee","n":83588},"t":{"r":[["x = y = ",1],["-",5967],["x\n",1]]},"top":["x","y"]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"e99107aa1bc065801d6b086c6740cfe63972a7c649afae0d71b8430a6ac5c2b6","n":83571},"t":{"r":[["x = y, ",1],["-",5965],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"962f4ef65328c87eac9e293a1b87fcd1fd0a919c86d4ca4f758c7f301b21a718","n":83672},"t":{"r":[["x = *",1],["-",5972],["x,\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"09e292c202002e3150286d5a7ae5f2e6c41366e6171b8435e7e4c1007308dbb8","n":83569},"t":{"r":[["x = yield ",1],["-",5966],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"4348def2c23861b1be2652caf18a1180816967d6696dfc13903054c1d8bc66e2","n":83564},"t":{"r":[["x = yield y, ",1],["-",5964],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"f67e4ab78a899116adfa849d99689a01af442a5e72b714bdfd6f0b719058099c","n":83653},"t":{"r":[["x = yield *",1],["-",5971],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"4dd2fe8c6ff0e67bcf16f86b623f5968e9d820988a4f7cefd6525b252802dd68","n":83601},"t":{"r":[["x = yield from ",1],["-",5968],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":{"h":"615117540718be76559359e42d5f14727d8cf98d1113db9a86e891b9f16b2697","n":83621},"t":{"r":[["x: ",1],["-",5970],["x\n",1]]},"top":["x"]}
+{"all":["y"],"ids":"AnnAssign 0","parse":"ok","shape":{"h":"a360f94161ed10bb82a56729d97a92b71ac8f630c59c6ff6b975bbf771349f5f","n":83637},"t":{"r":[["x.y: ",1],["-",5970],["x\n",1]]},"top":[]}
+{"all":["x"],"ids":"AnnAssign 0","parse":"ok","shape":{"h":"615117540718be76559359e42d5f14727d8cf98d1113db9a86e891b9f16b2697","n":83621},"t":{"r":[["(x): ",1],["-",5970],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":{"h":"bde61c82324e01ebc392e5587e0febd9d7c7cc7211d5745818f9847dc6d7b639","n":83576},"t":{"r":[["x: int = ",1],["-",5966],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":{"h":"c878992ceadb40d856ac9a956684d6744122b1480750c466e407dda7eaaca259","n":83672},"t":{"r":[["x: int = *",1],["-",5971],["x,\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":{"h":"f2302cd75c5971bc35af334222352cafa8a6ea34c4c6a9ef39ae428ce6451888","n":83569},"t":{"r":[["x: int = yield ",1],["-",5965],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":{"h":"d7f9edcd35b65cf3f46817b79adda2ca8e13de539ea7383755574b31acfa8faf","n":83601},"t":{"r":[["x: int = yield from ",1],["-",5967],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"e46a1c06471197246d9ebedebcc96fd3ca1bd178f61d68d0ea5d0e28b8209862","n":83583},"t":{"r":[["x += ",1],["-",5967],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"d21041c6ddbe015750113299869ca78050b5799b1386ca7ee268ba9113c214e1","n":83578},"t":{"r":[["x += y, ",1],["-",5965],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"235da538c4ef48ac22aab91bf4bf148b0d82880cbeef5f1708d2ed070a72b692","n":83576},"t":{"r":[["x += yield ",1],["-",5966],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"84e69a4f125d4fea4db8800c1baa27f3db52e1395a5f2cfae615f5ccb2b3cfe7","n":83608},"t":{"r":[["x += yield from ",1],["-",5968],["x\n",1]]},"top":["x"]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"c9a24799f1ead0c2dd77528c0f6be25390e245e476e7aa9f8046c538502e7873","n":83578},"t":{"r":[["return ",1],["-",5968],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"74022869e8d3aa75ed00415e209abb395cdf74286060987bb89e0a4b8591880e","n":83573},"t":{"r":[["return y, ",1],["-",5966],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"7b70e9915ab3834d83fa4c92ac75ea841c397666643bdace82478104cd9a4a03","n":83674},"t":{"r":[["return *",1],["-",5973],["x,\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"baf45b3eb56d0638b90fd3aa753db0a265d7a46dffea3f9ec2e20b75cc60d16e","n":83605},"t":{"r":[["raise ",1],["-",5970],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"108ee54a3a321078aafe1ad96cbd8ba0f4e9fc1a07459d90424b47320c3dd4eb","n":83602},"t":{"r":[["raise y from ",1],["-",5969],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"7c484b128df572a64ccea0c39020d0c7e14d15769d2983e3211dd02c527d7450","n":83606},"t":{"r":[["assert ",1],["-",5970],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"899558ceee42a29417e8c21045ccf9c467903cfbdc29cb2c469c9782ec20410e","n":83603},"t":{"r":[["assert y, ",1],["-",5969],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"89efd8ac040165c7a9348dcddd52894fcc9a046b43e0ec5992196cddc8e75dd7","n":83569},"t":{"r":[["yield ",1],["-",5967],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"1564182b83d34a4cc3097fcfaa2b51dffc5164477ac5d33a992b92c3cfc99aea","n":83653},"t":{"r":[["yield *",1],["-",5972],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"9c9c5851adaea596a2a5e698f310773725a56b51cc91e1a68aac179a667bfb0a","n":83601},"t":{"r":[["yield from ",1],["-",5969],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"1609b1f3781e230380ea35595d8b626b5295cdf5cbb7c4a3bd2bbc9ed5fafc6f","n":83579},"t":{"r":[["x; ",1],["-",5967],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"72c3a25e4ec75ab28f33166eb6273a17ddf157a84e7614cddd51177f0dcbbfe6","n":83596},"t":{"r":[["x; y; ",1],["-",5967],["x\n",1]]},"top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"d463fad973058959299938b9bdfcd9e680dfd547336ef2a3c2c719e7e0265ccc","n":83565},"t":{"r":[["x; x = ",1],["-",5965],["x\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":{"h":"548c17da91667468b89b697fdc1260886a0da89fb42cc1c9f457fe9ab8b19ab0","n":83610},"t":{"r":[["x; x: ",1],["-",5968],["x\n",1]]},"top":["x"]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"d15ac0d600dcf26b064f10acc32f589296e27297de35a3776a4bf5274e117857","n":83567},"t":{"r":[["x; return ",1],["-",5966],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"656368f0161de88b72067f5973cb3223b055af888110843bfc29e05561f67b22","n":83591},"t":{"r":[["x; raise y from ",1],["-",5967],["x\n",1]]},"top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"96709ca01859df29de3bc70e7b2976e23e48a74352933512ab81013da6e63539","n":83591},"t":{"r":[["x = 1; ",1],["-",5967],["x\n",1]]},"top":["x"]}
+{"all":["a"],"ids":"alias a ","parse":"ok","shape":{"h":"65ab340da7788aef06228f071f6c31aa0d4c644d2b626783543fcb1177223ed8","n":83576},"t":{"r":[["import a; ",1],["-",5967],["x\n",1]]},"top":["a"]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"7ae395a98db2d3c0677608d9fdce98f416f2bdd1686f2be0510cb5cca75a52cf","n":83590},"t":{"r":[["",1],["-",5969],["x;\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"88f08803f931ef9b5dd0d0e3047b3c198e017879a1c1c00b10077f54ed4cbbfc","n":83584},"t":{"r":[["match ",1],["-",5968],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"16e2d4058db64d64e3b9e7155e6ffd78da2f48e2619dede99032d6397b825f43","n":83607},"t":{"r":[["match ",1],["-",5968],["x, y\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"feb88389a09f58e213e8d515311fe2ce2fd0d98949b95546e5bb3f5fbe5a2118","n":83594},"t":{"r":[["match *a, ",1],["-",5966],["x\n",1]]},"top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":{"h":"8aff76850d3b376ffafba9a0a92168d8d38c4b55ac3d5e9b2f43d1d634b3580a","n":83613},"t":{"r":[["match ",1],["-",5968],["x\ny = 1\n",1]]},"top":["y"]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"9ab12f545db774e0368367133e78a593afd190df34c7fefd6083cbea9d38140a","n":83601},"t":{"r":[["x\nmatch ",1],["-",5968],["x\n",1]]},"top":[]}
+{"all":["match"],"ids":"","parse":"ok","shape":{"h":"3d022c864a15f7d541b0de22cba74d59ac4d205916a2ccfbeea1c93419193478","n":83576},"t":{"r":[["match = ",1],["-",5967],["x\n",1]]},"top":["match"]}
+{"all":["y"],"ids":"","parse":"ok","shape":{"h":"34215bcd0959e24ddb536648869f52cb50b17a2a4a357bf8110c5071a9669323","n":83592},"t":{"r":[["match.y = ",1],["-",5967],["x\n",1]]},"top":[]}
+{"all":["match"],"ids":"","parse":"ok","shape":{"h":"e46a1c06471197246d9ebedebcc96fd3ca1bd178f61d68d0ea5d0e28b8209862","n":83583},"t":{"r":[["match += ",1],["-",5967],["x\n",1]]},"top":["match"]}
+{"all":["match"],"ids":"AnnAssign 1","parse":"ok","shape":{"h":"bde61c82324e01ebc392e5587e0febd9d7c7cc7211d5745818f9847dc6d7b639","n":83576},"t":{"r":[["match: int = ",1],["-",5966],["x\n",1]]},"top":["match"]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"0e38dbdbdd659f89c594cc1c042fc7df3e5269f1bab9bfc985572012e841b191","n":83626},"t":{"r":[["match[0][1] = ",1],["-",5967],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"2650a25eb35b56d30e2172756a49ad48f98d87977e54c6ebad44f3ac76eeb393","n":83585},"t":{"r":[["match, ",1],["-",5967],["x\n",1]]},"top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":{"h":"0429fa03b3e3cd2ab0fb9aabaf9ad548736676d351a53e9805be32645872696f","n":83617},"t":{"r":[["match[0].y = ",1],["-",5967],["x\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"f28085c2d99d8e7a2a19820d07f3821d9ab9da3110ee02e1adf6b3ca98b38e2f","n":83566},"t":{"r":[["match *",1],["-",5964],["x, y\n",1]]},"top":[]}
+{"all":[],"band":true,"ids":"","parse":"ok","shape":{"h":"2d090518996096cf390b08a0a665a6ffa8b44267a2b79b1bd27c2a0ac75335e5","n":83706},"t":{"r":[["match *",1],["-",5974],["x, y\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"41c7511d341371abc49c38e7a3c52d53dd5e54a4e5e72ffdc516f0309370ae08","n":81101},"t":{"r":[["match(",1],["-",5790],["x)\n",1]]},"top":[]}
+{"all":[],"band":true,"ids":"","parse":"ok","shape":{"h":"f55b8317e358a530a6e88a9444c0f3467827b141351c089ef9682b5873fbe708","n":83201},"t":{"r":[["match(",1],["-",5940],["x)\n",1]]},"top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":{"h":"5d620c46b71b6b53419b6a82b4f1e8b0df323975963d34d26037d13b7d8153bb","n":80777},"t":{"r":[["return [a, x.y(",1],["-",5764],["x)]\n",1]]},"top":[]}
+{"all":["y"],"band":true,"ids":"","parse":"ok","shape":{"h":"bcaa1408181728f865ea8172f8776955c7a5a50ae39570b5921ca3be03da9df9","n":82877},"t":{"r":[["return [a, x.y(",1],["-",5914],["x)]\n",1]]},"top":[]}
+{"all":["z"],"ids":"","parse":"ok","shape":{"h":"18c8e820ff16e0678ebddc36b858cb1090f81bbdafab5a7868ed86da0e346431","n":81083},"t":{"r":[["x[(",1],["-",5786],["x).z] = 1\n",1]]},"top":[]}
+{"all":["z"],"band":true,"ids":"","parse":"ok","shape":{"h":"d1cfc67886c19b97a9c63bdbc8801334b4f11870a53a03cc891b64bf2e1b5c27","n":83183},"t":{"r":[["x[(",1],["-",5936],["x).z] = 1\n",1]]},"top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"bdd839983802f3585d1da901e314e1a6ef35beba8367226af32dd7714896b43a","n":80997},"t":{"r":[["x = [a for x[{**",1],["-",5777],["x}] in b]\n",1]]},"top":["x"]}
+{"all":["x"],"band":true,"ids":"","parse":"ok","shape":{"h":"7f2a4a473e4848086a0f518dc6fd6740046128ab21bd6c564700674a1a00e045","n":83097},"t":{"r":[["x = [a for x[{**",1],["-",5927],["x}] in b]\n",1]]},"top":["x"]}
+{"all":["a","x"],"ids":"","parse":"ok","shape":{"h":"53ba9c29bc5a19b6b7918752a6d66b6907465b68194dd66eca6978941695c929","n":80029},"t":{"r":[["x = await (a if b else (x[:(a := ",1],["-",5707],["x)]))\n",1]]},"top":["a","x"]}
+{"all":["a","x"],"band":true,"ids":"","parse":"ok","shape":{"h":"7b3076635b9a01dc78b6ffa139f16af853b69a7541fe2a0cb4ec3e0cc100f0ee","n":82129},"t":{"r":[["x = await (a if b else (x[:(a := ",1],["-",5857],["x)]))\n",1]]},"top":["a","x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":{"h":"30d9ef73e1a97b97850ba95d7144cce30bef279e73c7e0b950762e30a39ece69","n":81086},"t":{"r":[["x += (a, ",1],["-",5787],["x)\n",1]]},"top":["x"]}
+{"all":["x"],"band":true,"ids":"","parse":"ok","shape":{"h":"4efe0170ff095ae5a64d74bf531fd18f3739cc2d5362d3f54e3deb0791d03034","n":83186},"t":{"r":[["x += (a, ",1],["-",5937],["x)\n",1]]},"top":["x"]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"ebb65152f242e79c037d7f6a014c76d992f444d697483425d7df295972df5dd3","n":79923},"t":{"r":[["return {a: (a, f\"{a:{{**",1],["-",5699],["x}}}\")}\n",1]]},"top":[]}
+{"all":[],"band":true,"ids":"","parse":"ok","shape":{"h":"e8aa88f4fb334027e6992eccc0b99ae00590de96e1f16917d65ec20d326d2f56","n":82023},"t":{"r":[["return {a: (a, f\"{a:{{**",1],["-",5849],["x}}}\")}\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"cb1a889a51e9f6cb8fcccf479acc8196dfba0089fb0c7a3c63ec7b34a3c6d272","n":81108},"t":{"r":[["raise (a, ",1],["-",5790],["x)\n",1]]},"top":[]}
+{"all":[],"band":true,"ids":"","parse":"ok","shape":{"h":"55c5e377bd90d13a7761d88da9f1cfa7daa705557d7abf7e1ad1bde2a9e9a9c9","n":83208},"t":{"r":[["raise (a, ",1],["-",5940],["x)\n",1]]},"top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":{"h":"4c52ee6ba861163d0b7755e5aa69ac74620309071ed6eb3caa48557da7388ef9","n":80159},"t":{"r":[["raise f(a, x[:a if b else (x.y(",1],["-",5715],["x))])\n",1]]},"top":[]}
+{"all":["y"],"band":true,"ids":"","parse":"ok","shape":{"h":"341bad05519d8153e3cf644bca235067209298feb314b4c1ed10cfa8c3c8cff0","n":82259},"t":{"r":[["raise f(a, x[:a if b else (x.y(",1],["-",5865],["x))])\n",1]]},"top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":{"h":"86c61643193352442b0e1cd50abf60e7ba93f7f23c7a0051f48e79f51b80644b","n":81012},"t":{"r":[["y, x[lambda: (",1],["-",5779],["x)] = 1\n",1]]},"top":["y"]}
+{"all":["y"],"band":true,"ids":"","parse":"ok","shape":{"h":"e38f7b5a72f859ea6c07b6979646a4a4cfeaba5bd7f0b7a11856d2181cbbcb0d","n":83112},"t":{"r":[["y, x[lambda: (",1],["-",5929],["x)] = 1\n",1]]},"top":["y"]}
+{"all":["a","x"],"ids":"AnnAssign 1","parse":"ok","shape":{"h":"2ea24e9ff042eb2937633b116ae4c6359f6762d64e10ec6a31c82e7482f4c74d","n":80739},"t":{"r":[["x: int = await (f(a=",1],["-",5761],["x))\n",1]]},"top":["x"]}
+{"all":["a","x"],"band":true,"ids":"AnnAssign 1","parse":"ok","shape":{"h":"4913771dc1ace33c19f906c78d348da9dec2d8b245de59c6f44f526d708feb1c","n":82839},"t":{"r":[["x: int = await (f(a=",1],["-",5911],["x))\n",1]]},"top":["x"]}
+{"all":["z"],"ids":"","parse":"ok","shape":{"h":"761f626eb81ee07bd238ac98817648e60dde45baa69933fcf20f497af4893a2d","n":80685},"t":{"r":[["x[[a, (",1],["-",5756],["x).z]] = 1\n",1]]},"top":[]}
+{"all":["z"],"band":true,"ids":"","parse":"ok","shape":{"h":"01a13f0a37e75ae103769251cb6c4f37c3b7146ddec052169fcafaacc480b090","n":82785},"t":{"r":[["x[[a, (",1],["-",5906],["x).z]] = 1\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"63e88b9ebbb8c380b5008e81d0f4219a7a9b4cac6da58f4bee5f3e76f1c7941a","n":80670},"t":{"r":[["return [a for x[not (",1],["-",5754],["x)] in b]\n",1]]},"top":[]}
+{"all":[],"band":true,"ids":"","parse":"ok","shape":{"h":"23e6b8c89eb7efdce26d285e80a94887d71b72cb9c1c41ac2fbf94e431a2f20b","n":82770},"t":{"r":[["return [a for x[not (",1],["-",5904],["x)] in b]\n",1]]},"top":[]}
+{"all":["a","x"],"ids":"","parse":"ok","shape":{"h":"c032676bfdf2f469e89168e87e5419544470cb6ba11e678fe7357da03d522ce7","n":80729},"t":{"r":[["x += f(a=lambda: (",1],["-",5760],["x))\n",1]]},"top":["x"]}
+{"all":["a","x"],"band":true,"ids":"","parse":"ok","shape":{"h":"d44497382c333ebc56b366866e1daf82414d55a1a2db2d3409959dfc12764c97","n":82829},"t":{"r":[["x += f(a=lambda: (",1],["-",5910],["x))\n",1]]},"top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":{"h":"9292454cf642ad82dd79b551d419f5a1e764e459f0891a840580df61251e9089","n":80759},"t":{"r":[["x: [a, f(a, ",1],["-",5762],["x)]\n",1]]},"top":["x"]}
+{"all":["x"],"band":true,"ids":"AnnAssign 1","parse":"ok","shape":{"h":"b2e8474b39ff834f78b41d14a15523db621d9c4959d404f48a21feb6804ece0c","n":82859},"t":{"r":[["x: [a, f(a, ",1],["-",5912],["x)]\n",1]]},"top":["x"]}
+{"all":["a"],"ids":"","parse":"ok","shape":{"h":"1baf9a254559a726ce9e21c1b2a534107f662853d52fccdae9ef5b0d439bffe2","n":80282},"t":{"r":[["del x[a if b else (-((a := ",1],["-",5726],["x)))]\n",1]]},"top":["a"]}
+{"all":["a"],"band":true,"ids":"","parse":"ok","shape":{"h":"6f4a0ffde31b8322938cfa014b70b53fb19454d0879b13e69f39b2504042966b","n":82382},"t":{"r":[["del x[a if b else (-((a := ",1],["-",5876],["x)))]\n",1]]},"top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":{"h":"50e3c5eea2701ad26049e4329d23adeefb05bd0d2ed24f3ad09b63a03703569f","n":79965},"t":{"r":[["raise (yield (a, f(a=(",1],["-",5706],["x))))\n",1]]},"top":[]}
+{"all":["a"],"band":true,"ids":"","parse":"ok","shape":{"h":"aafb17e84c41edf06c9ba816e2a037bbaa9e31ca7e39a9ad671603ed6c6b71a5","n":82065},"t":{"r":[["raise (yield (a, f(a=(",1],["-",5856],["x))))\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"7766a57e35882382df463d0db329c21021d960e33fb1f7c49d5637127dce4499","n":80774},"t":{"r":[["return f(await (",1],["-",5766],["x))\n",1]]},"top":[]}
+{"all":[],"band":true,"ids":"","parse":"ok","shape":{"h":"04ff47a89b1e6efafa29198d1a3b35722b9f747e0263479c6154989d8a6da564","n":82874},"t":{"r":[["return f(await (",1],["-",5916],["x))\n",1]]},"top":[]}
+{"all":["a","x"],"ids":"","parse":"ok","shape":{"h":"daf8b1e1ddbd20d5f1f871f297cda39d5a3da2de1e812e72ca31a194904189e1","n":80681},"t":{"r":[["x += lambda a=a if b else ([a for a in b if ",1],["-",5751],["x]): b\n",1]]},"top":["x"]}
+{"all":["a","x"],"band":true,"ids":"","parse":"ok","shape":{"h":"7a4475182d4ea42f776092ba6a6c846bc2d6adfe78fd2ab39426a69e3ab7d6f2","n":82781},"t":{"r":[["x += lambda a=a if b else ([a for a in b if ",1],["-",5901],["x]): b\n",1]]},"top":["x"]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"d8827a73582a896920af5dc71a6eb2ba2036d4194774398e14cb7f468b9b80d6","n":80751},"t":{"r":[["return (yield x[a, ",1],["-",5762],["x])\n",1]]},"top":[]}
+{"all":[],"band":true,"ids":"","parse":"ok","shape":{"h":"5eba02e6f37a93692802c19612082421f3f4b97cf3a3b0a59640217eb0e5ccc9","n":82851},"t":{"r":[["return (yield x[a, ",1],["-",5912],["x])\n",1]]},"top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"26bc9414ae21897b0d81d18e6854d577f1698a7221da9faae1ba329f10f55514","n":80674},"t":{"r":[["x[not (-(",1],["-",5756],["x))] = 1\n",1]]},"top":[]}
+{"all":[],"band":true,"ids":"","parse":"ok","shape":{"h":"6294065294405a1d189b71b3992c47a8848b62c678c2d58e09beecabe925e83f","n":82774},"t":{"r":[["x[not (-(",1],["-",5906],["x))] = 1\n",1]]},"top":[]}
+{"all":["a","x"],"ids":"AnnAssign 1","parse":"ok","shape":{"h":"af64dade703cb498e9854b27a39cd8df60936a1904cb8ffc18a50164eb616a9b","n":80031},"t":{"r":[["x: int = (x[a, [a for a in [",1],["-",5705],["x]]])\n",1]]},"top":["a","x"]}
+{"all":["a","x"],"band":true,"ids":"AnnAssign 1","parse":"ok","shape":{"h":"5e2b5b566e091a5d89e6eda115eb19f532cfcee676ae930f9b7cb2dfa49a32b4","n":82131},"t":{"r":[["x: int = (x[a, [a for a in [",1],["-",5855],["x]]])\n",1]]},"top":["a","x"]}
+{"all":["a","x"],"ids":"","parse":"ok","shape":{"h":"583e7bd7d628ddec36c9e12c918305a98c140f2515e44aa3b17bbd4c65d4a2b0","n":81010},"t":{"r":[["x += lambda a=[",1],["-",5780],["x]: b\n",1]]},"top":["x"]}
+{"all":["a","x"],"band":true,"ids":"","parse":"ok","shape":{"h":"b0c6d4e3fd2e7f5a73cc194b6da195ab32787a9f38dd9a7f553b34e354a1a089","n":83110},"t":{"r":[["x += lambda a=[",1],["-",5930],["x]: b\n",1]]},"top":["x"]}
+{"all":["a"],"ids":"","parse":"ok","shape":{"h":"82b87004f0de978e25aa461ff08625753da0c866e247dba6f891bebf4b48c646","n":80798},"t":{"r":[["x[f(a=x[",1],["-",5763],["x])] = 1\n",1]]},"top":[]}
+{"all":["a"],"band":true,"ids":"","parse":"ok","shape":{"h":"649cd9df2b7cc75ff3c32659bf599c1265eb724fccddfcf0afd791120238d6e0","n":82898},"t":{"r":[["x[f(a=x[",1],["-",5913],["x])] = 1\n",1]]},"top":[]}
+{"all":["a","x"],"ids":"AnnAssign 1","parse":"ok","shape":{"h":"a5c3c9ecc7b199725a3e8ef93b87ba3e40195e16ccb5f6ca1f911f2b7300604f","n":80170},"t":{"r":[["x: int = [x[:[a for a in {**",1],["-",5713],["x}]] for a in b]\n",1]]},"top":["a","x"]}
+{"all":["a","x"],"band":true,"ids":"AnnAssign 1","parse":"ok","shape":{"h":"1277df7a53601463304d5dfbbc33c85c9bafc56f11e605422603b4ec757be48a","n":82270},"t":{"r":[["x: int = [x[:[a for a in {**",1],["-",5863],["x}]] for a in b]\n",1]]},"top":["a","x"]}

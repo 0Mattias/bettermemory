@@ -475,13 +475,14 @@
 //!   citation records and `check_symbol_citations` over parsed citations,
 //!   with a module's names a trait;
 //! - [`pysyntax`]: Python source as CPython 3.13.13 reads it, its first
-//!   five units: the eval-mode tokenizer `ast.literal_eval` meets, with
+//!   six units: the eval-mode tokenizer `ast.literal_eval` meets, with
 //!   string and number literals read, the literal reader with
 //!   `claims._canonical_repr`, the module-mode tokenizer `ast.parse`
 //!   meets (logical lines, INDENT and DEDENT) with its f-string modes
-//!   (names past ASCII and `\N{...}` read), and the expression grammar
+//!   (names past ASCII and `\N{...}` read), the expression grammar
 //!   over it (acceptance, the parser's stack and `ast2obj`'s depth, the
-//!   node arena);
+//!   node arena) and the simple statements (targets in Store and Del
+//!   context, imports; compound statements declined);
 //! - [`gitfile_rule`]: the rule a `.git` entry is followed by, whole on
 //!   POSIX: from a `gitdir:` file's bytes to the judge of an entry and the
 //!   walk git's discovery makes;

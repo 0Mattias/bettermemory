@@ -244,6 +244,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // its rows past Windows' C recursion limit are POSIX only.
         | "pysyntax_expr.jsonl"
         | "pysyntax_expr_posix.jsonl"
+        // Its simple statements (`gen_pysyntax_stmt`), likewise split.
+        | "pysyntax_stmt.jsonl"
+        | "pysyntax_stmt_posix.jsonl"
         | "machine_identity_python.jsonl"
         | "store_rotation_python.jsonl"
         // A reader's origin anchor or rekey payload nested past where

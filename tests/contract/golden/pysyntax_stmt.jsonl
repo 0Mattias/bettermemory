@@ -1,0 +1,1166 @@
+{"fixture":"pysyntax_stmt","python":"3.13.13","rows":1165}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Constant))","t":"x = 1","top":["x"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Name(Store),Name(Load)))","t":"x = y = z","top":["x","y"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Assign(Tuple(Name(Store),Name(Store),Store),Name(Load)))","t":"x, y = z","top":["x","y"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Tuple(Name(Store),Store),Name(Load)))","t":"x, = y","top":["x"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Assign(Starred(Name(Store),Store),Name(Load)))","t":"*a = b","top":["a"]}
+{"all":["a","b"],"ids":"","parse":"ok","shape":"Module(Assign(Tuple(Starred(Name(Store),Store),Starred(Name(Store),Store),Store),Name(Load)))","t":"*a, *b = c","top":["a","b"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Starred(Name(Load),Load)))","t":"x = *a","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Tuple(Starred(Name(Load),Load),Name(Load),Load)))","t":"x = *a, b","top":["x"]}
+{"all":["a","b"],"ids":"","parse":"ok","shape":"Module(Assign(List(Name(Store),Starred(Name(Store),Store),Store),Name(Load)))","t":"[a, *b] = c","top":["a","b"]}
+{"all":["a","b","c"],"ids":"","parse":"ok","shape":"Module(Assign(Tuple(Tuple(Name(Store),Name(Store),Store),Name(Store),Store),Name(Load)))","t":"(a, b), c = d","top":["a","b","c"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Assign(Tuple(Store),Name(Load)))","t":"() = x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Assign(List(Store),Name(Load)))","t":"[] = x","top":[]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Constant))","t":"(a) = 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Constant))","t":"((a)) = 1","top":["a"]}
+{"all":["a","b"],"ids":"","parse":"ok","shape":"Module(Assign(Tuple(Starred(Name(Store),Store),Name(Store),Store),Name(Load)))","t":"(*a, b) = c","top":["a","b"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Assign(Starred(List(Starred(Name(Store),Store),Store),Store),Name(Load)))","t":"*[*a] = b","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Assign(Starred(Name(Store),Store),Name(Load)))","t":"*(a) = b","top":["a"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Assign(Subscript(Name(Load),Slice(Constant,Constant),Store),Constant))","t":"x[1:2] = 3","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Assign(Subscript(Name(Load),Tuple(Name(Load),Slice(Name(Load),Name(Load)),Load),Store),Constant))","t":"x[a, b:c] = 1","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Attribute(Call(Name(Load)),Store),Constant))","t":"f().x = 1","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Assign(Subscript(Call(Name(Load)),Constant,Store),Constant))","t":"f()[0] = 1","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Attribute(Constant,Store),Constant))","t":"'a'.x = 1","top":[]}
+{"all":["y","z"],"ids":"","parse":"ok","shape":"Module(Assign(Attribute(Attribute(Name(Load),Load),Store),Constant))","t":"x.y.z = 1","top":[]}
+{"parse":"SyntaxError","t":"f() = 1"}
+{"parse":"SyntaxError","t":"a + 1 = 2"}
+{"parse":"SyntaxError","t":"-a = 1"}
+{"parse":"SyntaxError","t":"None = 1"}
+{"parse":"SyntaxError","t":"True = 1"}
+{"parse":"SyntaxError","t":"... = 1"}
+{"parse":"SyntaxError","t":"1 = x"}
+{"parse":"SyntaxError","t":"x = 1 = 2"}
+{"parse":"SyntaxError","t":"x == y = 1"}
+{"parse":"SyntaxError","t":"(x := 1) = 2"}
+{"parse":"SyntaxError","t":"await x = 1"}
+{"parse":"SyntaxError","t":"lambda: x = 1"}
+{"parse":"SyntaxError","t":"x if y else z = 1"}
+{"parse":"SyntaxError","t":"f'' = 1"}
+{"parse":"SyntaxError","t":"{a} = 1"}
+{"parse":"SyntaxError","t":"{a: b} = 1"}
+{"parse":"SyntaxError","t":"[x for x in y] = 1"}
+{"parse":"SyntaxError","t":"(yield) = 1"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Yield))","t":"x = (yield)","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Yield))","t":"x = yield","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Yield(Name(Load))))","t":"x = yield y","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Yield(Tuple(Name(Load),Name(Load),Load))))","t":"x = yield y, z","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Yield(Starred(Name(Load),Load))))","t":"x = yield *a","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Yield(Tuple(Starred(Name(Load),Load),Name(Load),Load))))","t":"x = yield *a, b","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),YieldFrom(Name(Load))))","t":"x = yield from y","top":["x"]}
+{"parse":"SyntaxError","t":"x = yield from y, z"}
+{"parse":"SyntaxError","t":"x = yield from"}
+{"all":["a","b"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Name(Store),Yield(Name(Load))))","t":"a = b = yield c","top":["a","b"]}
+{"parse":"SyntaxError","t":"a = yield = c"}
+{"parse":"SyntaxError","t":"x = yield )"}
+{"parse":"SyntaxError","t":"x.None = 1"}
+{"parse":"SyntaxError","t":"x ="}
+{"parse":"SyntaxError","t":"= 1"}
+{"parse":"SyntaxError","t":"x = = 1"}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load)))","t":"x: int","top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load),Constant))","t":"x: int = 1","top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load),Tuple(Constant,Constant,Load)))","t":"x: int = 1, 2","top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load),Tuple(Starred(Name(Load),Load),Name(Load),Load)))","t":"x: int = *a, b","top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load),Yield))","t":"x: int = yield","top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load),YieldFrom(Name(Load))))","t":"x: int = yield from y","top":["x"]}
+{"parse":"SyntaxError","t":"x: yield"}
+{"parse":"SyntaxError","t":"x: *a"}
+{"parse":"SyntaxError","t":"x: a := 1"}
+{"all":["a","x"],"ids":"AnnAssign 1","parse":"ok","shape":"Module(AnnAssign(Name(Store),NamedExpr(Name(Store),Constant)))","t":"x: (a := 1)","top":["a","x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":"Module(AnnAssign(Name(Store),Lambda(arguments,Name(Load))))","t":"x: lambda: y","top":["x"]}
+{"all":["a"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load)))","t":"(a): int","top":["a"]}
+{"all":["a"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load),Constant))","t":"((a)): int = 1","top":["a"]}
+{"all":["b"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Attribute(Name(Load),Store),Name(Load)))","t":"(a.b): int","top":[]}
+{"all":["b"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Attribute(Name(Load),Store),Name(Load),Constant))","t":"a.b: int = 1","top":[]}
+{"all":[],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Subscript(Name(Load),Constant,Store),Name(Load)))","t":"a[0]: int","top":[]}
+{"all":[],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Subscript(Name(Load),Constant,Store),Name(Load)))","t":"(a[0]): int","top":[]}
+{"parse":"SyntaxError","t":"a, b: int"}
+{"parse":"SyntaxError","t":"(a, b): int"}
+{"parse":"SyntaxError","t":"[a]: int"}
+{"parse":"SyntaxError","t":"*a: int"}
+{"parse":"SyntaxError","t":"(*a): int"}
+{"parse":"SyntaxError","t":"f(): int"}
+{"parse":"SyntaxError","t":"True: int"}
+{"parse":"SyntaxError","t":"x:"}
+{"parse":"SyntaxError","t":"x: int ="}
+{"parse":"SyntaxError","t":"x: int = 1 = 2"}
+{"parse":"SyntaxError","t":"(a).b: c"}
+{"parse":"SyntaxError","t":"(a)[0]: c"}
+{"parse":"SyntaxError","t":"(a)(b).c: d"}
+{"parse":"SyntaxError","t":"((a)).b: c"}
+{"parse":"SyntaxError","t":"(a.b).c: d"}
+{"parse":"SyntaxError","t":"(a[0]).b: c"}
+{"parse":"SyntaxError","t":"(a).b: c = 1"}
+{"parse":"SyntaxError","t":"x; (a).b: int"}
+{"parse":"SyntaxError","t":"(a) .b: int"}
+{"parse":"SyntaxError","t":"(match).b: int"}
+{"parse":"SyntaxError","t":"((a).b).c: d"}
+{"parse":"SyntaxError","t":"(a.b)(c).d: e"}
+{"parse":"SyntaxError","t":"(a)[0].b: c"}
+{"parse":"SyntaxError","t":"(a)\\\n.b: c"}
+{"all":["b"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Attribute(Name(Load),Store),Name(Load)))","t":"((a).b): int","top":[]}
+{"all":["b"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Attribute(Name(Load),Store),Name(Load),Constant))","t":"((a).b): c = 1","top":[]}
+{"all":["b"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Attribute(Call(Name(Load)),Store),Name(Load)))","t":"(f()).b: c","top":[]}
+{"all":["b"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Attribute(Tuple(Name(Load),Load),Store),Name(Load)))","t":"(a,).b: c","top":[]}
+{"all":["b"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Attribute(List(Name(Load),Load),Store),Name(Load)))","t":"[a].b: c","top":[]}
+{"all":["b"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Attribute(Constant,Store),Name(Load)))","t":"(1).b: c","top":[]}
+{"all":["b"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Attribute(Constant,Store),Name(Load)))","t":"('s').b: c","top":[]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(Assign(Attribute(Name(Load),Store),Constant))","t":"(a).b = 1","top":[]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(AugAssign(Attribute(Name(Load),Store),Add,Constant))","t":"(a).b += 1","top":[]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(Delete(Attribute(Name(Load),Del)))","t":"del (a).b","top":[]}
+{"all":["a"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load)))","t":"(a): c","top":["a"]}
+{"all":["a"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load)))","t":"((a)): c","top":["a"]}
+{"all":["b"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Attribute(Name(Load),Store),Name(Load)))","t":"(a.b): c","top":[]}
+{"parse":"SyntaxError","t":"x: int: str"}
+{"all":["x","y"],"ids":"AnnAssign 1;AnnAssign 1","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load)),AnnAssign(Name(Store),Name(Load)))","t":"x: int; y: str","top":["x","y"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Add,Constant))","t":"a += 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Sub,Constant))","t":"a -= 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Mult,Constant))","t":"a *= 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Div,Constant))","t":"a /= 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),FloorDiv,Constant))","t":"a //= 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Mod,Constant))","t":"a %= 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),MatMult,Constant))","t":"a @= 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),BitAnd,Constant))","t":"a &= 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),BitOr,Constant))","t":"a |= 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),BitXor,Constant))","t":"a ^= 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),RShift,Constant))","t":"a >>= 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),LShift,Constant))","t":"a <<= 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Pow,Constant))","t":"a **= 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Add,Yield))","t":"a += yield","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Add,YieldFrom(Name(Load))))","t":"a += yield from b","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Add,Tuple(Constant,Constant,Load)))","t":"a += 1, 2","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Add,Tuple(Starred(Name(Load),Load),Name(Load),Load)))","t":"a += *b, c","top":["a"]}
+{"parse":"SyntaxError","t":"(a, b) += 1"}
+{"parse":"SyntaxError","t":"[a] += 1"}
+{"parse":"SyntaxError","t":"a, b += 1"}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Add,Constant))","t":"(a) += 1","top":["a"]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(AugAssign(Attribute(Name(Load),Store),Add,Constant))","t":"a.b += 1","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(AugAssign(Subscript(Name(Load),Constant,Store),Add,Constant))","t":"a[0] += 1","top":[]}
+{"parse":"SyntaxError","t":"f() += 1"}
+{"parse":"SyntaxError","t":"a + 1 += 2"}
+{"parse":"SyntaxError","t":"*a += 1"}
+{"parse":"SyntaxError","t":"x += 1 = 2"}
+{"parse":"SyntaxError","t":"x += y += 1"}
+{"parse":"SyntaxError","t":"x +="}
+{"parse":"SyntaxError","t":"x = y += 1"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Return)","t":"return","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Return(Name(Load)))","t":"return x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Return(Tuple(Name(Load),Name(Load),Load)))","t":"return x, y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Return(Tuple(Starred(Name(Load),Load),Name(Load),Load)))","t":"return *a, b","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Return(Starred(Name(Load),Load)))","t":"return *a","top":[]}
+{"parse":"SyntaxError","t":"return x = 1"}
+{"parse":"SyntaxError","t":"return yield"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Return(Yield))","t":"return (yield)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Return)","t":"return;","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Raise)","t":"raise","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Raise(Name(Load)))","t":"raise a","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Raise(Name(Load),Name(Load)))","t":"raise a from b","top":[]}
+{"parse":"SyntaxError","t":"raise from b"}
+{"parse":"SyntaxError","t":"raise a from"}
+{"parse":"SyntaxError","t":"raise a, b"}
+{"parse":"SyntaxError","t":"raise *a"}
+{"parse":"SyntaxError","t":"raise a from b from c"}
+{"parse":"SyntaxError","t":"raise a := 1"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Assert(Name(Load)))","t":"assert a","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Assert(Name(Load),Name(Load)))","t":"assert a, b","top":[]}
+{"parse":"SyntaxError","t":"assert"}
+{"parse":"SyntaxError","t":"assert a,"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Assert(Tuple(Name(Load),Name(Load),Load)))","t":"assert (a, b)","top":[]}
+{"parse":"SyntaxError","t":"assert a, b, c"}
+{"parse":"SyntaxError","t":"assert *a"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Pass)","t":"pass","top":[]}
+{"parse":"SyntaxError","t":"pass x"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Break)","t":"break","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Continue)","t":"continue","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Break,Continue)","t":"break; continue","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Delete(Name(Del)))","t":"del x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Delete(Name(Del),Name(Del)))","t":"del x, y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Delete(Name(Del)))","t":"del x,","top":[]}
+{"parse":"SyntaxError","t":"del"}
+{"all":["d"],"ids":"","parse":"ok","shape":"Module(Delete(Name(Del),List(Name(Del),Del),Attribute(Name(Load),Del),Subscript(Name(Load),Constant,Del)))","t":"del (a), [b], c.d, e[0]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Delete(Tuple(Del)))","t":"del ()","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Delete(List(Del)))","t":"del []","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Delete(Tuple(Name(Del),Del)))","t":"del (a,)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Delete(List(Name(Del),Tuple(Name(Del),Name(Del),Del),Del)))","t":"del [a, (b, c)]","top":[]}
+{"parse":"SyntaxError","t":"del *a"}
+{"parse":"SyntaxError","t":"del (*a,)"}
+{"parse":"SyntaxError","t":"del [*a]"}
+{"parse":"SyntaxError","t":"del f()"}
+{"parse":"SyntaxError","t":"del a + 1"}
+{"parse":"SyntaxError","t":"del (a := 1)"}
+{"parse":"SyntaxError","t":"del x = 1"}
+{"parse":"SyntaxError","t":"del x,,"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Delete(Name(Del),Name(Del)))","t":"del x, y,","top":[]}
+{"all":["b","c"],"ids":"","parse":"ok","shape":"Module(Delete(Attribute(Attribute(Name(Load),Load),Del),Subscript(Subscript(Name(Load),Name(Load),Load),Name(Load),Del)))","t":"del a.b.c, d[e][f]","top":[]}
+{"parse":"SyntaxError","t":"del (yield)"}
+{"all":[],"ids":"Global a","parse":"ok","shape":"Module(Global)","t":"global a","top":[]}
+{"all":[],"ids":"Global a,b","parse":"ok","shape":"Module(Global)","t":"global a, b","top":[]}
+{"parse":"SyntaxError","t":"global a,"}
+{"parse":"SyntaxError","t":"global"}
+{"parse":"SyntaxError","t":"global a b"}
+{"parse":"SyntaxError","t":"global a.b"}
+{"all":[],"ids":"Nonlocal x","parse":"ok","shape":"Module(Nonlocal)","t":"nonlocal x","top":[]}
+{"all":[],"ids":"Nonlocal x,y","parse":"ok","shape":"Module(Nonlocal)","t":"nonlocal x, y","top":[]}
+{"parse":"SyntaxError","t":"nonlocal"}
+{"parse":"SyntaxError","t":"global None"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Yield))","t":"yield","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Yield(Name(Load))))","t":"yield x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Yield(Tuple(Name(Load),Name(Load),Load))))","t":"yield x, y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Yield(Tuple(Starred(Name(Load),Load),Name(Load),Load))))","t":"yield *a, b","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Yield(Starred(Name(Load),Load))))","t":"yield *a","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(YieldFrom(Name(Load))))","t":"yield from x","top":[]}
+{"parse":"SyntaxError","t":"yield from x, y"}
+{"parse":"SyntaxError","t":"yield from"}
+{"parse":"SyntaxError","t":"yield = 1"}
+{"parse":"SyntaxError","t":"yield x = 1"}
+{"all":["a"],"ids":"alias a ","parse":"ok","shape":"Module(Import(alias))","t":"import a","top":["a"]}
+{"all":["a"],"ids":"alias a.b.c ","parse":"ok","shape":"Module(Import(alias))","t":"import a.b.c","top":["a"]}
+{"all":["d"],"ids":"alias a.b.c d","parse":"ok","shape":"Module(Import(alias))","t":"import a.b.c as d","top":["d"]}
+{"all":["a"],"ids":"alias a.b ","parse":"ok","shape":"Module(Import(alias))","t":"import a . b","top":["a"]}
+{"all":["a","c","d"],"ids":"alias a ;alias b c;alias d.e ","parse":"ok","shape":"Module(Import(alias,alias,alias))","t":"import a, b as c, d.e","top":["a","c","d"]}
+{"parse":"SyntaxError","t":"import a as b.c"}
+{"parse":"SyntaxError","t":"import (a)"}
+{"parse":"SyntaxError","t":"import a,"}
+{"parse":"SyntaxError","t":"import"}
+{"parse":"SyntaxError","t":"import a."}
+{"parse":"SyntaxError","t":"import a as"}
+{"parse":"SyntaxError","t":"import *"}
+{"parse":"SyntaxError","t":"import a as None"}
+{"parse":"SyntaxError","t":"import None"}
+{"parse":"SyntaxError","t":"import a.if"}
+{"all":["b"],"ids":"ImportFrom a 0;alias b ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from a import b","top":["b"]}
+{"all":["b","c"],"ids":"ImportFrom a 0;alias b ;alias c ","parse":"ok","shape":"Module(ImportFrom(alias,alias))","t":"from a import b, c","top":["b","c"]}
+{"all":["c","e"],"ids":"ImportFrom a 0;alias b c;alias d e","parse":"ok","shape":"Module(ImportFrom(alias,alias))","t":"from a import b as c, d as e","top":["c","e"]}
+{"all":["b"],"ids":"ImportFrom a 0;alias b ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from a import (b)","top":["b"]}
+{"all":["b"],"ids":"ImportFrom a 0;alias b ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from a import (b,)","top":["b"]}
+{"all":["b","c"],"ids":"ImportFrom a 0;alias b ;alias c ","parse":"ok","shape":"Module(ImportFrom(alias,alias))","t":"from a import (b, c,)","top":["b","c"]}
+{"parse":"SyntaxError","t":"from a import b,"}
+{"parse":"SyntaxError","t":"from a import ()"}
+{"parse":"SyntaxError","t":"from a import (*)"}
+{"all":["*"],"ids":"ImportFrom a 0;alias * ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from a import *","top":["*"]}
+{"parse":"SyntaxError","t":"from a import *, b"}
+{"all":["*"],"ids":"ImportFrom  1;alias * ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from . import *","top":["*"]}
+{"all":["x"],"ids":"ImportFrom  2;alias x ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from .. import x","top":["x"]}
+{"all":["x"],"ids":"ImportFrom  3;alias x ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from ... import x","top":["x"]}
+{"all":["x"],"ids":"ImportFrom  4;alias x ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from .... import x","top":["x"]}
+{"all":["x"],"ids":"ImportFrom  3;alias x ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from . . . import x","top":["x"]}
+{"all":["c"],"ids":"ImportFrom a.b 1;alias c ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from .a.b import c","top":["c"]}
+{"all":["b"],"ids":"ImportFrom a 1;alias b ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from . a import b","top":["b"]}
+{"all":["c","d"],"ids":"ImportFrom a 3;alias b c;alias d ","parse":"ok","shape":"Module(ImportFrom(alias,alias))","t":"from ... a import (b as c, d,)","top":["c","d"]}
+{"parse":"SyntaxError","t":"from import x"}
+{"parse":"SyntaxError","t":"from a"}
+{"parse":"SyntaxError","t":"from a import"}
+{"parse":"SyntaxError","t":"from a. import b"}
+{"parse":"SyntaxError","t":"from a import b.c"}
+{"parse":"SyntaxError","t":"from a import (b"}
+{"parse":"SyntaxError","t":"from None import a"}
+{"parse":"SyntaxError","t":"from a import None"}
+{"parse":"SyntaxError","t":"from a import b as None"}
+{"all":["braces"],"ids":"ImportFrom __future__ 0;alias braces ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from __future__ import braces","top":["braces"]}
+{"all":["annotations"],"ids":"ImportFrom __future__ 0;alias annotations ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from __future__ import annotations","top":["annotations"]}
+{"all":["barry_as_FLUFL"],"ids":"ImportFrom __future__ 0;alias barry_as_FLUFL ","parse":"ok","shape":"Module(ImportFrom(alias),Expr(Compare(Constant,NotEq,Constant)))","t":"from __future__ import barry_as_FLUFL\n1 <> 2\n","top":["barry_as_FLUFL"]}
+{"parse":"SyntaxError","t":"from __future__ import barry_as_FLUFL\n1 != 2\n"}
+{"parse":"SyntaxError","t":"1 <> 2\nfrom __future__ import barry_as_FLUFL\n"}
+{"all":["barry_as_FLUFL","x"],"ids":"ImportFrom __future__ 0;alias barry_as_FLUFL ","parse":"ok","shape":"Module(ImportFrom(alias),Assign(Name(Store),Compare(Constant,NotEq,Lt,Constant,Constant)))","t":"from __future__ import barry_as_FLUFL; x = 1 <> 2 < 3\n","top":["barry_as_FLUFL","x"]}
+{"all":["a","b"],"ids":"ImportFrom __future__ 0;alias a ;alias barry_as_FLUFL b","parse":"ok","shape":"Module(ImportFrom(alias,alias),Expr(JoinedStr(FormattedValue(Compare(Name(Load),NotEq,Name(Load))))))","t":"from __future__ import (a, barry_as_FLUFL as b)\nf'{x <> y}'\n","top":["a","b"]}
+{"all":["barry_as_FLUFL","x"],"ids":"ImportFrom __future__ 0;alias barry_as_FLUFL ","parse":"ok","shape":"Module(Assign(Name(Store),Constant),ImportFrom(alias),Expr(Compare(Name(Load),NotEq,Name(Load))))","t":"x = 1\nfrom __future__ import barry_as_FLUFL\nx <> y\n","top":["barry_as_FLUFL","x"]}
+{"parse":"SyntaxError","t":"from .__future__ import barry_as_FLUFL\n1 <> 2\n"}
+{"parse":"SyntaxError","t":"from __future__.a import barry_as_FLUFL\n1 <> 2\n"}
+{"parse":"SyntaxError","t":"from __future__ import barry_as_flufl\n1 <> 2\n"}
+{"parse":"SyntaxError","t":"import __future__\n1 <> 2\n"}
+{"parse":"SyntaxError","t":"from __future__ import *\n1 <> 2\n"}
+{"all":["barry_as_FLUFL"],"ids":"ImportFrom __future__ 0;alias barry_as_FLUFL ","parse":"ok","shape":"Module(ImportFrom(alias),Expr(Compare(Constant,NotEq,Constant)))","t":"from __future__ import \uff42arry_as_FLUFL\n1 <> 2\n","top":["barry_as_FLUFL"]}
+{"parse":"SyntaxError","t":"from \uff3f_future__ import barry_as_FLUFL\n1 <> 2\n"}
+{"all":["a","barry_as_FLUFL"],"ids":"ImportFrom __future__ 0;alias barry_as_FLUFL ","parse":"ok","shape":"Module(ImportFrom(alias),Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load),Compare(Name(Load),NotEq,Name(Load))))))","t":"from __future__ import barry_as_FLUFL\n[a for a in b if a <> c]\n","top":["a","barry_as_FLUFL"]}
+{"all":[],"ids":"Nonlocal x","parse":"ok","shape":"Module(Nonlocal,Break,Continue,Return)","t":"nonlocal x\nbreak\ncontinue\nreturn\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"x;","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)),Expr(Name(Load)))","t":"x; y","top":[]}
+{"parse":"SyntaxError","t":"x;;"}
+{"parse":"SyntaxError","t":";x"}
+{"parse":"SyntaxError","t":"x; ;"}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Constant),Assign(Name(Store),Constant))","t":"x = 1; y = 2;","top":["x","y"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Pass,Pass)","t":"pass; pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Return(Name(Load)),Return)","t":"return x; return","top":[]}
+{"all":["a","c"],"ids":"alias a ;ImportFrom b 0;alias c ","parse":"ok","shape":"Module(Import(alias),ImportFrom(alias))","t":"import a; from b import c","top":["a","c"]}
+{"parse":"SyntaxError","t":"x; if y: pass"}
+{"parse":"SyntaxError","t":"x; def f(): pass"}
+{"parse":"ok","t":"x; type X = int","want":"D"}
+{"parse":"SyntaxError","t":"x $; type X = int"}
+{"parse":"SyntaxError","t":"x; type X"}
+{"parse":"SyntaxError","t":"x = 1; match x:"}
+{"parse":"ok","t":"x\\\n; type X = int","want":"D"}
+{"parse":"SyntaxError","t":"(x;\n type X = int)"}
+{"parse":"SyntaxError","t":"x; else: pass"}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Constant),Assign(Name(Store),Constant))","t":"x = 1\ny = 2\n","top":["x","y"]}
+{"parse":"IndentationError","t":"x = 1\n  y = 2\n"}
+{"parse":"ok","t":"x = 1\nif y:\n    z = 2\n","want":"D"}
+{"parse":"ok","t":"if y:\n    z = 2\n","want":"D"}
+{"parse":"SyntaxError","t":"x $\nif y: pass\n"}
+{"parse":"ok","t":"for x in y: pass","want":"D"}
+{"parse":"ok","t":"while x: pass","want":"D"}
+{"parse":"ok","t":"with x: pass","want":"D"}
+{"parse":"ok","t":"try:\n    pass\nfinally:\n    pass\n","want":"D"}
+{"parse":"ok","t":"def f(): pass","want":"D"}
+{"parse":"ok","t":"class C: pass","want":"D"}
+{"parse":"ok","t":"async def f(): pass","want":"D"}
+{"parse":"ok","t":"@d\ndef f(): pass","want":"D"}
+{"parse":"SyntaxError","t":"else: pass"}
+{"parse":"SyntaxError","t":"elif x: pass"}
+{"parse":"SyntaxError","t":"except: pass"}
+{"parse":"SyntaxError","t":"finally: pass"}
+{"parse":"ok","t":"type X = int","want":"D"}
+{"parse":"ok","t":"type X[T] = list[T]","want":"D"}
+{"all":["type"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Constant))","t":"type = 1","top":["type"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))))","t":"type(x)","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Attribute(Name(Load),Store),Constant))","t":"type.x = 1","top":[]}
+{"parse":"SyntaxError","t":"type x"}
+{"all":["match"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Constant))","t":"match = 1","top":["match"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))))","t":"match(x)","top":[]}
+{"all":["x"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(AnnAssign(Attribute(Name(Load),Store),Name(Load),Constant))","t":"match.x: int = 1","top":[]}
+{"parse":"ok","t":"match x:\n    case 1: pass\n","want":"D"}
+{"parse":"SyntaxError","t":"match x: pass"}
+{"parse":"IndentationError","t":"match x:","want":"D"}
+{"all":["case"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Constant))","t":"case = 1","top":["case"]}
+{"parse":"SyntaxError","t":"case x: pass"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(BinOp(Name(Load),RShift,Name(Load)),Name(Load),Load)))","t":"print >> f, x","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Constant))","t":"\uff58 = 1","top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load)))","t":"\uff58: int","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Add,Constant))","t":"\uff58 += 1","top":["x"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Delete(Name(Del)))","t":"del \uff58","top":[]}
+{"all":[],"ids":"Global x","parse":"ok","shape":"Module(Global)","t":"global \uff58","top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(Assign(Attribute(Name(Load),Store),Constant))","t":"x.\uff59 = 1","top":[]}
+{"all":["k","x"],"ids":"","parse":"ok","shape":"Module(Assign(Attribute(Call(Name(Load),keyword(Constant)),Store),Constant))","t":"f(\uff4b=1).x = 1","top":[]}
+{"all":["o"],"ids":"alias m.n o","parse":"ok","shape":"Module(Import(alias))","t":"import \uff4d.\uff4e as \uff4f","top":["o"]}
+{"all":["o"],"ids":"ImportFrom m 0;alias n o","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from \uff4d import \uff4e as \uff4f","top":["o"]}
+{"all":["*"],"ids":"ImportFrom m 1;alias * ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from .\uff4d import *","top":["*"]}
+{"parse":"ValueError","t":"\uff2e\uff4f\uff4e\uff45 = 1"}
+{"parse":"ValueError","t":"\uff2e\uff4f\uff4e\uff45: int"}
+{"parse":"ValueError","t":"\uff2e\uff4f\uff4e\uff45 += 1"}
+{"parse":"ValueError","t":"x = \uff2e\uff4f\uff4e\uff45 = 1"}
+{"parse":"ValueError","t":"del \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"global \uff34\uff52\uff55\uff45"}
+{"parse":"ValueError","t":"nonlocal a, \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"import \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"import a.\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"import a as \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"from \uff2e\uff4f\uff4e\uff45 import a"}
+{"parse":"ValueError","t":"from a import \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"from a import b as \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"from .\uff34\uff52\uff55\uff45 import a"}
+{"parse":"SyntaxError","t":"\uff49\uff4d\uff50\uff4f\uff52\uff54 a"}
+{"all":["import"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Constant))","t":"\uff49\uff4d\uff50\uff4f\uff52\uff54 = 1","top":["import"]}
+{"parse":"SyntaxError","t":"\uff44\uff45\uff4c x"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"\uff50\uff41\uff53\uff53","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"\uff52\uff45\uff54\uff55\uff52\uff4e","top":[]}
+{"parse":"SyntaxError","t":"\uff4d\uff41\uff54\uff43\uff48 x:\n    case 1: pass\n"}
+{"parse":"SyntaxError","t":"\uff54\uff59\uff50\uff45 X = int"}
+{"parse":"ok","t":"type \uff38 = int","want":"D"}
+{"parse":"ValueError","t":"x.\uff2e\uff4f\uff4e\uff45 = 1"}
+{"parse":"ValueError","t":"f()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"a+1+=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"[a]:\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"del f(),\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"-x = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"(a, b) += \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match \uff2e\uff4f\uff4e\uff45: pass"}
+{"parse":"ValueError","t":"match \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match x, *\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match a := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match.\uff2e\uff4f\uff4e\uff45 = 1"}
+{"parse":"SyntaxError","t":"f(): int = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"x = f() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"del f(); \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"*a: \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"*a, b: \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"*a += \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"*f() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"f() = a if \uff2e\uff4f\uff4e\uff45 else b"}
+{"parse":"ValueError","t":"f() = a | \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"f() = a < \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"f() = yield \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"[a] + 1 = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"(a) + 1 = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"([a]) + 1 = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"() + 1 = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"(x for x in y) + 1 = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"((x for x in y)) + 1 = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"((a, b)) + 1 = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"True + 1 = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"[x for x in y] + 1 = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"x == y = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"not x = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"await x = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"lambda: x = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"f(), x = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"x, f() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"x, f(), = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"f(), *x = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"f(), None = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"a, b += \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"del x, f(), \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"del f(), *\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"del *a, \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"(a).b: \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"(a).b: int = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"f(): lambda: \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"f(): a := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"x; f() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"f() = \uff2e\uff4f\uff4e\uff45 = 1"}
+{"parse":"ValueError","t":"f() += yield \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(x)\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match[0]\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match -1\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(x)\ndel f(),\uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(x)\n[a]:\uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(x)\na+1+=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(x)\n-x = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match (x),\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match -1, 2\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match *a, b\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(x) if y else z\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match[0] = 1\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match *x\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match.x\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match(x); f()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"f()=\uff2e\uff4f\uff4e\uff45\nmatch(x)"}
+{"parse":"ValueError","t":"match(x)\nmatch \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"print(x)\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"print.x\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"f()=\uff2e\uff4f\uff4e\uff45\nprint -1"}
+{"parse":"SyntaxError","t":"match(x).y = 1\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(x), y = 1, 2\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match[0].y = 1\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match(x).y = z = 1\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match(x).y += 1\nf()=\uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match f(x) = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match f(x) := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match f(x) = z = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(x)\nmatch f(x) = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(*a) = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match (*a) = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(**a) = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(a=1) = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(*a)\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(*a)\ndel f(), \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(*a)\n[a]: \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(*a)\na + 1 += \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"y = 1\nmatch(*a)\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(*a)\nf() = \uff2e\uff4f\uff4e\uff45; y"}
+{"parse":"SyntaxError","t":"match(**a)\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(a, b=1)\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(a=1)\nx = 1\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(*a).y = 1\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(*a); f() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(*a, b=1)\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(*a if b else c)\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match(a := 1, b=2)\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Starred(Name(Load),Load))))","t":"match(*a)","top":[]}
+{"parse":"ValueError","t":"match(*a)[0] = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match(x, *a) = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match(x, **a)\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"f(*a) = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match(*a, **b)\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match(**a, b=1)\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match(a=lambda: 1)\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match(a=not b)\nf() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match(a=\uff2e\uff4f\uff4e\uff45)"}
+{"parse":"ValueError","t":"match(a=1, \uff2e\uff4f\uff4e\uff45)"}
+{"parse":"SyntaxError","t":"match(a=1, a := \uff2e\uff4f\uff4e\uff45)"}
+{"parse":"SyntaxError","t":"match(a=1, (a := \uff2e\uff4f\uff4e\uff45))"}
+{"parse":"SyntaxError","t":"match(*a)\nf(a=1, x + \uff2e\uff4f\uff4e\uff45)"}
+{"parse":"SyntaxError","t":"match(x)\nf(a=1, a := \uff2e\uff4f\uff4e\uff45)"}
+{"parse":"SyntaxError","t":"match(*a)\nf(**a, *\uff2e\uff4f\uff4e\uff45)"}
+{"parse":"SyntaxError","t":"match(*a)\nf(a=1, g(\uff2e\uff4f\uff4e\uff45))"}
+{"parse":"ValueError","t":"match(*a)\nf(a=1, \uff2e\uff4f\uff4e\uff45)"}
+{"parse":"ValueError","t":"match(*a)\nf(a=1, *\uff2e\uff4f\uff4e\uff45)"}
+{"parse":"ValueError","t":"match(*a)\nf(a=1, *(x + \uff2e\uff4f\uff4e\uff45))"}
+{"parse":"ValueError","t":"match(*a)\nf(a=1, b=\uff2e\uff4f\uff4e\uff45)"}
+{"parse":"ValueError","t":"match(*a)\nf(**a, \uff2e\uff4f\uff4e\uff45.x)"}
+{"parse":"ValueError","t":"f(a=1, x + \uff2e\uff4f\uff4e\uff45)"}
+{"parse":"ValueError","t":"f(a=1, a := \uff2e\uff4f\uff4e\uff45)"}
+{"parse":"ValueError","t":"f(**a, *\uff2e\uff4f\uff4e\uff45)"}
+{"parse":"SyntaxError","t":"match a := 1 := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match a := 1 := \uff2e\uff4f\uff4e\uff45\ny = 1"}
+{"parse":"SyntaxError","t":"x\nmatch a := 1 := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match x, a := 1 := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match a, b := c := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match a := b := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match a := (1) := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match *a, b := 1 := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"match (a := 1) := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match a := 1 = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match a := 1, := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match a := 1 := 2"}
+{"parse":"ValueError","t":"match x, (a := 1) := \uff2e\uff4f\uff4e\uff45"}
+{"parse":"SyntaxError","t":"match x, a := 1 = \uff2e\uff4f\uff4e\uff45"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Constant))","t":"x = 1","top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load)))","t":"x: int","top":["x"]}
+{"all":["x"],"ids":"AnnAssign 1","parse":"ok","shape":"Module(AnnAssign(Name(Store),Name(Load),Constant))","t":"x: int = 1","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Add,Constant))","t":"x += 1","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(AugAssign(Name(Store),Pow,Constant))","t":"x **= 2","top":["x"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)),Expr(Name(Load)))","t":"x; y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"x;","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Delete(Name(Del)))","t":"del x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Pass)","t":"pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Yield(Name(Load))))","t":"yield x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Yield))","t":"yield","top":[]}
+{"parse":"ok","t":"if x: pass","want":"D"}
+{"parse":"ok","t":"if x:\n    y\n","want":"D"}
+{"parse":"ok","t":"for x in y: pass","want":"D"}
+{"parse":"ok","t":"@d\ndef f(): pass","want":"D"}
+{"all":["x"],"ids":"alias x ","parse":"ok","shape":"Module(Import(alias))","t":"import x","top":["x"]}
+{"all":["y"],"ids":"ImportFrom x 0;alias y ","parse":"ok","shape":"Module(ImportFrom(alias))","t":"from x import y","top":["y"]}
+{"parse":"ok","t":"async def f(): pass","want":"D"}
+{"parse":"ok","t":"match x:\n    case 1: pass\n","want":"D"}
+{"parse":"ok","t":"type X = int","want":"D"}
+{"all":["a","x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Lambda(arguments(arg,Constant),Name(Load))))","t":"x = lambda a=1: a","top":["x"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,Constant),Name(Load))))","t":"lambda a=1: a","top":[]}
+{"all":["a","b","c"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg,Lambda(arguments(arg,Constant),Name(Load))),Name(Load))))","t":"lambda a, b=lambda c=1: c: b","top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)),Assign(Name(Store),Constant))","t":"x\ny = 1\n","top":["y"]}
+{"parse":"SyntaxError","t":"x +\ny = 1\n"}
+{"parse":"SyntaxError","t":"x = 1\nx +\n"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Assign(Name(Store),Constant))","t":"(x) = 1","top":["x"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Assign(Subscript(Name(Load),Name(Load),Store),Name(Load)))","t":"x[y] = z","top":[]}
+{"parse":"SyntaxError","t":"f(x) = 1"}
+{"parse":"SyntaxError","t":"x + 1 = 2"}
+{"parse":"SyntaxError","t":"x := 1\ny = 2\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))),Return)","t":"print(x) # c\nreturn\n","top":[]}
+{"parse":"SyntaxError","t":"x if y else z = w"}
+{"parse":"SyntaxError","t":"f'{x:y}' = 1"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Dict(Name(Load),Name(Load))))","t":"{x: y}","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice(Name(Load),Name(Load)),Load)))","t":"x[a:b]","top":[]}
+{"parse":"SyntaxError","t":"lambda: x, y = 1"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments,NamedExpr(Name(Store),Constant))))","t":"lambda: (x := 1)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module","t":"","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"x\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)),Expr(Name(Load)))","t":"x\ny\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"x  # c\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Name(Load),Load)))","t":"(x,\n y)\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BinOp(Name(Load),Add,Name(Load))))","t":"x \\\n + y\n","top":[]}
+{"parse":"IndentationError","t":"  x\n"}
+{"parse":"IndentationError","t":"x\n  y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"1","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"1.5","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"1j","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"0x1f","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"'s'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"b'b'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"'a' 'b'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"u'a' 'b'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"b'a' b'b'","top":[]}
+{"parse":"SyntaxError","t":"b'a' 'b'"}
+{"parse":"SyntaxError","t":"'a' b'b'"}
+{"parse":"SyntaxError","t":"b'a' f'{x}'"}
+{"parse":"SyntaxError","t":"'a' f'{x}' b'c'"}
+{"parse":"SyntaxError","t":"f'{x}' b''"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"rb'a' Rb'b'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"...","top":[]}
+{"all":["__class__"],"ids":"","parse":"ok","shape":"Module(Expr(Attribute(Constant,Load)))","t":"....__class__","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"True","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"False","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"None","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(Attribute(Constant,Load)))","t":"True.x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Constant)))","t":"None()","top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(Expr(Attribute(Name(Load),Load)))","t":"x.y","top":[]}
+{"all":["y","z"],"ids":"","parse":"ok","shape":"Module(Expr(Attribute(Attribute(Name(Load),Load),Load)))","t":"x.y.z","top":[]}
+{"parse":"SyntaxError","t":"x.True"}
+{"all":["match"],"ids":"","parse":"ok","shape":"Module(Expr(Attribute(Name(Load),Load)))","t":"x.match","top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(Expr(Attribute(Name(Load),Load)))","t":"x .y","top":[]}
+{"parse":"SyntaxError","t":"x.\ny"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load))))","t":"f()","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))))","t":"f(x)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))))","t":"f(x,)","top":[]}
+{"parse":"SyntaxError","t":"f(,)"}
+{"parse":"SyntaxError","t":"f(x,,)"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Call(Name(Load),Name(Load)),Name(Load))))","t":"f(x)(y)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Call(Name(Load),Name(Load)),Name(Load),Load)))","t":"f(x)[y]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Name(Load),Load)))","t":"x[y]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Name(Load),Name(Load),Load),Load)))","t":"x[y, z]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Name(Load),Load),Load)))","t":"x[y,]","top":[]}
+{"parse":"SyntaxError","t":"x[]"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice,Load)))","t":"x[:]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice,Load)))","t":"x[::]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice(Constant,Constant),Load)))","t":"x[1:2]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice(Constant,Constant,Constant),Load)))","t":"x[1:2:3]","top":[]}
+{"parse":"SyntaxError","t":"x[1:2:3:4]"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Slice,Slice,Load),Load)))","t":"x[:, :]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Slice(Constant,Constant),Constant,Load),Load)))","t":"x[1:2, 3]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Starred(Name(Load),Load),Load),Load)))","t":"x[*a]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Starred(Name(Load),Load),Name(Load),Load),Load)))","t":"x[*a, b]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Slice(Name(Load),Name(Load)),Starred(Name(Load),Load),Load),Load)))","t":"x[a:b, *c]","top":[]}
+{"parse":"SyntaxError","t":"x[*a:b]"}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),NamedExpr(Name(Store),Constant),Load)))","t":"x[a:=1]","top":["a"]}
+{"parse":"SyntaxError","t":"x[a:b:=1]"}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Name(Load),NamedExpr(Name(Store),Constant),Load),Load)))","t":"x[a, b:=1]","top":["b"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice(NamedExpr(Name(Store),Constant),Constant),Load)))","t":"x[(a:=1):2]","top":["a"]}
+{"parse":"SyntaxError","t":"x[a:=1:2]"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Constant,Load)))","t":"x[...]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Lambda(arguments,Constant),Load)))","t":"x[lambda: 1]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice(Name(Load),Lambda(arguments,Name(Load))),Load)))","t":"x[a:lambda: b]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Starred(BoolOp(Or,Name(Load),Name(Load)),Load),Load),Load)))","t":"x[*a or b]","top":[]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),keyword(Constant))))","t":"f(a=1)","top":[]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),keyword(Constant),keyword(Constant))))","t":"f(a=1, a=2)","top":[]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load),keyword(Constant))))","t":"f(a, b=1)","top":[]}
+{"parse":"SyntaxError","t":"f(a=1, b)"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Starred(Name(Load),Load))))","t":"f(*a)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),keyword(Name(Load)))))","t":"f(**a)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Starred(Name(Load),Load),Name(Load))))","t":"f(*a, b)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load),Starred(Name(Load),Load),Name(Load))))","t":"f(a, *b, c)","top":[]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Starred(Name(Load),Load),keyword(Constant))))","t":"f(a=1, *b)","top":[]}
+{"parse":"SyntaxError","t":"f(a=1, *b, c)"}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),keyword(Name(Load)),keyword(Constant))))","t":"f(**a, b=1)","top":[]}
+{"parse":"SyntaxError","t":"f(**a, *b)"}
+{"parse":"SyntaxError","t":"f(**a, b)"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),keyword(Name(Load)),keyword(Name(Load)))))","t":"f(**a, **b)","top":[]}
+{"all":["d"],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load),Starred(Name(Load),Load),keyword(Name(Load)),keyword(Constant))))","t":"f(a, *b, **c, d=1)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Starred(BoolOp(Or,Name(Load),Name(Load)),Load))))","t":"f(*a or b)","top":[]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),NamedExpr(Name(Store),Constant))))","t":"f(a:=1)","top":["a"]}
+{"parse":"SyntaxError","t":"f(a=b:=1)"}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load),NamedExpr(Name(Store),Constant))))","t":"f(a, b:=1)","top":["b"]}
+{"parse":"SyntaxError","t":"f(True=1)"}
+{"parse":"SyntaxError","t":"f(x.y=1)"}
+{"parse":"SyntaxError","t":"f((a)=1)"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Compare(Name(Load),Eq,Constant))))","t":"f(a==1)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Lambda(arguments,Name(Load)))))","t":"f(lambda: x)","top":[]}
+{"parse":"SyntaxError","t":"f(*)"}
+{"parse":"SyntaxError","t":"f(**)"}
+{"parse":"SyntaxError","t":"f(a=)"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load))))))","t":"f(x for x in y)","top":["x"]}
+{"parse":"SyntaxError","t":"f(x for x in y, 1)"}
+{"parse":"SyntaxError","t":"f(x for x in y,)"}
+{"parse":"SyntaxError","t":"f(1, x for x in y)"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load))),Constant)))","t":"f((x for x in y), 1)","top":["x"]}
+{"parse":"SyntaxError","t":"f(*x for x in y)"}
+{"parse":"SyntaxError","t":"f(a=1 for x in y)"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(Call(Call(Name(Load),GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load)))),Name(Load))))","t":"f(x for x in y)(z)","top":["x"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),GeneratorExp(NamedExpr(Name(Store),Constant),comprehension(Name(Store),Name(Load))))))","t":"f(x := 1 for y in z)","top":["x","y"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(UnaryOp(USub,Name(Load))))","t":"-x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(UnaryOp(UAdd,Name(Load))))","t":"+x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(UnaryOp(Invert,Name(Load))))","t":"~x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(UnaryOp(Not,Name(Load))))","t":"not x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(UnaryOp(Not,UnaryOp(Not,Name(Load)))))","t":"not not x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(UnaryOp(USub,UnaryOp(USub,Name(Load)))))","t":"--x","top":[]}
+{"parse":"SyntaxError","t":"-not x"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(UnaryOp(Not,UnaryOp(USub,Name(Load)))))","t":"not -x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(UnaryOp(USub,Await(Name(Load)))))","t":"- await x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Await(Name(Load))))","t":"await x","top":[]}
+{"parse":"SyntaxError","t":"await -x"}
+{"parse":"SyntaxError","t":"await await x"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BinOp(Await(Name(Load)),Pow,Constant)))","t":"await x ** 2","top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(Expr(Await(Call(Attribute(Name(Load),Load)))))","t":"await x.y()","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BinOp(Name(Load),Pow,BinOp(Name(Load),Pow,Name(Load)))))","t":"x ** y ** z","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(UnaryOp(USub,BinOp(Name(Load),Pow,UnaryOp(USub,Name(Load))))))","t":"-x ** -y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BinOp(Name(Load),Pow,UnaryOp(USub,Name(Load)))))","t":"x ** -y","top":[]}
+{"parse":"SyntaxError","t":"x ** not y"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BinOp(Name(Load),Add,BinOp(Name(Load),Mult,Name(Load)))))","t":"x + y * z","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BinOp(BinOp(Name(Load),Mult,Name(Load)),Add,Name(Load))))","t":"x * y + z","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BinOp(BinOp(Name(Load),Add,Name(Load)),Mult,Name(Load))))","t":"(x + y) * z","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BinOp(BinOp(Name(Load),Sub,Name(Load)),Sub,Name(Load))))","t":"x - y - z","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BinOp(Name(Load),Sub,BinOp(Name(Load),Sub,Name(Load)))))","t":"x - (y - z)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"f165d7f8a06ee2e6f7b8b0bc0dabb215d735f02a41b55193ed9de305ab344fe6","n":312},"t":"x | y ^ z & w << v >> u + t - s * r / q // p % o @ n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BinOp(Name(Load),FloorDiv,Name(Load))))","t":"x // y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BinOp(Name(Load),MatMult,Name(Load))))","t":"x @ y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Compare(Name(Load),Lt,Name(Load))))","t":"x < y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Compare(Name(Load),Lt,Lt,Name(Load),Name(Load))))","t":"x < y < z","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Compare(Name(Load),Lt,Eq,Gt,Name(Load),Name(Load),Name(Load))))","t":"x < y == z > w","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Compare(Name(Load),NotIn,Name(Load))))","t":"x not in y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Compare(Name(Load),IsNot,Name(Load))))","t":"x is not y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Compare(Name(Load),Is,Name(Load))))","t":"x is y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Compare(Name(Load),In,Name(Load))))","t":"x in y","top":[]}
+{"parse":"SyntaxError","t":"x not y"}
+{"parse":"SyntaxError","t":"x is not not y"}
+{"parse":"SyntaxError","t":"x in not y"}
+{"parse":"SyntaxError","t":"x < not y"}
+{"parse":"SyntaxError","t":"x <> y"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Compare(Name(Load),NotEq,Name(Load))))","t":"x != y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(UnaryOp(Not,Compare(Name(Load),Eq,Name(Load)))))","t":"not x == y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(UnaryOp(Not,Compare(Name(Load),In,Name(Load)))))","t":"not x in y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BoolOp(And,Name(Load),Name(Load))))","t":"x and y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BoolOp(And,Name(Load),Name(Load),Name(Load))))","t":"x and y and z","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BoolOp(Or,Name(Load),BoolOp(And,Name(Load),Name(Load)))))","t":"x or y and z","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BoolOp(Or,BoolOp(And,Name(Load),Name(Load)),Name(Load))))","t":"x and y or z","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BoolOp(And,Name(Load),BoolOp(And,Name(Load),Name(Load)))))","t":"x and (y and z)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BoolOp(And,Name(Load),UnaryOp(Not,Name(Load)))))","t":"x and not y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BoolOp(Or,Name(Load),UnaryOp(Not,Name(Load)))))","t":"x or not y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(IfExp(Name(Load),Name(Load),Name(Load))))","t":"x if y else z","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(IfExp(Name(Load),Name(Load),IfExp(Name(Load),Name(Load),Name(Load)))))","t":"x if y else z if w else v","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(IfExp(Name(Load),IfExp(Name(Load),Name(Load),Name(Load)),Name(Load))))","t":"(x if y else z) if w else v","top":[]}
+{"parse":"SyntaxError","t":"x if y if z else w else v"}
+{"parse":"SyntaxError","t":"x if y"}
+{"parse":"SyntaxError","t":"x if lambda: y else z"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(IfExp(Name(Load),Name(Load),Lambda(arguments,Name(Load)))))","t":"x if y else lambda: z","top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(Expr(IfExp(NamedExpr(Name(Store),Constant),Name(Load),Name(Load))))","t":"x if (y := 1) else z","top":["y"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments,Name(Load))))","t":"lambda: x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments,IfExp(Name(Load),Name(Load),Name(Load)))))","t":"lambda: x if y else z","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Name(Load))))","t":"lambda x: x","top":[]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg),Name(Load))))","t":"lambda x, y: x","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,Constant),Name(Load))))","t":"lambda x=1: x","top":[]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg,Constant),Name(Load))))","t":"lambda x, y=1: x","top":[]}
+{"parse":"SyntaxError","t":"lambda x=1, y: x"}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Name(Load))))","t":"lambda *a: a","top":[]}
+{"all":["k"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Name(Load))))","t":"lambda **k: k","top":[]}
+{"all":["a","k"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg),Constant)))","t":"lambda *a, **k: 0","top":[]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Name(Load))))","t":"lambda *, a: a","top":[]}
+{"parse":"SyntaxError","t":"lambda *: 0"}
+{"parse":"SyntaxError","t":"lambda *,: 0"}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Constant)))","t":"lambda a, /: 0","top":[]}
+{"parse":"SyntaxError","t":"lambda /: 0"}
+{"all":["a","b"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg),Constant)))","t":"lambda a, /, b: 0","top":[]}
+{"parse":"SyntaxError","t":"lambda a=1, /, b: 0"}
+{"all":["a","b"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg,Constant,Constant),Constant)))","t":"lambda a=1, /, b=2: 0","top":[]}
+{"parse":"SyntaxError","t":"lambda *a=1: 0"}
+{"parse":"SyntaxError","t":"lambda **k=1: 0"}
+{"parse":"SyntaxError","t":"lambda **k, a: 0"}
+{"all":["k"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Constant)))","t":"lambda **k,: 0","top":[]}
+{"all":["a","b","c"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg,arg),Constant)))","t":"lambda a, /, b, *, c: 0","top":[]}
+{"parse":"SyntaxError","t":"lambda a, *, /: 0"}
+{"parse":"SyntaxError","t":"lambda a, /, /: 0"}
+{"parse":"SyntaxError","t":"lambda *a, *b: 0"}
+{"all":["a","b"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg),Constant)))","t":"lambda *a, **b, : 0","top":[]}
+{"all":["a","b","c","d"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg,arg,arg,Constant),Constant)))","t":"lambda a, *b, c=1, d: 0","top":[]}
+{"all":["a","b","c","d","e"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg,arg,arg,Constant,arg,Constant),Tuple(Name(Load),Name(Load),Load))))","t":"lambda a=1, *b, c, d=2, **e: (a, b)","top":[]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg),Constant)))","t":"lambda a, a: 0","top":[]}
+{"parse":"SyntaxError","t":"lambda ,: 0"}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Constant)))","t":"lambda a,: 0","top":[]}
+{"parse":"SyntaxError","t":"lambda a b: 0"}
+{"parse":"SyntaxError","t":"lambda (a): 0"}
+{"parse":"SyntaxError","t":"lambda a=: 0"}
+{"parse":"SyntaxError","t":"lambda *, **k: 0"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments,Yield)))","t":"lambda: (yield)","top":[]}
+{"parse":"SyntaxError","t":"lambda: yield"}
+{"parse":"SyntaxError","t":"lambda x=yield: 0"}
+{"parse":"SyntaxError","t":"lambda: x := 1"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments,Lambda(arguments,Name(Load)))))","t":"lambda: lambda: x","top":[]}
+{"all":["a","b"],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,Lambda(arguments(arg,Constant),Name(Load))),Name(Load))))","t":"lambda a=lambda b=1: b: a","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"(x)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Load)))","t":"(x,)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Name(Load),Load)))","t":"(x, y)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Load)))","t":"()","top":[]}
+{"parse":"SyntaxError","t":"(,)"}
+{"parse":"SyntaxError","t":"(*x)"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Starred(Name(Load),Load),Load)))","t":"(*x,)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Starred(Name(Load),Load),Name(Load),Load)))","t":"(*x, y)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"((x))","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(NamedExpr(Name(Store),Constant)))","t":"(x := 1)","top":["x"]}
+{"parse":"SyntaxError","t":"(x.y := 1)"}
+{"parse":"SyntaxError","t":"((x) := 1)"}
+{"parse":"SyntaxError","t":"(x := y := 1)"}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Expr(NamedExpr(Name(Store),NamedExpr(Name(Store),Constant))))","t":"(x := (y := 1))","top":["x","y"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(NamedExpr(Name(Store),Constant),Name(Load),Load)))","t":"(x := 1, y)","top":["x"]}
+{"parse":"SyntaxError","t":"x := 1"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(NamedExpr(Name(Store),IfExp(Name(Load),Constant,Name(Load)))))","t":"(x := 1 if y else z)","top":["x"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Lambda(arguments,Constant)))","t":"(lambda: 1)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Yield))","t":"(yield)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Yield(Name(Load))))","t":"(yield x)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Yield(Tuple(Name(Load),Name(Load),Load))))","t":"(yield x, y)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Yield(Tuple(Starred(Name(Load),Load),Name(Load),Load))))","t":"(yield *x, y)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Yield(Starred(Name(Load),Load))))","t":"(yield *x)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(YieldFrom(Name(Load))))","t":"(yield from x)","top":[]}
+{"parse":"SyntaxError","t":"(yield from x, y)"}
+{"parse":"SyntaxError","t":"(yield from)"}
+{"parse":"SyntaxError","t":"(yield, 1)"}
+{"parse":"SyntaxError","t":"(yield yield)"}
+{"parse":"SyntaxError","t":"(yield x for x in y)"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Yield,Constant,Load)))","t":"((yield), 1)","top":[]}
+{"parse":"SyntaxError","t":"[yield]"}
+{"parse":"SyntaxError","t":"f(yield)"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(Attribute(Yield,Load)))","t":"(yield).x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(BinOp(Yield,Add,Constant)))","t":"(yield) + 1","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(List(Name(Load),Load)))","t":"[x]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(List(Load)))","t":"[]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(List(Name(Load),Name(Load),Load)))","t":"[x, y,]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(List(Starred(Name(Load),Load),Starred(Name(Load),Load),Name(Load),Load)))","t":"[*x, *y, z]","top":[]}
+{"parse":"SyntaxError","t":"[*x or y]"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(List(NamedExpr(Name(Store),Constant),Load)))","t":"[x := 1]","top":["x"]}
+{"parse":"SyntaxError","t":"[,]"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Dict))","t":"{}","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Set(Name(Load))))","t":"{x}","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Set(Name(Load),Name(Load))))","t":"{x, y}","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Set(Starred(Name(Load),Load),Name(Load))))","t":"{*x, y}","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Dict(Name(Load),Name(Load))))","t":"{x: y}","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Dict(Name(Load),Name(Load),Name(Load),Name(Load))))","t":"{x: y, z: w}","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Dict(Name(Load))))","t":"{**x}","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Dict(Name(Load),Name(Load),Name(Load))))","t":"{**x, y: z}","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Dict(Name(Load),Name(Load),Name(Load))))","t":"{y: z, **x}","top":[]}
+{"parse":"SyntaxError","t":"{x, y: z}"}
+{"parse":"SyntaxError","t":"{x: y, z}"}
+{"parse":"SyntaxError","t":"{**x or y}"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(Set(NamedExpr(Name(Store),Constant))))","t":"{x := 1}","top":["x"]}
+{"parse":"SyntaxError","t":"{x: y := 1}"}
+{"parse":"SyntaxError","t":"{x := 1: y}"}
+{"parse":"SyntaxError","t":"{*x: y}"}
+{"parse":"SyntaxError","t":"{x: *y}"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Set(Lambda(arguments,Constant))))","t":"{lambda: 1}","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Dict(Lambda(arguments,Constant),Constant)))","t":"{lambda: 1: 2}","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Dict(Name(Load),Lambda(arguments,Name(Load)))))","t":"{x: lambda: y}","top":[]}
+{"parse":"SyntaxError","t":"{**x, y}"}
+{"parse":"SyntaxError","t":"{x:}"}
+{"parse":"SyntaxError","t":"{:x}"}
+{"parse":"SyntaxError","t":"{,}"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Set(Name(Load))))","t":"{x,}","top":[]}
+{"parse":"SyntaxError","t":"{**}"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load)))))","t":"[x for x in y]","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load),Name(Load)))))","t":"[x for x in y if z]","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load),Name(Load),Name(Load)))))","t":"[x for x in y if z if w]","top":["x"]}
+{"all":["x","z"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load)),comprehension(Name(Store),Name(Load)))))","t":"[x for x in y for z in w]","top":["x","z"]}
+{"all":["w","x"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load),Name(Load)),comprehension(Name(Store),Name(Load),Name(Load)))))","t":"[x for x in y if z for w in v if u]","top":["w","x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load)))))","t":"[x async for x in y]","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load),Await(Name(Load))))))","t":"[x for x in y if await z]","top":["x"]}
+{"parse":"SyntaxError","t":"[x async x in y]"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Tuple(Name(Store),Store),Name(Load)))))","t":"[x for x, in y]","top":["x"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Tuple(Name(Store),Name(Store),Store),Name(Load)))))","t":"[x for x, y in z]","top":["x","y"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Tuple(Starred(Name(Store),Store),Name(Store),Store),Name(Load)))))","t":"[x for *x, y in z]","top":["x","y"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Starred(Name(Store),Store),Name(Load)))))","t":"[x for *x in y]","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load)))))","t":"[x for (x) in y]","top":["x"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Tuple(Name(Store),Name(Store),Store),Name(Load)))))","t":"[x for (x, y) in z]","top":["x","y"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(List(Name(Store),Name(Store),Store),Name(Load)))))","t":"[x for [x, y] in z]","top":["x","y"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Tuple(Store),Name(Load)))))","t":"[x for () in y]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(List(Store),Name(Load)))))","t":"[x for [] in y]","top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Attribute(Name(Load),Store),Name(Load)))))","t":"[x for x.y in z]","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Subscript(Name(Load),Constant,Store),Name(Load)))))","t":"[x for x[0] in z]","top":[]}
+{"parse":"SyntaxError","t":"[x for f() in z]"}
+{"all":["real"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Attribute(Constant,Store),Name(Load)))))","t":"[x for 1 .real in z]","top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Attribute(Name(Load),Store),Name(Load)))))","t":"[x for (x.y) in z]","top":[]}
+{"parse":"SyntaxError","t":"[x for x + y in z]"}
+{"parse":"SyntaxError","t":"[x for -x in y]"}
+{"parse":"SyntaxError","t":"[x for x in *y]"}
+{"parse":"SyntaxError","t":"[x for x in y, z]"}
+{"parse":"SyntaxError","t":"[x for x in lambda: y]"}
+{"parse":"SyntaxError","t":"[x for x in y if lambda: z]"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),BoolOp(Or,Name(Load),Name(Load))))))","t":"[x for x in y or z]","top":["x"]}
+{"parse":"SyntaxError","t":"[x for x in y if z else w]"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load),BoolOp(Or,Name(Load),Name(Load))))))","t":"[x for x in y if z or w]","top":["x"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(NamedExpr(Name(Store),Constant),comprehension(Name(Store),Name(Load)))))","t":"[x := 1 for y in z]","top":["x","y"]}
+{"all":["y","z"],"ids":"","parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),NamedExpr(Name(Store),Name(Load))))))","t":"[x for y in (z := w)]","top":["y","z"]}
+{"parse":"SyntaxError","t":"[x for y in z := w]"}
+{"parse":"SyntaxError","t":"[x for y in z if w := v]"}
+{"parse":"SyntaxError","t":"[*x for x in y]"}
+{"parse":"SyntaxError","t":"[x, y for x in z]"}
+{"parse":"SyntaxError","t":"[x for x in y,]"}
+{"parse":"SyntaxError","t":"[x for x in]"}
+{"parse":"SyntaxError","t":"[x for in y]"}
+{"parse":"SyntaxError","t":"[x for]"}
+{"parse":"SyntaxError","t":"[x if y for z in w]"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load)))))","t":"(x for x in y)","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load),Name(Load)))))","t":"(x for x in y if z)","top":["x"]}
+{"parse":"SyntaxError","t":"(x, y for x in z)"}
+{"parse":"SyntaxError","t":"(*x for x in y)"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(SetComp(Name(Load),comprehension(Name(Store),Name(Load)))))","t":"{x for x in y}","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(DictComp(Name(Load),Name(Load),comprehension(Name(Store),Name(Load)))))","t":"{x: y for x in z}","top":["x"]}
+{"parse":"SyntaxError","t":"{**x for x in y}"}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(Expr(DictComp(Name(Load),Name(Load),comprehension(Tuple(Name(Store),Name(Store),Store),Name(Load)))))","t":"{x: y for x, y in z}","top":["x","y"]}
+{"parse":"SyntaxError","t":"{x, y for x in z}"}
+{"parse":"SyntaxError","t":"{x: y, z: w for x in v}"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr))","t":"f''","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x!r}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x!s:>3}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x!a}'","top":[]}
+{"parse":"SyntaxError","t":"f'{x!z}'"}
+{"parse":"SyntaxError","t":"f'{x!A}'"}
+{"parse":"SyntaxError","t":"f'{x!rr}'"}
+{"parse":"SyntaxError","t":"f'{x! r}'"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x !r}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x!r }'","top":[]}
+{"parse":"SyntaxError","t":"f'{x!}'"}
+{"parse":"SyntaxError","t":"f'{x!r!s}'"}
+{"parse":"SyntaxError","t":"f'{x!r=}'"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'{x=!r}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'{x=}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'{x = }'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x=:>3}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)))))))","t":"f'{x=!s:{y}}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr))))","t":"f'{x:}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load),JoinedStr))))","t":"f'{x=:}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr))))","t":"f'{x!r:}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)))))))","t":"f'{x:{y}}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant,FormattedValue(Name(Load)),Constant)))))","t":"f'{x:a{y}b}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant,FormattedValue(Name(Load)))))))","t":"f'{x:{y=}}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)))))))))","t":"f'{x:{y!r:{z}}}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)),Constant)))))","t":"f'{x:{y}!r}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)),Constant)))))","t":"f'{x!r:{y}=}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Dict))))))","t":"f'{x:{{}}}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)),Constant)),Constant)))","t":"f'{x:{y}{{z}}}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x:=1}'","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(NamedExpr(Name(Store),Constant)))))","t":"f'{(x:=1)}'","top":["x"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Tuple(Name(Load),Load)))))","t":"f'{x,}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Tuple(Name(Load),Load)))))","t":"f'{x, }'","top":[]}
+{"parse":"SyntaxError","t":"f'{x,,}'"}
+{"parse":"SyntaxError","t":"f'{*x,,}'"}
+{"parse":"SyntaxError","t":"f'{x, ,}'"}
+{"parse":"SyntaxError","t":"f'{x,, y}'"}
+{"parse":"SyntaxError","t":"f'{x:{y,,}}'"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Tuple(Name(Load),Name(Load),Load)))))","t":"f'{x, y}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Starred(Name(Load),Load)))))","t":"f'{*x}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Tuple(Starred(Name(Load),Load),Load)))))","t":"f'{*x,}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Tuple(Starred(Name(Load),Load),Name(Load),Load)))))","t":"f'{*x, y}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Yield))))","t":"f'{yield}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Yield(Name(Load))))))","t":"f'{yield x}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(YieldFrom(Name(Load))))))","t":"f'{yield from x}'","top":[]}
+{"parse":"SyntaxError","t":"f'{lambda: 1}'"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Lambda(arguments,Constant)))))","t":"f'{(lambda: 1)}'","top":[]}
+{"parse":"SyntaxError","t":"f'{x for x in y}'"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load)))))))","t":"f'{(x for x in y)}'","top":["x"]}
+{"parse":"SyntaxError","t":"f'{}'"}
+{"parse":"SyntaxError","t":"f'{ }'"}
+{"parse":"SyntaxError","t":"f'{=}'"}
+{"parse":"SyntaxError","t":"f'{!r}'"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)),Constant,FormattedValue(Name(Load)))))","t":"f'{x}' 'a' f'b{y}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"'a' f'{x}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'' 'a'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr))","t":"f'' ''","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a{{b}}c'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)),Constant)))","t":"f'{x}{{'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'{{'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr))","t":"f'\\\n'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)),FormattedValue(Name(Load)))))","t":"f'{x}\\\n{y}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x:\\x41}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"rf'{x:\\x41}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)),Constant)))))","t":"f'{x:{y}\\x41}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)),Constant,FormattedValue(Name(Load)))))","t":"f'{x=}' f'{y=}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'a{x=}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)),FormattedValue(Name(Load)))))","t":"f'{x}' f'{y}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(JoinedStr(FormattedValue(Name(Load)))))))","t":"f'{f'{x}'}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(JoinedStr(FormattedValue(JoinedStr(FormattedValue(Name(Load)))))))))","t":"f'{f'{f'{x}'}'}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x!\uff52}'","top":[]}
+{"parse":"ValueError","t":"f'{x!\uff2e\uff4f\uff4e\uff45}'"}
+{"parse":"SyntaxError","t":"f'{x!if}'"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)))))))))","t":"f'{x:{y:{z}}}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"\uff58","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"\uff49\uff46","top":[]}
+{"parse":"SyntaxError","t":"\uff49\uff46 x"}
+{"parse":"ValueError","t":"\uff34\uff52\uff55\uff45"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"\uff34\uff32\uff35\uff25","top":[]}
+{"parse":"ValueError","t":"\uff2e\uff4f\uff4e\uff45.a"}
+{"all":["if"],"ids":"","parse":"ok","shape":"Module(Expr(Attribute(Name(Load),Load)))","t":"x.\uff49\uff46","top":[]}
+{"parse":"ValueError","t":"x.\uff34\uff52\uff55\uff45"}
+{"parse":"ValueError","t":"f(\uff34\uff52\uff55\uff45=1)"}
+{"parse":"ValueError","t":"lambda \uff34\uff52\uff55\uff45: 0"}
+{"parse":"ValueError","t":"(\uff2e\uff4f\uff4e\uff45 := 1)"}
+{"parse":"ValueError","t":"[x for \uff26\uff41\uff4c\uff53\uff45 in y]"}
+{"parse":"ValueError","t":"f'{x!\uff34\uff52\uff55\uff45}'"}
+{"all":["__debug__"],"ids":"","parse":"ok","shape":"Module(Expr(NamedExpr(Name(Store),Constant)))","t":"(__debug__ := 1)","top":["__debug__"]}
+{"parse":"SyntaxError","t":"x y"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Load)))","t":"x,","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Name(Load),Load)))","t":"x, y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Name(Load),Load)))","t":"x, y,","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Starred(Name(Load),Load)))","t":"*x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Starred(Name(Load),Load),Load)))","t":"*x,","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Starred(Name(Load),Load),Starred(Name(Load),Load),Load)))","t":"*x, *y","top":[]}
+{"parse":"SyntaxError","t":"**x"}
+{"parse":"SyntaxError","t":"*x or y,"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Starred(BinOp(Name(Load),BitOr,Name(Load)),Load),Load)))","t":"*x | y,","top":[]}
+{"parse":"SyntaxError","t":"*not x,"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Starred(UnaryOp(USub,Name(Load)),Load),Load)))","t":"*-x,","top":[]}
+{"parse":"SyntaxError","t":"*x if y else z,"}
+{"parse":"SyntaxError","t":"1 if 2 else *x"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Starred(Name(Load),Load),Load)))","t":"x, *y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Starred(Name(Load),Load),Name(Load),Load)))","t":"*x, y","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(Starred(Name(Load),Load),Name(Load),Load)))","t":"(*x, y)","top":[]}
+{"parse":"SyntaxError","t":"x $ y"}
+{"parse":"SyntaxError","t":"x ? y"}
+{"parse":"SyntaxError","t":"x ` y"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"x;","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))))","t":"match(x)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))))","t":"type(x)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))))","t":"case(x)","top":[]}
+{"parse":"SyntaxError","t":"match x"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)))","t":"_","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Tuple(BinOp(Name(Load),RShift,Name(Load)),Name(Load),Load)))","t":"print >> f, x","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)),Expr(Name(Load)))","t":"x\n\ny\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Name(Load)),Expr(Name(Load)))","t":"x\n#c\ny\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(Constant))","t":"'\\N{EM DASH}'","top":[]}
+{"parse":"SyntaxError","t":"x $\n'\\N{EM DASH}'"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"fR'''\\\n'''","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"Rf'\\\n{x}'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"RF'\\\n'","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"FR'{x:\\\n}'","top":[]}
+{"parse":"MemoryError","t":{"r":[["x = ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x = y = ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x = y, ",1],["-",5966],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x = *",1],["-",5973],["x,\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x = yield ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x = yield y, ",1],["-",5965],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x = yield *",1],["-",5972],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x = yield from ",1],["-",5969],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x: ",1],["-",5971],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x.y: ",1],["-",5971],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["(x): ",1],["-",5971],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x: int = ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x: int = *",1],["-",5972],["x,\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x: int = yield ",1],["-",5966],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x: int = yield from ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x += ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x += y, ",1],["-",5966],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x += yield ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x += yield from ",1],["-",5969],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["return ",1],["-",5969],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["return y, ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["return *",1],["-",5974],["x,\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["raise ",1],["-",5971],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["raise y from ",1],["-",5970],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["assert ",1],["-",5971],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["assert y, ",1],["-",5970],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["yield ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["yield *",1],["-",5973],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["yield from ",1],["-",5970],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x; ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x; y; ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x; x = ",1],["-",5966],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x; x: ",1],["-",5969],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x; return ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x; raise y from ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x = 1; ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["import a; ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5970],["x;\n",1]]}}
+{"parse":"ValueError","t":{"r":[["x = ",1],["-",5967],["\uff34rue\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x = ",1],["-",5968],["\uff34rue\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match ",1],["-",5969],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match ",1],["-",5969],["x, y\n",1]]}}
+{"parse":"ValueError","t":{"r":[["match ",1],["-",5968],["\uff2e\uff4f\uff4e\uff45\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match ",1],["-",5969],["\uff2e\uff4f\uff4e\uff45\n",1]]}}
+{"parse":"ValueError","t":{"r":[["match ",1],["-",5968],["x, \uff2e\uff4f\uff4e\uff45\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match ",1],["-",5969],["x, \uff2e\uff4f\uff4e\uff45\n",1]]}}
+{"parse":"ValueError","t":{"r":[["match a, ",1],["-",5966],["\uff2e\uff4f\uff4e\uff45\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match a, ",1],["-",5967],["\uff2e\uff4f\uff4e\uff45\n",1]]}}
+{"parse":"ValueError","t":{"r":[["match a, b, ",1],["-",5965],["\uff2e\uff4f\uff4e\uff45\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match a, b, ",1],["-",5966],["\uff2e\uff4f\uff4e\uff45\n",1]]}}
+{"parse":"ValueError","t":{"r":[["match *",1],["-",5974],["\uff2e\uff4f\uff4e\uff45, y\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match *",1],["-",5975],["\uff2e\uff4f\uff4e\uff45, y\n",1]]}}
+{"parse":"ValueError","t":{"r":[["match a, *",1],["-",5972],["\uff2e\uff4f\uff4e\uff45\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match a, *",1],["-",5973],["\uff2e\uff4f\uff4e\uff45\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match *a, ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match ",1],["-",5969],["x\ny = 1\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x\nmatch ",1],["-",5969],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match = ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match.y = ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match += ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match: int = ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match[0][1] = ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match, ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["match[0].y = ",1],["-",5968],["x\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["x = ",1],["-",5903],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["x = ",1],["-",5963],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x = ",1],["-",5964],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["x: ",1],["-",5906],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["x: ",1],["-",5966],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x: ",1],["-",5967],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["x += ",1],["-",5903],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["x += ",1],["-",5963],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x += ",1],["-",5964],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["return ",1],["-",5904],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["return ",1],["-",5964],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["return ",1],["-",5965],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["yield ",1],["-",5902],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["yield ",1],["-",5962],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["yield ",1],["-",5963],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["x: int = ",1],["-",5902],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["x: int = ",1],["-",5962],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x: int = ",1],["-",5963],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["x; ",1],["-",5900],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["x; ",1],["-",5960],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x; ",1],["-",5961],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["del ",1],["-",5903],["x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["del ",1],["-",5963],["x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["del ",1],["-",5964],["x\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["del y, ",1],["-",5901],["x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["del y, ",1],["-",5961],["x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["del y, ",1],["-",5962],["x\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["x; del ",1],["-",5901],["x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["x; del ",1],["-",5961],["x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x; del ",1],["-",5962],["x\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["x; del y, ",1],["-",5899],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["x; del y, ",1],["-",5959],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x; del y, ",1],["-",5960],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["f() = ",1],["-",5908],["x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["f() = ",1],["-",5968],["x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["f() = ",1],["-",5969],["x\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["x = ",1],["-",5904],["\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["x = ",1],["-",5964],["\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x = ",1],["-",5965],["\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["",1],["-",5902],["x = 1\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["",1],["-",5962],["x = 1\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["",1],["-",5963],["x = 1\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["x, y: ",1],["-",5905],["x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["x, y: ",1],["-",5965],["x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x, y: ",1],["-",5966],["x\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["(yield ",1],["-",5835],["x) = 1\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["(yield ",1],["-",5955],["x) = 1\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["(yield ",1],["-",5956],["x) = 1\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["match *",1],["-",5975],["x, y\n",1]]}}
+{"parse":"ValueError","t":{"r":[["match [",1],["-",5789],["\uff2e\uff4f\uff4e\uff45]\n",1]]}}
+{"band":true,"parse":"ValueError","t":{"r":[["match [",1],["-",5939],["\uff2e\uff4f\uff4e\uff45]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["match [",1],["-",5940],["\uff2e\uff4f\uff4e\uff45]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["match(",1],["-",5941],["x)\n",1]]}}
+{"parse":"ValueError","t":{"r":[["match a, (",1],["-",5788],["\uff2e\uff4f\uff4e\uff45)\n",1]]}}
+{"band":true,"parse":"ValueError","t":{"r":[["match a, (",1],["-",5938],["\uff2e\uff4f\uff4e\uff45)\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["match a, (",1],["-",5939],["\uff2e\uff4f\uff4e\uff45)\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["match ",1],["-",5903],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["match ",1],["-",5963],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["match ",1],["-",5964],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["match a, ",1],["-",5901],["x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["match a, ",1],["-",5961],["x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["match a, ",1],["-",5962],["x\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["match(",1],["-",5782],["x)\nf() = 1\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["match(",1],["-",5932],["x)\nf() = 1\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["match(",1],["-",5933],["x)\nf() = 1\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["return [a, x.y(",1],["-",5915],["x)]\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["return [a, x.y(",1],["-",6065],["x)]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x[(",1],["-",5937],["x).z] = 1\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x[(",1],["-",6087],["x).z] = 1\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x = [a for x[{**",1],["-",5928],["x}] in b]\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x = [a for x[{**",1],["-",6078],["x}] in b]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x = await (a if b else (x[:(a := ",1],["-",5858],["x)]))\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x = await (a if b else (x[:(a := ",1],["-",6008],["x)]))\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x += (a, ",1],["-",5938],["x)\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x += (a, ",1],["-",6088],["x)\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["return {a: (a, f\"{a:{{**",1],["-",5850],["x}}}\")}\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["return {a: (a, f\"{a:{{**",1],["-",6000],["x}}}\")}\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["raise (a, ",1],["-",5941],["x)\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["raise (a, ",1],["-",6091],["x)\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["raise f(a, x[:a if b else (x.y(",1],["-",5866],["x))])\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["raise f(a, x[:a if b else (x.y(",1],["-",6016],["x))])\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["y, x[lambda: (",1],["-",5930],["x)] = 1\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["y, x[lambda: (",1],["-",6080],["x)] = 1\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x: int = await (f(a=",1],["-",5912],["x))\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x: int = await (f(a=",1],["-",6062],["x))\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x[[a, (",1],["-",5907],["x).z]] = 1\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x[[a, (",1],["-",6057],["x).z]] = 1\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["return [a for x[not (",1],["-",5905],["x)] in b]\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["return [a for x[not (",1],["-",6055],["x)] in b]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x += f(a=lambda: (",1],["-",5911],["x))\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x += f(a=lambda: (",1],["-",6061],["x))\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x: [a, f(a, ",1],["-",5913],["x)]\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x: [a, f(a, ",1],["-",6063],["x)]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["del x[a if b else (-((a := ",1],["-",5877],["x)))]\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["del x[a if b else (-((a := ",1],["-",6027],["x)))]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["raise (yield (a, f(a=(",1],["-",5857],["x))))\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["raise (yield (a, f(a=(",1],["-",6007],["x))))\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["return f(await (",1],["-",5917],["x))\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["return f(await (",1],["-",6067],["x))\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x += lambda a=a if b else ([a for a in b if ",1],["-",5902],["x]): b\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x += lambda a=a if b else ([a for a in b if ",1],["-",6052],["x]): b\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["return (yield x[a, ",1],["-",5913],["x])\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["return (yield x[a, ",1],["-",6063],["x])\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x[not (-(",1],["-",5907],["x))] = 1\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x[not (-(",1],["-",6057],["x))] = 1\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x: int = (x[a, [a for a in [",1],["-",5856],["x]]])\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x: int = (x[a, [a for a in [",1],["-",6006],["x]]])\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x += lambda a=[",1],["-",5931],["x]: b\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x += lambda a=[",1],["-",6081],["x]: b\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x[f(a=x[",1],["-",5914],["x])] = 1\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x[f(a=x[",1],["-",6064],["x])] = 1\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x: int = [x[:[a for a in {**",1],["-",5864],["x}]] for a in b]\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x: int = [x[:[a for a in {**",1],["-",6014],["x}]] for a in b]\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["x = 1 = ",1],["-",6000],["x\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["x = x",1],["+x",10500],["\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["x: int = x",1],["+x",10500],["\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["x += x",1],["+x",10500],["\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["return x",1],["+x",10500],["\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["del x, x",1],["+x",10500],["\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["x = x",1],["+x",10500],["\ny = 1\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["x = x",1],["+x",10500],["; y = 1\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["y = 1; x = x",1],["+x",10500],["\n",1]]}}
+{"count":20000,"sha256":"4ff1bb776f30006c3543dc3109a8d2bd69550719534aad0e8d8053ae6479898b","sweep":"stmt_templates"}

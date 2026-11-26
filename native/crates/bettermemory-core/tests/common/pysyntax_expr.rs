@@ -10,9 +10,12 @@
 
 #![allow(dead_code)]
 
-use bettermemory_core::pysyntax::module_expr::{parse_expression_module, Ctx, ExprError, Tree};
+use bettermemory_core::pysyntax::module_expr::{
+    parse_expression_module, parse_module, Ctx, ExprError, Tree,
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 /// A text as the generator spells it (`gen_pysyntax._built`).
 pub fn text(v: &Value) -> Vec<u32> {
@@ -66,6 +69,7 @@ pub fn shape(t: &Tree) -> String {
                 match node.ctx {
                     Ctx::Load => kids.push(It::S("Load")),
                     Ctx::Store => kids.push(It::S("Store")),
+                    Ctx::Del => kids.push(It::S("Del")),
                     Ctx::None => {}
                 }
                 push_kids(&mut stack, kids);
@@ -163,6 +167,166 @@ pub fn check(row: &Value, n: &mut Counts) {
                     "refused as {k}: {parse}"
                 ),
             }
+            n.refused += 1;
+        }
+        Err(ExprError::Declined("statement")) => {
+            assert!(want_d, "declined as a statement");
+            n.statements += 1;
+        }
+        Err(ExprError::Declined("name table")) => {
+            assert!(
+                t.windows(2).any(|w| w == [0x5C, 0x4E]),
+                "declined for the name table"
+            );
+            n.named += 1;
+        }
+        Err(ExprError::Declined(why)) => {
+            assert!(band, "declined ({why}) off the band");
+            n.band_declined += 1;
+        }
+    }
+}
+
+fn ident(v: &[u32]) -> String {
+    v.iter().map(|&c| char::from_u32(c).unwrap()).collect()
+}
+
+/// The name an `alias` binds: its asname, else its name's first part.
+fn bound(t: &Tree, n: u32) -> String {
+    let node = &t.nodes[n as usize];
+    let name = ident(node.asname.as_deref().or(node.name.as_deref()).unwrap());
+    name.split('.').next().unwrap().to_string()
+}
+
+/// `symbols._all_names` and `symbols._top_level_names`, each sorted: the
+/// second walks no Lambda and takes an import's aliases.
+pub fn names(t: &Tree) -> [Vec<String>; 2] {
+    let (mut all, mut top) = (BTreeSet::new(), BTreeSet::new());
+    let mut stack: Vec<(u32, bool)> = t.body.iter().map(|&b| (b, true)).collect();
+    while let Some((n, scope)) = stack.pop() {
+        let node = &t.nodes[n as usize];
+        let name = node.name.as_deref().map(ident);
+        match (node.kind, node.ctx) {
+            ("Name", Ctx::Store) => {
+                all.insert(name.clone().unwrap());
+                if scope {
+                    top.insert(name.unwrap());
+                }
+            }
+            ("arg" | "Attribute" | "keyword", _) => {
+                if let Some(name) = name {
+                    all.insert(name);
+                }
+            }
+            ("alias", _) => {
+                all.insert(bound(t, n));
+            }
+            ("Import" | "ImportFrom", _) if scope => {
+                top.extend(t.kids(n).iter().map(|&k| bound(t, k)));
+            }
+            _ => {}
+        }
+        let inner = scope && !matches!(node.kind, "Lambda" | "Import" | "ImportFrom");
+        stack.extend(t.kids(n).iter().map(|&k| (k, inner)));
+    }
+    [all.into_iter().collect(), top.into_iter().collect()]
+}
+
+/// The identifiers and numbers no shape holds, in preorder (`_ids`).
+pub fn ids(t: &Tree) -> String {
+    let mut out = Vec::new();
+    let mut stack: Vec<u32> = t.body.iter().rev().copied().collect();
+    while let Some(n) = stack.pop() {
+        let node = &t.nodes[n as usize];
+        let name = || node.name.as_deref().map(ident).unwrap_or_default();
+        match node.kind {
+            "AnnAssign" => out.push(format!("AnnAssign {}", node.num)),
+            "ImportFrom" => out.push(format!("ImportFrom {} {}", name(), node.num)),
+            "alias" => {
+                let asname = node.asname.as_deref().map(ident).unwrap_or_default();
+                out.push(format!("alias {} {asname}", name()));
+            }
+            "Global" | "Nonlocal" => out.push(format!("{} {}", node.kind, name())),
+            _ => {}
+        }
+        stack.extend(t.kids(n).iter().rev());
+    }
+    out.join(";")
+}
+
+/// One statement sweep source's answer line (`gen_pysyntax_stmt._line`).
+pub fn stmt_line(t: &[u32]) -> String {
+    match parse_module(t) {
+        Ok(tree) => {
+            let mut parts: Vec<String> = names(&tree).iter().map(|l| l.join(",")).collect();
+            parts.push(ids(&tree));
+            parts.push(shape(&tree));
+            parts.join("|")
+        }
+        // A subclass of SyntaxError as SyntaxError: the port reads every
+        // token first, so a tokenizer refusal may stand where the parser
+        // raises IndentationError sooner.
+        Err(ExprError::Refused(k)) => match refused_as(k) {
+            "IndentationError" | "TabError" => "E SyntaxError".to_string(),
+            class => format!("E {class}"),
+        },
+        Err(ExprError::Declined("statement")) => "D".to_string(),
+        Err(e) => panic!("declined {}: {e:?}", ident(t)),
+    }
+}
+
+/// The class `ast.parse` raises for a refusal of kind `k`: the parser's
+/// stack, `ast2obj`'s depth, a constant's identifier, an indentation the
+/// tokenizer or the statements refuse, else a SyntaxError.
+pub fn refused_as(k: &str) -> &'static str {
+    match k {
+        "stack" => "MemoryError",
+        "recursion" => "RecursionError",
+        "value" => "ValueError",
+        "indent"
+        | "unexpected indent"
+        | "unindent does not match any outer indentation level"
+        | "too many levels of indentation" => "IndentationError",
+        "inconsistent use of tabs and spaces" => "TabError",
+        _ => "SyntaxError",
+    }
+}
+
+/// One `pysyntax_stmt.jsonl` row against `parse_module`, as [`check`]
+/// compares an expression row, with each refusal's kind tied to the class
+/// `ast.parse` raises ([`refused_as`]).
+pub fn check_stmt(row: &Value, n: &mut Counts) {
+    let t = text(&row["t"]);
+    let parse = row["parse"].as_str().unwrap();
+    let band = row["band"].as_bool().unwrap_or(false);
+    let want_d = row["want"] == "D";
+    n.banded += usize::from(band);
+    match parse_module(&t) {
+        Ok(tree) => {
+            assert!(!want_d, "read a compound statement");
+            assert_eq!(parse, "ok", "accepted");
+            let [all, top] = names(&tree);
+            let want = |k: &str| -> Vec<String> { serde_json::from_value(row[k].clone()).unwrap() };
+            assert_eq!(all, want("all"), "_all_names");
+            assert_eq!(top, want("top"), "_top_level_names");
+            assert_eq!(ids(&tree), row["ids"].as_str().unwrap(), "ids");
+            let s = shape(&tree);
+            match &row["shape"] {
+                Value::String(w) => assert_eq!(&s, w, "shape"),
+                d => {
+                    assert_eq!(s.len() as u64, d["n"].as_u64().unwrap(), "shape length");
+                    assert_eq!(
+                        crate::common::hex(&Sha256::digest(s.as_bytes())),
+                        d["h"].as_str().unwrap(),
+                        "shape"
+                    );
+                }
+            }
+            n.accepted += 1;
+        }
+        Err(ExprError::Refused(k)) => {
+            assert!(!want_d, "refused a compound statement line: {k}");
+            assert_eq!(parse, refused_as(k), "refused ({k})");
             n.refused += 1;
         }
         Err(ExprError::Declined("statement")) => {

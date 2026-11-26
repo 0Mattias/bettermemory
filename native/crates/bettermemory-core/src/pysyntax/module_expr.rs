@@ -12,6 +12,9 @@ use super::lex::{decode_str, Tok};
 use super::module_lex::{module_tokens, Kind, ModToken, Module, ModuleError};
 use std::collections::HashMap;
 
+mod stmt;
+pub use stmt::parse_module;
+
 /// `MAXSTACK`: the parser's rule calls nested at once.
 pub const MAXSTACK: i32 = 6000;
 /// The rule calls from a statement to a name leaf (`-` * 5969 + `x`
@@ -116,7 +119,9 @@ pub enum ExprError {
     Refused(&'static str),
     /// Not answered here: `name table`, `statement` (a statement, unit
     /// 5c), `stack bound` or `recursion bound` (near a limit whose exact
-    /// place this port does not know).
+    /// place this port does not know), `second pass` (a ValueError only
+    /// the second pass reaches, past a legacy `print` or `exec` whose
+    /// SyntaxError may come first).
     Declined(&'static str),
 }
 
@@ -131,6 +136,7 @@ pub enum Ctx {
     None,
     Load,
     Store,
+    Del,
 }
 
 /// One node: an `ast` class (operators and comparison operators are
@@ -148,6 +154,10 @@ pub struct Node {
     pub end: u32,
     pub ctx: Ctx,
     pub name: Option<Box<[u32]>>,
+    /// An `alias`'s `asname`.
+    pub asname: Option<Box<[u32]>>,
+    /// `AnnAssign.simple` or `ImportFrom.level`.
+    pub num: u32,
     first: u32,
     count: u32,
     /// The depth `ast2obj` counts below and at this node (0: an operator).
@@ -341,6 +351,17 @@ pub struct Parser<'m> {
     frames: Vec<Frame>,
     /// The parser's depth came within this port's bound of `MAXSTACK`.
     pub unsure: bool,
+    /// `from __future__ import barry_as_FLUFL` was read: `<>` is `!=`,
+    /// and `!=` refused (`_PyPegen_check_barry_as_flufl`).
+    barry: bool,
+    /// The refusal is one only the second pass reaches (a ValueError past
+    /// a target the first pass refuses): its depth decides as a
+    /// SyntaxError's does.
+    second: bool,
+    /// A line before opens with `match_stmt`'s subject, which the second
+    /// pass refuses (`invalid_match_stmt`, "expected ':'", or
+    /// `invalid_named_expression`): its SyntaxError comes first.
+    match_head: bool,
     /// The last node a parenthesis returned as its value: a walrus there
     /// is no longer bare.
     grouped: u32,
@@ -358,18 +379,27 @@ fn same(a: &[u32], s: &str) -> bool {
 /// holding a statement's `=`, `:` or `;` after its expressions is
 /// declined (unit 5c).
 pub fn parse_expression_module(text: &[u32]) -> Res<Tree> {
+    parse_with(text, |p| p.lines(), 0)
+}
+
+/// A module's tokens read by `read` into a tree, or why not: `margin` is
+/// what the second pass of `read`'s grammar may go past the expression
+/// statement's.
+fn parse_with(text: &[u32], read: impl FnOnce(&mut Parser) -> Res<u32>, margin: i32) -> Res<Tree> {
     let m = module_tokens(text).map_err(|e| match e {
         ModuleError::Syntax(k) => ExprError::Refused(k),
         ModuleError::NeedsNameTable => ExprError::Declined("name table"),
     })?;
     let mut p = Parser::new(&m);
-    let deepest = match p.lines() {
+    let deepest = match read(&mut p) {
         Ok(d) => d,
-        // A ValueError ends the parse; a SyntaxError makes the parser read
-        // the source again with its error rules, whose MemoryError then
-        // stands (`_PyPegen_run_parser`).
+        // A ValueError of the first pass ends the parse; a SyntaxError
+        // makes the parser read the source again with its error rules,
+        // whose MemoryError then stands (`_PyPegen_run_parser`).
         Err(ExprError::Refused(k))
-            if k != "stack" && (p.unsure || (k != "value" && p.second_pass_may_overflow())) =>
+            if k != "stack"
+                && (p.unsure
+                    || ((k != "value" || p.second) && p.second_pass_may_overflow(margin))) =>
         {
             return Err(ExprError::Declined("stack bound"))
         }
@@ -408,13 +438,52 @@ impl<'m> Parser<'m> {
             tree: Tree::default(),
             frames: Vec::new(),
             unsure: false,
+            barry: false,
+            second: false,
+            match_head: false,
             grouped: u32::MAX,
             opened: HashMap::new(),
         }
     }
 
+    /// On a line opening with the soft keyword `match`, `match_stmt`'s
+    /// subject read first ([`Parser::match_subject`]): whether the second
+    /// pass reads a constant's identifier in it, and the token its first
+    /// pass's reading stopped at (`None` on another line).
+    fn subject(&mut self) -> Res<(Option<bool>, Option<usize>)> {
+        if !self.soft("match") {
+            return Ok((None, None));
+        }
+        match self.match_subject() {
+            Ok((value, reach)) => Ok((value, Some(reach))),
+            Err(e) => Err(self.first_value(e)),
+        }
+    }
+
+    /// A refusal of the line after its subject (`reach`, where that
+    /// reading stopped), as the reference answers it: a ValueError at a
+    /// constant's identifier only the second pass reads as
+    /// [`Parser::first_value`] says, and a MemoryError as follows. The
+    /// subject's reading leaves its rules' results
+    /// in the parser's memo, where the line's own reading takes them
+    /// without descending again, so a MemoryError the port counts at a
+    /// token the subject's reading reached may be none of the
+    /// reference's (`match *` + `-` * 5974 + `x, y` is read, `a *` + `-` *
+    /// 5970 + `x, y` overflows). Past that token no rule's result is kept
+    /// (a rule that reads a token there would have read it in the subject
+    /// too), so the line's reading descends as the port counts:
+    /// `match = ` + `-` * 6100 + `x` overflows as `a = ` does.
+    fn after_subject(&mut self, e: ExprError, reach: Option<usize>) -> ExprError {
+        if e == ExprError::Refused("stack") && reach.is_some_and(|r| self.pos <= r) {
+            ExprError::Declined("stack bound")
+        } else {
+            self.first_value(e)
+        }
+    }
+
     /// Every logical line as `star_expressions NEWLINE` up to ENDMARKER:
-    /// the depth of the deepest Expr statement.
+    /// the depth of the deepest Expr statement. A line opening with the
+    /// soft keyword `match` has `match_stmt`'s subject read first.
     fn lines(&mut self) -> Res<u32> {
         let mut deepest = 0;
         loop {
@@ -426,10 +495,22 @@ impl<'m> Parser<'m> {
             if self.statement_line() {
                 return Err(ExprError::Declined("statement"));
             }
-            let v = self.star_expressions()?;
-            if self.t(0).kind != Kind::Newline {
-                return syntax();
-            }
+            let (value, reach) = self.subject()?;
+            let line = |p: &mut Self| {
+                let v = p.star_expressions()?;
+                if p.t(0).kind != Kind::Newline {
+                    return syntax();
+                }
+                Ok(v)
+            };
+            let v = match line(self) {
+                Ok(v) => v,
+                // The second pass reads the subject before the line.
+                Err(ExprError::Refused("syntax")) if value.is_some() => {
+                    return Err(self.second_value(value == Some(true)))
+                }
+                Err(e) => return Err(self.after_subject(e, reach)),
+            };
             let s = self.mk("Expr", self.start(v), &[v]);
             self.bump();
             deepest = deepest.max(self.tree.nodes[s as usize].height);
@@ -442,8 +523,25 @@ impl<'m> Parser<'m> {
     /// error rules, and past the first pass's failure (`[*lambda: ...]`
     /// fails at `lambda`; `invalid_starred_expression` then reads the
     /// lambdas).
-    fn second_pass_may_overflow(&self) -> bool {
-        BASE + self.reach() + SECOND_PASS > MAXSTACK
+    fn second_pass_may_overflow(&self, margin: i32) -> bool {
+        BASE + self.reach() + SECOND_PASS + margin > MAXSTACK
+    }
+
+    /// What may follow `NAME` in `invalid_legacy_expression`: a token
+    /// `star_expressions` may open with, other than `(`.
+    fn opens_operand(&self, t: &ModToken) -> bool {
+        let text = &self.m.source[t.start..t.end];
+        match t.kind {
+            Kind::Lex(Tok::Op) => ["-", "+", "~", "*", "[", "{", "..."]
+                .iter()
+                .any(|s| same(text, s)),
+            Kind::Lex(Tok::Name) => KEYWORDS
+                .iter()
+                .find(|w| same(text, w))
+                .is_none_or(|w| ["not", "lambda", "await", "True", "False", "None"].contains(w)),
+            Kind::Lex(_) | Kind::FStringStart => true,
+            _ => false,
+        }
     }
 
     /// The most rule calls past [`BASE`] a reading of any logical line may
@@ -472,21 +570,6 @@ impl<'m> Parser<'m> {
             // A statement's later item lies two calls on.
             base: 2,
             marks: Vec::new(),
-        };
-        // What may follow `NAME` in `invalid_legacy_expression`: a token
-        // `star_expressions` may open with, other than `(`.
-        let opens_operand = |t: &ModToken| {
-            let text = &self.m.source[t.start..t.end];
-            match t.kind {
-                Kind::Lex(Tok::Op) => ["-", "+", "~", "*", "[", "{", "..."]
-                    .iter()
-                    .any(|s| same(text, s)),
-                Kind::Lex(Tok::Name) => KEYWORDS.iter().find(|w| same(text, w)).is_none_or(|w| {
-                    ["not", "lambda", "await", "True", "False", "None"].contains(w)
-                }),
-                Kind::Lex(_) | Kind::FStringStart => true,
-                _ => false,
-            }
         };
         let mut levels = vec![line()];
         let (mut cur, mut most) = (2, 0);
@@ -546,7 +629,7 @@ impl<'m> Parser<'m> {
                     None => {
                         operand = true;
                         let next = self.toks.get(j + 1).map(|&k| &self.m.tokens[k as usize]);
-                        if at_start && next.is_some_and(opens_operand) {
+                        if at_start && next.is_some_and(|t| self.opens_operand(t)) {
                             cur += LEGACY;
                             level.base = level.base.max(cur);
                         }
@@ -626,15 +709,16 @@ impl<'m> Parser<'m> {
 
     /// `star_expressions` up to the first token it cannot use.
     pub fn star_expressions(&mut self) -> Res<u32> {
-        self.run(Seq::Top)
+        self.run(Seq::Top, 0)
     }
 
     /// `named_expression` (`NAMED`) or `expression` (`EXPR`).
     pub fn expression(&mut self, named: bool) -> Res<u32> {
-        self.run(Seq::One(if named { NAMED } else { EXPR }))
+        self.run(Seq::One(if named { NAMED } else { EXPR }), 0)
     }
 
-    fn run(&mut self, k: Seq) -> Res<u32> {
+    /// The owner `k` reads its element, `at` calls past the top frame's.
+    fn run(&mut self, k: Seq, at: i32) -> Res<u32> {
         let start = self.t(0).start as u32;
         self.push(
             Fr::Seq {
@@ -643,7 +727,7 @@ impl<'m> Parser<'m> {
                 comma: false,
                 start,
             },
-            (0, 0),
+            (at, at),
             false,
         );
         let mut st = St::Operand;
@@ -724,6 +808,8 @@ impl<'m> Parser<'m> {
             end,
             ctx: Ctx::None,
             name: None,
+            asname: None,
+            num: 0,
             first,
             count,
             height,
@@ -1167,6 +1253,8 @@ impl<'m> Parser<'m> {
                 return Ok(Ok(St::Operand));
             }
             Some(_) => return Ok(Err(v)),
+            None if self.barry && self.is(0, "!=") => return syntax(),
+            None if self.barry && self.is(0, "<>") => ("NotEq", CMP, 1),
             None => match BIN.iter().find(|b| self.is(0, b.0)) {
                 Some(&(_, op, p)) => (op, p, 1),
                 None => return Ok(Err(v)),

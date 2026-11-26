@@ -157,7 +157,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `builder` | `builder.py`'s two pure schema scrubs: `_strip_titles`, `_fold_nullable` | `builder_schema.jsonl` |
 | `claims`, `claim_drift` | units 1 to 3 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`); `claim_drift`: `_Headers`, `build_binding_index`, `claim_level_drift`, the trait `LiteralLines` for the literal helpers | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl`, `claim_drift.jsonl`, `claim_drift_unicode.jsonl`, `claim_drift_python.jsonl` |
 | `symbols` | unit symcheck of `symbols.py`: the bounds (`_MAX_*`, `_FILE_SUFFIXES`), `SymbolCitation`, `SymbolDriftReport` (`missing`, `__bool__`, `to_dict`), `check_symbol_citations` over citations already parsed, `_tier`, `_live_root`, `_resolve_module`, `_module_bindings`; `ast.parse` and the name walks are a trait (`ModuleNames`) | `symbols.jsonl`, `symbols_platform.jsonl` |
-| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII read since unit claims-6 (`verify_identifier` over the raw run, the parser's NFKC in `literal`). Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts. Unit pyexpr (claims-5b2): the expression grammar `ast.parse` reads over those tokens (`module_expr::parse_expression_module`, `Parser`): acceptance with the first pass's actions, the parser's stack limit and `ast2obj`'s depth, the node arena with the names `symbols._all_names` reads; statements declined | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl`, `pysyntax_expr.jsonl`, `pysyntax_expr_posix.jsonl` |
+| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII read since unit claims-6 (`verify_identifier` over the raw run, the parser's NFKC in `literal`). Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts. Unit pyexpr (claims-5b2): the expression grammar `ast.parse` reads over those tokens (`module_expr::parse_expression_module`, `Parser`): acceptance with the first pass's actions, the parser's stack limit and `ast2obj`'s depth, the node arena with the names `symbols._all_names` reads; statements declined. Unit pystmt (claims-5c1): the simple statements (`module_expr::parse_module`, `module_expr::stmt`): assignments, annotations and augmented assignments with their targets in Store context, `del` in Del, `return`, `raise`, `assert`, `yield`, `pass`, `break`, `continue`, `global`, `nonlocal`, `import` and `from` (`_PyPegen_checked_future_import`'s flag), each slot's stack offset, an annotated target read as `assignment`'s group commits, what the second pass reads past a refused target read for its ValueError, a `match` line's subject read first; compound statements and `type` declined | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl`, `pysyntax_expr.jsonl`, `pysyntax_expr_posix.jsonl`, `pysyntax_stmt.jsonl`, `pysyntax_stmt_posix.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json`, `store_restore_lock_hold_python.json`, `store_restore_lock_python.json` (POSIX only) |
 | `store::returned` | `store_returned.py`'s backfill half on the writable store: `missing_links`, `returned_rows`, `backfill`, `ensure_backfilled` (`has_key` given, its log lines returned); `Store._put_relinked` as `store::writers::put_relinked`; the `returned_put` row a backfill appends (`Transaction::mutate_returned_put`) | `store_returned.jsonl`, `store_returned_posix.jsonl` (POSIX only) |
@@ -26608,8 +26608,8 @@ none edits another's.
 | --- | --- | --- | --- |
 | `lex` | the eval-mode tokenizer (`Parser/lexer/lexer.c`'s `tok_get_normal_mode`), the newline translation of `_PyTokenizer_FromString`, the string decoders (`_PyUnicode_DecodeUnicodeEscapeInternal`, `_PyBytes_DecodeEscape`) and the number readers (`parsenumber`, `int`'s 4,300-digit limit) | nothing | built (unit pylex) |
 | `literal` | the eval-mode parser over `lex`'s tokens, `literal_eval`'s evaluation and `claims._canonical_repr` | nothing | built (unit pylit) |
-| `module_lex`, `fstring_lex` | the module-mode tokenizer for `ast.parse` at 672 (unit 5a) and its f-string modes (5b, first part); the statement grammar (5c) and the top-level binding read (5d) follow | nothing | 5a built (unit pymodlex), 5b first part built (unit pyfstring) |
-| `module_expr` | the expression grammar of `ast.parse` over those tokens (5b2): acceptance, the first pass's actions, the parser's stack limit, `ast2obj`'s depth, and the tree with the names `symbols._all_names` reads | the C recursion limit of the host's CPython build (a `cfg` constant) | built (unit pyexpr) |
+| `module_lex`, `fstring_lex` | the module-mode tokenizer for `ast.parse` at 672 (unit 5a) and its f-string modes (5b, first part); the compound statements (5c2) and the top-level binding read (5d) follow | nothing | 5a built (unit pymodlex), 5b first part built (unit pyfstring) |
+| `module_expr` | the expression grammar of `ast.parse` over those tokens (5b2): acceptance, the first pass's actions, the parser's stack limit, `ast2obj`'s depth, and the tree with the names `symbols._all_names` reads; its child `stmt`, the simple statements (5c1): assignments, the keyword statements and imports, with Store and Del targets | the C recursion limit of the host's CPython build (a `cfg` constant) | built (units pyexpr and pystmt); compound statements declined |
 | the XID tables | whether a name past ASCII is an identifier (`verify_identifier`) | Unicode tables (`unicode::xid`) | built (unit claims-6) |
 | `\N{...}` | the Unicode name table (`getcode`) | Unicode tables (`unicode::names`) | built (unit claims-6) |
 
@@ -27318,14 +27318,269 @@ million prefix operators within twice the time of ten thousand, token
 soups and every truncation of a long line without a panic) hold the
 rest.
 
+### The simple statements (`module_expr::stmt`)
+
+`parse_module(text) -> Result<Tree, ExprError>` reproduces
+`ast.parse(source)` of CPython 3.13.13 for a module of simple
+statements (unit claims-5c1): `module_tokens`, then each logical line as
+`simple_stmts` (statements joined by `;`, one `;` may close the line,
+then NEWLINE), then ENDMARKER. It is a child module of `module_expr`
+and drives the same `Parser`: `run(owner, at)` reads an element with its
+frames `at` calls past the statement's place. As for the expressions,
+every rule was read from the interpreter and is held by
+`pysyntax_stmt.jsonl`.
+
+- The statements, in `simple_stmt`'s order: a keyword first decides
+  `return`, `raise` (`from`), `pass`, `break`, `continue`, `del`,
+  `yield`, `assert`, `global`, `nonlocal`, `import` and `from`; any other
+  statement keyword is SyntaxError (a compound keyword after `;`,
+  `else` at module level). Otherwise the first part is read as
+  `star_expressions`, and what follows it makes it a target: `:` an
+  annotation (`AnnAssign`, the value after `=` a `yield_expr` or
+  `star_expressions`), an augmented operator an `AugAssign`, `=` one
+  `Assign` target after another; else it is an `Expr`. A target is
+  checked when its `:`, operator or `=` is met, where the first pass
+  fails on one that is none: `star_targets` takes a Name, an
+  Attribute or Subscript (of any primary), and Starred, Tuple and List of
+  targets, given Store (a lone `*a = b` and `*a, *b = c` are accepted:
+  the compiler refuses them, and `ast.parse` runs no compiler); an
+  annotation or augmented operator takes a Name, Attribute or Subscript,
+  bare or in parentheses, and `AnnAssign.simple` is 1 for a bare Name
+  only; `del` takes no Starred and gives Del. An annotation's target
+  that opens with a parenthesised Name, Attribute or Subscript ends
+  there: `assignment` reads it as the group `'(' single_target ')' |
+  single_subscript_attribute_target`, and once the group's first branch
+  matches, the `:` must follow it, so `(a).b: c`, `(a)[0]: c` and
+  `(a.b).c: d` are SyntaxError where `((a).b): c` and `(f()).b: c` are
+  not (the augmented, Store and Del targets try the attribute or
+  subscript first: `(a).b += 1` is read). A yield is a value only
+  where `yield_expr` is (`x = yield = 1` is SyntaxError).
+- Past a refused target. The second pass reads on before it raises
+  SyntaxError, and a constant's identifier there is a ValueError, which
+  the port answers (`Refused("value")`, declined near the stack as a
+  SyntaxError is): after `:`, the annotation as `expression`
+  (`invalid_assignment`) unless the target is starred; after an
+  augmented operator, the value (`yield_expr` or `star_expressions`)
+  unless the target is starred in parentheses (`invalid_group` refuses
+  first); after the `=` of a first target that is none, one
+  `bitwise_or`, by `invalid_named_expression` over the element the `=`
+  follows (the last of a list without parentheses and with no trailing
+  comma, else the target) where that is a bare name or a `bitwise_or`
+  that no list, tuple, generator, `True`, `None` or `False` opens, and
+  nothing where a later target is none; at a `del` target that is none
+  or starred, the rest of the list as `star_expressions`
+  (`invalid_del_stmt`). The second pass reads the module from its
+  start, so a SyntaxError it raises before the constant stands: after a
+  line whose `match` subject it refuses (below; `match(x)` then
+  `f() = Ｎｏｎｅ`) the answer is `syntax`, and a constant after a NAME
+  whose identifier is `print` or `exec` followed by a token
+  `star_expressions` may open with is declined (`second pass`):
+  `invalid_legacy_expression` refuses it where an `expression` opens
+  with it (`print -1` then `f() = Ｎｏｎｅ` is SyntaxError,
+  `x + print -1` then the same is ValueError), which the port does not
+  place. A constant in a call's argument after a keyword or `**` is one
+  only the second pass reads, and is answered the same way, where the
+  first pass does not read it: a positional or starred argument there,
+  past its first token (`kwarg_or_starred` tries it as `NAME '='`) and
+  outside a starred argument after keywords alone (`starred_expression`
+  reads that whole). The port reads that argument before it refuses
+  the call, so `match(*a)` then `f(a=1, x + Ｎｏｎｅ)` is `syntax`, and
+  `f(a=1, x + Ｎｏｎｅ)` alone and `f(a=1, Ｎｏｎｅ)` after it are
+  `value`.
+- A line opening with the soft keyword `match` has `match_stmt`'s
+  subject read first (`subject_expr`, `compound_stmt` being tried
+  before `simple_stmts`): first
+  `star_named_expression ',' star_named_expressions?` (a starred first
+  element needs its comma, and past a comma the subject ends before an
+  element that is none), else `named_expression`. Its ValueError and
+  its MemoryError stand; anything else undoes that reading and the line
+  is read as simple statements. The second pass refuses a subject the
+  line ends after (`invalid_match_stmt`, "expected ':'") and one whose
+  last element `invalid_named_expression` refuses: `:=` after it, or
+  `=` after it with the element read as past a statement's first target
+  and a `bitwise_or` that no `=` or `:=` follows after the `=`
+  (`match(x).y = 1`, not `match[0].y = 1`); a constant's identifier
+  that rule reads is the second pass's ValueError on a line the first
+  pass refuses (`match f(x) = Ｎｏｎｅ`). A last element that is a walrus
+  no parenthesis holds is `assignment_expression`'s, which
+  `named_expression` takes before that rule, so nothing after it is
+  read (`match a := 1 := Ｎｏｎｅ` is SyntaxError). It also refuses a
+  parenthesis right after `match`, the subject's first atom, which the
+  first pass reads as a call's arguments: `tuple` reads its elements as
+  `star_named_expression` until one is none, and
+  `invalid_named_expression` refuses a keyword argument it reaches whose
+  value opens with a `bitwise_or` (`match(a=1)`, `match(x, a=1)`, not
+  `match(a=not b)` or `match(**a, b=1)`); where `tuple` fails,
+  `invalid_group` refuses a lone starred or double-starred element
+  (`match(*a)`, `match(**a)`). `parse_expression_module` reads such a
+  line's subject the same way.
+- Imports. A dotted name is one identifier with its dots, each part the
+  NFKC of its NAME (`import a . b` is `a.b`); `as` takes a NAME; a
+  `from` counts `.` as one and `...` as three, takes `*` alone, and a
+  trailing comma only inside parentheses. Each `alias` spans its text and
+  holds its name and `asname` (`Node::asname`); `ImportFrom` holds its
+  module and level (`Node::num`, which holds `AnnAssign.simple` too);
+  `Global` and `Nonlocal` hold their names joined by `,`. An identifier
+  whose NFKC is a constant is a ValueError in every slot (`import a as
+  Ｎｏｎｅ`); a constant keyword is SyntaxError. `from __future__ import
+  barry_as_FLUFL` (level 0, the alias's name, any asname) sets the flag
+  `_PyPegen_checked_future_import` sets: from the next token on, `<>`
+  is `!=` and `!=` is SyntaxError (`_PyPegen_check_barry_as_flufl`);
+  `ast.parse` accepts it anywhere in the module, as the compiler alone
+  places future imports.
+- Declined (`statement`, unit 5c2): a line opening with `if`, `while`,
+  `for`, `with`, `try`, `def`, `class`, `async` or `@`, a line opening
+  with the soft keyword `match` (its raw text) and ending in `:`, and a
+  statement (after `;` too) opening with `type`, a name and `=` or `[`.
+  `match`, `type` and `case` are names elsewhere; `case x:` at module
+  level is read and refused.
+- The stack. Each slot's place past `BASE`, read by bisection on a `-`
+  chain at the interpreter, is exact and pinned by its boundary pair:
+  an assignment's value 2, an augmented value 2, an annotation -1, the
+  value after it 3, `return` 1, `raise`'s exception and `assert`'s test
+  -1 and the cause and message 0, the `yield` statement's slot 1, `del`
+  6 and its later targets 8, a statement after `;` 2 more, `match_stmt`'s
+  subject 1 for its first element, 3 for its second and 4 for each
+  later one (a starred element 6 fewer: `'*' bitwise_or` skips the six
+  calls from `named_expression` to `bitwise_or`); `yield` reads one call past its
+  slot's place and `yield from` one before it, and inside a slot the
+  expression grammar's own counts hold (a later item 2, a starred one
+  -5). `del`'s target that is none (`del -x`) is not read by the first
+  pass; the second pass's `invalid_del_stmt` reads it at 6, which the
+  port counts as the first pass. Brackets in a target or value keep the
+  expression grammar's ranges, from the slot's place. The subject's
+  reading leaves its rules' results in the parser's memo, which the
+  line's own reading takes without descending again: `match *` + `-` *
+  5974 + `x, y` is read where `a *` + `-` * 5970 + `x, y` overflows, so
+  a MemoryError the port counts in the line's reading at a token the
+  subject's reading reached is declined (`stack bound`). Past that
+  token no rule's result is kept (a rule that reads a token there would
+  have read it in the subject too), and the line's MemoryError stands:
+  `match = ` + `-` * 6100 + `x` overflows as `a = ` does.
+- The second pass. A refusal is declined (`stack bound`) where
+  `Parser::reach` with the expression statement's margin and
+  `STATEMENT_PASS` (10, the deepest slot past the expression
+  statement's line: `del`'s later targets after `;`) passes 6,000. No
+  form bisected needs the 10 (each overflows past where the port
+  declines without it); `pysyntax_stmt_kills::the_statement_margin_is_ten_calls`
+  holds its value on a module whose first line is refused, which the
+  reference answers SyntaxError however deep the second is. The
+  forms whose second pass was bisected (a trailing `$` after each
+  slot, `del` of a chain, `f() = ` and `x, y: ` before a chain, a chain
+  before `= 1`) overflow past where the port starts to decline, and 60
+  pieces below their boundary (120 inside a parenthesis) the port
+  answers SyntaxError.
+- `ast2obj`'s depth: a statement is one level above its deepest child,
+  and `recursion_answer` is asked of the deepest statement with the
+  Module counted, as for an Expr.
+
+Which forms are exact: every slot above on a `-` chain (the first
+refused source of each is pinned with the last accepted, including the
+ValueError a constant identifier raises at its leaf), the `match`
+subject's elements among them. Declined within the margin: a refusal
+near the second pass's bound, a target or value inside brackets near
+the stack (the expression grammar's ranges), a MemoryError of a `match`
+line's own reading at a token its subject's reading reached, and
+anything a statement's second pass reads that the first does not.
+
+Fixtures: `tests/contract/gen_pysyntax_stmt.py` writes
+`pysyntax_stmt.jsonl` and `pysyntax_stmt_posix.jsonl`, both gated on
+the Python release (the header alone under another interpreter). The
+POSIX file holds the rows `ast.parse` reads into trees deeper than the
+port answers under Windows' `Py_C_RECURSION_LIMIT` (1,000 on arm64,
+3,000 on x64): each slot's deepest accepted chain and the bracket
+stacks' accepted sources, about 5,970 deep, which a POSIX host, whose
+limit is 10,000, converts and Windows refuses with RecursionError. It
+is POSIX only (`golden_pysyntax_stmt_not_posix` records the gap on
+Windows), and its generator declines where the limit is not 10,000.
+Every other row every host answers alike: the deepest trees of
+`pysyntax_stmt.jsonl` (10,500) are past every host's limit. A row holds
+the source, the class
+`ast.parse` raises or `ok`, and for an accepted source the names
+`symbols._all_names` and `symbols._top_level_names` read (the
+reference's own functions), `ids` (`AnnAssign.simple`, an
+`ImportFrom`'s module and level, each alias's name and asname, a
+`Global`'s names, in preorder) and the shape in preorder. The cases:
+each form and its near misses (every target kind, starred targets,
+annotations, annotated targets opening with a parenthesised single
+target, augmented targets, `del`, imports, `global`, `raise`, `assert`,
+`yield`, `;`, the compound heads declined, the future import), names
+past ASCII and constant identifiers in each slot and past a refused
+target (after a `match` line the second pass refuses first, and after
+those it does not; a subject's parenthesis it refuses, walrus chains
+after the subject, a constant in a call's argument after a keyword),
+every
+`pysyntax_expr.jsonl` form and statement line read as a module of
+statements, each slot's boundary pair (the `match` subject's among
+them, and seven `match` lines whose subject's reading stops before the
+chain), 16 lines the first pass refuses at the second pass's boundary
+pair (`band`) and 60 or 120 pieces below it, 7 lines opening with
+`match` where the port does not decide (the memo, a bracket around the
+subject, the second pass after it) at their boundary pair (`band`) and
+10, 60 or 150 pieces below it, 24 bracket stacks drawn by a fixed LCG into statement slots at
+their boundary pair (`band`) and 150 calls either side, chains past
+`ast2obj`'s depth in five statements and before or after a shallow
+one, and a sweep row pinning by count and SHA-256 the answers (a
+refusal by its class, a subclass of SyntaxError as SyntaxError) to
+20,000 lines drawn from 46 statement templates, one in three with a
+token inserted or a character deleted. `golden_pysyntax_stmt` and
+`golden_pysyntax_stmt_posix` check every row, a refusal's kind against
+the class `ast.parse` raises; `pysyntax_stmt_kills` (targets, the
+compiler's errors, `simple`, Del, dotted names, the annotated target's
+group, what the second pass reads past a refused target, a SyntaxError
+the second pass meets first, one the subject raises first (its
+parenthesis, a walrus chain, a constant in an argument after a
+keyword), the `match` subject read before the line by both entries and
+its memo, a MemoryError past the subject's tokens, each slot's offset by one, `del`'s later targets, the second pass and
+`STATEMENT_PASS`, the future import, the declines, the statement level,
+the deepest statement, the stated difference below; each deep source's
+answer under the host's C recursion limit) and
+`pysyntax_stmt_robustness` (each boundary on a 64 KiB thread,
+100,000 statements on one line and 100,000 lines within ten times the
+time of a tenth, token soups and every truncation of a long line without
+a panic) hold the rest.
+
+Stated difference: a constant's identifier that only the expression
+grammar's second pass reads (`invalid_legacy_expression` in `x Ｎｏｎｅ`
+and `type a + Ｎｏｎｅ = 1`, `invalid_arithmetic`, `invalid_comprehension`,
+`invalid_kvpair`, `invalid_named_expression` over a statement's
+unparenthesised walrus, `a := Ｎｏｎｅ` and `f(x) := Ｎｏｎｅ`) is refused
+as `syntax`, as `parse_expression_module` refuses it, where the
+reference raises ValueError; so is one before a later tokenizer
+refusal (`Ｎｏｎｅ` then an unclosed `(`), which the port reads first.
+`check_claim` (`claims.py` 673) and `symbols` (`symbols.py` 444) catch
+SyntaxError and ValueError alike, so no caller's answer changes;
+`pysyntax_stmt_kills::a_constant_only_the_expressions_second_pass_reads_is_syntax`
+pins the port's answers.
+
+The reference's own reading, reproduced: `ast.parse` honours
+`from __future__ import barry_as_FLUFL` wherever it stands in the
+module, and only from the token after it, so `1 <> 2` parses after it
+and not before; `check_claim` reads such a module's bindings as the
+parser left them. An annotated target that opens with a parenthesised single
+target ends there (`(a).b: int` is SyntaxError, while the language
+reference takes any attribute reference as a target and `(a).b = 1` is
+read), so `check_claim` reports such a file as one that does not parse.
+
+No regular expression is involved.
+
+Size: `stmt.rs` is 830 lines of Rust source after `cargo fmt`, and
+`module_expr.rs` grew by 88 (the child module, `Ctx::Del`,
+`Node::asname` and `num`, `parse_with`, `run`'s place, the future
+import's flag, the second pass's flags, the `match` subject read on an
+expression line, `subject` and `after_subject`); the reading past a
+refused target, the annotated target's group and the `match` subject's
+two passes take it past the 600 planned; the imports stay in this unit.
+
 ### Left for later units
 
 Unit 5d removes `LexError::NeedsIdentTable` and `NeedsNameTable`,
 `LiteralError`'s and `ModuleError`'s variants passing them on, and the
 branches of `module_lex` and `fstring_lex` that answer them: since unit
-claims-6 nothing produces them. For `module_lex`: the statement grammar
-(5c, which calls `module_expr`'s entries and owns the lines it
-declines), and the reads of the parsed module by `check_claim` and
+claims-6 nothing produces them. For `module_lex`: the compound
+statements (5c2: blocks, decorators, `def` and `class` with their
+parameters, `async` forms, `match` and its patterns, type parameters
+and the `type` statement, which `parse_module` declines), and the reads of the parsed module by `check_claim` and
 `symbols` (5d, which also decides what `Refused("stack")` becomes, since
 the reference raises MemoryError out of `check_claim`).
 
@@ -30196,8 +30451,9 @@ What the reference has and this build does not, by area:
 - Each hit's signals and drift report: `claims.py` past its leaves,
   its literal reader, its drift index, its module tokenizer (unit
   5a) and that tokenizer's f-string modes (unit 5b, first part) (the
-  declare-time oracle: the statement grammar 5c and the binding read
-  5d),
+  declare-time oracle: the statement grammar's second part 5c2, the
+  first part 5c1 being built in `pysyntax::module_expr`, and the
+  binding read 5d),
   `verify_candidates.py` past the validation of one candidate, its
   three extraction patterns (`_BACKTICK_RE`, `_BARE_RE`,
   `_DOMAIN_ROUTE_RE`) and the candidate scan (`_normalize_for_compare`
