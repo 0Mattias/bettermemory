@@ -111,6 +111,9 @@
 //!   records, the text one related entry shows, the roster line, and the
 //!   answers with their readers, teaching errors and two checks, and the
 //!   pure write decision, its replacement IDs and its event fields;
+//! - [`review_counters`]: `review_counters.py`'s first unit: its tables,
+//!   its field readers, the three row readers of the event log
+//!   (`IssuedRow`, `DecidedRow`, `GradeRow`) and `is_review_row`;
 //! - [`mirror_format`]: the v8 file names and frontmatter the mirror
 //!   writes (`mirror_format.py` whole);
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
@@ -574,6 +577,7 @@ pub mod response_rows;
 pub mod response_trust;
 pub mod response_write;
 pub mod review;
+pub mod review_counters;
 pub mod search;
 pub mod search_dedup;
 pub mod session;

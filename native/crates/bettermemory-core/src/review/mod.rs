@@ -300,6 +300,10 @@ pub const ACTION_RESTATES: &str = "restates";
 pub const ACTION_COMMIT: &str = "committed";
 pub const DETECTOR_REVIEW: &str = "review";
 pub const DETECTOR_REVIEW_DISAGREES: &str = "review-disagrees";
+/// `REVIEW_ISSUED`: the event kind a review writes.
+pub const REVIEW_ISSUED: &str = "review_issued";
+/// `UNDECLARED`: the bucket an undeclared client or model is counted under.
+pub const UNDECLARED: &str = "none";
 /// `REVIEW_LINK_NOTE`: the note on a supersedes link the review sets.
 pub const REVIEW_LINK_NOTE: &str = "set by the write review";
 

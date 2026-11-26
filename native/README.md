@@ -45,7 +45,8 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `models_text` | unit 2 of `models.py`, the text helpers: `make_slug` (`_LEADING_DATE_RE`, `_SLUG_RE`), `build_filename`, `_word_ending_at`, `looks_truncated` (`_BODY_TERMINALS`), `first_summary_line` (`_SENTENCE_END_RE`, `_ABBREVIATIONS`), `snippet_for`, `snippet_window`, `_truncate_at_word` (the last two moved here from `search_dedup`) | `models_text.jsonl`, `models_text_unicode.jsonl`, `models_text_platform.jsonl` |
 | `records::summaries` | unit 3 of `models.py`, the result models: `MemoryHit` (`MemoryHit::new` with the model's defaults), `MemorySummary` and `TombstonedSummary` (`of` a record, as `store_records.list_summaries` and `list_tombstones` build them), and the two listings' scope filters (`summaries`, `tombstone_summaries`) | `models_hits.jsonl` |
 | `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT`, re-exported), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint`; unit 2, the store reads: the body sha memo (`SHA_BOUND`, `clear_shas`), `current`, `answers`, `Backlog`, `backlog`, `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids`, `refusal_rows`, `held_by_removal` over `StandingStore` and `Admission` | `standing.jsonl`, `standing_reads.jsonl` |
-| `review` | unit 1 of `review.py`, the sealed tables: `RELATED_TOP`, `RELATED_CAP`, `RELATED_TEXT_CHARS`, `RELATED_CONSTANTS`, `ROSTER_TEXT_CHARS`, `TAU_UNSAFE`, `TAU_SECRET`, `Tau`, `current_tau`, `tau_override`, `tau_unset` (and `tau_patched`), the labels, `LABEL_CHOICES`, the four statements, `QUESTIONS`, `questions_payload`, `questions_sha256`, `constants_sha256`, `seal_shas`, `ACTION_*`, `DETECTOR_*`, `REVIEW_LINK_NOTE`, `RelatedEntry`, `RelatedSet` (with `CueReport`), `related_text`, `related_entry`, `RosterLine`, `_write_sentences`; unit 2, the answers: `ReviewAnswerError` (`AnswerFault`), `ANSWER_FORMAT`, `NAMED_FORMAT`, `UPDATE_ANSWER_FORMAT`, `ReviewAnswers` with `to_event` and `is_zero_attestation`, `_score`, `_chain_keys`, `parse_answers`, `parse_update_answers`, `check_answered_ids`, `check_named`; the pure decision, `ReviewDecision::to_event`, `replaced_ids`, `apply_review` | `review_tables.jsonl`, `review_tables_unicode.jsonl`, `review_answers.jsonl`, `review_decision.jsonl` |
+| `review` | unit 1 of `review.py`, the sealed tables: `RELATED_TOP`, `RELATED_CAP`, `RELATED_TEXT_CHARS`, `RELATED_CONSTANTS`, `ROSTER_TEXT_CHARS`, `TAU_UNSAFE`, `TAU_SECRET`, `Tau`, `current_tau`, `tau_override`, `tau_unset` (and `tau_patched`), the labels, `LABEL_CHOICES`, the four statements, `QUESTIONS`, `questions_payload`, `questions_sha256`, `constants_sha256`, `seal_shas`, `ACTION_*`, `DETECTOR_*`, `REVIEW_ISSUED`, `UNDECLARED`, `REVIEW_LINK_NOTE`, `RelatedEntry`, `RelatedSet` (with `CueReport`), `related_text`, `related_entry`, `RosterLine`, `_write_sentences`; unit 2, the answers: `ReviewAnswerError` (`AnswerFault`), `ANSWER_FORMAT`, `NAMED_FORMAT`, `UPDATE_ANSWER_FORMAT`, `ReviewAnswers` with `to_event` and `is_zero_attestation`, `_score`, `_chain_keys`, `parse_answers`, `parse_update_answers`, `check_answered_ids`, `check_named`; the pure decision, `ReviewDecision::to_event`, `replaced_ids`, `apply_review` | `review_tables.jsonl`, `review_tables_unicode.jsonl`, `review_answers.jsonl`, `review_decision.jsonl` |
+| `review_counters` | unit review_counters-1a of `review_counters.py`: `ANSWER_WINDOW` (`ANSWER_WINDOW_US`), `REVIEW_GRADE`, `REFUSAL_ACTIONS`, `DETECTORS`, `_STATUS_ACTION`, `_str`, `_ids`, `_session_of`, `_bucket_value`, `_score`, `IssuedRow` (`chain_key`, `from_event`), `DecidedRow` (`committed`, `zero_attestation`, `from_event`), `GradeRow` (`from_event`), `is_review_row`; and `review.py`'s `REVIEW_ISSUED` and `UNDECLARED` in `review` | `review_counters_rows.jsonl` |
 | `mirror_format` | `mirror_format.py` whole: `TOMBSTONE_DIR`, `EPISODES_DIR`, `TOMBSTONE_SUFFIX`, `_ID_TOMBSTONE_RE` (by hand, `id_tombstone_stem`), `memory_filename`, `tombstone_filename`, `active_filename_for_tombstone`, `is_legacy_tombstone_name`, the four key tables, `memory_metadata`, `episode_metadata` | `mirror_format.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo; unit 4 (POSIX): `_claim_key`, `_ClaimKeys` (with its recursion limit), `_is_under_home`, `_home_ignores_case` (with `str.swapcase`), `_is_multi_segment_routelike`, `_path_exists` over the file-system trait | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl`, `verify_candidates_keys.jsonl`, `verify_candidates_keys_unicode.jsonl`, `verify_candidates_keys_python.jsonl` |
@@ -13577,6 +13578,125 @@ the exact replacement list and ASCII JSON spelling. The kills tests pin the
 branches that change a refusal, link or filing. The robustness tests cover
 long code-point IDs, nonfinite scores and growth from 1,500 to 15,000 entries.
 Store-backed review chains and related-set construction belong to later units.
+
+## The write review's counters (`review_counters.py`)
+
+`review_counters.py` (780 lines) reads the event log's review rows and
+counts the write review's chains for `bettermemory eval` and `bettermemory
+review samples`. It is cut into three units, leaves first. Unit
+review_counters-1a is built in `src/review_counters.rs`.
+
+| Function | Lines | Needs from the machine | Status |
+| --- | --- | --- | --- |
+| `ANSWER_WINDOW`, `REVIEW_GRADE`, `REFUSAL_ACTIONS`, `DETECTORS`, `_STATUS_ACTION` | 46-70 | nothing | built (1a) |
+| `_str`, `_ids`, `_session_of`, `_bucket_value` | 73-99 | nothing | built (1a) |
+| `IssuedRow` (`chain_key`, `from_event`) | 108-152 | nothing | built (1a) |
+| `DecidedRow` (`committed`, `zero_attestation`, `from_event`), `_score` | 155-245 | nothing | built (1a) |
+| `GradeRow` (`from_event`) | 248-279 | nothing | built (1a) |
+| `is_review_row` | 282-288 | nothing | built (1a) |
+| `ReviewChain`, `build_chains`, `_in_window`, `chains_in_window`, `_share`, `_median`, `_iso_week`, `_Tally` | 296-610 | nothing (rows are arguments) | review_counters-1b |
+| `ReviewReport`, `compute_review_report` | 613-780 | the event log's rows, the clock as an argument | review_counters-2 |
+
+`review.py`'s `REVIEW_ISSUED` (`"review_issued"`) and `UNDECLARED`
+(`"none"`) sit in `review/mod.rs` beside `ACTION_*`; they are the only
+names of review.py's chain unit (review-4) the counters read.
+`recall_settle.rs` keeps its own copy of `REVIEW_ISSUED`.
+
+What review_counters-1a reproduces, and why it is built as it is:
+
+- **An event is a `PyValue`.** The readers take the row as
+  `json.loads` gave it. `.get(key)` is `PyValue::get`, the last value of
+  a `str` key. A row that is not a dict has no `.get`: every reader
+  answers `CountersError::AttributeError` with the type's name, as the
+  reference raises. `actor`, `review_answers`, `relation` and each
+  filing are read only when they are dicts (`isinstance(..., Mapping)`).
+- **Texts.** `_str` is a non-empty `str`; `_ids` reads only a `list`
+  (a tuple gives none, as `isinstance(value, list)` refuses it) and keeps
+  its non-empty `str` items in order, repeats included. The session is
+  the actor block's, then the row's own; the client and the model are
+  the row's own, then the actor block's, then `UNDECLARED`. The actor
+  block is read one level deep: an `actor` inside it is not followed.
+- **`IssuedRow.from_event`** answers None without a review_id, without
+  a time `parse_event_ts` reads, or with a `door` of any value but None
+  (`false`, `0` and `""` are present: an update's standing roster).
+  `response_chars` is an `int` that is not a bool, kept as `PyValue::Int`'s
+  decimal text, since the reference keeps an `int` of any size.
+  `pre_answered` is `is True` (an `int` 1 is not). `chain_key` is the
+  parent's review_id, else the row's own.
+- **`DecidedRow.from_event`** answers None without a review_id, a time
+  or a non-empty `str` status. The action is `review_action` when it is
+  a non-empty `str`, else `_STATUS_ACTION`'s entry for the status, else
+  the status itself: an empty or non-`str` `review_action` falls to the
+  map. The relation keeps the `str` to `str` pairs of the answers'
+  `relation` in its order; a key held twice in the dict keeps its first
+  place and its last value (as a dict built from those pairs does, and
+  as `json::loads` already folds a key repeated in the log's text), and
+  is then dropped if that last value is not a `str`. A filing is a dict
+  row with a non-empty `str` id and detector.
+- **`_score`** answers None for a bool and for anything not an `int` or
+  a `float`; an `int` is `float(int)`, correctly rounded (Rust's parse
+  rounds half to even, as CPython does), an `int` zero is +0.0 (an `int`
+  has no negative zero, so `-0` text, which no reader makes, reads as
+  `float(0)` does), and from 2**1024 - 2**970 on it
+  raises OverflowError, which `from_event` does not catch: the answer is
+  `CountersError::OverflowError`, the class only, since its text follows
+  the release. The guards come first, so a row without a status answers
+  None whatever its scores. NaN and the infinities pass as floats.
+- **`zero_attestation`** compares both scores with 0 as floats (-0.0
+  equals; NaN and None do not) and asks every relation label to be
+  `unrelated` (true for no relation). `committed` is an action of
+  `ACTION_COMMIT`.
+- **`GradeRow.from_event`** needs `right_answers` and `right_action` to
+  be bools (an `int` 1 is refused); `sample_ts` is read or None.
+- **`is_review_row`** is `kind in (REVIEW_ISSUED, REVIEW_GRADE)`, a
+  tuple's `==`, so a kind of any type, an unhashable list or dict
+  included, answers False without raising; then a `write` kind with a
+  `str` review_id, the empty one included (not `_str`).
+- **`ANSWER_WINDOW`** is `ANSWER_WINDOW_US`, 30 minutes in microseconds;
+  datetimes are `DateTime`s with the offset `parse_event_ts` gives.
+
+The module has no regular expression.
+
+`gen_review_counters` writes the ungated `review_counters_rows.jsonl`
+(about 120 KB): the tables in its header with the three base events and
+the sweep's pools; 219 event rows (each base with fields set or dropped
+to reach every guard, a relation with one label unrelated and one
+not, events that are not dicts, kinds of every type, and JSON texts with
+a key held twice), each answered by all seven
+readers; 36 rows of `_str`, `_ids` and `_score` on their own; and a
+sweep of 10,000 events drawn field by field from the pools by count and
+SHA-256 of the answers. `golden_review_counters_rows` checks every row
+and the sweep (drawn here from the header's pools by the generator's
+rule). `review_counters_rows_kills` pins the misreadings that move a
+row into the wrong action, bucket, chain or verdict: an empty
+`review_action` kept, a bool score read as 1.0, a huge `int` score read
+as infinity, `right_answers` 1 taken as True, the actor's client before
+the row's own, a false door read as absent, a list kind raising, a tuple
+of ids read, a repeated relation key placed last, and a zero
+attestation that asks any label, not every label, to be unrelated.
+`review_counters_rows_robustness` reads rows of 100,000 ids, relation
+pairs and filings (linear growth from 10,000), an actor nested 10,000
+deep, every float extreme and `int`s past the float range, and texts of
+200,000 code points, without a panic; it compares scores by their
+bits, so a zero's sign is checked.
+
+Known costs, both linear in the row's size. Each `.get` is
+`PyValue::get`, the crate-wide linear scan of a dict's pairs from the
+end, where the reference's dict lookup is O(1): the readers make about
+20 lookups an event, so on an event of 1,000,000 keys
+`DecidedRow::from_event` takes about 26 ms and `IssuedRow::from_event`
+about 19 ms in release, where the reference takes a few microseconds
+(the event's JSON parse, linear in both, stays the larger part end to
+end). A relation of 200,000 keys of 200 code points takes 9.5 to 15
+times the reference's time and 16 times its memory (188 MB against
+11.5 MB): `str_items` hashes every key, and the row clones each key and
+value as code points (4 bytes each) where the reference shares its `str`
+objects; `IssuedRow` likewise clones the id lists it keeps.
+
+Left for review_counters-1b: the chains and their window (`ReviewChain`
+to `_Tally`); for review_counters-2: `ReviewReport` and
+`compute_review_report`. The medians and the per-100 rates whose
+rounding a report shows are theirs.
 
 ## The hook mains' argument parser (`argparse`, units argparse-1a and argparse-1b)
 
