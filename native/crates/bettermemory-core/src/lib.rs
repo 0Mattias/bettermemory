@@ -140,7 +140,8 @@
 //!   id, the hostname, the id file's object and the two files read;
 //!   `open_machine` and `_write_record`, with the machine's own reads);
 //! - [`search`]: `search.search` over records in memory, bit for bit,
-//!   the query-biased snippet and its memos, and the token cache;
+//!   the query-biased snippet and its memos, the token cache, and each
+//!   hit with its drift report and the page's claim anchors (`hit`);
 //! - [`search_dedup`]: write-time dedup, the Jaccard scorer and its
 //!   token cache;
 //! - [`supersession`]: write-time supersession: the cue table, the
@@ -376,6 +377,10 @@
 //!   with its memo; the drift report and the claim anchors; the attestation
 //!   write gate; the attestation and citation read passes; the drift
 //!   readers `detect_path_drift` and `holds_commit`);
+//! - [`commit_anchors`]: `commit_anchors.py` whole (`relative_under`,
+//!   `expected_home`, `project_commit_anchors`, and `HostPaths`, the
+//!   anchors' path rules over them), the cwd, the home and the user
+//!   lookup arguments;
 //! - [`verify_status`] and [`attribution`]: a memory's verification
 //!   staleness, and phrase-match attribution of memories to a reply;
 //! - [`response_rows`]: `ResponseBuilder`'s search and list serializers
@@ -479,6 +484,7 @@ pub mod checkout_token;
 pub mod claim_drift;
 pub mod claims;
 pub mod cli;
+pub mod commit_anchors;
 pub mod config;
 pub mod control_tokens;
 pub mod credentials;

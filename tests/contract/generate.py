@@ -192,6 +192,7 @@ from . import (
     gen_supersession_features,
     gen_supersession_detect,
     gen_search_snippet,
+    gen_search_hit,
     gen_store,
     gen_store_docfreq,
     gen_store_docfreq_store,
@@ -293,6 +294,7 @@ from . import (
     gen_witness_questions,
     gen_verify_anchoring_sparse,
     gen_verify_anchoring_anchor,
+    gen_commit_anchors,
     gen_verify_anchoring_attest,
     gen_verify_anchoring_detect,
     gen_verify_anchoring_passes,
@@ -403,6 +405,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "supersession_detect_unicode": gen_supersession_detect.generate_unicode,
     "search_snippet": gen_search_snippet.generate,
     "search_snippet_unicode": gen_search_snippet.generate_unicode,
+    "search_hit": gen_search_hit.generate,
     "store_path": gen_store_path.generate,
     "datetime": gen_time.generate,
     "argparse": gen_argparse.generate,
@@ -636,6 +639,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "witness_questions": gen_witness_questions.generate,
     "verify_anchoring_sparse": gen_verify_anchoring_sparse.generate,
     "verify_anchoring_anchor": gen_verify_anchoring_anchor.generate,
+    "commit_anchors": gen_commit_anchors.generate,
+    "commit_anchors_posix": gen_commit_anchors.generate_posix,
     "verify_anchoring_attest": gen_verify_anchoring_attest.generate,
     "verify_anchoring_attest_posix": gen_verify_anchoring_attest.generate_posix,
     "verify_anchoring_attest_unicode": gen_verify_anchoring_attest.generate_unicode,
@@ -1423,6 +1428,9 @@ PLATFORM_GATED = frozenset(
 #: ``verify_anchoring_detect`` spells candidates through the host's `Path`
 #: and locates repositories through `os.path.realpath`
 #: (`gen_verify_anchoring_detect`);
+#: ``commit_anchors_posix`` holds the rows that reach `ntpath.relpath`, which
+#: asks `nt._getfullpathname` on Windows, or expand a ``~`` path, which
+#: `ntpath.expanduser` reads from ``USERPROFILE`` (`gen_commit_anchors`);
 #: ``symbols_platform`` holds links, a FIFO and a mode-000 file
 #: (`gen_symbols`);
 #: ``project_file_parse_posix`` parses a real tree with a FIFO, links, a
@@ -1464,6 +1472,7 @@ POSIX_ONLY = frozenset(
         "verify_candidates_keys_python",
         "verify_anchoring_attest_posix",
         "verify_anchoring_detect",
+        "commit_anchors_posix",
         # The anchors' compare form is the host's `Path` (`gen_verify_count`).
         "verify_count",
         "checkout_token_remint",

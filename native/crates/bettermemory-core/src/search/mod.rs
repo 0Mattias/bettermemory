@@ -16,6 +16,7 @@
 //! callback ([`Options::corpus_stats_provider`]).
 
 pub mod expansion;
+pub mod hit;
 pub mod lane;
 pub mod num;
 pub mod snippet;

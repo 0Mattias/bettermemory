@@ -64,6 +64,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `handlers::search_request` | `handlers/search.py` request width and mode, `Hydrator` and `_TopExpansion` | `handler_search_request.jsonl` |
 | `handlers::verify` | unit h_verify-1 of `handlers/verify.py`: the caps, `_check_verify_args`, `_refuse_stale_stored_claims`, `_refuse_unverifiable_stored_attestations`, `_relative_to_root`, `_refuse_evidence_free_stamp`, `_record_root`, `_within`, `_is_callers_tree` | `handlers_verify_args.jsonl`, `handlers_verify_args_unicode.jsonl`, `handlers_verify_gates.jsonl`, `handlers_verify_gates_python.jsonl` |
 | `verify_anchoring` | units 1a and 1b of `verify_anchoring.py`: `_config_switch`, the index constants, `_index_varint`, `_parse_skip_index`, `_SkipIndex` (`skips`, `_holds`, `_any_below`); `_sparse_enabled`, `_parts_below`, `_SKIP_MEMO_CAP`, `_SKIP_MEMO` (`SkipMemo`), `_clear_skip_memo`, `_skip_index`, `_absent_by_sparsity`; unit 2a: `PathDriftReport`, the anchoring vocabulary, `ClaimAnchor`, `Anchoring`; unit attest: `_is_absolute_attestation`, `_join_under`, `_resolves_under`, `_worktree_root_is_live`, `unverifiable_attestations`, `_unverifiable_at`, `_normalize_attestations`; unit passes: `_relative_attestation_keys`, `_read_attestations`, `_AttestationRead`, `_attestation_read`, `_read_citations`, `_check_anchored_attestations`, `_is_checkable_citation`, `_check_anchored_citations`; unit detect: `holds_commit`, `detect_path_drift`, `_detect_unanchored`, `_AnchoredRead` (`report`), `_detect_anchored` | `verify_anchoring_sparse.jsonl`, `verify_anchoring_skip.jsonl`, `verify_anchoring_anchor.jsonl`, `verify_anchoring_attest.jsonl`, `verify_anchoring_attest_unicode.jsonl`, `verify_anchoring_attest_posix.jsonl`, `verify_anchoring_passes.jsonl`, `verify_anchoring_passes_unicode.jsonl`, `verify_anchoring_detect.jsonl` |
+| `commit_anchors` | `commit_anchors.py` whole (unit commit_anchors-1): `UNMAPPED_ANCHOR`, `UNMAPPED_REASON`, `relative_under`, `expected_home`, `CommitAnchors`, `project_commit_anchors`, and `HostPaths` (`verify_anchoring`'s `AnchorPaths` over them) | `commit_anchors.jsonl`, `commit_anchors_posix.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
 | `response_history` | `_DriftPass` location, eligibility to key a row, and lazy whole-history reads in `_response.py` | `response_history.jsonl` |
 | `verify_basis`, `verify::status` | `verify_basis.py` whole (`unread_recommendation`, `dates_since`, `date_count_uncertainty`, `_count_since_verify` over the `AnchorWalk` trait) and `verify.py`'s status leaves (`CommitDriftStatus`, `_drift_recommendation`, `_claim_drift_recommendation`, `ResolvedCommitDrift`, `_index_paths`, `_unreadable`, `_gated_claims`, `commit_drift_status`, `staleness_verdict_from_report`), and the claim-level narrowing (`_weak_tier_evaluation`, `_claim_legs`, `_resolve_reachable`, `_resolve_with_claims`, `resolve_commit_drift` over the `DriftGit` and `Spelling` traits, and `LiteralReader`, the `LiteralLines` of the built literal reader), the claim anchors (`commit_drift_anchor_paths`, `_anchor_paths`, `_attested_anchor`, `_RELATIVE_CITATION_RE` on the engine) and the count (`resolve_commit_drift_count`, `_quiescent_drift_applicable`, `_anchor_specs`, `applicable_unread`, `compute_commit_drift`, `_narrow_commit_drift` over the `CountGit` trait) | `verify_basis.jsonl`, `verify_weak.jsonl`, `verify_count.jsonl` |
@@ -71,7 +72,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `response_render` | `_response.py`'s `ResponseBuilder.render_hit`, `render_show`, `_SHOW_DEFAULTS`, `_NATIVE_SEP`, `_slashed`, `_path_states`, `_compact_origin`, `_grouped_links` | `response_render.jsonl` |
 | `response_reason`, `response_trust` | `_response.py`'s `check_reason` (`_named`, `_REASON_PATHS`, `_rejection_note`), `_UNTRUSTED_PROVENANCE`, `_untrusted`, `verdict_and_reason`, `_row_reason`, `_claim_at_index`, `TRUST_UNAVAILABLE_RECOMMENDATION`, `ResponseBuilder.attach_provenance`, `apply_trust_unavailable`, `apply_trust`; `verdict.py`'s `_OBJECTED` and `with_objection` | `response_reason.jsonl` |
 | `verdict` | `verdict.py`'s `MemoryVerdict`, `UnresolvedVerdict`, `resolve_verdicts`, `memoised_verdicts`, `memory_verdict`, `_open_legs`, `_verdict` (the commit legs a trait, the path drift read and `unchecked_verdict` closures) | `verdict.jsonl` |
-| `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms; `_query_biased_snippet` with its memos (`snippet`), `_memory_tokens`, `seed_memory_tokens` and their LRU (`token_cache`), `top_hit_leads_runner_up` | `search.jsonl`, `search_ranker.jsonl`, `search_snippet.jsonl`, `search_snippet_unicode.jsonl` |
+| `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms; `_query_biased_snippet` with its memos (`snippet`), `_memory_tokens`, `seed_memory_tokens` and their LRU (`token_cache`), `top_hit_leads_runner_up`; unit search-1b (`hit`): `_build_hit`, `_claim_anchors` | `search.jsonl`, `search_ranker.jsonl`, `search_snippet.jsonl`, `search_snippet_unicode.jsonl`, `search_hit.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `supersession` | units supersession-1a and 1b of `supersession.py`: `CHANGE_CUES`, `_CUE_RE` (`cue_pattern`), the other patterns, `_VALUE_PREPS`, `_CUE_TOKENS`, the claim and floor constants, `SupersessionMatch` (`note`, `detector`), `SupersessionReport`, `change_cues`, `_word_tokens` and its cache, `anchored_values`, `_proper_nouns`, `value_tokens`, `anchor_tokens`, `_numeric_token_set`, `_numeric_shape`, `values_are_kin`, `_content_stream`, `_context`, `_surface_forms`, `_surface_form`; `claim_sized` and `_strip_provenance` re-exported from `store::digest`; the detector: `_one_claim_replaced`, `_floor`, `_SCORE_BATCH`, `detect_supersession` (with `_claims_among` and `_detect`), `detect_supersession_in` (with `_best_first` and its heap) over the `SupersessionStore` trait, `_rule` | `supersession_features.jsonl`, `supersession_features_unicode.jsonl`, `supersession_detect.jsonl`, `supersession_detect_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
@@ -1885,6 +1886,122 @@ surrogates answered as the reference answers them, a lone surrogate in
 a report path declining; a 100,000-digit name; linear time in the
 number of attestations).
 
+## Commit anchors through the checkout views (`commit_anchors.py`)
+
+`src/bettermemory/commit_anchors.py` (110 lines, read at 998253b2)
+projects a record's stored absolute commit anchors through the views of
+the checkout they were recorded under, so the drift memo reads them
+repository-relative. It is built whole as unit commit_anchors-1
+(`src/commit_anchors.rs`, 305 lines), with `verify_anchoring`'s
+`AnchorPaths` implemented over it (`HostPaths`).
+
+### The map
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `UNMAPPED_ANCHOR`, `UNMAPPED_REASON` | 22-23 | nothing | built |
+| `relative_under` | 26-47 | `os.getcwd()` where `ntpath.relpath` makes a relative root absolute off Windows; Windows itself (`nt._getfullpathname`) on Windows | built (the cwd an argument; the Windows flavour declines) |
+| `expected_home` | 50-52 | nothing | built |
+| `CommitAnchors` | 55-58 | nothing | built |
+| `project_commit_anchors` | 61-110 | `os.path.expanduser` (the home and `pwd.getpwnam`), the anchor's `translate` | built (home and lookup arguments) |
+
+### What it reproduces, and the decisions
+
+- **The process is an argument.** `PathHost` holds `os.name == "nt"`
+  (`NT_HOST`, `cfg!(windows)`, for a caller; a test sets either) and what
+  `os.getcwd()` answers or raises. It is `hostpath::text::Process` for
+  `relpath`. The home and the user lookup are those of
+  `verify_candidates::scan` (`UserHome`, `UserLookup`): `os.path.expanduser`
+  is `posixpath.expanduser` over them, a `~user` name `getpwnam` refuses
+  raising `ValueError` (`Failure::Value`), an unknown one leaving the path.
+- **`relative_under`.** The flavour is read off the root (a root starting
+  with `/` is `posixpath`, any other `ntpath`, an empty one included); the
+  `..` test splits the path as given on `/`, and on `\` too under
+  `ntpath`; both texts go through that flavour's `normpath` and
+  `_paths.inside` (`capture::paths::inside`), then `relpath`, whose
+  `ValueError` (another mount: a rooted root `\` against a UNC path) is
+  None and whose `OSError` from `os.getcwd()` escapes (`Failure::Os`). An
+  `ntpath` answer is spelled with `/`; a POSIX answer keeps a backslash as
+  data. `posixpath.relpath` of a root starting with `/` never asks the
+  process, so it answers on every host; `ntpath.relpath` asks Windows on
+  Windows, and there the port declines (`Failure::NotPorted`) once the
+  path has passed the `..`, `normpath` and `inside` tests, which answer
+  as the reference does everywhere. That is the crate's stated Windows
+  gap (ENG-124); `ntpath.expanduser` of a `~` path (`USERPROFILE`)
+  declines the same way.
+- **The release followed.** Under an `ntpath` root the port answers as
+  CPython 3.13.13, the reference release, which 3.14 matches. 3.11 and
+  3.12 answer otherwise where the path holds a drive-like part past its
+  first: their `ntpath.relpath` drops the parts before it, so
+  `relative_under('C:\\a\\b\\C:', 'C:\\a')` is `C:` there and `b/C:`
+  here. With `os.getcwd()` raising, a rooted path against an equal rooted
+  root (`relative_under('\\w\\a', '\\w\\a')`) answers on 3.11 and 3.12 and raises on
+  3.13 (the `ntpath.isabs` change); the port raises. No golden row holds
+  either case: both files regenerate alike under 3.11 to 3.14.
+- **`project_commit_anchors`.** No anchor or the rule `global_record`
+  answers the paths as given, duplicates kept. The expected roots are the
+  recorded roots and a truthy `origin_root`; the recorded roots are tried
+  longest first by code points, a stable sort, so roots of one length keep
+  their recorded order (an ascending sort reversed would not, and a sort by
+  UTF-8 bytes would order `/é/ü/..` before `/é/abcd`). `absolute_spelling`
+  reads the path as given, before expansion; the `..` test splits the
+  expanded path on `/` alone when it starts with `/`. A `..` path counts
+  unmapped only when expected and not inside a truthy `anchor.root` (an
+  empty root is no root). The anchor's `absolute` runs over `HostPaths`;
+  an anchor with no `translate` answers the spelling itself, so no text
+  conversion is made there. The answers are kept once each, first
+  occurrence first (`dict.fromkeys`).
+- **Text.** Paths are code points. `ClaimAnchor::absolute` and its
+  `translate` take `&str`, so a spelled path holding a lone surrogate
+  that must pass a translating anchor declines (`Failure::NotPorted`).
+  `HostPaths` answers `AnchorPaths`, whose calls answer no failure: the
+  first failure a `relative_under` meets is kept and the call answers
+  None; `project_commit_anchors` reads it after each `absolute` and
+  returns it, and another caller reads it with `HostPaths::failure`.
+- **Left for the wiring unit.** `verify::count` and `Anchoring` take
+  `project_commit_anchors` and `AnchorPaths` as a closure and a trait
+  object; passing these functions to them is the later wiring unit's.
+  No pattern of the regular-expression engine is involved.
+
+### Fixtures
+
+`tests/contract/gen_commit_anchors.py` writes `commit_anchors.jsonl`
+(not gated) and `commit_anchors_posix.jsonl` (POSIX only). The generator
+sets `os.getcwd()` to `/w/cwd`, `$HOME` per row, and `pwd.getpwnam` from a
+table in the header; a `ClaimAnchor`'s `translate` is a table that logs
+each path asked. A row that reaches `ntpath.relpath` or expands a `~`
+path (`ntpath` asks Windows for both on Windows) goes to the POSIX file;
+every other row answers alike on every host. Whether a row reads the
+working directory follows the Python release (3.11 and 3.12 read a
+rooted `\a` as absolute, 3.13 joins it to the working directory), so no
+row records it; the answers agree. Rows: `relative_under` in both flavours
+(`..`, `.`, trailing separators, `//`, UNC, drive-relative,
+drive-absolute and rooted roots, two drives, case, a root equal to the
+path, POSIX backslashes, empty roots and paths); `expected_home`;
+`project_commit_anchors` over anchors the generator builds (no anchor,
+`global_record`, recorded roots of one length in both orders, by code
+points against bytes, origin roots empty and set, an `absolute` that maps
+and one that answers `unanchored`, `..` with and without `anchor.root`,
+duplicates, a Windows view from POSIX, `~` and `~user` with the home set,
+unset, `/` and empty, and a refused name). The POSIX file ends with a
+digest of `relative_under` over every root of one to three and every path
+of up to three of `/`, `\`, `a`, `.`, `..`, `C:` and `b` (159,600
+answers).
+
+Tests: `golden_commit_anchors`, `golden_commit_anchors_posix` (POSIX
+only) and `commit_anchors_not_posix` (the gap recorded, the Windows
+decline checked); `commit_anchors_kills` (the order of equal-length
+roots, code points against bytes, the spelling before expansion, `..`
+inside the root, an empty root and origin, de-duplication, the `ntpath`
+answer's separators, another mount, a lost working directory through the
+anchor, `expanduser`, the Windows flavour, a lone surrogate, an empty
+root read as `ntpath`, an interior drive part, the `..` and anchor-root
+tests on the expanded path, a translated target under an empty root);
+`commit_anchors_robustness` (100,000 paths and 1,000 recorded roots,
+each linear by `timing::grows_within` at `TENFOLD`; 4,096 components; a
+million code points; every byte value at each place a separator, drive,
+`~` or dot is read).
+
 ## The response layer's leaves (`_response_links.py`, the drift memo, the verdict ladder)
 
 The response builder uses `response_links.rs`, `response_memo.rs` and
@@ -2182,7 +2299,7 @@ over them, up to the `memory_show` block `compute_commit_drift` answers.
   the caller's `AnchorWalk` and `Unwalked`; the whole-history dates are a
   closure. The anchor is its `commit_root(verified_head)` root as a
   closure (`ClaimAnchor::commit_root` binds to it), None for a record
-  with no anchor; `project_commit_anchors` (unbuilt) is a closure
+  with no anchor; `project_commit_anchors` (built in `commit_anchors`, not yet passed here) is a closure
   answering `(paths, unmapped)`. Before reading git, the count spells
   the root as `Path(commit_root)` does, through
   `verify_anchoring::attest::pure_text` with the host's path flavour.
@@ -4243,7 +4360,7 @@ machine but the tokenizer; each memo is a value the caller holds, as
 | `SNIPPET_TOKEN_ENTRIES`, `TOKEN_SURFACE_ENTRIES`, `clear_snippet_caches` | 859-878 | two process-wide memos and their locks | built (`SnippetMemo`, `SnippetMemo::clear`) |
 | `_token_surfaces`, `_snippet_tokens` | 880-917 | the memos | built |
 | `_query_biased_snippet` | 918-1040 | the memos | built |
-| `_build_hit`, `_claim_anchors` | 1041-1118, 1964-1979 | the store | not built (unit search-1b) |
+| `_build_hit`, `_claim_anchors` | 1041-1118, 1964-1979 | the drift read and the anchoring (traits) | built (`search::hit`, unit search-1b) |
 
 ### What each part reproduces, and the decisions
 
@@ -4298,6 +4415,52 @@ as a digest.
 Tests: `golden_search_snippet`, `search_snippet_kills`,
 `search_snippet_robustness` (the scan's time does not grow with the body
 past `_SNIPPET_SCAN_CHARS`).
+
+### Unit search-1b: the hit and the claim anchors (`search::hit`)
+
+`search::hit` (173 lines) reproduces `_build_hit` (reference lines
+1041-1118) and `_claim_anchors` (1964-1979), read at 998253b2.
+
+- **`build_hit`.** The drift read is the trait `Drift`, which
+  `verify_anchoring::detect::Effects` answers with `detect_path_drift`;
+  it is made only when `path_drift` holds, otherwise the hit carries the
+  empty report and nothing is read. Its attestation legs are
+  `record_paths` of the record (the literal targets where the record has
+  them, else the reference lists); the origin's `worktree_root` is passed
+  only when no anchor is given and the record has an origin (an empty root
+  is passed as it is). The snippet is `_query_biased_snippet` at its
+  default 200 characters over the caller's `SnippetMemo`; the score is
+  `round(score, 4)` (`num::round4`, half to even on the exact value); the
+  relevance is the module's `_relevance_label`; each report bucket is
+  copied to its field. The anchor is a `ReadAnchor`, as the drift read
+  takes it; adapting a `ClaimAnchor` to it is the outer search's
+  (search-2). A drift read's error escapes as `DriftError`.
+- **`claim_anchors`.** The anchoring is the trait `RecordAnchors`
+  (`prime`, `for_record`), which `Anchoring` answers. Without one every
+  record answers None and nothing is asked; with one, the homes are primed
+  once with every id in order (an id twice is asked twice), then each
+  record's anchor is asked with its origin's `worktree_root`, None only
+  where the record has no origin or the origin has none.
+- **Left for search-2.** The outer `search()` with `hydrate`, the
+  anchoring's prime and `matched_leg_out`.
+
+Fixtures: `tests/contract/gen_search_hit.py` writes `search_hit.jsonl`
+(not gated) over six memories the generator builds (attestations as
+lists and as target maps, origins with a root, without one and with an
+empty one, a body past the snippet budget). `detect_path_drift` is a
+stand-in that logs its arguments and answers a scripted report, so no row
+reads the disk and no POSIX sibling is needed; the drift read itself is
+pinned by `verify_anchoring_detect.jsonl`. Rows: each memory with
+`path_drift` on and off, with and without an anchor; scores at
+`round(x, 4)` ties (1/32, -1/32, 3/32, 33/32), the float
+bounds, infinities and NaN; coverage at 0.75 and 0.40 exactly and
+`query_unique` 0; query-biased snippets; `_claim_anchors` over a stand-in
+anchoring that logs its calls.
+
+Tests: `golden_search_hit`, `search_hit_kills` (no read with
+`path_drift` off, no origin root beside an anchor, the record's own legs,
+each bucket on its field, half to even, the relevance bounds, the snippet
+budget, an escaping drift error, one prime per page).
 
 ## Write-time dedup (`search_dedup.py`)
 
