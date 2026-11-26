@@ -265,6 +265,10 @@
 //!   `review_unanswered`, over traits for the store, recorder and state,
 //!   and in `interrupted` `_probe_message` and `settle_interrupted`, the
 //!   probe, the pool and the transcript read taken as closures;
+//! - [`sessions`]: the session join read off the event log (the harness
+//!   join, `hook_spans` and `runs_beside`, the worktree bridge
+//!   `bridged_session`, `joined_sessions`, the disabled-scope replay),
+//!   pure functions over the events, `event_joined` re-exported;
 //! - [`recall_prompt`]: the prompt recall's turn, window, settlement,
 //!   probe and the `recall_held` and `prompt_recall` rows;
 //! - [`control_tokens`]: the chat-template delimiters a stored text may
@@ -560,6 +564,7 @@ pub mod review;
 pub mod search;
 pub mod search_dedup;
 pub mod session;
+pub mod sessions;
 pub mod standing;
 pub mod standing_guard;
 pub mod store;

@@ -83,6 +83,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `event_recorder` | `events.py`'s fourth unit: `Recorder` (`session_for_request`, `worktree_for_request`, `records`, `record`) over the store's writer as the trait `EventSink`; the hook scope and the published caller are arguments, the workspace declaration, `_handlers.capture_origin().worktree_root` and `credentials.secret_spans` closures | `event_recorder.jsonl`, `event_recorder_python.jsonl` |
 | `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields`; audit-2/3: `is_duplicate_audit`, `probe_for_miss` with its helpers, `_count_recent_retrievals`, `_retrieved_ids` (the ranker and admission as traits), with `search_lane._relevance_label_v2` | `audit_fields.jsonl`, `audit_probe.jsonl` |
 | `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`); unit 2 (`recall_settle::interrupted`): `_probe_message` and `settle_interrupted`, the probe, the pool and the transcript read as closures | `recall_settle.jsonl`, `recall_settle_interrupted.jsonl` |
+| `sessions` | `sessions.py`'s first unit, the whole module but `event_joined` (built in `recall_settle`, re-exported): `_OUT_OF_PROCESS_TRIGGERS`, `_disabled_scopes_from_events`, `_latest_in_process_session`, `_session_of`, `harness_joined_sessions`, `hook_spans` (`HookSpans`), `runs_beside`, `live_harness_sessions`, `bridged_session`, `joined_sessions`, pure functions over the events | `sessions.jsonl` |
 | `recall_prompt` | `recall_prompt.py` whole: `_PromptTurn` (`PromptTurn`, `PromptTurnView`), `_prompt_window`, `_settle_before_probe`, `_prompt_probe`, `_record_hold`, `_record_delivery`; the session joins and `recall_admission`'s gate are traits, `Admission.on`, `settle_interrupted` and `_probe_message` closures | `recall_prompt.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `recall` | `recall.py`'s first unit: the constants, `WordsSeen` (`remember`, `seen`, `holds`, `clear`), `_fold`, `_bounded`, `RecallPointer`, `_annotation`, `_core`, `_one_excerpt`, `_recall_line`, `render_recall_block`; `recall_admission.summarize` and `disputed_marks`; `recall::choose`: `_seen_in_log`, `_seen_in_segment`, `_choose_hits`, `_deliver_recall`, `_unless_standing`, `_contradiction_open`, `HookResult` | `recall_render.jsonl`, `recall_render_unicode.jsonl`, `recall_choose.jsonl` |
@@ -9516,6 +9517,138 @@ the read, the error after the probe); `recall_settle_interrupted_robustness`
 holds 20,000 turns against 10,000 audited rows, a prompt id nested 1,000
 deep, clocks at the ends of the calendar, and the settlement's growth
 (5,000 turns against 500).
+
+## The session join (`sessions.py`)
+
+`sessions` reproduces `src/bettermemory/sessions.py`: the join between a
+client-side hook's transcript session id and the in-process server
+sessions that served its conversation, read off the event log alone. The
+map by function (lines at 998253b2):
+
+| Function | Lines | Needs from the machine | Status |
+|---|---|---|---|
+| `_OUT_OF_PROCESS_TRIGGERS` | 47-49 | nothing | built (unit 1, `OUT_OF_PROCESS_TRIGGERS`, sorted) |
+| `_disabled_scopes_from_events` | 52-103 | nothing | built (unit 1) |
+| `_latest_in_process_session` | 106-149 | nothing | built (unit 1) |
+| `_session_of` | 152-156 | nothing | built (unit 1) |
+| `harness_joined_sessions` | 159-177 | nothing | built (unit 1) |
+| `hook_spans` | 180-198 | nothing | built (unit 1) |
+| `runs_beside` | 201-223 | nothing | built (unit 1) |
+| `live_harness_sessions` | 226-238 | nothing | built (unit 1) |
+| `bridged_session` | 241-323 | nothing | built (unit 1) |
+| `joined_sessions` | 326-340 | nothing | built (unit 1) |
+| `event_joined` | 343-355 | nothing | built in `recall_settle` (re-exported) |
+
+The whole module is pure functions over the events, so it is one unit
+(399 lines of Rust source, comments included).
+
+What unit 1 reproduces. An event is a `PyValue` dict as the log reads it;
+`event.get(k)` reads the last value of a `str` key and a missing field
+reads as None. The functions take the events as a slice whatever the
+reference's annotation (a list or an iterable). An answer that is a set
+is a `BTreeSet<PyStr>`: nothing observes its order. `hook_spans` answers
+`HookSpans`, its sessions in first-insertion order as the reference's
+dict keeps them, read by `get` and `entries`.
+
+- `x in _OUT_OF_PROCESS_TRIGGERS` (`is_out_of_process`) is `frozenset`
+  membership: true only for a `str` equal to one of the four members; a
+  hashable value of any other type (None, an int, a bool, a float) is
+  absent; a list or a dict (or a tuple holding one) is unhashable and
+  raises `TypeError` there, answered as `Err(PyError::TypeError)` by every
+  function that reads `triggered_from`, at the event its walk reaches it.
+  The reversed walks (`_latest_in_process_session`, `bridged_session`'s
+  stamp walk) return before reaching an older unhashable row; the forward
+  ones (`harness_joined_sessions`, `hook_spans`) raise on any. An empty
+  harness session reads no trigger in `harness_joined_sessions` or
+  `hook_spans`; `bridged_session` and `joined_sessions` still fall back to
+  `_latest_in_process_session`, which reads it. Neither does
+  `_disabled_scopes_from_events` given its anchor.
+- `event.get("session") or event.get("session_id")`: every false value
+  by Python's `bool` (`events::truthy`: the empty `str`, 0, False, an
+  empty list or dict, None) hands over to `session_id`. `_session_of` and
+  `_latest_in_process_session` keep the result only when it is a `str`,
+  the empty one included where `or` hands it back; `hook_spans` keeps
+  only a non-empty `str`; `_disabled_scopes_from_events` compares it
+  unfiltered with `!=`, so a non-`str` never equals the anchor.
+- `_latest_in_process_session`: the newest event no hook wrote with a
+  `str` session, the newest whose `worktree_root` equals the given one
+  first, else the newest of any worktree.
+- `_disabled_scopes_from_events`: the anchor is `server_session` when
+  given, else `_latest_in_process_session`; the anchor's `scope_disable`
+  rows add and `scope_enable` rows remove a `str` scope in log order. A
+  `kind` or `scope` that is not a `str` is skipped (the tuple test on
+  `kind` compares with `==` and hashes nothing).
+- `harness_joined_sessions`: the `_session_of` of every event no hook
+  wrote whose `harness_session` is the given (non-empty) one. No worktree
+  filter: the harness join names a server wherever it runs.
+- `hook_spans`: per non-empty `str` session of the hook rows whose `ts`
+  parses (`datetime::parse_event_ts`, always aware: naive is UTC, an
+  offset is kept, not converted), the least and the greatest stamp as
+  instants. `min` and `max` keep their first argument on a tie, so of two
+  stamps equal as instants in different offsets the earlier row's
+  spelling stays at both ends.
+- `runs_beside`: `other` has a span, and `conversation` has none, or
+  `other`'s last stamp is at or after `conversation`'s first (`>=` as
+  instants).
+- `live_harness_sessions`: the sessions of `hook_spans` other than the
+  given one that run beside it; empty for an empty harness session.
+- `bridged_session`: the events walked newest first, skipping hook rows
+  and rows whose `harness_session` is not a non-empty `str` or whose
+  `_session_of` is None. The first row stamped with this conversation
+  answers its session at once (no worktree filter). Otherwise each
+  session keeps the first stamp the reversed walk meets (`setdefault`:
+  its newest). With none stamped, `_latest_in_process_session` answers.
+  Else the sessions stamped with a conversation that runs beside this one
+  are set aside; and when this conversation has a hook row, the stamps of
+  the sessions not set aside that wrote at or after its first hook row
+  (in the given worktree only, when one is given) are counted, and two or
+  more set aside every stamped session. `_latest_in_process_session`
+  then answers over the events whose `_session_of` is not set aside (an
+  event without one is kept).
+- `joined_sessions`: `harness_joined_sessions` when it names any, else
+  the one `bridged_session` names, else none.
+
+No pattern of `re` is involved. No reference finding.
+
+Fixtures: `tests/contract/gen_sessions.py` writes `sessions.jsonl` (not
+gated: every id, stamp and worktree is ASCII, every stamp carries an
+offset or reads as UTC; 61 KB). The header holds the triggers and the
+count; 56 rows are hand-built logs (each trigger, an absent, None, int,
+bool, float and other `str` trigger, list, dict and empty-list triggers at
+the newest and the oldest row, the session and session_id fallbacks with
+each false value, a truthy non-`str` session, the worktree match and its
+fallback, scope toggle sequences with non-`str` scopes and kinds, harness
+stamps that are not a non-empty `str`, the scenarios of
+`bridged_session`'s docstring: a server stamped before a /clear, a /clear
+beside another window's turn in the same worktree and in another, the
+foreign join, a live other window, a /resume's first and second call, a
+restamped session, equal instants in other offsets, a span one
+microsecond short), each with every function's answer for every harness
+session, worktree and anchor the log names plus null, empty and absent
+ones. The last row is a sweep of 5,000 logs drawn by a 64-bit LCG from
+pools of kinds, triggers (an unhashable one among them), sessions,
+session ids, harness stamps, worktrees, scopes and timestamps the row
+holds, each
+through `bridged_session` and `joined_sessions` (five harness sessions by
+three worktrees), `live_harness_sessions` and
+`_disabled_scopes_from_events`: 115,000 answer lines pinned by count and
+SHA-256. `golden_sessions` checks every row and regenerates the sweep;
+`sessions_kills` holds the cases a plausible wrong port fails (the
+bridge's walk read forwards, a session's oldest stamp kept, `runs_beside`
+with `>`, the worktree filter in the harness join, the stamps check
+skipped, `min` keeping the later of equal instants, `or` read as
+is-None, an unhashable trigger answered as absent); `sessions_robustness`
+runs 100,000 events over 10,000 sessions through every function against
+10,000 over 1,000 (`timing::TENFOLD`), unhashable, deeply nested (100,000
+levels), huge and non-`str` values at every field the functions read,
+and stamps at the ends of the calendar.
+
+Left for later units: wiring these functions in place of the traits and
+closures that stand for them today (`hook_stop_side`'s `StopSide`
+methods `bridged_session`, `joined_sessions`, `harness_joined_sessions`
+and `_disabled_scopes_from_events`, `recall_settle::Sessions`, and the
+`latest_session` closure of `hook::emit_hook_attributions`);
+`recall_counters` reads `hook_spans` and `runs_beside`.
 
 ## The prompt recall's steps (`recall_prompt.py`)
 
