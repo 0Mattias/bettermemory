@@ -43,8 +43,7 @@ use crate::history_record::RecordHistory;
 use crate::history_rows::{HistoryRow, ACTOR_FROM_RECORD};
 use crate::json::{self, DumpOptions};
 use crate::printable::printable_into;
-use crate::pyvalue::{py_str, PyError, PyStr, PyValue};
-use crate::toml::INT_MAX_STR_DIGITS;
+use crate::pyvalue::{py_str_limited, PyError, PyStr, PyValue};
 use crate::unicode::cps;
 
 /// `_value_text`'s longest text, in code points; a longer one is cut.
@@ -167,35 +166,11 @@ fn cut(text: &[u32]) -> PyStr {
 }
 
 /// A detail name as an f-string writes it: a `str` as itself, anything
-/// else as `str()` of it, which raises ValueError for an `int` past
-/// 4,300 digits and RecursionError past the port's budget, the first met
-/// in the order `repr` writes.
+/// else as `str()` of it ([`py_str_limited`]), which raises ValueError for
+/// an `int` past 4,300 digits and RecursionError past the port's budget,
+/// the first met in the order `repr` writes.
 fn name_text(name: &PyValue) -> Result<PyStr, PyError> {
-    if let PyValue::Str(s) = name {
-        return Ok(s.clone());
-    }
-    let mut work = vec![(name, 1usize)];
-    while let Some((value, depth)) = work.pop() {
-        if depth > json::MAX_DEPTH {
-            return Err(PyError::RecursionError);
-        }
-        match value {
-            PyValue::Int(digits) if digits.trim_start_matches('-').len() > INT_MAX_STR_DIGITS => {
-                return Err(PyError::ValueError);
-            }
-            PyValue::List(items) | PyValue::Tuple(items) => {
-                work.extend(items.iter().rev().map(|item| (item, depth + 1)));
-            }
-            PyValue::Dict(items) => {
-                for (key, item) in items.iter().rev() {
-                    work.push((item, depth + 1));
-                    work.push((key, depth + 1));
-                }
-            }
-            _ => {}
-        }
-    }
-    py_str(name)
+    py_str_limited(name)
 }
 
 fn push(line: &mut PyStr, text: &str) {

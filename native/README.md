@@ -26,8 +26,10 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `health_summary` | `health_summary.py` whole: `section_names`, `health_summary` (with `_empty`, `_attention`), `health_section`, `SUMMARY_IDS`, `HEADLINE_KEYS` | `health_summary.jsonl` |
 | `health_model` | units health_model-1 and health_model-2 of `health_model.py`: `_ENDORSEMENT_GRACE_DAYS`, `_freshest_touch_ts`, `_has_unresolved_contradiction`, `_is_dead_weight`, `is_hook_telemetry_event`, `applied_tier`, `endorsement_tier`, `TelemetryCoverage`, `_HOOKLESS_REASON`, `MemoryStats`, `MarkerStats`, `ScopeHealth`, `ActorSlice` (each `to_dict`), `explicit_ratio`, `_iso`; `round(x, 3)` through `search::num::round_digits`; unit 2 (`health_model::debt`): `ActorSlices`, `VerificationDebt`, `CommitDriftRow`, `CommitDriftDebt`, `CrossRepoDriftGroup`, `CrossRepoDrift`, `ColdEndorsementMemories`, `SilentMissStats`, `RecentSilentMiss` (each `to_dict`), `clamp_ratio_threshold`, `weakly_endorsed`, `_is_weakly_endorsed`, `unread_fields`, `_unread_dict` and the six caps | `health_model.jsonl`, `health_model_debt.jsonl` |
 | `eval_model` | unit eval_model-1 of `eval_model.py`: `DEFAULT_SINCE_SPEC`, `DEFAULT_ENDORSEMENT_MIN_RETRIEVALS`, `DEFAULT_SILENT_MISS_LIMIT`, `_WILSON_Z`, `_SINCE_PATTERN` (on the engine), `_SINCE_UNIT_TO_SECONDS`, `_EARLIEST_START`, `EARLIER_RULES`, `RateCI` (`from_counts`, `to_dict`), `_wilson_interval`, `ColdEndorsementMemoriesRow` (`endorsement_ratio`, `to_dict`), `SilentMissCandidate`, `parse_since`, `parse_timestamp_utc`, `parse_window_bound` (`now` an argument), `resolve_window`, `_show_in_window`, `_canonical_top_hit_id`, `_silent_miss_from_event` | `eval_model.jsonl`, `eval_model_python.jsonl` |
+| `eval` | unit 1 of `eval.py`: `EvalReport` (the reference's fields and defaults, `NO_RATE`) and its `to_dict` | `eval_render.jsonl`, `eval_render_unicode.jsonl` |
+| `eval_render` | unit eval_render-1 of `eval_render.py` (lines 49-384): `render_text`, `_text`, `_review_text_lines`, `_rate_from_dict`, `_SURFACE_RATES`, `_surface_text_lines`, `_rule_split_text_lines`, `_format_rate`, `_bar`, `_truncate`, `_humanize_seconds`, `_short_ts` | `eval_render.jsonl`, `eval_render_unicode.jsonl` |
 | `health_roots` | `health_roots.py` 21-73: `EstateProgress` (`ordered`, `attempt`), `_LAST_CHECKED_CAP`; `progress_for_store` is the open Store's own `EstateProgress` | `health_roots.jsonl` |
-| `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
+| `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules); `format(x, '.Nf')` and `format(x, 'g')` (`format_fixed`, `format_general`: the exact binary value rounded half to even, as Rust's `{:.N}` and `{:.Ne}` write it; a precision past `INT_MAX` refused) | `canonical_json.jsonl`, `eval_render.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
 | `argparse` | unit argparse-1a: the flat-parser subset of CPython 3.13.13's `argparse` the hook mains use: `ArgumentParser(prog, description, add_help)`, `add_argument` (`store`, `store_true`, `help`, `version`; positionals of one argument with `choices`), `parse_args` (`_parse_known_args` with `_parse_optional`, `_get_option_tuples`, `consume_optional`, `consume_positionals`, `_match_argument`, `_match_arguments_partial`, the negative-number matcher), `error` and `_format_usage` with its wrapping, as an `Outcome` without a process exit; unit argparse-1b: `add_subparsers(dest)` with its `prog` derived from the parent's positionals, `add_parser`, the PARSER `nargs` and `_SubParsersAction.__call__` with the child's namespace merged in the reference's order and its leftovers after the parent's. Unit argparse-1c adds the one-value `append` action used by `log verify --anchor FILE`. Unit argparse-2a formats default help and wraps version text | `argparse.jsonl`, `argparse_python.jsonl`, `argparse_subparsers.jsonl`, `argparse_subparsers_python.jsonl`, `cli_log_args.jsonl`, `argparse_help.jsonl`, `argparse_help_python.jsonl` |
 | `native_text`, `caches`, `daemon_client`, `install_hints` | `native_text.py` 15-40 (`has_surrogates`, `utf8_text`, `encoded_json`, `origin_projection`), `_caches.py` whole (`register` under a key, `clear_all`), `_daemon_client.py` 149-172 (`STORE_FILENAME` re-exported, `START_TIMEOUT_SECONDS`, `HOOK_TIMEOUT_SECONDS`, `HOOK_HARNESS_TIMEOUT_SECONDS`, `HOOK_MARGIN_SECONDS`, `hook_budget_seconds`), `_install_hints.py` 41-130 (every spelling) | `native_text.jsonl`, `daemon_client.jsonl`, `install_hints.jsonl` |
@@ -54,7 +56,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `project_walk` | unit 3 of `project_file.py`: `Walk` and its properties, `above_start`, `find`, `_walk`, `_look`, `write` (`WriteEffects`), with `path_eq` and `is_relative_to` | `project_walk.jsonl` |
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report; `log::ring`, the key ring's files (unit log-1): the id check, the paths, `load_current` with `KeyUnreadableError` and `_dangling_link`, `retire_current`, `read_origin`, `write_origin`, `name_origin_key`, `replace_origin`, `read_binding`, `rebind_store`; `log::segments` (`Segment`, `chain_trust` with the caller's key, `chain_segments`) and `log::replaced` (`HISTORY_REPLACED`, `history_replaced_kind`, `history_replaced_row`, `append_history_replaced`) | `log_chain.jsonl`, `log_keyring.jsonl`, `log_keyfiles.jsonl`, `log_keyfiles_posix.jsonl`, `log_keyfiles_posix_python.jsonl`, `log_keyfiles_darwin.jsonl`, `ring_binding_paths.jsonl`, `ring_binding_path_codecs.jsonl`, `log_segments.jsonl`, `log_replaced.jsonl`, `log_replaced_store.jsonl` |
 | `machine` | unit 1 of `machine.py`: `MachineFacts` (`to_dict`, `from_dict` with `str()` of the id file's parts), `MachineIdentity`, `_identity_from`, `identity_to_json`, `new_machine_id` from given bytes, `is_clone`; unit 2 (`machine::facts`): `_ID_RE`, `_LINUX_MACHINE_ID`, the hardware memo, `_darwin_hardware`, `_linux_hardware`, `_windows_hardware`, `read_hardware_id`, `current_hostname`, `_file_object`, `_read_id`, `_read_record`; unit 3 (`machine::open`): `_write_record`, `open_machine`, `StdMachine` (`gethostuuid`, the `ioreg` spawn) | `machine_identity.jsonl`, `machine_identity_python.jsonl`, `machine_facts.jsonl`, `machine_facts_python.jsonl`, `machine_facts_unicode.jsonl`, `machine_facts_platform.jsonl`, `machine_open.jsonl`, `machine_open_platform.jsonl` |
-| `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
+| `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()` (`py_str`, and `py_str_limited` with the 4,300-digit `int` limit), `repr()` | through the above |
 | `verify_status`, `attribution` | `verify_status.py` whole (`compute_verification_status`, `remote_verification_status`, `VerificationStatus.to_dict`, the three recommendations) and `attribution.py` whole (`attribute_uses`, `_candidate_sentences`, `_normalize`, `_content_token_set`, `_sentence_matches`, the three patterns) | `verify_status.jsonl`, `attribution.jsonl`, `attribution_unicode.jsonl` |
 | `response_rows` | `_response.py` unit resphit: `SIMILAR_HITS_SHOWN`, `ResponseBuilder.__init__`, `hit_to_dict`, `summary_to_dict`, `tombstone_summary_to_dict` | `response_hits.jsonl` |
 | `response_write` | `_response.py` unit respwrite: `ResponseBuilder.committed`, `review`, `roster`, `similar_to_dict`, `add_similar`, `transient_to_dict`, `credential_to_dict`, `origin_to_dict`, `actor_to_dict` (free functions) | `response_write.jsonl`, `response_write_posix.jsonl` |
@@ -3976,6 +3978,166 @@ Known costs, measured in release against CPython 3.13.13 on one machine
 
 Left for later: units eval_model-1b, eval_model-2 and eval_model-3 as
 mapped above.
+
+## The eval family's renderers (`eval_render.py`)
+
+`eval_render.py` (1,199 lines) turns the reports `eval.py` computes into
+text: the plain-text rendering of each `eval` mode and the markdown of
+`eval --report`. Its report classes live in `eval.py`; unit 1 of
+`eval.py` (`src/eval.rs`) builds `EvalReport`, the one class the first
+renderer unit reads. Nothing here asks the machine: a report is an
+argument, and every text the store or the log gave goes through
+`history.printable` (built, `printable::printable`). The module is cut
+into four units; unit eval_render-1 is built (`src/eval_render.rs`, 783
+lines with comments, and 218 in `src/eval.rs`), with two formats of
+Python's `format` added to `src/float_repr.rs`.
+
+| function | reference lines | needs | unit, status |
+| --- | --- | --- | --- |
+| `render_text`, `_text` | 49-174 | `EvalReport`, `printable`, `isoformat_utc_optional`, `HOOKLESS_REASON` | eval_render-1, built |
+| `_review_text_lines` | 176-220 | the review dict (`review_counters.ReviewReport.to_dict()`) as a `PyValue` | eval_render-1, built |
+| `_rate_from_dict`, `_SURFACE_RATES`, `_surface_text_lines`, `_rule_split_text_lines` | 223-325 | the surfaces dict (`compute_surface_report`) as a `PyValue`, `EARLIER_RULES` | eval_render-1, built |
+| `_format_rate`, `_bar`, `_truncate`, `_humanize_seconds`, `_short_ts` | 332-380 | `format_fixed`, round half to even | eval_render-1, built |
+| `render_threshold_sweep_text`, `render_widening_preview_text` | 387-506 | `ThresholdSweepReport`, `WideningPreviewReport` and eval_model-2's rows | eval_render-1b, after eval_model-2 |
+| `_clip`, `render_widening_detail_text`, `render_tool_usage_text` | 508-652 | `WideningDetailReport`, `ToolUsageReport` | eval_render-2 |
+| `_md_escape_cell` through `render_report_markdown` | 654-1199 | `ReportDocument` and every report above | eval_render-3 |
+
+**`EvalReport`** (`eval.py` 138-321) carries every count, row and rate
+of `compute_eval`. The reference gives its first thirteen fields
+(`generated_at` through `silent_misses`) no default; `EvalReport::new`
+sets them to zero, None and the empty text for a caller to fill, and
+every other field to the reference's default: `RateCI(0, 0, None, None,
+None)` (`NO_RATE`), `DEFAULT_ENDORSEMENT_MIN_RETRIEVALS`, a ratio
+threshold of 0.0, False, empty lists and dicts, None. `by_model` is the
+reference's `dict[str, dict[str, int]]` as pairs in insertion order, its
+keys distinct as a dict's are; `window_seconds` is `Option<i64>`.
+`review` and `surfaces` are the dicts `ReviewReport.to_dict()` and
+`compute_surface_report` make, carried as `PyValue`s and passed through
+`to_dict` as they are. `to_dict` answers the reference's key order,
+`surfaces` only when it is not None (a `PyValue::None` counts as None),
+`suppressed_reason` the shared `HOOKLESS_REASON` sentence or None.
+`compute_eval` and `_eval_report` fill it in unit eval-1; the other
+report classes of `eval.py` and their computations follow with the
+renderer units that read them.
+
+**Unit eval_render-1, built.** `render_text` reproduces the reference
+line by line: the window header three ways (all time, `last` a
+humanized span, or both absolute ends with `the start` for an open
+one), the scope part only for a non-empty scope, the count rows as
+`:>5d` (the no-signal and repeat rows only when non-zero), the rate
+trio, the per-model rows in `sorted(by_model)` order (code point order,
+which is `Vec<u32>`'s), each model padded to 28 code points with
+`counts.get(key, 0)` at `:<5d` and `:<4d`, the cold-endorsement bucket
+(the first ten rows, `printable(','.join(scopes)) or` the em dash
+(U+2014), the explicit share only when `ratio > 0`, so never for a NaN
+ratio, the rule naming `{ratio:g}`, the remainder line past ten) or the
+suppressed sentence, the silent-miss rows (`top_missed_id or` the dash,
+so an empty id reads as missing; `session_id[:12]` and `_short_ts` in
+code points), the threshold rule, the review and surfaces sections, the
+torn-read note, and `_text`'s second `printable` pass with a final
+newline.
+
+Python's `format` is built on Rust's, which writes the exact binary
+value's digits rounded half to even. `'0.2f'` is
+`float_repr::format_fixed(x, 2)`, Rust's `{:.2}` (0.125 is `0.12`, 2.675
+is `2.67`, 0.005 is `0.01`, a minus sign on every negative value, so
+`-0.00` for -0.001, and `inf`, `-inf`) but for a NaN of either sign,
+`nan` where Rust writes `NaN`. Past 1,074 places every digit is a zero
+and is written out, since Rust's precision stops at `u16::MAX`; a
+precision past `INT_MAX` is refused (`PrecisionTooBig`), as Python
+refuses it with ValueError before it reads the value. `'g'` is
+`float_repr::format_general`: the six significant digits of Rust's
+`{:.5e}`, positional for a decimal exponent in `-4 <= exp < 6` and
+`1e-05`, `1.23457e+06` otherwise (Rust's `{}` writes `0.00001` and
+`1234567`), trailing zeros and a bare point dropped, `-0` for negative
+zero, `nan`, `inf`, `-inf`. `_bar` is Python's `max(0.0, min(1.0,
+rate))`, under which a NaN rate is a full bar, then `round(rate * 10)`
+half to even (`round(2.5)` is 2; `f64::round` gives 3). The NaN is
+tested before the clamp: an optimised arm64 build folds `if rate < 1.0
+{ rate } else { 1.0 }` into `fminnm`, which passes a signalling NaN
+through to an empty bar. Widths
+(`:<28s`, `:<18s`, `:<20s`) pad by code points, not bytes or columns.
+`_humanize_seconds` floors as Python's `%` and `//` do (-90 is `-90s`,
+-120 is `-2m`). `_truncate` and `_short_ts` count code points;
+`_truncate` with `n = 0` slices to `-1` as Python does, a case the
+reference never reaches.
+
+The review and surfaces sections read their dicts as the reference
+does, and where it raises the answer is its exception class
+(`RenderError`; messages are not compared): subscription is KeyError
+for a missing key and TypeError for a value that is not a dict;
+`.items()` on anything but a dict is AttributeError; `', '.join(value)`
+reads a list's or tuple's elements, a `str`'s characters or a dict's
+keys, TypeError for a non-`str` element or a value that is not
+iterable; truthiness decides `not review`, `not chains['issued']`
+(a NaN is true), `if suppressed`, `if grades['n']`, `if
+grade['graded']` and `if tally['deliveries']`; `surfaces is None` is an
+identity test, so an empty dict is read and raises KeyError. `str()` and
+an f-string's `format(value, '')` spell through
+`pyvalue::py_str_limited`, shared with `history_render`'s detail names
+(a float as its `repr`, True as `True`, a container as its `repr`),
+which raises the first of `repr`'s two faults in the order it writes: a
+level past `json::MAX_DEPTH` (RecursionError) or an `int` of more than
+4,300 digits (ValueError). Through `_review_text_lines` CPython 3.13.13
+answers RecursionError for `[<9,998 nested lists>, 10**4300]` and
+ValueError for 9,997; the bound follows the release, so
+`eval_render_robustness` pins it and no golden row sits near it. `_rate_from_dict` reads its six keys in order,
+`torn_read` included though nothing prints it. `_format_rate` over a
+dict's values runs `_bar` first: an `int` or a bool compares exactly
+(one and above a full bar, zero and below an empty one) and any other
+type but a float is TypeError there, so a `str` rate is TypeError where
+a `str` bound is ValueError (the format code); an `int` bound formats
+through `float()` (OverflowError past the doubles), a datetime as its
+`strftime('0.2f')`, which is `0.2f`, a path, list, tuple or dict
+TypeError. `_rule_split_text_lines` answers nothing when `by_rule` is
+not a dict, the membership delta line included; a group other than
+`earlier` is its key's `str()`, spelled after `split[surface]` is read
+(an `int` key past 4,300 digits over an empty split is KeyError, not
+ValueError).
+
+Fixtures: `tests/contract/gen_eval_render.py` writes `eval_render.jsonl`
+(not gated: ASCII texts but for the renderer's own characters, which
+every Unicode release calls printable, and float formatting from the
+exact binary value) and `eval_render_unicode.jsonl` (`UNICODE_GATED`,
+mirrored in `gates_of`: ids, models, summaries, scopes, keys and stamps
+past ASCII, whose `printable` escapes read the Unicode database). Reports
+are written as specs (what differs from the empty report), dicts as
+edits of a base review and a base surfaces dict in the header, and each
+answer as one edit of a base text (the empty report's text, its
+`to_dict` dumped with `indent=1`, the base sections), so a reader sees
+what each case changes. `to_dict` of a report carrying a review or
+surfaces dict is pinned by the SHA-256 of its dump. The last row is a
+sweep of 5,000 reports drawn from a seed (windows, scopes, counts at
+both ends of `i64`, rates from `RateCI.from_counts`, cold rows, ratios
+with NaN and infinity, misses, models, the base dicts), pinned by count
+and the SHA-256 of each `render_text` and `json.dumps(to_dict())`.
+
+Tests: `golden_eval_render` (every row of both files, the header's base
+texts against the port's own answers, the sweep redrawn by the
+generator's rule); `eval_render_kills` (`f64::round` in `_bar`, a
+signalling NaN's bar, `NaN`, `{}` for `'g'`, decimal-text rounding for
+`'0.2f'`, byte or width padding, `by_model` sorted by UTF-16 units or
+by the escaped text, `or` read as is-None, the share for a NaN ratio,
+`.get` where the reference subscripts, truthiness where it tests `is
+None`);
+`eval_render_robustness` (100,000 cold rows and models and 100,000
+review actions, megabyte ids, summaries and models, every float extreme
+in each rate field and the ratio, `i64` extremes, review and surfaces
+dicts nested 10,000 deep, the depth bound against the int limit, a
+precision past `INT_MAX`; growth linear through `tests/timing`, and the
+float extremes through `'g'` and `'0.2f'` within ten times the cost of
+0.5).
+
+Patterns: none. The unit matches no regular expression.
+
+Reference observations, reproduced: a `str` rate in a surfaces rate dict
+raises TypeError from `_bar` before `'0.2f'` could raise ValueError; a
+`by_rule` that is not a dict drops the membership delta line with the
+split; a negative `cold_endorsement_memories_total` with no rows prints
+the bucket's header with that total and no rows.
+
+Left for later: units eval_render-1b, eval_render-2 and eval_render-3
+as mapped above, and unit eval-1 (`compute_eval`, `_eval_report`).
 
 ## The ranker
 

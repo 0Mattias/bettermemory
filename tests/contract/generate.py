@@ -148,6 +148,7 @@ from . import (
     gen_health_summary,
     gen_health_model,
     gen_eval_model,
+    gen_eval_render,
     gen_lexicon,
     gen_verify_candidates,
     gen_path_drift_steps,
@@ -336,6 +337,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "health_model_debt": gen_health_model.generate_debt,
     "eval_model": gen_eval_model.generate,
     "eval_model_python": gen_eval_model.generate_python,
+    "eval_render": gen_eval_render.generate,
+    "eval_render_unicode": gen_eval_render.generate_unicode,
     "log_chain": gen_log.generate,
     "ring_binding_paths": gen_ring_binding_paths.generate,
     "ring_binding_path_codecs": gen_ring_binding_paths.generate_codecs,
@@ -813,6 +816,9 @@ UNICODE_GATED = frozenset(
         "credentials_spans_unicode",
         "control_tokens_unicode",
         "recall_render_unicode",
+        # `history.printable` and code-point padding past ASCII
+        # (`gen_eval_render`).
+        "eval_render_unicode",
         "machine_facts_unicode",
         "durability_unicode",
         # IGNORECASE folding, `\b`, `\w`, `\s` and `\d` past ASCII in the

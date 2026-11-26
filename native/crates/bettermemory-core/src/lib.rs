@@ -37,8 +37,14 @@
 //!   unit: the defaults, `RateCI` with the Wilson interval, the two row
 //!   types, the `--since` and `--until` parsing and the window, and the
 //!   silent-miss readers of one event;
+//! - [`eval`]: `eval.py`, its first unit: `EvalReport` with its
+//!   `to_dict`;
+//! - [`eval_render`]: the eval family's renderers (`eval_render.py`), its
+//!   first unit: `render_text` for the rate trio with the review and
+//!   surfaces sections and the helpers it calls;
 //! - [`health_roots`]: `health_roots.py`'s estate progress cursor;
-//! - [`float_repr`]: Python's `float.__repr__`;
+//! - [`float_repr`]: Python's `float.__repr__`, and `format` with `'.Nf'`
+//!   and `'g'` (`format_fixed`, `format_general`);
 //! - [`datetime`]: the datetime spellings and readings;
 //! - [`argparse`]: the flat-parser subset of `argparse` the hook mains
 //!   parse through, its first two units (optionals and positionals of one
@@ -474,7 +480,9 @@ pub mod declare;
 pub mod difflib;
 pub mod durability;
 pub mod entry;
+pub mod eval;
 pub mod eval_model;
+pub mod eval_render;
 pub mod event_hook;
 pub mod event_recorder;
 pub mod event_redact;

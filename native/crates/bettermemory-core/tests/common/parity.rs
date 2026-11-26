@@ -258,6 +258,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "log_keyfiles_posix_python.jsonl"
         | "machine_facts_python.jsonl"
         | "capture_vocabulary_python.jsonl" => &[Python],
+        // `history.printable` and code-point padding past ASCII
+        // (`gen_eval_render`).
+        "eval_render_unicode.jsonl" => &[Unicode],
         // `str.isspace` and `str.isalnum` past ASCII (`gen_control_tokens`).
         "control_tokens_unicode.jsonl" => &[Unicode],
         // `str.isalnum`, `str.isspace` and `str.casefold` past the stable

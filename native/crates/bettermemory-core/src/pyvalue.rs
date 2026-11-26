@@ -13,6 +13,7 @@ use std::cmp::Ordering;
 
 use crate::datetime::DateTime;
 use crate::float_repr;
+use crate::toml::INT_MAX_STR_DIGITS;
 use crate::unicode;
 
 /// A Python `str`: code points, surrogates allowed.
@@ -376,6 +377,32 @@ pub fn repr_str(text: &[u32]) -> PyStr {
 /// scalar at the bottom too, so 9,997 lists around an int are the most it
 /// writes (9,998 around an empty list).
 pub fn repr(value: &PyValue) -> Result<PyStr, PyError> {
+    repr_with(value, false)
+}
+
+/// `str(value)` as CPython spells it, with its limit on converting an
+/// `int` to text: ValueError for an `int` of more than
+/// [`INT_MAX_STR_DIGITS`] digits (the sign not counted,
+/// `sys.int_info.default_max_str_digits`) wherever it sits, and
+/// RecursionError past [`crate::json::MAX_DEPTH`] as [`repr`] raises it,
+/// the first met in the order `repr` writes. This is also an f-string's
+/// `format(value, '')` of every type a [`PyValue`] holds.
+pub fn py_str_limited(value: &PyValue) -> Result<PyStr, PyError> {
+    match value {
+        PyValue::Int(digits) if int_past_limit(digits) => Err(PyError::ValueError),
+        PyValue::Tuple(_) | PyValue::List(_) | PyValue::Dict(_) => repr_with(value, true),
+        _ => py_str(value),
+    }
+}
+
+/// Whether `str()` refuses an `int` of this decimal text.
+fn int_past_limit(digits: &str) -> bool {
+    digits.trim_start_matches('-').len() > INT_MAX_STR_DIGITS
+}
+
+/// [`repr`], and with `int_limit` [`py_str_limited`]'s ValueError for an
+/// `int` past [`INT_MAX_STR_DIGITS`] digits, checked where `repr` spells it.
+fn repr_with(value: &PyValue, int_limit: bool) -> Result<PyStr, PyError> {
     enum Piece<'a> {
         Value(&'a PyValue, usize),
         Text(&'static str),
@@ -428,6 +455,9 @@ pub fn repr(value: &PyValue) -> Result<PyStr, PyError> {
                 push_ascii(&mut out, "PurePosixPath(");
                 out.extend(repr_str(p));
                 push_ascii(&mut out, ")");
+            }
+            PyValue::Int(digits) if int_limit && int_past_limit(digits) => {
+                return Err(PyError::ValueError)
             }
             PyValue::None | PyValue::Bool(_) | PyValue::Int(_) | PyValue::Float(_) => {
                 out.extend(py_str(value)?)
