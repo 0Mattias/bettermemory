@@ -285,6 +285,11 @@
 //!   join, `hook_spans` and `runs_beside`, the worktree bridge
 //!   `bridged_session`, `joined_sessions`, the disabled-scope replay),
 //!   pure functions over the events, `event_joined` re-exported;
+//! - [`recall_counters`]: the recall surface's counters read off the
+//!   event log (`compute_surface_report`, the `surfaces` section of eval,
+//!   with its conversation join, re-show bounds and grades), and the
+//!   readers `is_surface_row`, `is_surface_show`, `surface_of`,
+//!   `shown_ids` and `session_of`;
 //! - [`recall_prompt`]: the prompt recall's turn, window, settlement,
 //!   probe and the `recall_held` and `prompt_recall` rows;
 //! - [`control_tokens`]: the chat-template delimiters a stored text may
@@ -578,6 +583,7 @@ pub mod pyre;
 pub mod pysyntax;
 pub mod pyvalue;
 pub mod recall;
+pub mod recall_counters;
 pub mod recall_prompt;
 pub mod recall_settle;
 pub mod recall_state;

@@ -90,6 +90,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `audit` | `audit.py`'s first unit: the constants, `MissHit`, `MissReport`, `no_owner_prompt_report`, `turn_audited_fields`, `search_miss_fields`, `recall_held_fields`, `prompt_recall_fields`; audit-2/3: `is_duplicate_audit`, `probe_for_miss` with its helpers, `_count_recent_retrievals`, `_retrieved_ids` (the ranker and admission as traits), with `search_lane._relevance_label_v2` | `audit_fields.jsonl`, `audit_probe.jsonl` |
 | `recall_settle` | `recall_settle.py`'s first unit: `_used_in_segment`, `settle_shown`, `settle_unused`, `previous_audit_at`, `review_unanswered`, with `sessions.event_joined`; the store's reads, the recorder, the recall state, `joined_sessions` and `review.find_chain` are traits and closures; `events._event_id_items` and `_event_id_list` (`events::event_id_items`, `event_id_list`, `str_ids`); unit 2 (`recall_settle::interrupted`): `_probe_message` and `settle_interrupted`, the probe, the pool and the transcript read as closures | `recall_settle.jsonl`, `recall_settle_interrupted.jsonl` |
 | `sessions` | `sessions.py`'s first unit, the whole module but `event_joined` (built in `recall_settle`, re-exported): `_OUT_OF_PROCESS_TRIGGERS`, `_disabled_scopes_from_events`, `_latest_in_process_session`, `_session_of`, `harness_joined_sessions`, `hook_spans` (`HookSpans`), `runs_beside`, `live_harness_sessions`, `bridged_session`, `joined_sessions`, pure functions over the events | `sessions.jsonl` |
+| `recall_counters` | `recall_counters.py`, the whole module: `is_surface_row`, `is_surface_show`, `surface_of`, `shown_ids`, `session_of`, `compute_surface_report` and the constants, with `_ids`, `_in_window`, `_attested` (public as `ids_of`, `in_window`, `attested`), `_anchors_conversation`, `_conversation_rows`, `_reshown`, `_next_show`, `_latest_grades` and `_SurfaceTally`; the pick is the caller's closure | `recall_counters.jsonl` |
 | `recall_prompt` | `recall_prompt.py` whole: `_PromptTurn` (`PromptTurn`, `PromptTurnView`), `_prompt_window`, `_settle_before_probe`, `_prompt_probe`, `_record_hold`, `_record_delivery`; the session joins and `recall_admission`'s gate are traits, `Admission.on`, `settle_interrupted` and `_probe_message` closures | `recall_prompt.jsonl` |
 | `control_tokens` | `control_tokens.py`, the whole module: `find_control_tokens`, `control_token_offsets`, `defang_control_tokens`, `folded_quote`, `named_tokens`, `refuse_control_tokens` and its message, the token table, `BARE_NAME_REMEDY`, `_FIELD_WHY` | `control_tokens.jsonl`, `control_tokens_unicode.jsonl` |
 | `recall` | `recall.py`'s first unit: the constants, `WordsSeen` (`remember`, `seen`, `holds`, `clear`), `_fold`, `_bounded`, `RecallPointer`, `_annotation`, `_core`, `_one_excerpt`, `_recall_line`, `render_recall_block`; `recall_admission.summarize` and `disputed_marks`; `recall::choose`: `_seen_in_log`, `_seen_in_segment`, `_choose_hits`, `_deliver_recall`, `_unless_standing`, `_contradiction_open`, `HookResult` | `recall_render.jsonl`, `recall_render_unicode.jsonl`, `recall_choose.jsonl` |
@@ -4426,6 +4427,180 @@ the bucket's header with that total and no rows.
 
 Left for later: units eval_render-1b, eval_render-2 and eval_render-3
 as mapped above, and unit eval-1 (`compute_eval`, `_eval_report`).
+
+## The recall surface's counters (`recall_counters.py`)
+
+`recall_counters` reproduces `src/bettermemory/recall_counters.py`: the
+recall surface's counters read off the event log, the `surfaces` section
+of `bettermemory eval` (`compute_surface_report`). The map by function
+(lines at 652b94a9):
+
+| Function | Lines | Needs from the machine | Status |
+|---|---|---|---|
+| `RECALL_GRADE`, `STRATUM_*`, `STRATA` | 61-71 | nothing | built (unit 1) |
+| `_SURFACE_OF_KIND`, `SURFACES` | 75-79 | nothing | built (unit 1; the kind test in `surface_of`) |
+| `_ROW_KINDS` | 85-95 | nothing | built (unit 1, `OWN_KINDS` with `events::HARNESS_STAMPED_KINDS`) |
+| `SILENT_MISS_NOTE` | 98-103 | nothing | built (unit 1) |
+| `is_surface_row` | 106-108 | nothing | built (unit 1) |
+| `is_surface_show` | 111-119 | nothing | built (unit 1) |
+| `_anchors_conversation` | 122-128 | nothing | built (unit 1) |
+| `surface_of` | 131-135 | nothing | built (unit 1) |
+| `shown_ids` | 138-141 | nothing | built (unit 1) |
+| `session_of` | 144-146 | nothing | built (unit 1) |
+| `_ids` | 149-158 | nothing | built (unit 1, public as `ids_of`) |
+| `_str` | 161-162 | nothing | built (unit 1, `str_of`) |
+| `_in_window` | 165-170 | nothing | built (unit 1, public as `in_window`) |
+| `_attested` | 173-190 | nothing | built (unit 1, public as `attested`) |
+| `_rate` | 198-201 | nothing | built (unit 1, `eval_model::RateCI`) |
+| `_SurfaceTally` | 204-231 | nothing | built (unit 1, `Tally`) |
+| `_After` | 234-241 | nothing | built (unit 1) |
+| `_conversation_rows` | 244-318 | nothing | built (unit 1) |
+| `_reshown` | 321-339 | nothing | built (unit 1) |
+| `_next_show` | 342-356 | nothing | built (unit 1) |
+| `_latest_grades` | 359-382 | nothing | built (unit 1) |
+| `compute_surface_report` | 385-515 | nothing | built (unit 1) |
+
+The whole module is pure functions over the events, so it is one unit.
+
+What unit 1 reproduces. An event is a `PyValue` (a dict as the log reads
+it); `event.get(k)` reads the last value of a `str` key and a missing
+field reads as None. The events come as a slice. The window's bounds
+are `Option<DateTime>`: eval's window is always aware, and every stamp
+`parse_event_ts` answers is aware (a non-`str` `ts` is None), so stamps
+compare as instants in microseconds. A naive bound is read as UTC where
+the reference raises `TypeError` at its first comparison; no caller
+hands one.
+
+- Rows. `compute_surface_report` keeps the events that are dicts and
+  surface rows; anything else is skipped, never raised on. `kind in
+  _ROW_KINDS` is `frozenset` membership: a list or a dict kind (or a
+  tuple holding one) raises `TypeError`, a hashable non-`str` is absent.
+  The kind tests `kind in ("session_brief", "turn_audited")` and `kind
+  not in ("show", "use")` are tuple tests and never raise. Every
+  position (a show's, `_reshown`'s) is the position in that filtered
+  list.
+- Fields. `session_of` is `session or session_id` with Python
+  truthiness, kept only as a non-empty `str` (unlike
+  `sessions::session_of`, which keeps the empty one). `_ids` reads a
+  non-empty `str` as one id, a list as its non-empty `str` items first
+  seen first (a set beside the vector answers the reference's quadratic
+  `item not in out`), anything else (a tuple, a dict) as none.
+  `shown_ids` reads `ids` of a `session_brief` and `shown_ids` of any
+  other row. A `prompt_recall` is a show for any `str` `rule`, the empty
+  one included, which `_str` then leaves out of `rules`.
+- `_attested`: `outcome == "applied"`, `auto is True` (the bool only:
+  an int 1 is not the fallback), `attribution != "auto"`, `ids or
+  memory_ids` (truthiness) and `claim_excerpts` both lists, and an
+  excerpt that is a `str` whose `str.strip` (`unicode::py_strip`) is not
+  empty at an index whose id equals the memory id.
+- The join (`_conversation_rows`): rows with a readable stamp before
+  `end` only. The hook rows (`_anchors_conversation`: a brief printed or
+  not, a `turn_audited`, a show) name the conversations and move the
+  per-worktree bridge; every non-empty `str` harness stamp names a
+  stamped conversation, which the bridge never answers. `hook_spans`
+  reads a copy of the bounded rows that `is_out_of_process` does not
+  answer false for, the rows it would not skip, so its answer and its
+  `TypeError` on an unhashable trigger are the reference's. A `show` or
+  `use` row with a stamp joins it unless the bridge answers another
+  conversation the stamp does not run beside (`runs_beside(spans,
+  stamp, bridged)`, in the reference's argument order); without a stamp
+  it joins its own session when that names a conversation, else the
+  bridge. A row without ids (`id` of a show, `ids or memory_ids` of a
+  use) joins nothing. Each conversation's rows stay in log order.
+- The tally. `later` is the conversation's rows at or after the show's
+  instant; `_next_show` is `bisect_right` over `(instant, position)`
+  pairs (`partition_point` with `<=`), so a second show of the id at the
+  same instant and a later position ends the first show's follow-ups at
+  that instant. A show without a readable stamp (inside only the
+  unbounded window) still counts its delivery and ids and sees no
+  follow-ups. `chars_p50` is `statistics.median_low`: the element at
+  `(n - 1) / 2` of the ints sorted by `pyvalue::cmp_int_text`, any size,
+  answered as the int. `for entry in suppressed_ids or []`: a list or a
+  tuple yields its entries, a truthy `str` its characters and a dict its
+  keys (none of them a dict, so nothing counts), and a truthy int, float
+  or bool raises `TypeError`; `suppressed` is reported on the recall
+  surface only, sorted by reason in code point order. `rules` is
+  sorted; `segments` counts the set of `(session, agent_of or "",
+  segment)` for an int `segment` that is neither a bool nor zero (its
+  canonical text is the key), from the picked shows and every
+  `segment_opened` row in the window.
+- Settlements add the number of `_ids(ids)` under the row's `surface`;
+  `is_settlement`'s `TypeError` on an unhashable surface comes only from
+  a `use` row inside the window.
+- `review_unanswered`'s `chains` sums every int `count` that is not a
+  bool, of any size and sign, exactly: the sum is carried as decimal
+  text (base 10^9 limbs, a positive and a negative magnitude subtracted
+  once), with no bound.
+- `_latest_grades` reads the grade rows already in the window (the
+  reference tests the window again, which keeps every row): per `(sample,
+  id)` the latest grade in log order, `irrelevant_ids` after
+  `relevant_ids` within a row, a non-empty `str` `sample_id` and a
+  `stratum` in `STRATA` required.
+- The pick is `Option<&mut dyn FnMut(&PyValue) -> Result<bool, E>>`
+  with `E: From<PyError>`: the caller's (eval_model's `surface_rule_split`
+  reads rows and may fail). It runs on every show in the window, in
+  order, after the join and before the tally, so it chooses the shows
+  tallied but never whether the section is None, and every row still
+  joins and every show still bounds the follow-ups of the id's earlier
+  show. The order of the errors is the reference's: an unhashable kind,
+  then an unhashable settlement surface, then `hook_spans`' unhashable
+  trigger, then the pick's error, then a `suppressed_ids` that does not
+  iterate.
+- The answer is a `PyValue` dict in the reference's key order (`rules`,
+  `brief`, `recall`, `settlements`, `segments`, `review_unanswered`,
+  `grades` in `STRATA` order, `note`); each rate is
+  `RateCI::from_counts(..).to_dict()`.
+
+Fixtures: `tests/contract/gen_recall_counters.py` writes
+`recall_counters.jsonl` (not gated: ASCII ids, rules and worktrees,
+every stamp with an offset or read as UTC). A tuple and an int past 64
+bits are tagged (`{"$t": [...]}`, `{"$i": "<decimal>"}`) so a log holds
+them. Rows: the readers over hand-built events (kinds of every type, a
+list kind raising, falsy sessions, ids as `str`, list, tuple, dict and
+repeated), `_ids`, `_attested` (auto, attribution, the `ids or
+memory_ids` fallback, blank and non-`str` excerpts, short excerpt lists)
+and `_in_window`; then `compute_surface_report` over hand-built logs:
+the window's edges, what alone makes a section, the join's cases (a
+/clear with a stamped server, a stamp running beside the bridge, a
+stamp without hooks, two worktrees, a row with no worktree, a stamped
+bridge dropped, a stamp before the row's own session, rows at and after
+`end`, the anchors), re-shows across surfaces at the same instant and
+later, `chars` and `segment` as bool, float, zero and past 64 bits,
+`suppressed_ids` of every type, the uses, settlements of each surface,
+`count` of every type and sign, grades re-graded in one sample and
+across samples, picks that split the shows, pick none and raise; each
+section as compact text with each rate dict spelled `[numerator,
+denominator]`. A seeded sweep of 5,000 logs drawn from small pools runs
+each through `compute_surface_report` in a drawn window without and
+with a drawn pick, pinned by count and SHA-256 of the full `json.dumps`
+text. Tests: `golden_recall_counters` (every row and the sweep),
+`recall_counters_kills` (`runs_beside` swapped, the stamped bridge kept,
+the row's session before its stamp, rows at `end` joined,
+`bisect_left`, `>` at the show's instant, `median`, `suppressed` on the
+brief or unsorted, `auto` by truthiness, a pick that makes the section
+None, a list kind answered False, chains past 64 bits, the pick run
+after the tally, grades by stamp), `recall_counters_robustness`
+(100,000 rows over 1,000 conversations and 100 worktrees: the work is
+the sum over conversations of shows times joined rows times ids, held
+linear in the conversations at a fixed size per conversation through
+`tests/timing`; ints past 64 bits in `chars`, `segment` and `count`;
+unhashable and 100,000-deep values at every field read; extreme stamps
+and bounds).
+
+Patterns: none. The module matches no regular expression.
+
+Reference observations, reproduced: a `prompt_recall` with an empty
+`rule` is a show whose rule is not reported; a negative `count` lowers
+`chains`; `suppressed_ids` on a brief show is counted and never
+reported; a truthy `suppressed_ids` that does not iterate raises
+`TypeError` and ends the whole section; `_latest_grades` tests the
+window a second time over rows already in it.
+
+Left for later: nothing of this module. Its callers are later units:
+eval_model-1b (`_with_rule_split`, `surface_rule_split`, the pick's
+maker), eval-1 (`_eval_report`, which passes the surface rows),
+eval_rates-1 (its use of `is_surface_row`) and recall_review-1 (its
+sampling over the same rows).
 
 ## The ranker
 
