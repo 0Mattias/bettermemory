@@ -130,7 +130,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `identity` | unit 1 of `identity.py`: `_clean`, `_strip_format_characters`, `_json_workspace`, `actor_matches`, `Actor.is_empty`/`to_record`, `Workspace.declared`, `registry_key`, `resolve` over a request given as data, the published caller (`publish`, `reset`, `current`, `bind`, `bind_transcript`, `current_actor`, `current_harness_session`) as a value the caller owns; unit 2: `_first_file_root` (with `unquote(errors="surrogateescape")`), `workspace_declaration` | `identity_caller.jsonl`, `identity_caller_unicode.jsonl`, `identity_roots.jsonl`, `identity_roots_python.jsonl` |
 | `session` | `session.py` whole: the constants, `_new_session_id`, `PendingUseToken`, `SessionState` and every method under its lock, `SessionSource`, `SessionRegistry` with its LRU (`for_request`, `_key_for_ctx`'s fallback, `known_keys`, `stats`), `get_default_registry`, `get_state`; the clock and the random source are `Effects` | `session.jsonl` |
 | `standing_guard` | `handlers/_guard.py` whole: `read_words`, `record`, `Held`, `check`, `guard` and the hints, over `GuardDeps` | `standing_guard.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); the event reads (`store::event_reads`: `iter_events`, `iter_events_backward`, `capture_rows`, `events_of_kinds`, `session_events_of_kinds`, `events_since`, `_window_floor`, `NAMING_BOUND`, `log.CAPTURE_KINDS`); the event writes (`store::record_event`: `record_event` with `_primary_code`, `_busy`, `_time_left`, `_waiting_until` and `EVENT_RETRY_PAUSE_SECONDS`, `import_event`, `imported_event_keys`, `_named_payload`, `record_migration`, `record_capture`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build, and the upkeep with the key present: `_close_foreign_tail`, `_settle_origin`, `_record_origin`, `_name_origin_key`, `_forget_segments`; and with the key missing or foreign: `_open_connected`'s dispatch (117-143), `_reclaim`, `_open_rekeyed`, `_take_over_origin`, `KeyRing.create_key`; `restore_rows.settle` after each path's upkeep; another connection, `Store.reopen` as `WritableStore::reopen` with `Store.open(allow_rekey=False)` on a writing connection, `_tell_drift` and `_first_told`; `Store.store_orphans` as `store::create::store_orphans`); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `wrote_record`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the keys a store opened without writing keeps (`store::key_read::open_reader`: `_open_connected`'s dispatch (82-116), `_open_reader`'s read key (146-203), `Store.has_key`, `Store._verify_key`, `Store.can_verify`); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `ranked_rows` with its limit, `_ranked_batches`, `newest_rows`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`); a restore's late `store_restored` row (`store::restore_rows`, unit restore_rows-1a: `restore_record_path`, `pending`, `record_row`, `append_missing`, `append_for`, `settle`, with `_fill`, `_standing`, `_decide`, `_logged`, `_still_stands`, `_settle_one`, `_report_withheld`, `_said`, `_clock_reading`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_event_reads.jsonl`, `store_event_reads_naive.jsonl`, `store_record_event_posix.jsonl` (POSIX only), `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `store_open_upkeep.jsonl` (POSIX only), `store_open_upkeep_python.jsonl` (POSIX only), `store_open_rekey.jsonl` (POSIX only), `store_open_rekey_python.jsonl` (POSIX only), `store_orphans.jsonl` (POSIX only), `store_open_restore.jsonl` (POSIX only), `store_reopen.jsonl` (POSIX only), `restore_rows.jsonl` (POSIX only), `restore_rows_python.jsonl` (POSIX only), `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_open_reader.jsonl`, `store_open_reader_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); the event reads (`store::event_reads`: `iter_events`, `iter_events_backward`, `capture_rows`, `events_of_kinds`, `session_events_of_kinds`, `events_since`, `_window_floor`, `NAMING_BOUND`, `log.CAPTURE_KINDS`); the event writes (`store::record_event`: `record_event` with `_primary_code`, `_busy`, `_time_left`, `_waiting_until` and `EVENT_RETRY_PAUSE_SECONDS`, `import_event`, `imported_event_keys`, `_named_payload`, `record_migration`, `record_capture`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); the digest's questions (`store::digest_query`: `_mark`, `_share`, `digest_candidates`, `DigestShare`, `digest_shares`, `digest_memo`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build, and the upkeep with the key present: `_close_foreign_tail`, `_settle_origin`, `_record_origin`, `_name_origin_key`, `_forget_segments`; and with the key missing or foreign: `_open_connected`'s dispatch (117-143), `_reclaim`, `_open_rekeyed`, `_take_over_origin`, `KeyRing.create_key`; `restore_rows.settle` after each path's upkeep; another connection, `Store.reopen` as `WritableStore::reopen` with `Store.open(allow_rekey=False)` on a writing connection, `_tell_drift` and `_first_told`; `Store.store_orphans` as `store::create::store_orphans`); what a resolved caller is admitted to see (`store::caller`); the additive schema steps and their leaves (`store::schema`: `_add_membership_tables`, `_add_returned_marks`, `_add_proposals_index`, `_add_session_index`, `_add_path_targets`, `absent_text`, `orphan_names`, `refuse_unmigrated_v8`, `holds_v8_files`); `store_rows`' shared leaves (`store::rows`: `_iso_opt`, `_upsert_sql`, `_sync_links`, the membership specs, `_membership_values`, `_membership_key`, `_membership_spec`, `_membership_column`, `_MEMBERSHIP_BY_TABLE`, `_sort_rows`, `_known_columns`, `_verification_row`, `_event_from_columns`, `Store._event_from_raw`, the kind sets `MUTATION_KINDS`, `MEMBERSHIP_MUTATION_KINDS`, `CONTROL_KINDS`, `MEMBERSHIP_EVENT_KINDS` and `_NOT_TELEMETRY`); the membership tables' store methods (`store::membership`: `put_membership`, `delete_membership`, `_clear_native`, `record_membership`, `membership_rows`, `next_membership_id`, `next_membership_number`, `committed_seq`, `membership_log`, `wrote_record`, `reissue_membership_store_id`, `in_batch`, `membership_store_id`, with `store_native`'s `row_key`, `legacy_row`, `native_rows`, `matches` and `require_native_writer`); `store.py`'s connection leaves and its admitted reads (`store::reads`: `note_residue`, `error_code_name`, `retryable_code`, `Store.set_busy_timeout`, `Store.document_frequencies` outside the memo, `Store._term_masks`, `Store.scope_counts`, `Store.scopes_for`, `Store.category_rows`, `Store.brief_rows`, `StoreSource`, `DefaultStoreSource`); a committed key rotation finished (`store::rotation`: `finish_rotation`, `_finish_for_signing`, `_rename_read_attempts`, `_current_named`, `_bound_here_or_nowhere`, `write_key_once`, `pending_key_path`, `_signs_a_segment`, `KeysDirUnreadableError`'s text); the keys a store opened without writing keeps (`store::key_read::open_reader`: `_open_connected`'s dispatch (82-116), `_open_reader`'s read key (146-203), `Store.has_key`, `Store._verify_key`, `Store.can_verify`); the episode journal's reads (`store::journal`: `get_episode`, `iter_episodes`, `count_episodes`, `episodes_by_session`, `episodes_by_swarm`, `episode_session_ids`, `prunable_episode_sessions`, `episode_volume`) and the upgrade's proof (`store::upgrade`: `TRANSACTION_WRITER_REVISION`, `_prove_exclusive`); the plain reads over a connection (`store::index_reads`: `ranked_rows` with its limit, `_ranked_batches`, `newest_rows`, `rows_updated_since`, `inbound_links`; `store::record_reads`: `body_of`, `get_memory`, `has_memory`, `get_many`, `light_many`, `light_by_ids`, `memory_ids`, `count_memories`, `has_memories`, `filename_for`, `load_one`); a restore's late `store_restored` row (`store::restore_rows`, unit restore_rows-1a: `restore_record_path`, `pending`, `record_row`, `append_missing`, `append_for`, `settle`, with `_fill`, `_standing`, `_decide`, `_logged`, `_still_stands`, `_settle_one`, `_report_withheld`, `_said`, `_clock_reading`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `fold_python.jsonl`, `store_event_reads.jsonl`, `store_event_reads_naive.jsonl`, `store_record_event_posix.jsonl` (POSIX only), `store_create.json`, `store_digest_query.jsonl`, `store_digest_query_sqlite.jsonl`, `store_open.jsonl`, `store_open_upkeep.jsonl` (POSIX only), `store_open_upkeep_python.jsonl` (POSIX only), `store_open_rekey.jsonl` (POSIX only), `store_open_rekey_python.jsonl` (POSIX only), `store_orphans.jsonl` (POSIX only), `store_open_restore.jsonl` (POSIX only), `store_reopen.jsonl` (POSIX only), `restore_rows.jsonl` (POSIX only), `restore_rows_python.jsonl` (POSIX only), `caller_admission.jsonl`, `store_schema_steps.jsonl`, `store_schema_posix.jsonl`, `store_rows_leaves.jsonl`, `store_rows_leaves_python.jsonl`, `store_rows_columns.jsonl`, `store_membership.jsonl`, `store_membership_native.jsonl` (POSIX only), `store_reads.jsonl`, `store_reads_python.jsonl`, `store_rotation.jsonl`, `store_rotation_python.jsonl`, `store_open_reader.jsonl`, `store_open_reader_python.jsonl`, `store_journal.jsonl`, `store_upgrade.jsonl`, `store_upgrade_posix.jsonl`, `store_reads_seams.jsonl`, `store_reads_seams_platform.jsonl`, `store_reads_seams_python.jsonl` |
 | `store::docfreq` | the document frequency memo of `store_index.py`: `_memoised_document_frequencies`, `_current_inputs`, `_patched_masks`, `_admitted_mask`, `_keep_doc_freqs`, `_row_mask`, `_DocFreqInputs` and the grouping of `Store._read_doc_freq_inputs`, the memoised half of `Store.ranking_statistics`; the store's side is the trait `DocFreqSource`, implemented over a store connection by `store::docfreq_store` (`_memory_head`, `digest_mark(build=False)`, `digest_admission_rows`, `Store._read_doc_freq_inputs`'s reads, `Store._term_masks`, `Store.document_frequencies`, `Store.ranking_statistics`, and `_advanced_inputs` with `_HEAD_KINDS` and `_ADVANCE_ROWS`, which carries an entry over a moved head; the rows a request admits, decided through the memo: `admitted_rows`, `_admitter`, `ranked_admitted_rows`, `admitted_share`, `_admitted_rows_read` in `docfreq_store::admitted`, which `store::pool` draws its pool through, unit poolmemo) | `store_docfreq.jsonl`, `store_docfreq_store.jsonl`, `store_docfreq_store_b.jsonl`, `store_docfreq_advance.jsonl` |
 | `membership_records` | unit 1 of `membership_records.py`: `legacy_asks`, `_same_number`, and in `paths` `_same_path`, `_flavour`, `_path_under`, `_rebase`, `_basename`, `_common_by_pointer`, `_dir_key`, `_dir_below`; `gitfile_rule::hostpath::text`, `os.path` of both flavours over a `str` (`join`, `normpath`, `normcase`, `split`, `abspath`, `relpath`); units 2 and 3 in `records`: `Manifest.to_json`, `Manifest.from_json`, `manifest_match`, `HistoryReader` and `IndependentReader` (traits), `NeedIndependent`, `Specific`, `Machine`, `View`, `Checkout` (`token_superseded`, `lineage`, `token_refutes`, `views_on`, `newest_view`), `_live_key`, `Project`, `ProjectFile`, `Proposal`, `_found_token`; unit 4 in `identity`: `_strings`, `_flag`, `_FULL_SHA`, `PortableIdentity` (`to_json`, `from_json`, `digest`), `ImportedProject` and the bounds and import words, and in `outcomes`: `Declaration`, `Declared`, `Why`, `UnresolvedProject`, `Health`, `EpisodeRef`, `Handoff`, `RecallAdmission` | `membership_records_paths.jsonl`, `membership_records_paths_python.jsonl`, `membership_records_paths_platform.jsonl`, `membership_records_records.jsonl`, `membership_records_identity.jsonl`, `membership_records_identity_python.jsonl` |
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks`; unit 2a in `membership::shared_heal`: `_carriers`, `_restamped`, `_healed`, `_chosen`, `retired_into`, `_folded`, and the `MembershipLog` trait; unit 2b in `membership::shared_ask`: `_ask_which`, `_retire_into`, `_asked_at`, `_asked_here`, `_unseen`, `_asked_plan` | `membership_shared.jsonl`, `membership_shared_python.jsonl`, `membership_shared_heal.jsonl`, `membership_shared_ask.jsonl` |
@@ -8333,26 +8333,28 @@ mutation dispatcher outside the fold).
 `store::membership` ports `store_membership.py`, the `Store` methods the
 membership model reads and writes through, with `Store.in_batch` and
 `Store.membership_store_id` (`store.py` 1603-1620) and the parts of
-`store_native.py` its reads need (`row_key` 21-22, `native_rows` 41-67,
-`matches` 70-77, `require_native_writer` 81-86), private here. Reference
+`store_native.py` its reads and writes need (`row_key` 21-22,
+`legacy_row` 25-38, `native_rows` 41-67, `matches` 70-77,
+`require_native_writer` 81-86), all but `legacy_row` private here. Reference
 lines are `store_membership.py` unless named. Line ranges were checked
 against the source as it is now.
 
 | Function | Reference | Needs from the machine | Status |
 | --- | --- | --- | --- |
-| `put_membership` | 47-80 | the store (write transaction), the log clock | built; the surrogate branch (58-77) refused |
-| `delete_membership` | 83-104 | the same | built; the surrogate branch (91-101) refused |
+| `put_membership` | 47-80 | the store (write transaction), the log clock | built; the surrogate branch (59-77) in unit store_membership-2 |
+| `delete_membership` | 83-104 | the same | built; the surrogate branch (91-101) in unit store_membership-2 |
 | `_clear_native` | 107-125 | the same | built |
 | `record_membership` | 128-137 | the same | built |
 | `membership_rows` | 140-217 | the store (reads) | built |
 | `next_membership_id` | 220-233 | the store | built |
 | `next_membership_number` | 236-246 | the store | built |
 | `committed_seq` | 249-262 | the transaction's rows; the connection | built |
-| `membership_log` | 265-304 | the store | unit store_membership-2 |
+| `membership_log` | 265-304 | the store | built (unit store_membership-2) |
 | `wrote_record` | 307-326 | the store | built |
-| `reissue_membership_store_id` | 329-354 | the store, `secrets.token_hex` (`Provider::membership_store_id`) | unit store_membership-2 |
+| `reissue_membership_store_id` | 329-354 | the store, `secrets.token_hex` (`Provider::membership_store_id`) | built (unit store_membership-2) |
 | `Store.in_batch`, `Store.membership_store_id` | `store.py` 1603-1620 | the store | built |
 | `row_key`, `native_rows`, `matches`, `require_native_writer` | `store_native.py` 21-22, 41-77, 81-86 | the store | built (private) |
+| `legacy_row` | `store_native.py` 25-38 | nothing | built (unit store_membership-2) |
 
 The writes. Each runs on a `Transaction` as a nested entry
 (`Transaction::scope`, as `_transaction` joins a batch), or on a
@@ -8366,12 +8368,8 @@ applies a membership table's own kind under a savepoint, the two
 `returned` marks. `Transaction::append_control` appends a control row of
 design 8.10 (`MEMBERSHIP_EVENT_KINDS`, `store_forked` among them) and
 changes no table. A put or delete whose row or key holds a lone
-surrogate is checked by `require_native_writer` (so a store held to
-older writers answers StoreVersionError as the reference does) and then
-refused as `WriteNotPorted::NativeMember`, nothing written and the
-transaction unable to commit; the native write (`legacy_row`,
-`encoded_json`, `native_member_put`) is left to store_membership-2.
-`_clear_native` writes `native_member_delete` after the put or delete
+surrogate is written as the reference writes it (unit store_membership-2,
+below). `_clear_native` writes `native_member_delete` after the put or delete
 when the row has a native twin, under the same writer check.
 
 The reads take the connection. `membership_rows` reproduces the
@@ -8434,9 +8432,177 @@ Tests: `golden_store_membership.rs`, `store_membership_kills.rs` (13),
 `store_membership_robustness.rs` (5; a `column_in` ten times larger,
 of duplicates or of distinct values, reads within 30 times as long), `store_membership_not_posix.rs`.
 
-Left for later units: store_membership-2 (`membership_log`,
-`reissue_membership_store_id`, the surrogate branches of
-`put_membership` and `delete_membership` with `store_native.legacy_row`).
+### Unit 2, built
+
+Unit store_membership-2 builds the rest of the module: the surrogate
+branches of `put_membership` and `delete_membership` with
+`store_native.legacy_row`, `membership_log` and
+`reissue_membership_store_id`. Line ranges were checked against the
+source as it is now.
+
+The native writes. A put whose row holds a lone surrogate
+(`has_surrogates` over the whole mapping; a key that holds one fails the
+row's checks first) is checked as before outside the transaction, then
+inside it: `require_native_writer`, the legacy `<kind>_put` of
+`legacy_row`'s row when it answers one, then `native_member_put` of
+`{"native_member": {"member_kind", "key_text": row_key, "row_text":
+encoded_json(dict(row))}}`, whose row is the answer. No `_clear_native`
+runs on this branch, so a native put over its own twin logs no delete. A
+delete whose key columns hold one logs `native_member_delete` of
+`{"member_kind", "key_text"}` alone, the legacy row untouched. A legacy
+row whose replacement is None in a NOT NULL column (a surrogate in
+`machines.minted`, say) fails SQLite's constraint as the reference's
+does: IntegrityError, the whole call taken back. `legacy_row` is None
+when a key column holds a surrogate; else the row in its order with each
+value that holds one replaced: a `_json` column's by `[]` for a list or
+tuple and `{}` for anything else (a str included), a `name`, `line` or
+`reason` str by `utf8_text` (a pair of halves stays two escapes), any
+other by None. `legacy_row`'s domain is a row the put's checks passed
+(`_membership_values`: a dict of the table's columns named by str, each
+key column non-empty text); outside it its answer is not the
+reference's, which raises KeyError for a missing key column, TypeError
+for a row that is not a mapping and AttributeError for a column name
+that is not a str, and keeps `[]` or `{}` for a `_json` column whose name
+holds a surrogate. `put_membership` never hands it such a row.
+`WriteNotPorted::NativeMember`, the refusal unit 1 put in their place,
+had no caller left and is gone.
+
+The depth budget. The reference's `has_surrogates` recurses, two Python
+frames a level (the function and its generator), and runs on every put
+and delete, so a `_json` value nested about 500 deep raises
+RecursionError inside the transaction, on the plain branch as on the
+surrogate one, before anything is written; how deep follows the
+caller's stack. The port counts the same frames against
+`SURROGATE_FRAMES` (998: CPython 3.13.13's limit of 1000 less the
+module's frame and the method's own, as from a module's top level).
+`has_surrogates(row)` is frame 1; each value takes its frame and the
+next (the generator over a str's characters, `Mapping.__instancecheck__`
+for anything else, the generator over a container's items); a
+container's keys and values are two frames further; the walk goes in the
+reference's order and stops at the first surrogate. So a `facts_json` of
+497 nested lists around a str or an int is written and 498 is
+RecursionError, 498 nested lists whose innermost is empty are written
+and 499 are not, as 3.13.13 answers called from a module's top level
+(900 and 5,000 levels are RecursionError in both); a deeper caller in the
+reference raises sooner. The port counts `Mapping.__instancecheck__` as
+one frame, which it is once the process has checked that type against
+`Mapping` (the ABC caches the answer). A type's first check in a process
+runs `__subclasscheck__` too, some frames more: in a fresh 3.13.13
+process whose first int, None, float or bool checked against `Mapping`
+is the value's innermost, 494 lists around it are written and 495 are
+RecursionError, where a process that checked that type once before (at
+any depth) writes 497. A str never reaches the check, and a list or a
+dict is checked at a shallower level of the same walk first (the row is
+a dict). A RecursionError inside that first
+check leaves the cache cold, and `ABCMeta.register` anywhere empties
+the negative caches. Like the caller's stack, the cache is the
+process's state, which the port cannot see; it answers as a warm cache
+does. `legacy_row` runs beside `has_surrogates(row)`
+and walks each value one frame shallower, every value to its end, so a
+value the put's own walk never reached (a surrogate in an earlier column
+ends that walk) raises there at 498 lists around a str. Each level costs
+two frames and the budget is even, so that one frame changes no answer
+from a module's top level (3.13.13 agrees: 497 lists written, 498
+RecursionError), and a walk started a frame deeper cannot be told apart
+by any test. Past `json::MAX_DEPTH` the row's own checks raise
+RecursionError first, before the transaction, as the reference's JSON
+encoder does past its own limit. A delete's key is text alone and
+reaches no depth.
+
+`membership_log` takes the kinds as the collection's items: the
+reference's `set(kinds) & allowed` raises TypeError at an unhashable item
+(a list, a dict, a tuple holding one) and drops one that is not a str or
+not a membership kind; the names are sorted and bound as the reference
+binds them, `since_seq` is an `i64` the caller has already passed through
+`int()` (a bool is its int), and the checkout test is the reference's
+SQL, `CASE WHEN json_valid(payload) THEN json_extract(payload,
+'$.checkout') END = ?`, left to SQLite: a JSON `true` reads as 1, so a
+checkout of `True`, `1` or `1.0` matches it and `"1"` does not, and an
+array or object reads back as its JSON text. A checkout bound as
+`sqlite3` binds it: a text holding a lone surrogate is UnicodeEncodeError
+with `str.encode`'s words (the first run of surrogates, one by its
+escape, several by their positions), a list, dict or tuple is
+ProgrammingError. With no membership kind left the reference returns
+before binding anything, so a checkout that cannot be bound is no error
+there. Each row is read as `LogRow(int, str, ...)` reads it (a NULL
+session stays None, any other value is its `str()`). The reference is a
+generator: its checks and its statement run at the first `next()`, and
+each row is read at the `next()` that yields it. `membership_log_each`
+reads the same way, handing each row to a visitor that answers
+`ControlFlow::Continue` to read the next or `Break` to stop, so a row past
+the one a caller stops at is never read: a later row whose TEXT column is
+not UTF-8 fails only a read that reaches it (OperationalError), as it
+fails only the reference's caller that iterates that far
+(`membership_alias._first_remotes`, for one, stops at its first match).
+`membership_log` is `list(...)` of it, every row or the first error.
+Rows written between two reads are seen as SQLite's statement sees them.
+
+`reissue_membership_store_id` on a `WritableStore` draws the new id
+(`Provider::membership_store_id`, `secrets.token_hex(16)`) before
+`BEGIN`, as the reference draws it before its `with`: a store whose
+transaction cannot begin has still drawn it. A draw that fails is
+`WriteError::Clock`. Inside one savepoint it reads the old id
+(`membership_store_id`, RuntimeError naming the store's path when meta
+has none), runs `UPDATE meta` and appends `store_forked` with
+`{old_store, new_store, record, source}` through `append_control`, so a
+failure leaves meta and the log as they were (a `store_forked` append
+whose clock read fails inside a batch that catches it takes back the
+`UPDATE meta`, as the reference's nested savepoint does); it answers
+`(old, new)`.
+On a `Transaction` (a batch) the caller passes the id it drew and the
+store's path, since the transaction's provider is its own.
+
+Fixtures (`tests/contract/gen_store_membership.py`, `generate_native`):
+`store_membership_native.jsonl` (4 cases, 123,374 bytes), run as
+`store_membership.jsonl`'s: a surrogate in a key column and in each kind
+of non-key column on every membership table (`_json` lists, tuples,
+dicts and strs, nullable columns, `name`, `line` and `reason`, NOT NULL
+columns that refuse), the tables after the writes and the refold, a
+native twin a later plain put clears, surrogate deletes, a store held
+to revision 4 and one without the meta row, native writes inside
+batches, `membership_log` with kinds None, empty, foreign, mixed and
+unhashable, `since_seq` at its edges and as `True`, checkouts of each
+type, a payload that is not JSON and one cut short, and reissues with a
+scripted token (`secrets` patched in `store_membership`), in and out of
+a batch and without an id. A log read is recorded as its rows'
+sequence numbers and the SHA-256 of their `encoded_json` text (each row
+is in its step's log rows already), a table of more than eight rows as
+its count and digest. A text the file would spell with four
+backslashes in a row (a native row's escape inside a payload inside the
+line) trips the golden directory's `host_fact` guard, so an answer or a
+payload holding two backslashes in a row is written as its UTF-8 hex.
+The surrogate checkout's UnicodeEncodeError text is the interpreter's and
+is pinned in the kills test instead. Gated on Unicode (the index text)
+and POSIX only, as the other store fixtures are; no row comes from
+pydantic.
+
+Tests: `golden_store_membership_native.rs`,
+`store_membership_native_kills.rs` (17), and
+`store_membership_native_robustness.rs` (5; a hundred thousand log rows
+read within 30 times the time of ten thousand, by the wall clock since
+the read waits on the database file; a `_json` value 10 deep written and
+900, 5,000 and 100,000 deep RecursionError with nothing written),
+`store_membership_native_not_posix.rs` (the gap, class os).
+`store_membership_kills.rs`'s surrogate refusal became the built answer.
+The kills cover a legacy row written for a surrogate key, `[]` and `{}`
+swapped, the native put before the legacy one, `_clear_native` after a
+native put, a log read kind by kind, a checkout compared outside SQLite,
+the token drawn inside the transaction, the depth budget moved by a
+frame either way (a str, an int, an empty list, a surrogate and a dict's
+key at the bottom, and a value only `legacy_row` walks),
+`require_native_writer` checked after the legacy put (a store at
+revision 4 answers StoreVersionError before any clock read, and before a
+legacy row's IntegrityError), the log's kinds taken from a slice that
+holds `quarantine` (every record and quarantine kind's row is absent,
+with `kinds` None and named), a checkout bound with no membership kind,
+a log read past the row its caller stopped at, and the reissue run
+without its savepoint. The answers were read from the reference under
+CPython 3.13.13. A port that binds the kinds unsorted answers every row the
+same (the statement orders by `seq`), so no test can tell it apart.
+
+No regular expression is involved. Left for later units: binding the
+membership model's seams (`MembershipStore`, `MembershipLog`,
+`ScopeReader`) to the store (store_membership-3).
 
 ## The search pool, by caller
 
@@ -28670,8 +28836,7 @@ What the reference has and this build does not, by area:
   write transaction (`mutate`, `begin`, its `returned` marks),
   `put_memory`, `tombstone`, `delete_tombstone` and the row writers
   (`store::home`, `store::tables`): the rest of the public record API
-  (the episode prune), the membership kinds' native (surrogate) writes,
-  the membership log and the store id reissue (store_membership-2),
+  (the episode prune),
   wiring the schema steps and `ensure_backfilled` (the returned marks'
   backfill, built in `store::returned`) into the writing open (store-3c)
   and `run_steps`, re-spelling the index, and `_connect`'s WAL switch and
@@ -28700,8 +28865,7 @@ What the reference has and this build does not, by area:
   `_earlier_tree` and `_machineless` (locearly) are not), and of
   `location_git.py` the binding of `probed` to githead's discovery,
   `_sources_once`, `_SYMBOLIC_HEAD`, `_ABOVE` and `_clear_above`.
-- Membership's native (surrogate) writes, the membership log and the
-  store id reissue (store_membership-2), and of the caller's resolution
+- Of the caller's resolution
   `prime_roots` and `middleware`, the MCP server's wire path (`identity`
   resolves the rest; its admission is `store::caller`).
 - `membership_resolve.py` past rung 2 of the ladder (`_token_now`,

@@ -177,9 +177,11 @@
 //!   membership specs, the row sort, the schema's columns, the
 //!   verification row, a log row as a telemetry event and the kind sets);
 //!   the membership tables' store methods (`store::membership`: the puts,
-//!   deletes and control rows on the write transaction, the batched
-//!   reads over legacy and native rows, the id counters, `committed_seq`,
-//!   `in_batch`, `wrote_record` and the store id);
+//!   deletes and control rows on the write transaction, a surrogate row's
+//!   native writes beside its legacy projection, the batched reads over
+//!   legacy and native rows, the membership log, the id counters,
+//!   `committed_seq`, `in_batch`, `wrote_record`, the store id and its
+//!   reissue);
 //!   `store.py`'s connection leaves and its admitted reads (`store::reads`);
 //!   the finish of a committed key rotation (`store::rotation`); the
 //!   keys a store opened without writing keeps

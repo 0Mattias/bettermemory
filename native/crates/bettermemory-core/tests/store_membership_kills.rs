@@ -5,8 +5,9 @@
 //! twice, an id counter that truncates past three digits or counts a
 //! prefix by bytes, a control kind check that lets a mutation kind
 //! through, `wrote_record` matching an id that only begins the one asked
-//! for, and a surrogate row written instead of refused. POSIX only, as
-//! the store fixture is.
+//! for, and a surrogate row written as a plain one (its native writes are
+//! `store_membership_native_kills.rs`'s). POSIX only, as the store fixture
+//! is.
 
 #![cfg(unix)]
 
@@ -18,7 +19,7 @@ use bettermemory_core::pyvalue::{PyStr, PyValue};
 use bettermemory_core::store::create;
 use bettermemory_core::store::membership as m;
 use bettermemory_core::store::open::{open_for_writing, WritableStore};
-use bettermemory_core::store::write::{WriteError, WriteNotPorted};
+use bettermemory_core::store::write::WriteError;
 use bettermemory_core::unicode;
 use common::created::{fixed, fixture};
 use common::opened;
@@ -223,7 +224,7 @@ fn wrote_record_matches_the_whole_id() {
 }
 
 #[test]
-fn a_surrogate_row_is_refused_with_nothing_written() {
+fn a_surrogate_row_is_written_as_its_native_row() {
     let (_d, mut store) = fresh("memb-kill-surrogate");
     let mut p = Counting::at(STAMP, 0);
     let before = kinds(&store).len();
@@ -231,14 +232,11 @@ fn a_surrogate_row_is_refused_with_nothing_written() {
         (s("project"), s("P1")),
         (s("remote_key"), PyValue::Str(vec![0x72, 0xDC80])),
     ];
-    let e = store
+    let (written, _) = store
         .put_membership(&mut p, &cps("project_remote"), &row, None)
-        .expect_err("refused");
-    assert!(matches!(
-        e,
-        WriteError::NotPorted(WriteNotPorted::NativeMember)
-    ));
-    assert_eq!(kinds(&store).len(), before);
+        .expect("written");
+    assert_eq!(written.kind, "native_member_put");
+    assert_eq!(kinds(&store).len(), before + 1);
 }
 
 fn witness_native(conn: &rusqlite::Connection, commit: &str, arrival: &str) {

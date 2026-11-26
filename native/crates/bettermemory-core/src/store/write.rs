@@ -72,10 +72,6 @@ pub enum WriteNotPorted {
     /// rotation another connection committed since (`_signing_key` would
     /// follow it, finishing the rotation's rename).
     Rekeyed,
-    /// A membership row or key holding a lone surrogate: the reference
-    /// writes it as a `native_member` row beside its legacy projection
-    /// (`store_native`), left to a later unit.
-    NativeMember,
     /// A value of a membership read this build does not carry the way the
     /// reference does (named): `bytes` from a BLOB column, or a sort over a
     /// value outside None, bool, int, float and surrogate-free str.
@@ -88,7 +84,6 @@ impl WriteNotPorted {
             WriteNotPorted::Kind(_) => "kind",
             WriteNotPorted::NativeOrigin => "native_origin",
             WriteNotPorted::Rekeyed => "rekeyed",
-            WriteNotPorted::NativeMember => "native_member",
             WriteNotPorted::Value(_) => "value",
         }
     }
@@ -175,9 +170,6 @@ impl std::fmt::Display for WriteError {
             WriteError::NotPorted(WriteNotPorted::Rekeyed) => f.write_str(
                 "the store was rekeyed since it was opened; the native build does not follow",
             ),
-            WriteError::NotPorted(WriteNotPorted::NativeMember) => {
-                f.write_str("the native build does not write a native-path membership row")
-            }
             WriteError::NotPorted(WriteNotPorted::Value(what)) => {
                 write!(
                     f,

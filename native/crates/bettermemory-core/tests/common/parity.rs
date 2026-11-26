@@ -414,6 +414,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_membership.jsonl"
         | "store_rows_written.jsonl"
         | "store_bulk.jsonl" => &[Unicode, Pydantic],
+        // The index text is the tokenizer's (`gen_store_membership`'s
+        // native cases).
+        "store_membership_native.jsonl" => &[Unicode],
         // Records read through pydantic models (`gen_store_reads_seams`).
         "store_reads_seams.jsonl" => &[Pydantic],
         // A bulk ranking whose order turns on two `bm25()` scores one unit

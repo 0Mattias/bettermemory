@@ -1,18 +1,20 @@
 //! The `Store` methods of the membership tables (`store_membership.py`):
 //! a put and a delete per table, the native row clear, the control rows of
-//! design 8.10, the batched reads, the id counters, `committed_seq`,
-//! `in_batch`, `wrote_record` and `membership_store_id`, with
-//! `store_native`'s `row_key`, `native_rows` and
-//! `matches` (private here). README, "The membership tables' store
-//! methods".
+//! design 8.10 and their log, the batched reads, the id counters,
+//! `committed_seq`, `in_batch`, `wrote_record`, `membership_store_id` and
+//! its reissue, with `store_native`'s `legacy_row` and (private here)
+//! `row_key`, `native_rows` and `matches`. README, "The membership tables'
+//! store methods".
 //!
 //! A write runs inside a [`Transaction`] (a nested entry, as `_transaction`
 //! joins a batch) or on a [`WritableStore`] in a transaction of its own,
 //! checked before it begins as the reference checks before `BEGIN`. A row
-//! or key holding a lone surrogate, which the reference writes as a
-//! `native_member` row beside its legacy projection, is refused as
-//! [`WriteNotPorted::NativeMember`] after `require_native_writer`, nothing
-//! written. Reads take the connection.
+//! or key holding a lone surrogate is written as `store_native` writes it:
+//! the legacy projection (`legacy_row`) where its key allows one, then a
+//! `native_member` row. Reads take the connection; `membership_log` and
+//! `reissue_membership_store_id` are here too.
+
+use std::ops::ControlFlow;
 
 use rusqlite::types::Value as Bound;
 use rusqlite::{Connection, OptionalExtension};
@@ -22,13 +24,14 @@ use super::open::WritableStore;
 use super::provenance::BATCH;
 use super::rows::{
     membership_column, membership_key, membership_spec, membership_spec_by_table,
-    membership_values, sort_rows, Fail, Spec, MEMBERSHIP_EVENT_KINDS,
+    membership_values, sort_rows, Fail, Spec, MEMBERSHIP_EVENT_KINDS, MUTATION_TABLES,
 };
 use super::tx::{Committed, Transaction};
 use super::write::{has_surrogates, WriteError, WriteNotPorted};
 use super::{sql_value, SqlValue};
 use crate::json::{self, DumpOptions};
 use crate::log::LogRow;
+use crate::native_text::{encoded_json, utf8_text};
 use crate::pyvalue::{int_from_str, repr_str, PyStr, PyValue};
 use crate::records::rows::{load_json, Row};
 use crate::unicode;
@@ -157,6 +160,100 @@ fn row_key(spec: &Spec, row: &PyValue) -> Result<String, WriteError> {
             }
         })?;
     Ok(unicode::to_string(&text).unwrap_or_default())
+}
+
+/// The Python frames `native_text.has_surrogates` may use when
+/// `put_membership` or `delete_membership` is called from a module's top
+/// level under CPython 3.13.13: the recursion limit (1000) less the
+/// module's frame and the method's own. A deeper caller has fewer.
+pub const SURROGATE_FRAMES: usize = 998;
+
+/// `native_text.has_surrogates(value)` entered at Python frame `frame`,
+/// counted from `put_membership`'s `has_surrogates(row)` as frame 1. Each
+/// value takes its frame and the next (the generator over a str's
+/// characters, `Mapping.__instancecheck__` for anything else, the
+/// generator over a container's items); a container's keys and values are
+/// two frames further. The walk is the reference's: a dict's key before
+/// its value, the first surrogate ending it; RecursionError where it would
+/// enter a frame past [`SURROGATE_FRAMES`].
+fn surrogates_within(value: &PyValue, frame: usize) -> Result<bool, WriteError> {
+    if frame + 1 > SURROGATE_FRAMES {
+        return Err(refused(
+            "RecursionError",
+            "maximum recursion depth exceeded",
+        ));
+    }
+    let inner = frame + 2;
+    match value {
+        PyValue::Str(s) => Ok(s.iter().any(|c| (0xD800..=0xDFFF).contains(c))),
+        PyValue::Dict(items) => {
+            for (k, v) in items {
+                if surrogates_within(k, inner)? || surrogates_within(v, inner)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        PyValue::List(items) | PyValue::Tuple(items) => {
+            for v in items {
+                if surrogates_within(v, inner)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// `store_native.legacy_row`, as `put_membership` calls it: None when a
+/// key column's value holds a surrogate; else the row in its order with
+/// each value that holds one replaced: a `_json` column's by `[]` for a
+/// list or tuple and `{}` for anything else, a `name`, `line` or `reason`
+/// str by its `utf8_text`, any other by None. Its walk counts frames as
+/// [`SURROGATE_FRAMES`] does, `legacy_row` beside `has_surrogates(row)`
+/// at frame 1 (each value at 2, a key column's at 3 under its generator),
+/// so a value the put's own walk never reached (a surrogate in an earlier
+/// column ends that walk) can raise RecursionError here.
+///
+/// Its domain is a row `put_membership`'s checks passed
+/// (`_membership_values`): a dict of the table's columns named by str,
+/// each key column non-empty text. Outside it the answer is not the
+/// reference's (which raises KeyError for a missing key column and
+/// TypeError for a row that is not a mapping).
+pub fn legacy_row(spec: &Spec, row: &PyValue) -> Result<Option<PyValue>, WriteError> {
+    let PyValue::Dict(items) = row else {
+        return Ok(None);
+    };
+    for column in spec.key {
+        if let Some(value) = row.get(column) {
+            if surrogates_within(value, 3)? {
+                return Ok(None);
+            }
+        }
+    }
+    let mut out = items.clone();
+    for (column, value) in &mut out {
+        if !surrogates_within(value, 2)? {
+            continue;
+        }
+        let PyValue::Str(name) = &*column else {
+            *value = PyValue::None;
+            continue;
+        };
+        let name = unicode::to_string(name).unwrap_or_default();
+        *value = match &*value {
+            PyValue::List(_) | PyValue::Tuple(_) if name.ends_with("_json") => {
+                PyValue::List(Vec::new())
+            }
+            _ if name.ends_with("_json") => PyValue::Dict(Vec::new()),
+            PyValue::Str(text) if ["name", "line", "reason"].contains(&name.as_str()) => {
+                PyValue::str(&utf8_text(text))
+            }
+            _ => PyValue::None,
+        };
+    }
+    Ok(Some(PyValue::Dict(out)))
 }
 
 fn rows_key_error(column: &str) -> Fail {
@@ -642,6 +739,166 @@ pub fn membership_store_id(
     }
 }
 
+/// `str.encode("utf-8")`'s refusal of a text holding a lone surrogate,
+/// as `sqlite3` raises it binding the text: the first run of surrogates
+/// named, one by its escape, several by their positions.
+fn unencodable(s: &[u32]) -> Option<WriteError> {
+    let surrogate = |c: &u32| (0xD800..=0xDFFF).contains(c);
+    let start = s.iter().position(surrogate)?;
+    let run = s[start..].iter().take_while(|c| surrogate(c)).count();
+    let what = if run == 1 {
+        format!("character '\\u{:04x}' in position {start}", s[start])
+    } else {
+        format!("characters in position {start}-{}", start + run - 1)
+    };
+    Some(refused(
+        "UnicodeEncodeError",
+        format!("'utf-8' codec can't encode {what}: surrogates not allowed"),
+    ))
+}
+
+/// `Store.membership_log(kinds, since_seq=, checkout=)` read as its
+/// generator is: the rows of the membership kinds
+/// (`MEMBERSHIP_MUTATION_KINDS | MEMBERSHIP_EVENT_KINDS`), or of those
+/// `kinds` names (a kind not a str, or no membership kind, is dropped; an
+/// unhashable one is TypeError), after `since_seq`, in log order; with
+/// `checkout`, only those whose payload is JSON and names it as its
+/// `checkout`, compared by SQLite (`kinds` is the collection's items, in
+/// its order). Each row is read and handed to `each` only after `each`
+/// answered `Continue` for the one before, so a row past the one where
+/// `each` answers `Break` is never read: one there that cannot be read (a
+/// TEXT column that is not UTF-8) fails nothing, as it fails nothing for
+/// the reference's caller that leaves its `for` loop first. The checks of
+/// `kinds` and `checkout` come before any row, as the generator's first
+/// `next` makes them. Answers the `Break`, or `Continue` past the last
+/// row.
+pub fn membership_log_each<B>(
+    conn: &Connection,
+    kinds: Option<&[PyValue]>,
+    since_seq: i64,
+    checkout: Option<&PyValue>,
+    mut each: impl FnMut(LogRow) -> ControlFlow<B>,
+) -> Result<ControlFlow<B>, WriteError> {
+    let allowed: std::collections::BTreeSet<String> = MUTATION_TABLES[7..]
+        .iter()
+        .flat_map(|t| [format!("{t}_put"), format!("{t}_delete")])
+        .chain(MEMBERSHIP_EVENT_KINDS.iter().map(|k| (*k).to_owned()))
+        .collect();
+    let names = match kinds {
+        None => allowed,
+        Some(kinds) => {
+            kinds.iter().try_for_each(hashable)?;
+            kinds
+                .iter()
+                .filter_map(|k| match k {
+                    PyValue::Str(k) => unicode::to_string(k),
+                    _ => None,
+                })
+                .filter(|k| allowed.contains(k))
+                .collect()
+        }
+    };
+    if names.is_empty() {
+        return Ok(ControlFlow::Continue(()));
+    }
+    let marks = vec!["?"; names.len()].join(",");
+    let mut params: Vec<Bound> = names.into_iter().map(Bound::Text).collect();
+    params.push(Bound::Integer(since_seq));
+    let mut naming = "";
+    if let Some(checkout) = checkout {
+        naming = " AND CASE WHEN json_valid(payload) \
+                  THEN json_extract(payload, '$.checkout') END = ?";
+        if let Some(e) = match checkout {
+            PyValue::Str(s) => unencodable(s),
+            _ => None,
+        } {
+            return Err(e);
+        }
+        params.push(bound(checkout)?);
+    }
+    let sql = format!(
+        "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log \
+         WHERE kind IN ({marks}) AND seq > ?{naming} ORDER BY seq"
+    );
+    let mut statement = conn.prepare(&sql)?;
+    let mut rows = statement.query(rusqlite::params_from_iter(params))?;
+    while let Some(r) = rows.next()? {
+        let read = |i| sql_value(r.get_ref(i)?).map_err(|_| sqlite_failed("OperationalError"));
+        let text = |i| read(i).map(|v| v.py_str());
+        let seq = match read(0)? {
+            SqlValue::Integer(i) => i,
+            other => i64::try_from(py_int(&sql_py(other)?)?)
+                .map_err(|_| WriteError::NotPorted(WriteNotPorted::Value("an int past 64 bits")))?,
+        };
+        let session = match read(2)? {
+            SqlValue::Null => None,
+            other => Some(other.py_str()),
+        };
+        let row = LogRow {
+            seq,
+            ts: text(1)?,
+            session,
+            kind: text(3)?,
+            payload: text(4)?,
+            prev_mac: text(5)?,
+            mac: text(6)?,
+        };
+        if let ControlFlow::Break(b) = each(row) {
+            return Ok(ControlFlow::Break(b));
+        }
+    }
+    Ok(ControlFlow::Continue(()))
+}
+
+/// `list(Store.membership_log(kinds, since_seq=, checkout=))`: every row
+/// [`membership_log_each`] reads, the first that cannot be read failing
+/// the whole read as `list` does. A caller that stops at a row it finds
+/// takes [`membership_log_each`].
+pub fn membership_log(
+    conn: &Connection,
+    kinds: Option<&[PyValue]>,
+    since_seq: i64,
+    checkout: Option<&PyValue>,
+) -> Result<Vec<LogRow>, WriteError> {
+    let mut out = Vec::new();
+    let _: ControlFlow<()> = membership_log_each(conn, kinds, since_seq, checkout, |row| {
+        out.push(row);
+        ControlFlow::Continue(())
+    })?;
+    Ok(out)
+}
+
+/// `Store.reissue_membership_store_id(record_id=, source=, session=)`
+/// with the new id `new` already drawn (the reference draws it before
+/// entering its transaction), inside `tx`: the old id read under the write
+/// lock (`path` names the store in its RuntimeError), meta's value
+/// replaced and a `store_forked` row appended under one savepoint, so a
+/// failure leaves both as they were. Answers `(old, new)`.
+fn reissue(
+    tx: &mut Transaction<'_>,
+    path: &std::path::Path,
+    new: &str,
+    record_id: &str,
+    source: &str,
+    session: Option<&str>,
+) -> Result<(String, String), WriteError> {
+    tx.scope(|tx| {
+        let old = membership_store_id(tx.connection(), path)?;
+        tx.connection().execute(
+            "UPDATE meta SET value = ? WHERE key = ?",
+            [new, MEMBERSHIP_STORE_ID],
+        )?;
+        let payload = PyValue::Dict(vec![
+            (PyValue::str("old_store"), PyValue::str(&old)),
+            (PyValue::str("new_store"), PyValue::str(new)),
+            (PyValue::str("record"), PyValue::str(record_id)),
+            (PyValue::str("source"), PyValue::str(source)),
+        ]);
+        tx.append_control("store_forked", &payload, session)?;
+        Ok((old, new.to_owned()))
+    })
+}
+
 /// The payload `put_membership` logs, checked: `{kind: dict(row)}`.
 fn put_payload(kind: &[u32], row: &Items) -> Result<(&'static Spec, PyValue), WriteError> {
     let spec = membership_spec(kind).map_err(failed)?;
@@ -703,6 +960,42 @@ impl Transaction<'_> {
         Ok(())
     }
 
+    /// The surrogate branch of `put_membership` and `delete_membership`,
+    /// after `require_native_writer`: a put logs `<kind>_put` of
+    /// `legacy_row` when it answers one, then `native_member_put` of the
+    /// row's `encoded_json` under its key; a delete logs
+    /// `native_member_delete` of the key alone. No `_clear_native` follows.
+    fn native_write(
+        &mut self,
+        spec: &Spec,
+        row: &PyValue,
+        op: &str,
+        session: Option<&str>,
+    ) -> Result<LogRow, WriteError> {
+        let member = |key: String| {
+            vec![
+                (PyValue::str("member_kind"), PyValue::str(spec.kind)),
+                (PyValue::str("key_text"), PyValue::str(&key)),
+            ]
+        };
+        if op != "put" {
+            let payload = PyValue::Dict(member(row_key(spec, row)?));
+            return self.mutate_membership("native_member_delete", &payload, session);
+        }
+        if let Some(legacy) = legacy_row(spec, row)? {
+            let payload = PyValue::Dict(vec![(PyValue::str(spec.kind), legacy)]);
+            self.mutate_membership(&format!("{}_put", spec.kind), &payload, session)?;
+        }
+        let mut native = member(row_key(spec, row)?);
+        let text = encoded_json(row).map_err(|e| WriteError::Refused {
+            class: e.name(),
+            text: None,
+        })?;
+        native.push((PyValue::str("row_text"), PyValue::Str(text)));
+        let payload = PyValue::Dict(vec![(PyValue::str("native_member"), PyValue::Dict(native))]);
+        self.mutate_membership("native_member_put", &payload, session)
+    }
+
     fn put_or_delete(
         &mut self,
         spec: &'static Spec,
@@ -711,9 +1004,9 @@ impl Transaction<'_> {
         session: Option<&str>,
     ) -> Result<LogRow, WriteError> {
         self.scope(|tx| {
-            if has_surrogates(&payload) {
+            if surrogates_within(&payload, 1)? {
                 require_native_writer(tx.connection())?;
-                return Err(tx.refuse(WriteNotPorted::NativeMember));
+                return tx.native_write(spec, &payload, op, session);
             }
             let kind = format!("{}_{op}", spec.kind);
             let logged = if op == "put" {
@@ -747,6 +1040,21 @@ impl Transaction<'_> {
     ) -> Result<LogRow, WriteError> {
         let (spec, key) = delete_payload(kind, key)?;
         self.put_or_delete(spec, key, "delete", session)
+    }
+
+    /// `Store.reissue_membership_store_id` inside this transaction, with
+    /// the new id `new` the caller drew before entering it, as the
+    /// reference draws it before its nested `_transaction`; `path` is the
+    /// store's, for the RuntimeError of a meta without the id.
+    pub fn reissue_membership_store_id(
+        &mut self,
+        path: &std::path::Path,
+        new: &str,
+        record_id: &str,
+        source: &str,
+        session: Option<&str>,
+    ) -> Result<(String, String), WriteError> {
+        reissue(self, path, new, record_id, source, session)
     }
 
     /// `Store.record_membership(kind, payload, session=)` inside this
@@ -803,6 +1111,22 @@ impl WritableStore {
         let mut tx = self.begin(provider)?;
         let written = tx.record_membership(kind, payload, session)?;
         Ok((written, tx.commit()?))
+    }
+
+    /// `Store.reissue_membership_store_id` in a transaction of its own: the
+    /// new id drawn (`Provider::membership_store_id`) before `BEGIN`.
+    pub fn reissue_membership_store_id(
+        &mut self,
+        provider: &mut dyn Provider,
+        record_id: &str,
+        source: &str,
+        session: Option<&str>,
+    ) -> Result<((String, String), Committed), WriteError> {
+        let new = provider.membership_store_id().map_err(WriteError::Clock)?;
+        let path = self.path().to_owned();
+        let mut tx = self.begin(provider)?;
+        let ids = reissue(&mut tx, &path, &new, record_id, source, session)?;
+        Ok((ids, tx.commit()?))
     }
 
     /// `Store.committed_seq()` with no transaction of this store's open: 0
