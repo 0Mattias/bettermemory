@@ -320,6 +320,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "project_file_parse_posix": gen_project_file.generate_parse_posix,
     "verify_candidates_patterns": gen_verify_candidates.generate_patterns,
     "verify_candidates_patterns_unicode": gen_verify_candidates.generate_patterns_unicode,
+    "verify_candidates_keys": gen_verify_candidates.generate_keys,
+    "verify_candidates_keys_unicode": gen_verify_candidates.generate_keys_unicode,
+    "verify_candidates_keys_python": gen_verify_candidates.generate_keys_python,
     "canonical_json": gen_json.generate,
     "native_text": gen_native_text.generate,
     "daemon_client": gen_daemon_client.generate,
@@ -774,6 +777,7 @@ UNICODE_GATED = frozenset(
         "verify_anchoring_passes_unicode",
         "verify_candidates_scan_unicode",
         "verify_candidates_patterns_unicode",
+        "verify_candidates_keys_unicode",
         "unicode",
         "models_text_unicode",
         "unicode_sequences",
@@ -1121,6 +1125,9 @@ PYTHON_GATED = frozenset(
         "log_keyfiles_posix_python",
         "machine_facts_python",
         "fold_python",
+        # Link loops, which 3.11 and 3.12 resolve otherwise, and
+        # `_ClaimKeys` at the recursion limit (`gen_verify_candidates`).
+        "verify_candidates_keys_python",
         # A rekey payload or an anchor nested past where `json.loads`
         # stops, and `sqlite3`'s OverflowError text
         # (`gen_store_open_upkeep.python_cases`).
@@ -1355,6 +1362,9 @@ PLATFORM_GATED = frozenset(
 #: ``verify_candidates_scan`` and ``verify_candidates_scan_unicode`` expand
 #: ``~`` through the host's ``Path``, whose Windows flavour parses and
 #: spells paths otherwise (`gen_verify_candidates`);
+#: ``verify_candidates_keys``, ``verify_candidates_keys_unicode`` and
+#: ``verify_candidates_keys_python`` resolve paths in a scratch tree with
+#: links through `posixpath` (`gen_verify_candidates`);
 #: ``location_stamps`` and
 #: ``location_stamps_python`` name devices by ``os.major``, which Windows'
 #: ``os`` lacks (`gen_location_stamps`); ``location_probe``, ``location_probe_python``
@@ -1427,6 +1437,11 @@ POSIX_ONLY = frozenset(
         "checkout_token_write_posix",
         "verify_candidates_scan",
         "verify_candidates_scan_unicode",
+        # A scratch tree with links, a loop and a dangling link, `$HOME`
+        # inside it, and `posixpath` (`gen_verify_candidates`).
+        "verify_candidates_keys",
+        "verify_candidates_keys_unicode",
+        "verify_candidates_keys_python",
         "verify_anchoring_attest_posix",
         "verify_anchoring_detect",
         # The anchors' compare form is the host's `Path` (`gen_verify_count`).

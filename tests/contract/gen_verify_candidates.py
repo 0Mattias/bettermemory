@@ -857,3 +857,609 @@ def generate_scan_unicode() -> dict[str, bytes]:
         "unicode": unicodedata.unidata_version,
     }
     return {"verify_candidates_scan_unicode.jsonl": jsonl([header, *rows])}
+
+
+# ---------------------------------------------------------------------------
+# Unit 4: the claim keys and the reads of the home and the disk
+# ---------------------------------------------------------------------------
+#
+# ``verify_candidates_keys.jsonl`` (POSIX only), its Unicode sibling
+# ``verify_candidates_keys_unicode.jsonl`` (POSIX only, gated on the Unicode
+# data) and ``verify_candidates_keys_python.jsonl`` (POSIX only, gated on
+# the Python release) pin `_claim_key`, `_ClaimKeys`, `_is_under_home`,
+# `_home_ignores_case`, `_is_multi_segment_routelike` and `_path_exists`.
+#
+# The header's ``tree`` is built under ``@``, a scratch folder resolved
+# through `os.path.realpath` (so no link stands above it): ``["d", rel]`` a
+# folder, ``["f", rel]`` an empty file, ``["l", rel, target]`` a symbolic
+# link, ``@`` in a target standing for the folder. ``users`` is the table a
+# fake `pwd` answers ``~user`` from (``@`` again the folder); a name holding
+# NUL or a surrogate it cannot encode raises ValueError, any other name not
+# listed KeyError. A row's ``home`` is ``$HOME`` (None: unset, with the
+# running user's password entry unknown). Every text is spelled with ``@``
+# for the folder; ``{"cps": [...]}`` is a text holding a surrogate.
+#
+# A row's ``calls`` are the ``os.lstat``, ``os.stat`` and ``os.readlink``
+# calls that reached the OS, in order, as ``[name, path]``: a path that
+# does not encode or that holds NUL raises before the OS is asked and is
+# not listed, and neither is a call on a folder above ``@`` (how many
+# there are is the machine's). ``^`` stands for ``@`` case-swapped
+# (`str.swapcase`), the spelling `_home_ignores_case` stats.
+#
+# - ``{"f": "claim_key", "home", "a", "r", "calls"}``: `_claim_key(a)`;
+# - ``{"f": "keys", "home", "read", "r"}``: one `_ClaimKeys` keys each
+#   path of ``read`` in turn, ``r`` holding ``[key, calls]`` for each;
+# - ``{"f": "under_home", "home", "a", "r", "calls"}``,
+#   ``{"f": "routelike", ...}``, ``{"f": "exists", ...}``: `_is_under_home`,
+#   `_is_multi_segment_routelike` and `_path_exists` of ``a``;
+# - ``{"f": "ignores_case", "a", "r", "calls"}``: `_home_ignores_case(a)`.
+#
+# ``r`` is absent from a row whose answer is the volume's (the probe of a
+# home that exists, case-swapped): which way it goes depends on whether
+# the scratch volume folds case, so only the calls up to that probe are
+# pinned, and the native test asks the reference itself on its own
+# volume. A raise is
+# ``{"raise": class name}``.
+#
+# The Python-gated file holds what follows the release. CPython 3.11 and
+# 3.12 resolve a link loop otherwise (`posixpath.realpath` returns the rest
+# of the path unresolved), so a row whose path meets a loop goes there.
+# And `_ClaimKeys._resolve` recurses once per component it has not
+# resolved, which meets the recursion limit of 1,000 frames: a ``keys`` row
+# with ``room`` runs its read with that many frames left to its caller
+# (`sys.getrecursionlimit()` less the caller's depth), a path spelled
+# ``{"rep": [head, part, times]}`` being ``head + part * times``. 3.11 and
+# 3.12 spend a frame or two more on the way, so those rows are gated too.
+
+KEYS_TREE: list[list[str]] = [
+    ["d", "hm/proj"],
+    ["f", "hm/proj/notes.md"],
+    ["l", "hm/hlink", "../real"],
+    ["d", "real/sub"],
+    ["f", "real/sub/f.py"],
+    ["l", "real/sub/up", "../.."],
+    ["l", "abs", "@/real"],
+    ["l", "rel", "real"],
+    ["l", "chain1", "chain2"],
+    ["l", "chain2", "@/abs"],
+    ["l", "dotdot", "real/sub/.."],
+    ["l", "via", "abs/sub/../sub"],
+    ["l", "dangling", "@/nowhere"],
+    ["l", "reldangle", "missing/x"],
+    ["l", "filelink", "real/sub/f.py"],
+    ["l", "loop", "loop"],
+    ["l", "la", "lb"],
+    ["l", "lb", "la"],
+    ["d", "api/v1"],
+]
+KEYS_USERS = {
+    "alice": "@/hm",
+    "linky": "@/abs/",
+    "root": "/",
+    "tilde": "~elsewhere",
+}
+KEYS_HOME = "@/hm"
+KEYS_PATHS = [
+    "",
+    "//host/share",
+    "/a\x00b",
+    "x://y",
+    "rel/path",
+    "~",
+    "~/",
+    "~/proj/../x",
+    "~/hlink/sub/f.py",
+    "~alice/proj",
+    "~linky/sub",
+    "~root/x",
+    "~tilde/x",
+    "~nobody/x",
+    "~a\udcff/x",
+    "@",
+    "@/",
+    "@/real/sub/f.py",
+    "@/abs/sub/f.py",
+    "@/rel/sub",
+    "@/chain1/sub/f.py",
+    "@/abs/..",
+    "@/abs/sub/..",
+    "@/rel/../hm",
+    "@/real/sub/up",
+    "@/real/sub/up/abs",
+    "@/dotdot/sub",
+    "@/via/f.py",
+    "@/dangling",
+    "@/dangling/x",
+    "@/reldangle",
+    "@/filelink",
+    "@/filelink/x",
+    "@/filelink/..",
+    "@//real/./sub//f.py",
+    "@/real/sub/",
+    "@/nothere/../real",
+    "@/abs/x\ud800",
+    "@/abs/x\ud800/../sub",
+    "@/real/\udcc3\udca9",
+    "@/abs/\udcff",
+    "@/loop",
+    "@/loop/x",
+    "@/loop/../abs",
+    "@/la",
+    "@/la/../lb",
+    "@/lb/x",
+]
+KEYS_HOMES: list[str | None] = [None, "", "/", "@/abs", "~h"]
+KEYS_HOME_PATHS = ["~", "~/sub", "~/../x", "~alice"]
+UNDER_HOME_TEXTS = [
+    "",
+    "~",
+    "~/x",
+    "~alice/x",
+    "~bad\x00/x",
+    "/hd/u",
+    "/hd/u/",
+    "/hd/u/x",
+    "/hd/ux",
+    "/hd/U",
+    "/HD/u/x",
+    "/hd/uX",
+    "/hd",
+    "/hd/u\\x",
+    "/hd/u\x00",
+    "x/hd/u",
+]
+UNDER_HOME_HOMES: list[str | None] = [
+    "/hd/u",
+    "/hd/u/",
+    "/hd/u//",
+    "/",
+    "//",
+    "",
+    "~h",
+    None,
+    "/123",
+    "/HD/u",
+]
+IGNORES_CASE_HOMES = ["/123", "/hd/u", "/HD/U", "@", "@/hm", "@/abs", "@/nothere"]
+ROUTE_TEXTS = [
+    "",
+    "/",
+    "/a",
+    "a/b/c",
+    "~/a/b",
+    "/a/",
+    "//",
+    "/api/v9/events",
+    "/api/v9/e.json",
+    "/api/v9.1/events",
+    "@/api/v1/users",
+    "@/api/v2/users",
+    "@/hm/gone/x",
+    "@/HM/gone/x",
+    "@/real/sub",
+    "@/abs/sub/x",
+    "@/dangling/x",
+    "@/loop/x",
+    "@/filelink/x",
+    "@/real/sub\x00/x",
+    "@/real/x\ud800/y",
+]
+EXISTS_TEXTS = [
+    "",
+    ".",
+    "@",
+    "@/real/sub/f.py",
+    "@/abs/sub",
+    "@//abs/./sub//",
+    "@/abs/sub/../sub",
+    "@/dangling",
+    "@/loop",
+    "@/la",
+    "@/filelink",
+    "@/filelink/x",
+    "@/real/x\ud800",
+    "@/real/x\x00",
+    "~",
+    "~/proj/notes.md",
+    "~/nothing",
+    "./~/proj",
+    "~alice/proj",
+    "~nobody/x",
+    "~tilde/x",
+    "~root",
+    "~bad\x00/x",
+    "~a\ud800/x",
+]
+EXISTS_HOMES: list[str | None] = [KEYS_HOME, None, "~h"]
+
+#: The tree and the texts of the Unicode file: homes whose case swaps
+#: past ASCII (`str.swapcase` and `str.lower` with their full mappings, a
+#: final sigma, titlecase and uncased letters).
+KEYS_UNICODE_TREE: list[list[str]] = [
+    ["d", "Stra\u00dfe"],
+    ["d", "\u0391\u03a3"],
+    ["d", "\u01c5x"],
+    ["d", "\u0130i"],
+    ["d", "\u2160\u24d0"],
+    ["l", "\u03c3link", "\u0391\u03a3"],
+]
+UNICODE_HOMES = [
+    "/hd/Stra\u00dfe",
+    "/hd/\u0391\u03a3",
+    "/hd/\u0391\u03a3.x",
+    "/hd/\u03a3",
+    "/hd/\u01c5x",
+    "/hd/\u0130i",
+    "/hd/\u2160\u24d0",
+    "/hd/\u02b0\u00aa",
+    "/hd/\ufb00",
+]
+UNICODE_TEXTS = [
+    "/hd/STRASSE/x",
+    "/HD/STRA\u00dfE/x",
+    "/hd/stra\u00dfe/x",
+    "/hd/\u03b1\u03c3/x",
+    "/hd/\u03b1\u03c2/x",
+    "/HD/\u0391\u03a3/x",
+    "/hd/\u03b1\u03c2.x/y",
+    "/hd/\u03b1\u03c3.x/y",
+    "/hd/\u03c3/x",
+    "/hd/\u03c2/x",
+    "/hd/\u01c4x/y",
+    "/hd/\u01c6x/y",
+    "/hd/i\u0307i/x",
+    "/hd/\u2170\u24b6/x",
+    "/hd/\u02b0\u00aa/x",
+    "/hd/FF/x",
+    "/hd/ff/x",
+]
+UNICODE_IGNORES_CASE = [
+    "@/Stra\u00dfe",
+    "@/\u0391\u03a3",
+    "@/\u01c5x",
+    "@/\u0130i",
+    "@/\u2160\u24d0",
+    "@/\u03c3link",
+    "/\u02b0\u00aa",
+    "/\u0345",
+]
+UNICODE_KEYS = [
+    "@/\u03c3link",
+    "@/\u03c3link/..",
+    "@/Stra\u00dfe/x",
+    "@/\u0391\u03a3/../\u03c3link",
+]
+
+
+def _keys_build(root: str, tree: list[list[str]]) -> None:
+    import os
+
+    for entry in tree:
+        path = os.path.join(root, entry[1])
+        if entry[0] == "d":
+            os.makedirs(path)
+        elif entry[0] == "f":
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb"):
+                pass
+        else:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            os.symlink(entry[2].replace("@", root), path)
+
+
+class _KeysRun:
+    """The reference's calls with ``$HOME``, `pwd` and the OS calls
+    replaced for one row, ``@`` standing for ``root``."""
+
+    def __init__(self, root: str, users: dict[str, str]) -> None:
+        self.root = root
+        self.flipped = root.swapcase()
+        self.users = {k: v.replace("@", root) for k, v in users.items()}
+        self.calls: list[list[Any]] = []
+
+    def at(self, text: str) -> str:
+        return text.replace("@", self.root)
+
+    def spell(self, path: str) -> Any:
+        for base, mark in ((self.root, "@"), (self.flipped, "^")):
+            if path == base or path.startswith(base + "/"):
+                return _t(mark + path[len(base) :])
+        return _t(path)
+
+    def answer(self, got: Any) -> Any:
+        if isinstance(got, str):
+            return self.spell(got)
+        return got
+
+    def _above(self, path: str) -> bool:
+        return path == "/" or self.root.startswith(path.rstrip("/") + "/")
+
+    def _traced(self, name: str, real: Callable[..., Any]) -> Callable[..., Any]:
+        import os
+
+        def call(path: Any, *args: Any, **kwargs: Any) -> Any:
+            text = os.fspath(path)
+            if isinstance(text, str) and "\x00" not in text:
+                try:
+                    os.fsencode(text)
+                except UnicodeEncodeError:
+                    pass
+                else:
+                    if not self._above(text):
+                        self.calls.append([name, self.spell(text)])
+            return real(path, *args, **kwargs)
+
+        return call
+
+    def run(self, home: str | None, fn: Callable[[], Any], trace: bool = True) -> Any:
+        import os
+        import sys
+        from unittest.mock import patch
+
+        users = self.users
+
+        class Pwd:
+            @staticmethod
+            def getpwnam(name: str) -> Any:
+                if "\x00" in name:
+                    raise ValueError("embedded null character")
+                os.fsencode(name)
+                if name not in users:
+                    raise KeyError(name)
+                return type("pw", (), {"pw_dir": users[name]})()
+
+            @staticmethod
+            def getpwuid(uid: int) -> Any:
+                raise KeyError(uid)
+
+        env = dict(os.environ)
+        env.pop("HOME", None)
+        if home is not None:
+            env["HOME"] = self.at(home)
+        self.calls = []
+        traced = {
+            name: self._traced(name, getattr(os, name)) if trace else getattr(os, name)
+            for name in ("lstat", "stat", "readlink")
+        }
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.dict(sys.modules, {"pwd": Pwd}),
+            patch.object(os, "lstat", traced["lstat"]),
+            patch.object(os, "stat", traced["stat"]),
+            patch.object(os, "readlink", traced["readlink"]),
+        ):
+            try:
+                got = fn()
+            except Exception as exc:  # noqa: BLE001 - the class is the answer
+                got = {"raise": type(exc).__name__}
+        return self.answer(got)
+
+
+#: Whether a path meets a link loop, which 3.11 and 3.12 resolve
+#: otherwise: such a key goes in the Python-gated file.
+def _meets_loop(text: str) -> bool:
+    return any(f"@/{n}" in text for n in ("loop", "la", "lb"))
+
+
+def _keys_rows(run: _KeysRun, python: bool) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
+    def one(f: str, fn: Callable[[str], Any], home: str | None, text: str) -> None:
+        if (f == "claim_key" and _meets_loop(text)) != python:
+            return
+        got = run.run(home, lambda: fn(run.at(text)))
+        rows.append({"f": f, "home": home, "a": _t(text), "r": got, "calls": run.calls})
+
+    for text in KEYS_PATHS:
+        one("claim_key", vc._claim_key, KEYS_HOME, text)
+    for home in KEYS_HOMES:
+        for text in KEYS_HOME_PATHS:
+            one("claim_key", vc._claim_key, home, text)
+    read = [t for t in KEYS_PATHS if _meets_loop(t) == python]
+    reads: list[tuple[str | None, list[str]]] = [(KEYS_HOME, read + read[::3])]
+    if not python:
+        reads += [(home, KEYS_HOME_PATHS) for home in KEYS_HOMES]
+        reads.append((KEYS_HOME, ["@/real/sub/f.py", "@/abs", "@/abs/sub/f.py"]))
+        reads.append((KEYS_HOME, ["@/abs/sub/f.py", "@/real/sub/f.py"]))
+    for home, texts in reads:
+        rows.append(_keys_read(run, home, texts))
+    for text in ROUTE_TEXTS:
+        one("routelike", vc._is_multi_segment_routelike, KEYS_HOME, text)
+    for home in EXISTS_HOMES:
+        for text in EXISTS_TEXTS:
+            one("exists", vc._path_exists, home, text)
+    if not python:
+        for home in UNDER_HOME_HOMES:
+            for text in UNDER_HOME_TEXTS:
+                one("under_home", vc._is_under_home, home, text)
+        for text in IGNORES_CASE_HOMES:
+            one("ignores_case", vc._home_ignores_case, None, text)
+        for text in ["@/hm/x", "@/HM/x", "@/Hm", "@/hM/proj"]:
+            one("under_home", vc._is_under_home, KEYS_HOME, text)
+    return [_volume_free(run, row) for row in rows]
+
+
+def _keys_read(run: _KeysRun, home: str | None, texts: list[str]) -> dict[str, Any]:
+    out: list[list[Any]] = []
+
+    def go() -> None:
+        keys = vc._ClaimKeys()
+        for text in texts:
+            got = run.run(home, lambda: keys(run.at(text)))
+            out.append([got, run.calls])
+
+    go()
+    return {"f": "keys", "home": home, "read": [_t(t) for t in texts], "r": out}
+
+
+def _volume_free(run: _KeysRun, row: dict[str, Any]) -> dict[str, Any]:
+    """The row without what follows the volume: where the flipped spelling
+    of a home inside the scratch folder was stated, its answer and the
+    calls after that `stat`, which a volume that folds case makes and one
+    that does not skips (or the reverse)."""
+    calls = row.get("calls", [])
+    for i, (_, path) in enumerate(calls):
+        if path == "^" or str(path).startswith("^/"):
+            kept = {k: v for k, v in row.items() if k != "r"}
+            kept["calls"] = calls[: i + 1]
+            return kept
+    return row
+
+
+def _depth() -> int:
+    import sys
+
+    frame: Any = sys._getframe(1)
+    depth = 0
+    while frame is not None:
+        depth += 1
+        frame = frame.f_back
+    return depth
+
+
+def _with_room(room: int, fn: Callable[[], Any]) -> Any:
+    """Call ``fn`` from a frame with ``room`` frames left above it."""
+    import sys
+
+    def pad() -> Any:
+        if sys.getrecursionlimit() - _depth() - 1 > room:
+            return pad()
+        return fn()
+
+    if sys.getrecursionlimit() - _depth() - 2 < room:
+        raise AssertionError("the generator runs too deep for this room")
+    return pad()
+
+
+def _rep(spec: list[Any]) -> str:
+    head, part, times = spec
+    return str(head + part * times)
+
+
+#: ``[room, [path spec, ...]]``: a read of deep paths under a given room.
+DEEP_READS: list[list[Any]] = [
+    [200, [["/q", "/a", 194]]],
+    [200, [["/q", "/a", 195]]],
+    [200, [["/q", "/a", 100], ["/q", "/a", 290], ["/q", "/a", 291]]],
+    [200, [["/q", "/a", 100], ["/q", "/a", 296], ["/q", "/a", 297]]],
+    [200, [["/q", "/a/.", 97], ["/q", "/a/..", 98]]],
+    [200, [["/q", "/b", 195], ["/q", "/b", 194]]],
+    [5, [["/q", "", 0], ["/", "", 0]]],
+    [4, [["/q", "", 0], ["", "", 0], ["//x", "", 0], ["~", "", 0]]],
+    [3, [["", "", 0], ["//x", "", 0], ["/q", "", 0]]],
+    [2, [["", "", 0], ["//x", "", 0]]],
+    [1, [["", "", 0]]],
+]
+
+
+#: ``[home, room, [path spec, ...]]``: ``~`` and ``~/...`` keys at the
+#: room they need. `posixpath.expanduser` reads ``'HOME' not in
+#: os.environ`` for them, three Python frames under it
+#: (`Mapping.__contains__`, `_Environ.__getitem__`, its ``encodekey``),
+#: so they need six frames, ``HOME`` set or not, where the rest need four.
+#: No ``~user`` key here: this table's `pwd.getpwnam` is Python, the real
+#: one is C.
+TILDE_READS: list[list[Any]] = [
+    ["/", 5, [["/", "", 0], ["~", "", 0]]],
+    ["/", 6, [["~", "", 0], ["~/q", "", 0]]],
+    ["rel", 5, [["~", "", 0], ["~/q", "", 0]]],
+    ["rel", 6, [["~", "", 0], ["~/q", "", 0]]],
+    [None, 5, [["~", "", 0], ["~/q", "", 0]]],
+    [None, 6, [["~", "", 0], ["~/q", "", 0]]],
+]
+
+
+def _deep_rows(run: _KeysRun) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    reads = [["/hd/u", room, specs] for room, specs in DEEP_READS] + TILDE_READS
+    for home, room, specs in reads:
+        keys = vc._ClaimKeys()
+        out = []
+        for spec in specs:
+            path = _rep(spec)
+
+            def call(path: str = path) -> Any:
+                return _with_room(room, lambda: keys(path))
+
+            # Untraced: the tracing wrappers are frames of their own.
+            got = run.run(home, call, trace=False)
+            if isinstance(got, str):
+                got = {"sha256": hashlib.sha256(got.encode()).hexdigest()}
+            out.append(got)
+        rows.append({"f": "keys", "home": home, "room": room, "read": specs, "r": out})
+    return rows
+
+
+def _keys_file(
+    name: str, tree: list[list[str]], rows_of: Callable[[_KeysRun], list[Any]]
+) -> dict[str, bytes]:
+    import os
+    import shutil
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as scratch:
+        root = os.path.join(os.path.realpath(scratch), "R")
+        os.mkdir(root)
+        try:
+            _keys_build(root, tree)
+            rows = rows_of(_KeysRun(root, KEYS_USERS))
+        finally:
+            shutil.rmtree(root)
+    header = {"cases": len(rows), "tree": tree, "users": KEYS_USERS}
+    if name.endswith("_unicode"):
+        header["unicode"] = unicodedata.unidata_version
+    return {f"{name}.jsonl": jsonl([header, *rows])}
+
+
+def _unicode_rows(run: _KeysRun) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for home in UNICODE_HOMES:
+        for text in UNICODE_TEXTS:
+            got = run.run(home, lambda: vc._is_under_home(text))
+            rows.append(
+                {
+                    "f": "under_home",
+                    "home": home,
+                    "a": text,
+                    "r": got,
+                    "calls": run.calls,
+                }
+            )
+    for text in UNICODE_IGNORES_CASE:
+        got = run.run(None, lambda: vc._home_ignores_case(run.at(text)))
+        rows.append(
+            {"f": "ignores_case", "home": None, "a": text, "r": got, "calls": run.calls}
+        )
+    for text in UNICODE_KEYS:
+        got = run.run(KEYS_HOME, lambda: vc._claim_key(run.at(text)))
+        rows.append(
+            {
+                "f": "claim_key",
+                "home": KEYS_HOME,
+                "a": text,
+                "r": got,
+                "calls": run.calls,
+            }
+        )
+    rows.append(_keys_read(run, KEYS_HOME, UNICODE_KEYS))
+    return [_volume_free(run, row) for row in rows]
+
+
+def generate_keys() -> dict[str, bytes]:
+    return _keys_file(
+        "verify_candidates_keys", KEYS_TREE, lambda run: _keys_rows(run, False)
+    )
+
+
+def generate_keys_unicode() -> dict[str, bytes]:
+    return _keys_file(
+        "verify_candidates_keys_unicode", KEYS_UNICODE_TREE, _unicode_rows
+    )
+
+
+def generate_keys_python() -> dict[str, bytes]:
+    return _keys_file(
+        "verify_candidates_keys_python",
+        KEYS_TREE,
+        lambda run: _keys_rows(run, True) + _deep_rows(run),
+    )

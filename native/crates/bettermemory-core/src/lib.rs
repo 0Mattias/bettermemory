@@ -105,9 +105,10 @@
 //!   writes (`mirror_format.py` whole);
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
 //! - [`verify_candidates`]: the path candidates verification reads, its
-//!   first three units (one candidate validated; `_BACKTICK_RE`,
+//!   first four units (one candidate validated; `_BACKTICK_RE`,
 //!   `_BARE_RE` and `_DOMAIN_ROUTE_RE` as hand matchers; the candidate
-//!   scan of a body);
+//!   scan of a body; the claim keys and the reads of the home and the
+//!   disk, on POSIX);
 //! - [`path_drift_steps`]: `_check_body_candidates`, the body-candidate
 //!   pass of path drift, its effects as closures;
 //! - [`attestation_paths`]: explicit path attestations compiled beside

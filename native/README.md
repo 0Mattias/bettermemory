@@ -45,7 +45,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `review` | unit 1 of `review.py`, the sealed tables: `RELATED_TOP`, `RELATED_CAP`, `RELATED_TEXT_CHARS`, `RELATED_CONSTANTS`, `ROSTER_TEXT_CHARS`, `TAU_UNSAFE`, `TAU_SECRET`, `Tau`, `current_tau`, `tau_override`, `tau_unset` (and `tau_patched`), the labels, `LABEL_CHOICES`, the four statements, `QUESTIONS`, `questions_payload`, `questions_sha256`, `constants_sha256`, `seal_shas`, `ACTION_*`, `DETECTOR_*`, `REVIEW_LINK_NOTE`, `RelatedEntry`, `RelatedSet` (with `CueReport`), `related_text`, `related_entry`, `RosterLine`, `_write_sentences`; unit 2, the answers: `ReviewAnswerError` (`AnswerFault`), `ANSWER_FORMAT`, `NAMED_FORMAT`, `UPDATE_ANSWER_FORMAT`, `ReviewAnswers` with `to_event` and `is_zero_attestation`, `_score`, `_chain_keys`, `parse_answers`, `parse_update_answers`, `check_answered_ids`, `check_named`; the pure decision, `ReviewDecision::to_event`, `replaced_ids`, `apply_review` | `review_tables.jsonl`, `review_tables_unicode.jsonl`, `review_answers.jsonl`, `review_decision.jsonl` |
 | `mirror_format` | `mirror_format.py` whole: `TOMBSTONE_DIR`, `EPISODES_DIR`, `TOMBSTONE_SUFFIX`, `_ID_TOMBSTONE_RE` (by hand, `id_tombstone_stem`), `memory_filename`, `tombstone_filename`, `active_filename_for_tombstone`, `is_legacy_tombstone_name`, the four key tables, `memory_metadata`, `episode_metadata` | `mirror_format.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
-| `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl` |
+| `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo; unit 4 (POSIX): `_claim_key`, `_ClaimKeys` (with its recursion limit), `_is_under_home`, `_home_ignores_case` (with `str.swapcase`), `_is_multi_segment_routelike`, `_path_exists` over the file-system trait | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl`, `verify_candidates_keys.jsonl`, `verify_candidates_keys_unicode.jsonl`, `verify_candidates_keys_python.jsonl` |
 | `path_drift_steps` | `path_drift_steps.py`: `_check_body_candidates`, its checks and keys as closures | `path_drift_steps.jsonl` |
 | `policy` | `policy.py` whole: `REFUSAL_STATUS`, `_FORCE_KEY`, `_ACKNOWLEDGE_KEY`, `_label`, `PolicyRefusal` (with `event_fields`), `_message`, `check_overrides` | `policy.jsonl` |
 | `attestation_paths` | `attestation_paths.py` whole: `LiteralPaths`/`ReferencePaths` (`Paths` and its `Kind`), `path_mode`, `interpret_path`, `_may_be_literal`, `joined_path`, `_REFERENCE_ROOT`, `absolute_spelling`, `literal_path`, `reference_path`, `placeholder_spelling`, `target_path`, `record_paths`, `commit_paths`, `compile_targets`, `unverifiable_inputs`, with `ntpath.splitdrive` and both `commonpath`s; the host (`os.name`, `expanduser`, `lstat`, `ntpath.normcase` on Windows) a trait | `attestation_paths.jsonl`, `attestation_paths_posix.jsonl` |
@@ -206,10 +206,10 @@ than 600 lines of Rust, so it is cut into four units.
 | `_normalize_for_compare` | 326-343 | the home directory (`Path.expanduser`) | unit 3, built (POSIX flavour) |
 | `_scan_candidates`, `_extract_candidates` | 549-677 | the home directory, through `_normalize_for_compare` | unit 3, built (`_extract_candidates` without its memo) |
 | `_body_key`, `_recall_parse`, `_keep_parse`, `_clear_body_parses`, `_CANDIDATES`, `_ANCHORS` | 487-526 | the home directory (in the key); a lock | the memo, a later unit; it wraps `scan::extract_candidates` unchanged |
-| `_claim_key`, `_ClaimKeys` | 346-450 | the home directory, `realpath` and `lstat` (the file-system trait), `os.name` and `normcase` | unit 4 |
-| `_is_under_home`, `_home_ignores_case` | 991-1095 | the home directory, `os.sep`/`os.altsep`, `samefile` | unit 4 |
-| `_is_multi_segment_routelike` | 1098-1207 | the above and `isdir` | unit 4 |
-| `_path_exists` | 1239-1248 | `Path.expanduser().exists()` | unit 4 |
+| `_claim_key`, `_ClaimKeys` | 346-450 | the home directory, `realpath` and `lstat` (the file-system trait), `os.name` and `normcase` | unit 4, built (POSIX) |
+| `_is_under_home`, `_home_ignores_case` | 991-1095 | the home directory, `os.sep`/`os.altsep`, `samefile` | unit 4, built (POSIX) |
+| `_is_multi_segment_routelike` | 1098-1207 | the above and `isdir` | unit 4, built (POSIX) |
+| `_path_exists` | 1239-1248 | `Path.expanduser().exists()` | unit 4, built (POSIX) |
 
 Unit 2 holds three patterns: `_BACKTICK_RE`, `_BARE_RE` and
 `_DOMAIN_ROUTE_RE` as hand matchers. `_RELATIVE_CITATION_RE` moves to its
@@ -396,6 +396,110 @@ Unix, `normalize_for_compare` of a non-empty text answers
 the kills test are POSIX only (`verify_candidates_scan_not_posix`
 records the gap, class os, and checks the decline).
 
+### Unit 4, built (`verify_candidates::keys`)
+
+`_claim_key` (346-382), `_ClaimKeys` (385-450), `_is_under_home`
+(991-1056), `_home_ignores_case` (1059-1095),
+`_is_multi_segment_routelike` (1098-1207) and `_path_exists`
+(1239-1248), on POSIX. The file system is an argument (`fsdata::Fs`), and
+so is the home, as unit 3 takes it: `home` is what `~` expands to and
+`lookup` answers `pwd.getpwnam` (`UserHome`). Paths are code points. Each
+call that reaches the OS encodes its path as `os.fsencode` does (UTF-8,
+`surrogateescape`); a path that does not encode, or that holds NUL,
+raises `ValueError` before the OS is asked, as CPython's `os` functions
+do, so no call is made. What the OS answers (`readlink`) is decoded the
+same way.
+
+- `claim_key`: `""` for `""`; a refused spelling (`_refused_spelling`)
+  as it is, since `normcase` is the identity; else
+  `posixpath.expanduser`, and an absolute result resolved by `realpath`,
+  whose `ValueError` keeps the expanded spelling. `expanduser`'s own
+  `ValueError` (a `~user` name `getpwnam` refuses) is outside the
+  handler and escapes (`Raised::Value`).
+- `ClaimKeys::new(room)` and `ClaimKeys::key`: one read's memo of keys
+  and of resolved paths. `_resolve` as written: `posixpath.split`; no
+  name: `realpath` of the path when the head is the path (a run of
+  slashes), else the head's resolution; `.`: the head's; `..`: `dirname`
+  of the head's; else the head's resolution joined with the name, and
+  `realpath` of that only when `islink` says link. A path shares every
+  folder resolved before in the read, so each further component costs one
+  `lstat`. The recursion is a loop here.
+- `swapcase`: `str.swapcase` (CPython's `do_swapcase`): a code point
+  with the `Uppercase` property lowered with its full mapping (U+03A3
+  final in context, as `handle_capital_sigma` reads it), one
+  `str.islower` accepts uppered with its full mapping (`ß` to `SS`),
+  titlecase and uncased code points unchanged. The crate's tables hold
+  every mapping it needs (`unicode::lower`, `unicode::upper`,
+  `is_case_ignorable`, `is_cased`, `validate::is_lower`); the `Uppercase`
+  test is written out as `durability`'s private `is_upper` writes it.
+- `home_ignores_case`: False when the swap changes nothing; else
+  `samefile(home, flipped)`, False on any error. The home is stated
+  before the flipped spelling is encoded, as `genericpath.samefile`
+  orders its calls. A `samestat` the file system does not port declines.
+- `is_under_home`: the home from `expanduser("~")`, disabled when it is
+  `~` (unknown), empty or `/` (a `HOME` of `""`, `/` or `//` expands to
+  `/`); `_fold_altsep` with `/` and no altsep (the identity); the exact
+  and prefix tests; then `str.lower` of the candidate against the home
+  and the prefix, and the probe only where they agree modulo case. A
+  `HOME` of `~h` is not `~` and is kept: `~/x` is under it.
+- `is_multi_segment_routelike`: a leading `/` and at least two slashes;
+  a `.` in the text after the last slash answers False; under the home
+  answers False; else not `isdir` of the text before it (links
+  followed). That text starts with `/`, so its `expanduser` never
+  expands.
+- `path_exists`: `Path(candidate).expanduser().exists()`: unit 3's
+  `normalize_for_compare` spells it, `""` is `Path("")`, which is `.`,
+  and `stat` follows links. A `~user` name `getpwnam` refuses is the
+  `ValueError` the handler catches (False); the lookup is watched to tell
+  it from the text unit 3 gives back. An unknown home is
+  `Path.expanduser`'s `RuntimeError`, which escapes (`Raised::Home`).
+
+**Decisions.**
+
+- `realpath` is CPython 3.13.13's `posixpath.realpath` (non-strict)
+  over `str`, written here, not `fsdata::realpath` over bytes: the
+  reference keeps each component as the `str` spelled it, and a decode
+  of the encoded whole reads `"\udcc3\udca9"` back as `"é"`. Its walk,
+  its `seen` map and its stack are those of `fsdata::realpath`.
+- `expanduser` is `posixpath.expanduser`, written here: unit 3's is
+  `Path.expanduser`, which raises where `posixpath` gives the path back.
+- `RecursionError`. `_resolve` recurses once per component the read
+  has not resolved, so a deep path meets the recursion limit of 1,000
+  frames, and `_key` catches only `OSError` and `ValueError`. `room` is
+  how many frames the reference's caller had left above its own
+  (`sys.getrecursionlimit()` less its depth; `RECURSION_LIMIT` is 1000).
+  A key needs four frames (`__call__`, `_key`, `isabs` or `expanduser`
+  and its `_get_sep`), and four plus one per `_resolve` that misses the
+  memo, the deepest being the last miss's `split` and its `_get_sep`,
+  which the reference reaches before any `lstat`. A `~` or `~/...` key
+  needs six before any of that, `HOME` set or not: `expanduser` reads
+  `'HOME' not in os.environ`, which runs `Mapping.__contains__`,
+  `_Environ.__getitem__` and its `encodekey` as Python frames. A `~user`
+  key asks `pwd.getpwnam`, which is C, and needs four. Past `room` the port raises
+  before any call reaches the disk and leaves both memos as they were.
+  The callers, ported later, pass their own room. Measured under 3.13.13
+  with the caller at depths 5 to 200 (`_resolve` levels plus caller depth
+  plus six is 1,000 at the last path that resolves); 3.11 and 3.12 stop
+  one to three frames sooner, so those rows are gated on the release.
+- No crate was added, and no Unicode table: the brief's open point
+  (whether the tables hold the mappings `str.swapcase` needs) is settled
+  by the tables as they stand.
+
+**Patterns.** None: nothing goes into the engine's inventory.
+
+**Windows.** `os.name == "nt"` (`ntpath`'s `realpath` and `normcase`,
+the alternate separator) is not ported (verify_candidates-4b). On a
+target that is not Unix `claim_key`, `ClaimKeys::key`,
+`home_ignores_case` and `path_exists` decline on a non-empty path and
+`is_under_home` on every path (`Raised::NotPorted`).
+`is_multi_segment_routelike` answers False where the text alone decides
+(no leading `/`, fewer than two slashes, a `.` in the last part), as the
+reference answers on Windows too, and otherwise declines through
+`is_under_home`. `home_ignores_case` declines before it encodes: Windows'
+`os.fsencode` uses `surrogatepass`, not `surrogateescape`.
+`verify_candidates_keys_not_posix` records the gap, class os, and checks
+the decline.
+
 ### What the reference does that looks wrong (not changed)
 
 - A candidate that trims to whitespace alone raises. `\ \ .` in
@@ -421,6 +525,24 @@ records the gap, class os, and checks the decline).
   whitespace yet the candidate is refused as a command, while
   `/a/b x/c` alone is kept with the no-break space in it.
 
+- `_ClaimKeys` does not resolve as `posixpath.realpath` resolves, which
+  its docstring says it does, so `_claim_key` and `_ClaimKeys` key one
+  path two ways. A component that does not encode: `realpath` raises
+  `ValueError` and `_claim_key` keeps the spelling, while `os.path.islink`
+  swallows it and `_ClaimKeys` keeps the parent's resolution. On macOS,
+  `_claim_key("/tmp/x\ud800")` is `/tmp/x\ud800` and
+  `_ClaimKeys()("/tmp/x\ud800")` is `/private/tmp/x\ud800`. And a loop of
+  two links met again after `..`: with `la -> lb` and `lb -> la` in `d`,
+  `_claim_key("d/la/../lb")` is `d/la` (what `lb` resolved to while `la`
+  was being resolved) and `_ClaimKeys()` gives `d/lb` (a fresh `realpath`
+  of `d/lb`). Both are rows of the fixtures, and the port answers each
+  function's own way.
+- `_ClaimKeys._resolve` recurses once per component: a path of about 990
+  components (fewer from a deeper caller) raises `RecursionError` out of
+  a read, since `_key` catches only `OSError` and `ValueError`, where
+  `_claim_key` resolves the same path. Reproduce:
+  `verify_candidates._ClaimKeys()("/q" + "/a" * 1000)`.
+- `_path_exists("")` is True: `Path("")` is `.`, which exists.
 ### Tests
 
 | test | golden file | class |
@@ -438,6 +560,13 @@ records the gap, class os, and checks the decline).
 | `verify_candidates_scan_not_posix` (not POSIX) | both scan files, recorded | os |
 | `verify_candidates_scan_kills` (12) | none | i |
 | `verify_candidates_scan_robustness` (2) | none | i |
+| `golden_verify_candidates_keys` (POSIX): `verify_candidates_keys_every_case` | `verify_candidates_keys.jsonl` | i |
+| `golden_verify_candidates_keys` (POSIX): `verify_candidates_keys_unicode_every_case` | `verify_candidates_keys_unicode.jsonl` | ii (Unicode) |
+| `golden_verify_candidates_keys` (POSIX): `verify_candidates_keys_python_every_case` | `verify_candidates_keys_python.jsonl` | ii (Python) |
+| `golden_verify_candidates_keys` (POSIX): `the_reference_probes_as_the_port_on_this_volume` | none (`BM_REFERENCE_PYTHON`) | i |
+| `verify_candidates_keys_not_posix` (not POSIX) | the three keys files, recorded | os |
+| `verify_candidates_keys_kills` (17) | none | i |
+| `verify_candidates_keys_robustness` (6) | none | i |
 
 `gen_verify_candidates.py` writes two files. A case whose texts are all
 ASCII goes in `verify_candidates.jsonl` (every table answers ASCII the
@@ -468,6 +597,29 @@ ambiguity tail and its downgrade, the routes, the cap in each pass and
 past the scan bound, and two digest sweeps of 7,381 and 9,331 bodies.
 A body past ASCII goes in `verify_candidates_scan_unicode.jsonl`, gated
 on the Unicode data as well.
+
+Unit 4's files are POSIX only. The generator builds a scratch tree (a
+file, folders, links absolute and relative, a chain, a link holding `..`,
+a link to a file, a dangling link, a loop of one link and one of two, a
+folder named like a route) under a folder resolved through `realpath`,
+`@` standing for it, and sets `$HOME` and a fake `pwd` per row. Each row
+holds the answer and the `lstat`, `stat` and `readlink` calls that
+reached the OS, in order, without those on folders above `@` (how many
+there are is the machine's). The native test builds the same tree under
+its own scratch folder on the disk and in memory (`MemFs`) and compares
+both. A row whose answer is the volume's (the probe stated the
+case-swapped spelling of a home that exists) holds no answer and its
+calls only up to that probe;
+`the_reference_probes_as_the_port_on_this_volume` runs the reference
+(`BM_REFERENCE_PYTHON`) and the port on the machine's scratch volume over
+a mixed-case home and compares their answers. Homes and candidates past
+ASCII (`ß`, a final and a medial sigma, a titlecase letter, `İ`,
+`Other_Uppercase` and `Other_Lowercase` letters, a ligature) go in
+`verify_candidates_keys_unicode.jsonl`, gated on the Unicode data too.
+The keys of paths that meet a loop, which CPython 3.11 and 3.12's
+`realpath` resolve otherwise, and the reads at the recursion limit, whose
+depth 3.11 and 3.12 count otherwise, go in
+`verify_candidates_keys_python.jsonl`, gated on the Python release.
 
 ## Body candidates of path drift (`path_drift_steps.py`)
 
@@ -27754,7 +27906,8 @@ What the reference has and this build does not, by area:
   three extraction patterns (`_BACKTICK_RE`, `_BARE_RE`,
   `_DOMAIN_ROUTE_RE`) and the candidate scan (`_normalize_for_compare`
   on POSIX, `_scan_candidates`, `_extract_candidates` without its body
-  parse memo), and `verify.py` past its verdict ladder (`verdict_signals`)
+  parse memo) and the claim keys with the home and disk reads on POSIX
+  (unit 4), and `verify.py` past its verdict ladder (`verdict_signals`)
   and its status leaves (`CommitDriftStatus`, the two recommendations,
   `ResolvedCommitDrift`, `_index_paths`, `_unreadable`, `_gated_claims`,
   `commit_drift_status`, `staleness_verdict_from_report`), its claim-level

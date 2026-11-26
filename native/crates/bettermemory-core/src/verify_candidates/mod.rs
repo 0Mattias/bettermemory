@@ -5,13 +5,16 @@
 //! and `_DOMAIN_ROUTE_RE` as hand matchers with `finditer` semantics. Unit
 //! 3 (`scan`) holds `_normalize_for_compare`, `_scan_candidates` and
 //! `_extract_candidates` without its memo, with the home directory an
-//! argument. The body parse memo and the checks that read the home
-//! directory or the disk are later units (native/README.md, "Path
-//! candidates").
+//! argument. Unit 4 (`keys`) holds the claim keys (`_claim_key`,
+//! `_ClaimKeys`) and the reads of the home directory and the disk
+//! (`_is_under_home`, `_home_ignores_case`, `_is_multi_segment_routelike`,
+//! `_path_exists`) over the file-system trait, on POSIX. The body parse
+//! memo is a later unit (native/README.md, "Path candidates").
 //!
 //! Text is code points (`&[u32]`), as a Python `str` is: a body may hold
 //! a lone surrogate, and every length and index here counts code points.
 
+pub mod keys;
 pub mod patterns;
 pub mod scan;
 pub mod validate;

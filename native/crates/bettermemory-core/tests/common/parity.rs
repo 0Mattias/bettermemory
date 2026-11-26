@@ -301,6 +301,12 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `str.islower` and `re`'s `\w` and `\s` past ASCII, through the
         // candidate scan (`gen_verify_candidates`).
         "verify_candidates_scan_unicode.jsonl" => &[Unicode],
+        // `str.swapcase` and `str.lower` past ASCII, through the home probe
+        // (`gen_verify_candidates`).
+        "verify_candidates_keys_unicode.jsonl" => &[Unicode],
+        // Link loops, which 3.11 and 3.12's `realpath` resolve otherwise,
+        // and `_ClaimKeys` at the recursion limit (`gen_verify_candidates`).
+        "verify_candidates_keys_python.jsonl" => &[Python],
         // `_sre`'s lower case, upper case and cased test, `re`'s categories
         // and the extra cases of `re._casefix` over every code point
         // (`gen_pyre`).
