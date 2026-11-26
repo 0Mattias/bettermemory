@@ -389,6 +389,9 @@
 //!   (`committed`, `review`, `roster`, the similar and transient rows, the
 //!   origin and actor dicts);
 //! - [`response_history`]: the location, key eligibility and whole-history reads of a drift pass;
+//! - [`response_drift`]: a drift pass's row keys, lookup and publication
+//!   (`_DriftKey`, the process's per-hit memo, `lookup`, `_key`,
+//!   `unstored`, `store`);
 //! - [`response_links`], [`response_memo`] and [`verdict_signals`]: the
 //!   response layer's leaves (`candidate_link_rows`, the per-hit drift
 //!   memo as a generic bounded LRU, and the verdict ladder);
@@ -580,6 +583,7 @@ pub mod recall_settle;
 pub mod recall_state;
 pub mod records;
 pub mod repository_history;
+pub mod response_drift;
 pub mod response_history;
 pub mod response_links;
 pub mod response_memo;

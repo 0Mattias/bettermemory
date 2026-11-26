@@ -78,6 +78,22 @@ impl HistoryPass {
         self.settled.is_some()
     }
 
+    /// The caller's directory, `str(self.cwd)`.
+    pub fn cwd(&self) -> &[u32] {
+        &self.cwd
+    }
+
+    /// Whether the pass is at a record's home root (`at_home`).
+    pub fn at_home(&self) -> bool {
+        self.at_home
+    }
+
+    /// The pair the rows key on as last decided (`_keyed`), with no read
+    /// and no check of the history's head.
+    pub fn keyed(&self) -> Option<&Key> {
+        self.keyed.as_ref()
+    }
+
     /// Whether an attempted history read named this head (`_history_at`).
     pub fn history_at(&self, head: &[u32]) -> bool {
         !self.history_read || self.history_head.as_deref() == Some(head)

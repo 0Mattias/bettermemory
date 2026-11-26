@@ -47,12 +47,17 @@ impl<K: Eq + Hash + Clone, V> Ordered<K, V> {
         self.map.insert(key.clone(), (s, value));
     }
 
+    /// `move_to_end(key)`: the entry held moves, so the key keeps the
+    /// spelling it was first stored with (equal keys may differ in it).
     fn move_to_end(&mut self, key: &K) {
         let s = self.stamp();
-        if let Some(slot) = self.map.get_mut(key) {
-            self.order.remove(&slot.0);
-            slot.0 = s;
-            self.order.insert(s, key.clone());
+        if let Some((held, slot)) = self.map.get_key_value(key) {
+            let (held, old) = (held.clone(), slot.0);
+            self.order.remove(&old);
+            self.order.insert(s, held);
+            if let Some(slot) = self.map.get_mut(key) {
+                slot.0 = s;
+            }
         }
     }
 

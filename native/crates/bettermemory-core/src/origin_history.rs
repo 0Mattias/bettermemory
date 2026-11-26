@@ -8,7 +8,8 @@
 //!   runner's counts and its two notes as data;
 //! - [`read_lines`], [`author_instant`], [`author_dates`] and
 //!   [`log_stdin`];
-//! - [`ReachableWalk`] and its `shas_touching`;
+//! - [`ReachableWalk`] and its `shas_touching`, and [`Walked`], a
+//!   pass's walks by (root, anchor, head);
 //! - [`TimestampsMemo`]: the module's two ordered dictionaries and their
 //!   lock (`recall`, `checked_cut`, `base_for`, `remember`,
 //!   `remember_failure`, `_clear_timestamps_memo`) as a value the caller
@@ -285,6 +286,21 @@ impl ReachableWalk {
         out
     }
 }
+
+/// What a pass remembers of one walk no memo keeps (`Walked`'s value):
+/// the walk; for one that came back None, whether a git process failed
+/// for it; why, for one given up on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WalkedValue {
+    Walk(Arc<ReachableWalk>),
+    Failed(bool),
+    Unread(HistoryUnread),
+}
+
+/// `Walked`: one pass's walks by (root, anchor, head), which
+/// `origin.commits_since_anchor` reads and writes. The reference's dict is
+/// only read and set by key, so its order is never observed.
+pub type Walked = BTreeMap<(PyStr, PyStr, PyStr), WalkedValue>;
 
 /// `Key`: the root as the caller resolved it, and the head's hash.
 pub type Key = (PyStr, PyStr);

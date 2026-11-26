@@ -67,6 +67,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `commit_anchors` | `commit_anchors.py` whole (unit commit_anchors-1): `UNMAPPED_ANCHOR`, `UNMAPPED_REASON`, `relative_under`, `expected_home`, `CommitAnchors`, `project_commit_anchors`, and `HostPaths` (`verify_anchoring`'s `AnchorPaths` over them) | `commit_anchors.jsonl`, `commit_anchors_posix.jsonl` |
 | `response_links`, `response_memo`, `verdict_signals` | `_response_links.py` whole (`candidate_link_rows`), `_response.py`'s drift memo (`_clear_drift_memo`, `_recall_drift`, `_remember_drift`, as the generic `DriftMemo`) and `verify.py`'s verdict ladder (`_commit_leg_escalates`, `verdict_from_signals`, `compute_staleness_verdict`, the verdict strings) | `response_leaf.jsonl` |
 | `response_history` | `_DriftPass` location, eligibility to key a row, and lazy whole-history reads in `_response.py` | `response_history.jsonl` |
+| `response_drift` | `_DriftPass`'s row half in `_response.py`: `_DriftKey`, the process's `_DRIFT_MEMO` instance with its `_caches` registration, `lookup` (under `git_read_budget.hit`), `_key`, `_owned`, `unstored`, `store`; `origin_history.Walked` | `response_drift.jsonl` |
 | `verify_basis`, `verify::status` | `verify_basis.py` whole (`unread_recommendation`, `dates_since`, `date_count_uncertainty`, `_count_since_verify` over the `AnchorWalk` trait) and `verify.py`'s status leaves (`CommitDriftStatus`, `_drift_recommendation`, `_claim_drift_recommendation`, `ResolvedCommitDrift`, `_index_paths`, `_unreadable`, `_gated_claims`, `commit_drift_status`, `staleness_verdict_from_report`), and the claim-level narrowing (`_weak_tier_evaluation`, `_claim_legs`, `_resolve_reachable`, `_resolve_with_claims`, `resolve_commit_drift` over the `DriftGit` and `Spelling` traits, and `LiteralReader`, the `LiteralLines` of the built literal reader), the claim anchors (`commit_drift_anchor_paths`, `_anchor_paths`, `_attested_anchor`, `_RELATIVE_CITATION_RE` on the engine) and the count (`resolve_commit_drift_count`, `_quiescent_drift_applicable`, `_anchor_specs`, `applicable_unread`, `compute_commit_drift`, `_narrow_commit_drift` over the `CountGit` trait) | `verify_basis.jsonl`, `verify_weak.jsonl`, `verify_count.jsonl` |
 | `hook` | `hook.py`, unit hook-1a: `_read_payload`, `_payload_text`, `_pending_retrievals`, `_emit_hook_attributions` (the store, the recorder, the session join and the clock as arguments), `_ATTRIBUTION_LOOKBACK_SECONDS`, `_STDIN_PAYLOAD_CAP_BYTES` | `hook_leaf.jsonl` |
 | `response_render` | `_response.py`'s `ResponseBuilder.render_hit`, `render_show`, `_SHOW_DEFAULTS`, `_NATIVE_SEP`, `_slashed`, `_path_states`, `_compact_origin`, `_grouped_links` | `response_render.jsonl` |
@@ -2037,7 +2038,8 @@ No regular expression is involved.
 - `DriftMemo<K, V>` holds the memo and the timed-out memo behind one
   `Mutex`, each an insertion-ordered map with move-to-end as
   `OrderedDict` is used. `recall(key, now)` answers the memo first (and
-  moves the hit to the end), then a timed-out value when `0.0 <= now -
+  moves the hit to the end, the entry held moving, so a key keeps the
+  spelling it was first stored with where equal keys differ in it), then a timed-out value when `0.0 <= now -
   kept < 60.0` (the entry keeps its place), else removes that timed-out
   entry; NaN and a clock that went back remove it. `remember(resolved,
   timed_out, now)` sets the resolutions in order (a key already held keeps
@@ -2119,9 +2121,176 @@ path. Other hosts supply their own path and origin readers through the
 same interface. The contract fixture exercises both pathlib flavours,
 including surrogate path code points, on every host.
 
-Construction of the concrete hit key, row lookup, the per-pass walked
-map, publication of resolved rows and the search/show wiring belong to
-subsequent units.
+The hit key, row lookup, the per-pass walked map and the publication of
+resolved rows are in `response_drift` (the next section). The search and
+show wiring belongs to a later unit.
+
+## A drift pass's row keys and their publication
+
+`response_drift` holds the row half of `_response._DriftPass`
+(`_response.py` 157-190, 228, 382-435 and 517-733): the per-hit memo's
+key, its one process-wide instance, `lookup`, `_key`, `_owned`,
+`unstored` and `store`. `DriftPass` owns the `HistoryPass` of the previous section, the
+admission (`admission::DriftScope`), the pass's resolved and timed-out
+maps, its walked map, the attribute and walk signatures it read and the
+directories they hold, the head's signature and the broken flag.
+
+### The map
+
+| Function | Reference lines | Needs from the machine | Status |
+| --- | --- | --- | --- |
+| `_DriftKey` (`DriftKey`) | `_response.py` 157-167 | nothing | built |
+| `_DRIFT_MEMO`, `_DRIFT_TIMED_OUT`, `_clear_drift_memo` (`drift_memo`, `clear_drift_memo`) | 169-190 | nothing (the clock is `DriftReads::now`) | built |
+| `_UNREAD` and the row fields of `__init__` | 228, 382-435 | nothing | built |
+| `lookup` | 517-608 | the reads of `HistoryReads` and `DriftReads`, the resolution (`Resolve`) | built |
+| `_key` | 610-670 | the attribute and walk signatures | built |
+| `_owned` | 672-676 | nothing | built (on `HistoryPass`) |
+| `unstored`, `store` | 678-733 | the files' pair or the located head, the signature, `files_held` | built |
+| `Walked` (`origin_history::Walked`, `WalkedValue`) | `origin_history.py` 655-659 | nothing | built |
+
+No regular expression is matched here: the anchors come from
+`verify::anchors::commit_drift_anchor_paths`, which runs on the engine.
+
+### What each reproduces
+
+- `DriftKey` holds the nine parts of the reference's tuple: the keyed
+  root and head, `str(cwd)`, the anchors, the record's raw claims (every
+  string, a claim `load_claims` skips included), the verify instant,
+  `verified_head`, the repository's attribute files with the governed
+  files' chain (only for a row with a governed claim, and only when both
+  read), and the walk files. Equality is the tuple's: the signatures by
+  their fields, as the reference's tuples of stamps compare, and `since`
+  as datetimes compare, an aware one by its instant (the same instant
+  under another offset is the same key) and a naive one never equal to
+  an aware one. The hash covers the text parts and the instant; the
+  signatures take part in equality only.
+- `drift_memo()` is the process's one `DriftMemo<DriftKey, HitDrift>`,
+  made on first use, when it registers `clear_drift_memo` with `caches`
+  under `_response._clear_drift_memo`. A clearing before the first use
+  has nothing to clear. `DriftPass::open` takes the memo it reads and
+  merges into, so a test passes its own (`Memo::with_cap` stands for the
+  patched cap).
+- `lookup` runs under `git_read_budget::read` with the fallback of
+  `hit`, `(true, CALL_BUDGET)`, and the root `(str(cwd), at_home)`; the
+  drift value is `verify::hit::HitDrift`, an `Option`, so the decorator's
+  `From<HistoryUnread>` bound is met through `read`. The early answers
+  come in the reference's order: no stamp; no remote and not at home;
+  `drift_counts` false; then the anchors (always derived, then replaced
+  by `anchor_paths` when it is given, an empty slice included) and the
+  claims (`load_claims` only when the record has claims), and no anchor
+  and no claim. A naive stamp takes UTC as its offset (`replace`, never
+  a conversion). The key is recalled from the memo (the clock read for
+  the call; reading it when no timed-out entry is held has no effect),
+  then from the pass's resolved and timed-out maps. A row that may not
+  resolve answers `(false, None)`. Before the first resolution of a
+  keyed pass the head's signature is read once. The tallies are read
+  around the resolution, after the key, and their differences are taken
+  as Python's ints (`i128`), so no pair of tallies overflows; a value is kept only under a key, when it is
+  not `CALL_BUDGET` and the history was read at the key's head: in the
+  resolved map when no git call failed, in the timed-out map when every
+  failure was a timeout. A deadline anywhere in the row, the resolution's
+  `WeakError::ReadDeadline` included, answers `(true, CALL_BUDGET)`.
+- `_key` reads the repository's attribute files once per pass (`None`
+  while unread, `Some(None)` where the read answered None: the
+  reference's `_UNREAD` sentinel as an `Option<Option<_>>`), each set of
+  governed paths' chain once (in the order first read, as the dict keeps
+  them), and the walk files once; it answers None where the pair is not
+  keyed, the walk files are None, or a governed row's attribute files or
+  chain are. A read that raises leaves the part unread.
+- `store` answers `not broken` with nothing held. Otherwise it checks, in
+  order and stopping at the first that fails: the pair (`files_pair`
+  equal to the keyed pair where the files settled it, else
+  `located_head` at the keyed root equal to the keyed head); the
+  signature equal to the one read before the first resolution; and
+  `files_held` over the repository attribute files (None while unread),
+  the chains, the walk files and the held directories. Held, it merges
+  both maps into the memo at `now` and empties them; failed, it empties
+  them and breaks the pass, so each later store with something to merge
+  fails. A check that raises leaves the maps and the flag as they were.
+
+### Decisions
+
+- The resolution is a trait, `Resolve`. `HitResolver` is the one a
+  search uses: it calls `resolve_hit_drift` with the pass's directory
+  and located root as `CountReads::at`, the caller's `Unwalked`, a walk
+  closure over the pass's walked map (`origin.commits_since_anchor`,
+  unit origin-3b's) and the pass's lazy `timestamps`. The fixture
+  scripts the resolution through the same trait, as the generator
+  patches `resolve_hit_drift`.
+- `DriftReads` extends `HistoryReads` with the reads this half adds. Its
+  errors carry no deadline: the signatures and `files_held` run no git.
+  `calls` answers `(failed_git_calls(), timed_out_calls())`, which the
+  caller keeps in step with the runner its git reads note into.
+- `admission::DriftScope` cannot fail in the crate, so an admission
+  whose read raises is not represented; the fixture's admission never
+  raises and is traced without a budget scope.
+- `Walked` is a `BTreeMap`: the reference's dict is only read and set by
+  key, so its order is never observed.
+- `posix::DriftOrigin` implements both traits over
+  `response_history::posix::OriginReads`, the caller's `ConfigMemo` and
+  `IndexMemo`, the effective user and owners, and the environment
+  (`Beside`: GIT_INDEX_FILE, XDG_CONFIG_HOME and HOME, read at each
+  call). A directory that is not filesystem-encodable answers an
+  undetermined signature (the reference catches that ValueError there)
+  and a governed path that is not encodable a None chain (os.lstat's
+  ValueError, before any directory is held); elsewhere an unencodable
+  path is `UnsupportedPath`. Off POSIX, `gitattributes_signature` and
+  `walk_files_signature` decline under the Windows flavour (ENG-124), so
+  no adapter is given there.
+
+### Reference findings (reproduced)
+
+1. The history check of `lookup` (`self._history_at(key[1])`) and of
+   `_keyed_pair` cannot fail for a keyed row: the whole history is read
+   at `located`'s head, and the keyed pair is the files' pair (which
+   `located` answers too) or `located` itself. The check is reproduced;
+   no fixture row can reach its false branch.
+2. A pass whose first signature is undetermined (a repository `githead`
+   cannot settle) never stores: the signature read at the store is a new
+   undetermined value, equal to none.
+
+### Fixtures and tests
+
+- `tests/contract/gen_response_drift.py` writes `response_drift.jsonl`
+  (not gated, about 56 KB): 38 scripts over a real `_DriftPass` and its
+  memo with every effect scripted (the location and history reads, the
+  admission, the signature, the three file signatures, `files_held`,
+  the tallies, the clock and `resolve_hit_drift`): each early answer, the
+  anchors from the body and the paths, `resolve` False before and after
+  a key, memo and pass-map hits, `CALL_BUDGET` and deadlines, failures,
+  timeouts and mixed failures, the timed-out window, each key part, the
+  governed rows' attribute reads, unreadable signatures, keys from git's
+  pair, eviction at a patched cap of 2, two stores that hold, each check
+  of `store` failing in turn with a later store on the broken pass, and
+  a raise in each read, and a memo hit under another offset of the same
+  instant, which leaves the memo's key as first stored. Each step records
+  the answer, the trace length and `unstored`; an observation records the
+  pass's maps and the memo's keys in order.
+- Rust: `golden_response_drift.rs` over the scripted reads in
+  `tests/response_drift_script`; `response_drift_kills.rs` (each key
+  part, the signature check, a failed store breaking the pass,
+  `CALL_BUDGET` and a mixed failure not kept, an empty `anchor_paths`, a
+  naive stamp replaced, the memo's registration, `HitResolver` handing
+  the walk the pass's directory, located root and head and its walked
+  map, `~` and `~user` anchors compared under the home and the user
+  table, the tallies read around the resolution alone, and on POSIX the
+  adapter over a real repository: a pass that holds still, takes a
+  commit, has its config rewritten, gains a `.gitattributes` beside a
+  governed file or has one rewritten in place between a lookup and the
+  store; GIT_INDEX_FILE set at the lookup or before the store; the
+  signature of a pass keyed by git's pair read through `locate`; and
+  unencodable paths); `response_drift_robustness.rs` (10,000 rows over
+  three keys resolving each once, reading the attribute, chain and walk
+  signatures once each and the head's signature twice, before the first
+  resolution and in the store; a tenfold growth claim, eviction at a cap
+  of 3 and at the real cap, extreme stamps, 100,000 anchors, a 1 MiB id,
+  and tallies at the ends of `i64`, whose differences are exact).
+
+### Left for later units
+
+`_stamp_hit_drift` and `ResponseBuilder.attach_commit_drift_counts`
+(response-9), `origin.commits_since_anchor` (origin-3b, the walk
+closure), and the search and show wiring.
 
 ## The commit-drift bases and the status leaves of `verify.py` (`verify_basis.py`, `verify::status`)
 
@@ -29062,7 +29231,7 @@ What the reference has and this build does not, by area:
   `_resolve_with_claims`, `resolve_commit_drift`), and its anchor and
   drift-count readers (`verify::anchors`, `verify::count`).
   `verify::hit` supplies the per-hit drift result. The response pass still
-  needs to connect its memo and concrete Git reads.
+  needs the walk (`commits_since_anchor`, origin-3b).
   Of the response layer, `_response_links.py`, the drift memo,
   `check_reason`, `verdict_and_reason`, the trust appliers,
   the per-memory reads in `verdict.py`, `verdict.with_objection`, `render_hit`,
@@ -29072,8 +29241,8 @@ What the reference has and this build does not, by area:
   write and review shapes (`committed`, `review`, `roster`,
   `similar_to_dict`, `add_similar`, `transient_to_dict`,
   `credential_to_dict`, `origin_to_dict`, `actor_to_dict`) are built;
-  `ResponseBuilder`'s attach passes, the memo's key and value types, its
-  one instance and its `_caches` registration (the drift pass) are not.
+  `ResponseBuilder`'s attach passes (`_stamp_hit_drift`,
+  `attach_commit_drift_counts`: response-9) are not.
 - The write gates past the control tokens, the dedup and `credentials.py`
   (built whole): `durability.py` past
   its quoted spans and sentence helpers (the marker tables with
