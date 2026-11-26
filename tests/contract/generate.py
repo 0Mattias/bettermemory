@@ -152,6 +152,7 @@ from . import (
     gen_eval_render,
     gen_lexicon,
     gen_verify_candidates,
+    gen_scope_match,
     gen_path_drift_steps,
     gen_policy,
     gen_attestation_paths,
@@ -334,6 +335,11 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "verify_candidates_keys": gen_verify_candidates.generate_keys,
     "verify_candidates_keys_unicode": gen_verify_candidates.generate_keys_unicode,
     "verify_candidates_keys_python": gen_verify_candidates.generate_keys_python,
+    "scope_match": gen_scope_match.generate,
+    "scope_match_posix": gen_scope_match.generate_posix,
+    "scope_match_posix_python": gen_scope_match.generate_posix_python,
+    "scope_match_unicode": gen_scope_match.generate_unicode,
+    "scope_match_volume": gen_scope_match.generate_volume,
     "canonical_json": gen_json.generate,
     "native_text": gen_native_text.generate,
     "daemon_client": gen_daemon_client.generate,
@@ -811,6 +817,9 @@ UNICODE_GATED = frozenset(
         "verify_candidates_scan_unicode",
         "verify_candidates_patterns_unicode",
         "verify_candidates_keys_unicode",
+        # `str.isalnum`, `str.isspace`, `str.lower` and `re`'s IGNORECASE
+        # past ASCII (`gen_scope_match`).
+        "scope_match_unicode",
         "unicode",
         "models_text_unicode",
         "unicode_sequences",
@@ -1177,6 +1186,9 @@ PYTHON_GATED = frozenset(
         # Link loops, which 3.11 and 3.12 resolve otherwise, and
         # `_ClaimKeys` at the recursion limit (`gen_verify_candidates`).
         "verify_candidates_keys_python",
+        # `Path.home()` of a home starting with `~`: 3.14 reads it as a
+        # relative home where earlier releases raise (`gen_scope_match`).
+        "scope_match_posix_python",
         # A rekey payload or an anchor nested past where `json.loads`
         # stops, and `sqlite3`'s OverflowError text
         # (`gen_store_open_upkeep.python_cases`).
@@ -1300,6 +1312,8 @@ PLATFORM_GATED = frozenset(
         "models_text_platform",
         "location_stamps_platform",
         "log_keyfiles_darwin",
+        # Whether the scratch volume folds case (`gen_scope_match`).
+        "scope_match_volume",
         "search_ranker",
         "store",
         "store_path",
@@ -1414,6 +1428,11 @@ PLATFORM_GATED = frozenset(
 #: ``verify_candidates_keys``, ``verify_candidates_keys_unicode`` and
 #: ``verify_candidates_keys_python`` resolve paths in a scratch tree with
 #: links through `posixpath` (`gen_verify_candidates`);
+#: ``scope_match_posix``, ``scope_match_posix_python``, ``scope_match_unicode``
+#: and ``scope_match_volume``
+#: fold separators by ``os.sep`` and ``os.altsep`` and read the home through
+#: the host's ``Path``, whose Windows flavour answers otherwise
+#: (`gen_scope_match`);
 #: ``location_stamps`` and
 #: ``location_stamps_python`` name devices by ``os.major``, which Windows'
 #: ``os`` lacks (`gen_location_stamps`); ``location_probe``, ``location_probe_python``
@@ -1497,8 +1516,13 @@ POSIX_ONLY = frozenset(
         # A scratch tree with links, a loop and a dangling link, `$HOME`
         # inside it, and `posixpath` (`gen_verify_candidates`).
         "verify_candidates_keys",
+        # `os.sep`, `os.altsep` and `Path.home()` (`gen_scope_match`).
+        "scope_match_posix",
+        "scope_match_posix_python",
         "verify_candidates_keys_unicode",
+        "scope_match_unicode",
         "verify_candidates_keys_python",
+        "scope_match_volume",
         "verify_anchoring_attest_posix",
         "verify_anchoring_detect",
         "commit_anchors_posix",

@@ -127,6 +127,10 @@
 //!   `_BARE_RE` and `_DOMAIN_ROUTE_RE` as hand matchers; the candidate
 //!   scan of a body; the claim keys and the reads of the home and the
 //!   disk, on POSIX);
+//! - [`scope_match`]: `scope_match.py`'s first unit: the report types and
+//!   the leaves the scope-mismatch detectors share (the roots, the home
+//!   alias, the boundary and occurrence tests, the declared-root spans
+//!   and cover, the evidence trim), on POSIX;
 //! - [`path_drift_steps`]: `_check_body_candidates`, the body-candidate
 //!   pass of path drift, its effects as closures;
 //! - [`attestation_paths`]: explicit path attestations compiled beside
@@ -615,6 +619,7 @@ pub mod response_trust;
 pub mod response_write;
 pub mod review;
 pub mod review_counters;
+pub mod scope_match;
 pub mod search;
 pub mod search_dedup;
 pub mod session;

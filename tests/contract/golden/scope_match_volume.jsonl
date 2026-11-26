@@ -1,0 +1,17 @@
+{"cases":16,"folds":true}
+{"by":[["projects:a",[["@/Base",1]]],["projects:b",[["@/BASE",2]]],["projects:c",[["@/Proj",1]]]],"f":"roots","r":[["projects:c","@/Proj"]]}
+{"by":[["projects:b",[["@/bASE",1]]],["projects:d",[["@/Gone",1]]]],"f":"roots","r":[["projects:d","@/Gone"]]}
+{"f":"alias","path":"@/Base/Work/x","r":"~/Work/x"}
+{"f":"alias","path":"@/BASE/Work/x","r":"~/Work/x"}
+{"f":"alias","path":"@/base","r":null}
+{"f":"alias","path":"@/base/","r":"~/"}
+{"f":"alias","path":"@/Gone/x","r":null}
+{"body":"see @/proj/x and @/Proj/y","declared":["projects:c"],"f":"spans","r":[[4,10],[17,23]],"roots":[["projects:c","@/Proj"]]}
+{"body":"see @/gone/x and @/Gone/y","declared":["projects:d"],"f":"spans","r":[[17,23]],"roots":[["projects:d","@/Gone"]]}
+{"body":"~/WORK/x and ~/Work/y","declared":["projects:w"],"f":"spans","r":[[0,6],[13,19]],"roots":[["projects:w","@/Base/Work"]]}
+{"body":"~/Work/x","declared":["projects:w"],"f":"spans","r":[[0,6]],"roots":[["projects:w","@/BASE/Work"]]}
+{"body":"@/PROJ/child/z","contracted":false,"declared":["@/Proj/Child"],"f":"covers","idx":0,"r":true,"root":"@/Proj"}
+{"body":"@/Proj/Child/z","contracted":false,"declared":["@/Proj/Child"],"f":"covers","idx":0,"r":true,"root":"@/proj"}
+{"body":"@/gone/Sub/z","contracted":false,"declared":["@/Gone/Sub"],"f":"covers","idx":0,"r":false,"root":"@/gone"}
+{"body":"~/Work/Sub/f","contracted":true,"declared":["@/BASE/Work/Sub"],"f":"covers","idx":0,"r":true,"root":"@/BASE/Work"}
+{"body":"~/work/sub/f","contracted":true,"declared":["@/Base/Work/Sub"],"f":"covers","idx":0,"r":true,"root":"@/Base/Work"}

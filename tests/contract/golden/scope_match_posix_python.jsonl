@@ -1,0 +1,5 @@
+{"cases":4,"home":"/hd/u"}
+{"f":"home","home":"~e","r":{"raise":"RuntimeError"}}
+{"by":[],"f":"roots","folds":[],"home":"~e","probes":[],"r":{"raise":"RuntimeError"}}
+{"f":"alias","folds":[],"home":"~e","path":"/hd/u/x","probes":[],"r":{"raise":"RuntimeError"}}
+{"body":"~/p/c/x","contracted":true,"declared":["/hd/u/p/c"],"f":"covers","folds":[],"home":"~e","idx":0,"probes":[],"r":{"raise":"RuntimeError"},"root":"/hd/u/p"}

@@ -317,6 +317,14 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // Link loops, which 3.11 and 3.12's `realpath` resolve otherwise,
         // and `_ClaimKeys` at the recursion limit (`gen_verify_candidates`).
         "verify_candidates_keys_python.jsonl" => &[Python],
+        // `str.isalnum`, `str.isspace`, `str.lower` and `re`'s IGNORECASE
+        // past ASCII, through the scope mismatch leaves (`gen_scope_match`).
+        "scope_match_unicode.jsonl" => &[Unicode],
+        // `Path.home()` of a home starting with `~`, which 3.14 reads as a
+        // relative home (`gen_scope_match`).
+        "scope_match_posix_python.jsonl" => &[Python],
+        // Whether the scratch volume folds case (`gen_scope_match`).
+        "scope_match_volume.jsonl" => &[Platform],
         // `_sre`'s lower case, upper case and cased test, `re`'s categories
         // and the extra cases of `re._casefix` over every code point
         // (`gen_pyre`).

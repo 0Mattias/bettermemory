@@ -50,6 +50,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `mirror_format` | `mirror_format.py` whole: `TOMBSTONE_DIR`, `EPISODES_DIR`, `TOMBSTONE_SUFFIX`, `_ID_TOMBSTONE_RE` (by hand, `id_tombstone_stem`), `memory_filename`, `tombstone_filename`, `active_filename_for_tombstone`, `is_legacy_tombstone_name`, the four key tables, `memory_metadata`, `episode_metadata` | `mirror_format.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo; unit 4 (POSIX): `_claim_key`, `_ClaimKeys` (with its recursion limit), `_is_under_home`, `_home_ignores_case` (with `str.swapcase`), `_is_multi_segment_routelike`, `_path_exists` over the file-system trait | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl`, `verify_candidates_keys.jsonl`, `verify_candidates_keys_unicode.jsonl`, `verify_candidates_keys_python.jsonl` |
+| `scope_match` | unit scope_match-1 of `scope_match.py`: `_MAX_MATCHES`, `_NOISY_NAME_STOPLIST`, `ScopeMismatchEntry` (`to_dict`), `ScopeMismatchReport` (`has_mismatch`), `_roots_of`, `_drop_ancestor_roots`, `_home_alias`, `_boundary_after`, `_find_root_occurrence`, `_declared_root_spans`, `_declared_root_covers`, `_trim_evidence`, on POSIX, the home and the case probe arguments | `scope_match.jsonl`, `scope_match_posix.jsonl`, `scope_match_posix_python.jsonl`, `scope_match_unicode.jsonl`, `scope_match_volume.jsonl` |
 | `path_drift_steps` | `path_drift_steps.py`: `_check_body_candidates`, its checks and keys as closures | `path_drift_steps.jsonl` |
 | `policy` | `policy.py` whole: `REFUSAL_STATUS`, `_FORCE_KEY`, `_ACKNOWLEDGE_KEY`, `_label`, `PolicyRefusal` (with `event_fields`), `_message`, `check_overrides` | `policy.jsonl` |
 | `attestation_paths` | `attestation_paths.py` whole: `LiteralPaths`/`ReferencePaths` (`Paths` and its `Kind`), `path_mode`, `interpret_path`, `_may_be_literal`, `joined_path`, `_REFERENCE_ROOT`, `absolute_spelling`, `literal_path`, `reference_path`, `placeholder_spelling`, `target_path`, `record_paths`, `commit_paths`, `compile_targets`, `unverifiable_inputs`, with `ntpath.splitdrive` and both `commonpath`s; the host (`os.name`, `expanduser`, `lstat`, `ntpath.normcase` on Windows) a trait | `attestation_paths.jsonl`, `attestation_paths_posix.jsonl` |
@@ -626,6 +627,255 @@ The keys of paths that meet a loop, which CPython 3.11 and 3.12's
 `realpath` resolve otherwise, and the reads at the recursion limit, whose
 depth 3.11 and 3.12 count otherwise, go in
 `verify_candidates_keys_python.jsonl`, gated on the Python release.
+
+## Scope mismatch's leaves (`scope_match.py`)
+
+`scope_match.py` (789 lines) is the write gate that flags a body whose
+declared scopes look out of step with what it cites: a `projects:<name>`
+scope's name as a token, or a path under a root the store associates
+with such a scope. The module by function, at 652b94a9:
+
+| function | lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_MAX_MATCHES`, `_NOISY_NAME_STOPLIST` | 52, 60-78 | nothing | built (scope_match-1) |
+| `ScopeMismatchEntry` (`to_dict`), `ScopeMismatchReport` (`has_mismatch`) | 81-122 | nothing | built (scope_match-1) |
+| `_project_name_matches` | 125-192 | nothing (its pattern built from the scope's name) | scope_match-2 |
+| `_project_root_matches` | 195-297 | the probe | scope_match-2 |
+| `detect_scope_mismatch` | 300-346 | the probe, the home | scope_match-2 |
+| `collect_project_scopes`, `collect_project_roots` | 349-403 | records | scope_match-2 |
+| `project_scopes_and_roots` | 406-435 | the store's digest memo, or its records | scope_match-2 |
+| `_roots_of` | 438-470 | the home, the probe | built (scope_match-1) |
+| `_drop_ancestor_roots` | 473-517 | `os.sep` | built (scope_match-1) |
+| `_home_alias` | 520-571 | the home, the probe | built (scope_match-1) |
+| `_boundary_after`, `_find_root_occurrence` | 574-619 | nothing | built (scope_match-1) |
+| `_declared_root_spans` | 622-688 | the home, the probe | built (scope_match-1) |
+| `_declared_root_covers` | 691-763 | the home, the probe | built (scope_match-1) |
+| `_trim_evidence` | 766-779 | nothing | built (scope_match-1) |
+
+The cut (redrawn from the ledger's 82-619 and 622-779): scope_match-1
+takes the report types and every leaf the two detectors call, from both
+halves; scope_match-2 takes the two detectors, `detect_scope_mismatch`,
+the three collectors and the store read, which need records and the
+store's digest memo. The write gate that calls `detect_scope_mismatch`
+is h_write_gates-1a's.
+
+### Unit 1, built (`scope_match`)
+
+The report types and the leaves, on POSIX, in `src/scope_match.rs`.
+Text is code points. The effects are arguments: `home` is what `~`
+expands to (`$HOME`, else the running user's password entry; None when
+neither is known), as `verify_candidates::scan` takes it, and `probe`
+answers `_home_ignores_case` of a path (`Probe`; `volume_probe` asks a
+file system through `verify_candidates::keys::home_ignores_case`).
+
+- `MAX_MATCHES`, `NOISY_NAME_STOPLIST` (in code point order),
+  `EVIDENCE_PADDING` (`_trim_evidence`'s default 24).
+- `ScopeMismatchEntry` with `EntryKind` (`project_name`,
+  `project_root`) and `to_dict` in the reference's key order;
+  `ScopeMismatchReport` with `has_mismatch`.
+- `folded_home`: `_fold_altsep(str(Path.home()), os.sep, os.altsep)`,
+  unit 3's `normalize_for_compare` of `~`, so `Path`'s collapse of
+  slashes and `.` parts, a `HOME` of `""`, `/` or `//` read as `/`, and
+  `RuntimeError` (`ScopeError::Home`) for an unknown home or one that
+  starts with `~`, as CPython 3.13.13 raises (3.14 raises only for `~`
+  itself).
+- `roots_of`: the home first (so an unknown one raises for no scopes
+  too); each scope's root is `most_common(1)[0][0]`, the highest count
+  and on a tie the first counted (`heapq.nlargest(1, ...)` is `max`); an
+  empty count is `IndexError` (`ScopeError::Index`); a root equal to the
+  home or `/` after the fold is dropped, and one equal to the home
+  modulo `str.lower` only when the home's volume folds case, probed
+  once per call and only when such a root appears; then
+  `drop_ancestor_roots`. `by_scope` is the dict's items in insertion
+  order, each count a `Counter`'s items in insertion order.
+- `drop_ancestor_roots`: under two roots, as given; else a root is
+  dropped when another scope's root, folded and stripped of trailing
+  `/`, starts with its own plus `/` (so `/a/foo` is no ancestor of
+  `/a/foobar`, `/` folded to empty is the ancestor of every absolute
+  root, and two scopes with one root keep both).
+- `home_alias`: a folded path under `home + "/"` is `~` and the tail
+  in the path's own spelling; a prefix equal to that only modulo
+  `str.lower` (cut at the prefix's raw length, then lowered) gives the
+  same when the home's volume folds case, probed at each call that gets
+  that far; the home itself has none.
+- `boundary_after`: past the end True; `str.isalnum` (`unicode::is_alnum`),
+  `-` or `_` False; a `.` before a code point `str.isspace` refuses False.
+- `find_root_occurrence`: the occurrences `str.find` gives from each
+  failed index plus one, overlapping ones included, walked once
+  (Knuth-Morris-Pratt), the first whose code point before is not
+  alphanumeric and after which the boundary holds. An empty needle
+  occurs at every index up to the length, as `str.find` answers.
+- `declared_root_spans`: over the folded body, each declared scope with
+  a non-empty root, the root and its alias as needles; each match of
+  `re.compile(re.escape(needle), re.IGNORECASE)` from `m.start() + 1`
+  on is kept when its text is the needle's, else only when the root's
+  volume folds case (`probe(root)`, once per scope, at the first such
+  match). A scope listed twice in `declared` is read once, as the
+  reference's set holds it. `project_roots` is the dict's items (a later
+  key wins).
+- `declared_root_covers`: the declared roots in code point order, once
+  each; one longer than the candidate that extends it, by bytes or
+  modulo `str.lower` with `probe(dr)` on the declared root; spelled as
+  itself or, contracted, by its alias (None skips it); the body's slice
+  at `idx` of that length compared folded, by bytes or modulo
+  `str.lower` with `probe(dr)` asked again; then `boundary_after` on the
+  raw body.
+- `trim_evidence`: the span widened by `padding` and clamped as slicing
+  clamps, newlines as spaces, `str.strip`, each run of `\s` as one
+  space, `...` on each cut side.
+
+**Decisions.**
+
+- The spans are answered sorted. `declared` is a set in the reference,
+  iterated in the hash seed's order, so the order of its spans is not
+  the reference's to pin (the slice here is read in its own order, each
+  scope once); `_project_name_matches`, their
+  only reader, tests each span by containment (`lo <= start and end <=
+  hi` under `any`), which no order changes.
+- The probe is an argument returning `Result`, so the table probes of
+  the fixtures and the volume's own (`volume_probe`) run the same code;
+  `home_ignores_case`'s only error is its decline.
+- `find_root_occurrence` walks the occurrences once where the reference
+  calls `str.find` again from each rejected index plus one: the same
+  occurrences in the same order, in linear time for any needle.
+- `declared_root_spans` searches a needle whose leading run `_sre`
+  leaves uncased (`/`, `~`, digits, `.`, `-`: code points
+  `_sre.unicode_iscased` refuses, which `_compile` emits as LITERAL)
+  the way `_sre` does: that run is the pattern's literal prefix, walked
+  once with Knuth-Morris-Pratt, and only the rest of the needle is tried
+  at each of its occurrences, literal by literal with the engine's own
+  test (`pyre::fold::Lit`). A needle that starts with a cased code point
+  has no literal prefix and is searched by the engine from each start,
+  as `_sre` searches it. The pattern is built either way, so the arena's
+  decline is unchanged. `ignorecase_starts_by_engine` keeps the engine's
+  search from each start, and two tests hold the two to the same starts:
+  every draw of the sweep (each root, behind `~` and doubled, in the
+  body, the body twice over and the body less its first code point) and
+  20,000 draws over an alphabet of uncased code points and cased ones
+  whose IGNORECASE classes reach past ASCII.
+- Positions are `usize`: the reference's callers pass match offsets,
+  never a negative index.
+
+**Patterns.** `scope_match.py:_declared_root_spans.pattern` (the builder
+family `declared_root` of the inventory, `re.escape(folded_needle)`
+under IGNORECASE) is built per needle with `pyre::atom::escape` and
+`pyre::regex::Regex::new`; a needle without a literal prefix is run by
+`search` from each start, and the rest of one with a prefix is tried by
+the literals the engine compiles (Decisions). `scope_match.py:_trim_evidence.chunk` (`\s+`, inventory tier T1)
+is built once by the engine and run by `sub`. Both were already in the
+engine's inventory (`gen_pyre_inventory.py`); nothing was added.
+`_project_name_matches.pattern` is scope_match-2's.
+
+**What differs from the reference, declared.** A root or alias past the
+engine's arena (`pyre::lower::MAX_NODES`, 4,096 nodes: a needle of
+about 4,000 code points) is not built: `declared_root_spans` answers
+`ScopeError::Regex`, where the reference builds the pattern and
+searches. The rule is the decision's: a refusal is not worked around.
+Its time, in release on this machine, best of three, answers equal:
+on a body of 1,000,000 code points with 10,000 citations and 1,000
+declared roots (`/w/r<i>`), the reference takes 0.53 s and the port
+0.93 s. A needle with an uncased literal prefix costs both the body's
+length and not the needle's: `/` * 500 + `x` in `/` * 200,000 takes the
+reference 0.0009 s and the port 0.0007 s, `1` * 1,000 + `2` in `1` *
+200,000 0.0003 s each, `/` * 4,000 + `x` 0.0009 s and 0.0008 s. A
+needle that starts with a cased code point is searched from every start
+by both (the engine has no prefix scan of its own, the decision's open
+risk 4, and none is needed there): `a` * 500 + `b` in `a` * 200,000
+takes the reference 0.10 s and the port 0.30 s, the widest ratio
+measured (2.9 times). Both grow linearly in the body for a fixed needle
+and as the square for a needle that overlaps itself (`/` + `a/` * 500
+in `/a` * 100,000: 0.11 s and 0.19 s).
+
+**Windows.** `os.sep` `\`, `os.altsep` `/` and `WindowsPath`'s home are
+not ported: on a target that is not Unix `folded_home`, `roots_of`,
+`drop_ancestor_roots`, `home_alias`, `declared_root_spans` and
+`declared_root_covers` decline (`ScopeError::NotPorted`), as does the
+volume probe on a non-empty path (the crate's Windows gap, ENG-124).
+`boundary_after`, `find_root_occurrence` and `trim_evidence` read no
+separator and answer as everywhere. `scope_match_not_posix` records the
+gap, class os, and checks the decline.
+
+### What the reference does that looks wrong (not changed)
+
+- `_home_alias` of a path shorter than `home + "/"` that equals it
+  modulo `str.lower` slices past the path's end and answers `~` alone,
+  where the path names the home folder with a trailing slash (`~/`).
+  It takes a home whose lowering does not change its length against a
+  path whose lowering does. Reproduce, with `_home_ignores_case`
+  answering True: `HOME=/i\u0307`, `scope_match._home_alias("/\u0130/")`
+  is `"~"`. A row of `scope_match_unicode.jsonl`; the port answers the
+  same.
+- The case leg of `_home_alias` cuts the path at the raw length of the
+  prefix before lowering, so a path that `str.lower` makes longer than
+  its spelling is never read as under a home it folds onto:
+  `HOME=/\u0130`, `_home_alias("/i\u0307/x")` is None on a folding
+  volume, and the probe is not asked.
+- `_drop_ancestor_roots`' `other != mine` can never be false where
+  `other.startswith(mine + os.sep)` is true.
+- `_roots_of` drops a root whose fold equals `os.sep` exactly, so `/`
+  goes but `//` and `///` stay: alone, `//` is kept as a scope's root
+  (`HOME=/hd/u`, `_roots_of({"projects:a": Counter({"//": 1})})` is
+  `{"projects:a": "//"}`), and beside an absolute root it folds to empty
+  under `rstrip(os.sep)` in `_drop_ancestor_roots` and is dropped as the
+  ancestor of every absolute root (`{"projects:a": "/hd/u/", "projects:b":
+  "//"}` keeps `projects:a` alone). A row of `scope_match_posix.jsonl`
+  each; the port answers the same.
+- `_declared_root_covers` asks the same probe twice for one declared
+  root when both its prefix and the cited text differ by case only;
+  `_roots_of` asks it once per call and `_home_alias` once per path.
+
+### Tests
+
+| test | golden file | class |
+| --- | --- | --- |
+| `golden_scope_match`: `scope_match_every_case` | `scope_match.jsonl` | i |
+| `golden_scope_match_posix` (POSIX): `scope_match_posix_every_case` | `scope_match_posix.jsonl` | i |
+| `golden_scope_match_posix` (POSIX): `scope_match_posix_python_every_case` | `scope_match_posix_python.jsonl` | ii (Python) |
+| `golden_scope_match_posix` (POSIX): `scope_match_unicode_every_case` | `scope_match_unicode.jsonl` | ii (Unicode) |
+| `golden_scope_match_posix` (POSIX): `scope_match_volume_every_case` | `scope_match_volume.jsonl` | iii (platform) |
+| `golden_scope_match_posix` (POSIX): `the_prefix_walk_answers_as_the_engine_over_the_sweep` | `scope_match_posix.jsonl` (the sweep's seed and count) | i |
+| `scope_match_not_posix` (not POSIX) | the four POSIX files, recorded | os |
+| `scope_match_kills` (14, POSIX) | none | i |
+| `scope_match_robustness` (9, POSIX) | none | i |
+
+`gen_scope_match.py` writes five files. `scope_match.jsonl` holds the
+leaves that read no separator and no home (`_boundary_after`,
+`_find_root_occurrence`, `_trim_evidence`, the report types, the
+constants) over ASCII texts; every platform and release answers it
+alike, so it is ungated and its test runs everywhere. The rest read
+`os.sep`, `os.altsep` and `Path.home()`, so `scope_match_posix.jsonl` and
+`scope_match_unicode.jsonl` are POSIX only (`POSIX_ONLY`), the second,
+past ASCII (`str.isalnum` and `str.isspace` past ASCII, the Kelvin sign
+and the long s under IGNORECASE, a final sigma, `İ` lengthened by
+`str.lower`, a lone surrogate), gated on the Unicode data too. In both
+the home is recorded, never read (`$HOME` set per row, the password
+entry unknown), and `_home_ignores_case` is a table: True for the row's
+`folds`, False otherwise, every path asked logged in order (sorted for
+the spans). Rows pin each leaf: `most_common` ties and zero counts, an
+empty count, `/` and the home and the home re-cased as roots, each
+`HOME` spelling `Path` collapses, ancestor chains and equal roots, the
+alias at the home itself and at a re-cased prefix, `foo.bak` against
+`foo/x.py`, `foo.` at the end, overlapping needles and an occurrence
+overlapping a rejected one, escaped needles, an uncased prefix met at
+every start, a scope and a declared root listed twice, a declared root
+absent from the table, the cover in code point order,
+contracted and re-cased, every trim edge; and a seeded sweep of 5,000
+draws (xorshift64*: up to four roots from eight pieces, a body of up to
+23 pieces from sixteen, a random declared set and probe table) through
+`_declared_root_spans`, `_find_root_occurrence`, `_home_alias` and
+`_declared_root_covers` (plain and contracted), by count and SHA-256 of
+each draw's answers and probes as compact JSON. The rows under a `HOME`
+of `~e` go in `scope_match_posix_python.jsonl`, gated on the Python
+release: through 3.13 `Path.home()` raises `RuntimeError` for a home that
+expands to a text starting with `~`, and from 3.14 only for one that
+stays `~` (3.14 reads `~e` as a relative home). The port answers as
+3.13.13.
+`scope_match_volume.jsonl` probes for real: a resolved scratch folder
+(`@`) holds `Base`, `Base/Work/Sub`, `Proj` and `Proj/Child`, `$HOME` is
+`@/Base`, and each answer is the volume's, with whether it folds case in
+the header; its bytes follow the volume, so it is gated on the platform
+(`PLATFORM_GATED`), and the test builds the same tree under its own
+scratch folder and probes through `StdFs`.
 
 ## Body candidates of path drift (`path_drift_steps.py`)
 
@@ -30484,6 +30734,8 @@ What the reference has and this build does not, by area:
   the store-backed review chain and related-set construction. The review
   tables, answer validation and decision policy are built. The dedup's
   store side reads through a trait not yet wired to `store::digest`.
+  `scope_match.py` past its types and leaves (built in `scope_match`):
+  the detectors and collectors (scope_match-2).
 - The regular expression engine (`pyre`) past its case folding and the
   parser (its tree, state, tokenizer, atoms, repeats, widths, groups,
   lookarounds, inline flags, alternatives and `parse`, and the refusal

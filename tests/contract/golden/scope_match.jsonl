@@ -1,0 +1,72 @@
+{"cases":71,"max_matches":5,"padding":24,"stoplist":["blog","build","config","configs","data","doc","docs","note","notes","script","scripts","site","src","test","tests"]}
+{"body":"","end":0,"f":"boundary","r":true}
+{"body":"abc","end":3,"f":"boundary","r":true}
+{"body":"abc","end":9,"f":"boundary","r":true}
+{"body":"foo/x","end":3,"f":"boundary","r":true}
+{"body":"foobar","end":3,"f":"boundary","r":false}
+{"body":"foo-bar","end":3,"f":"boundary","r":false}
+{"body":"foo_bar","end":3,"f":"boundary","r":false}
+{"body":"foo9","end":3,"f":"boundary","r":false}
+{"body":"foo.bak","end":3,"f":"boundary","r":false}
+{"body":"foo.","end":3,"f":"boundary","r":true}
+{"body":"foo. x","end":3,"f":"boundary","r":true}
+{"body":"foo.\n","end":3,"f":"boundary","r":true}
+{"body":"foo.\t","end":3,"f":"boundary","r":true}
+{"body":"foo..","end":3,"f":"boundary","r":false}
+{"body":"foo./","end":3,"f":"boundary","r":false}
+{"body":"foo x","end":3,"f":"boundary","r":true}
+{"body":"foo)","end":3,"f":"boundary","r":true}
+{"body":"foo,","end":3,"f":"boundary","r":true}
+{"body":"foo:","end":3,"f":"boundary","r":true}
+{"body":"foo~","end":3,"f":"boundary","r":true}
+{"body":"foo\\x","end":3,"f":"boundary","r":true}
+{"body":"foo\u000b.","end":3,"f":"boundary","r":true}
+{"body":"foo.\u001c","end":3,"f":"boundary","r":true}
+{"body":"foo.\u001f","end":3,"f":"boundary","r":true}
+{"body":"","f":"occurrence","needle":"","r":[0,0]}
+{"body":"abc","f":"occurrence","needle":"","r":null}
+{"body":"a b","f":"occurrence","needle":"","r":null}
+{"body":"x/","f":"occurrence","needle":"","r":[2,2]}
+{"body":"","f":"occurrence","needle":"/a","r":null}
+{"body":"/a","f":"occurrence","needle":"/a","r":[0,2]}
+{"body":"/ab","f":"occurrence","needle":"/a","r":null}
+{"body":"see /a/foo/x.py","f":"occurrence","needle":"/a/foo","r":[4,10]}
+{"body":"see /a/foo.bak and /a/foo/x.py","f":"occurrence","needle":"/a/foo","r":[19,25]}
+{"body":"see /a/foobar then /a/foo-bar, /a/foo_bar","f":"occurrence","needle":"/a/foo","r":null}
+{"body":"x/a/foo y","f":"occurrence","needle":"/a/foo","r":null}
+{"body":"-/a/foo y","f":"occurrence","needle":"/a/foo","r":[1,7]}
+{"body":"_/a/foo y","f":"occurrence","needle":"/a/foo","r":[1,7]}
+{"body":"./a/foo y","f":"occurrence","needle":"/a/foo","r":[1,7]}
+{"body":"ends /a/foo.","f":"occurrence","needle":"/a/foo","r":[5,11]}
+{"body":"ends /a/foo. next","f":"occurrence","needle":"/a/foo","r":[5,11]}
+{"body":"/a/foo.x /a/foo","f":"occurrence","needle":"/a/foo","r":[9,15]}
+{"body":"aaaa","f":"occurrence","needle":"aa","r":null}
+{"body":"baaa","f":"occurrence","needle":"aa","r":null}
+{"body":"/x/x/x","f":"occurrence","needle":"/x/x","r":[0,4]}
+{"body":"~/w/p and ~/w/p/q","f":"occurrence","needle":"~/w/p","r":[0,5]}
+{"body":"a~/w/p","f":"occurrence","needle":"~/w/p","r":null}
+{"body":"/a/foo\n","f":"occurrence","needle":"/a/foo","r":[0,6]}
+{"body":"/A/FOO /a/foo","f":"occurrence","needle":"/a/foo","r":[7,13]}
+{"body":"x/././ ","f":"occurrence","needle":"/./","r":[3,6]}
+{"body":"","end":0,"f":"trim","r":"","start":0}
+{"body":"abc","end":3,"f":"trim","r":"abc","start":0}
+{"body":"abc","end":2,"f":"trim","padding":0,"r":"...b...","start":1}
+{"body":"abc","end":2,"f":"trim","padding":1,"r":"abc","start":1}
+{"body":"abc","end":3,"f":"trim","padding":0,"r":"...","start":3}
+{"body":"abc","end":12,"f":"trim","r":"abc","start":9}
+{"body":"abc","end":1,"f":"trim","padding":0,"r":"......","start":2}
+{"body":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/a/byyyyyyyyyyyyyyyyyyyyyyyyyyyyyy","end":34,"f":"trim","r":"...xxxxxxxxxxxxxxxxxxxxxxxx/a/byyyyyyyyyyyyyyyyyyyyyyyy...","start":30}
+{"body":"xxxxxxxxxxxxxxxxxxxxxxxx/a/byyyyyyyyyyyyyyyyyyyyyyyy","end":28,"f":"trim","r":"xxxxxxxxxxxxxxxxxxxxxxxx/a/byyyyyyyyyyyyyyyyyyyyyyyy","start":24}
+{"body":"xxxxxxxxxxxxxxxxxxxxxxxxx/a/byyyyyyyyyyyyyyyyyyyyyyyyy","end":29,"f":"trim","r":"...xxxxxxxxxxxxxxxxxxxxxxxx/a/byyyyyyyyyyyyyyyyyyyyyyyy...","start":25}
+{"body":"  lead\n\n/a/b\t\ttail  ","end":12,"f":"trim","r":"lead /a/b tail","start":8}
+{"body":"one\r\ntwo /a three\u000b\ffour","end":11,"f":"trim","r":"one two /a three four","start":9}
+{"body":"\n\n\n/a\n\n\n","end":5,"f":"trim","r":"/a","start":3}
+{"body":"   ","end":2,"f":"trim","r":"","start":1}
+{"body":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","end":50,"f":"trim","padding":5,"r":"...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...","start":10}
+{"body":"a  ba  ba  ba  ba  ba  ba  ba  ba  ba  ba  ba  ba  ba  ba  ba  ba  ba  ba  ba  b","end":31,"f":"trim","r":"...ba ba ba ba ba ba ba ba ba ba ba ba...","start":30}
+{"body":"x\u001cy\u001dz\u001e/a\u001f","end":8,"f":"trim","r":"x y z /a","start":6}
+{"evidence":"...see foo...","f":"entry","kind":"project_name","r":[["kind","project_name"],["evidence","...see foo..."],["suggested_scope","projects:foo"]],"scope":"projects:foo"}
+{"evidence":"/a/b","f":"entry","kind":"project_root","r":[["kind","project_root"],["evidence","/a/b"],["suggested_scope","projects:b"]],"scope":"projects:b"}
+{"f":"report","n":0,"r":false}
+{"f":"report","n":1,"r":true}
+{"f":"report","n":2,"r":true}
