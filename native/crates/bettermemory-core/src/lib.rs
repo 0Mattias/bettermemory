@@ -154,6 +154,10 @@
 //!   anchored values, proper nouns, value and anchor tokens, numeric
 //!   shapes, kinship, context, surface forms), and the detector over the
 //!   active records or a store's digest read best first through a trait;
+//! - [`conflicts`]: corpus-level contradiction candidates: the queue row
+//!   (`ConflictCandidate`, its dict form and its two hashes) and the
+//!   pairwise dedup scan with the negation and numeric guards that file a
+//!   disagreement instead of crowning a keeper;
 //! - [`records`]: the reference's record models (memory, tombstone,
 //!   episode, origin, actor, link) validated from a payload or a row and
 //!   written back, with pydantic's errors, and the result models
@@ -501,6 +505,7 @@ pub mod claims;
 pub mod cli;
 pub mod commit_anchors;
 pub mod config;
+pub mod conflicts;
 pub mod control_tokens;
 pub mod credentials;
 pub mod daemon_client;

@@ -62,6 +62,7 @@ from . import (
     gen_native_process_entry,
     gen_native_process_menu,
     gen_config,
+    gen_conflicts,
     gen_difflib,
     gen_credentials_prefixed,
     gen_credentials_gate,
@@ -406,6 +407,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "supersession_features_unicode": gen_supersession_features.generate_unicode,
     "supersession_detect": gen_supersession_detect.generate,
     "supersession_detect_unicode": gen_supersession_detect.generate_unicode,
+    "conflicts": gen_conflicts.generate,
+    "conflicts_unicode": gen_conflicts.generate_unicode,
     "search_snippet": gen_search_snippet.generate,
     "search_snippet_unicode": gen_search_snippet.generate_unicode,
     "search_hit": gen_search_hit.generate,
@@ -822,6 +825,9 @@ UNICODE_GATED = frozenset(
         # The tokenizer, `str.lower` and the features' patterns past ASCII
         # (`gen_supersession_detect`).
         "supersession_detect_unicode",
+        # `str.lower`, the tokenizer, `str.strip`, `float`'s digits and
+        # spaces and `repr` past ASCII (`gen_conflicts`).
+        "conflicts_unicode",
         "search_snippet_unicode",
         # `\s` and the tokenizer past ASCII (`gen_review_tables`).
         "review_tables_unicode",

@@ -76,6 +76,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms; `_query_biased_snippet` with its memos (`snippet`), `_memory_tokens`, `seed_memory_tokens` and their LRU (`token_cache`), `top_hit_leads_runner_up`; unit search-1b (`hit`): `_build_hit`, `_claim_anchors` | `search.jsonl`, `search_ranker.jsonl`, `search_snippet.jsonl`, `search_snippet_unicode.jsonl`, `search_hit.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `supersession` | units supersession-1a and 1b of `supersession.py`: `CHANGE_CUES`, `_CUE_RE` (`cue_pattern`), the other patterns, `_VALUE_PREPS`, `_CUE_TOKENS`, the claim and floor constants, `SupersessionMatch` (`note`, `detector`), `SupersessionReport`, `change_cues`, `_word_tokens` and its cache, `anchored_values`, `_proper_nouns`, `value_tokens`, `anchor_tokens`, `_numeric_token_set`, `_numeric_shape`, `values_are_kin`, `_content_stream`, `_context`, `_surface_forms`, `_surface_form`; `claim_sized` and `_strip_provenance` re-exported from `store::digest`; the detector: `_one_claim_replaced`, `_floor`, `_SCORE_BATCH`, `detect_supersession` (with `_claims_among` and `_detect`), `detect_supersession_in` (with `_best_first` and its heap) over the `SupersessionStore` trait, `_rule` | `supersession_features.jsonl`, `supersession_features_unicode.jsonl`, `supersession_detect.jsonl`, `supersession_detect_unicode.jsonl` |
+| `conflicts` | unit conflicts-1 of `conflicts.py`: `_VALID_STATUSES`, `_body_hash`, `_pair_id`, `ConflictCandidate` (`to_dict`, `from_dict`), `DedupCandidate`, `PolaritySkippedPair`, `ConflictingPair`, `_pick_keeper`, `_find_dedup_with_skips`, `_NEGATION_MARKERS`, `_has_negation`, `_numeric_divergence`, `_clause_polarity`, `_body_signals`, `_polarity_flip`, `_conflict_signal`, `_polarity_skip`, `_find_dedup_jaccard`, `skip_to_candidate`, `find_conflict_candidates` (the clock an argument) | `conflicts.jsonl`, `conflicts_unicode.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `history` | `history.py`'s first two units: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection; `_RowVerifier` and `_set` | `history_rows.jsonl`, `history_rows_python.jsonl`, `history_rows_mac.jsonl` |
 | `history_rows` | `history.py`'s third unit: `HistoryRow` with `to_dict`, `_changed` (with `py_ne`, Python's `!=` over payload values), `_body_diff` (through `difflib::body_diff`), `_set`, `_event_detail`, `_RecordWalk`, `_record_row`, `_link_change_rows` | `history_detail.jsonl` |
@@ -5338,6 +5339,176 @@ count. The reference takes 0.49 s on the bodies of 100,000 words,
 0.012 s on the 20,000 shares and 0.021 s on the 1,000 tied records
 (Apple M-series); the robustness file runs in 23 s in a debug build,
 most of it the timing rounds.
+
+## The conflict scan (`conflicts.py`)
+
+`conflicts` reproduces the detection half of `conflicts.py` (986 lines):
+the queue row's type and its two hashes, and the pairwise dedup scan
+whose contradiction guards file a disagreement instead of crowning a
+keeper. It needs nothing from the machine but the tokenizer, the regular
+expression engine and the clock `find_conflict_candidates` stamps rows
+with, which is its caller's argument. The module is cut in two units:
+conflicts-1 (built, reference 115-731, in `src/conflicts.rs`) and
+conflicts-2 (`CONFLICTS_FILENAME` at 113 and 732-986: `ConflictQueue`
+over the store's `conflicts` table and its mutation rows,
+`scan_conflicts`, `split_judgeable`, `conflicts_pending_count`). The
+handler that lists and judges pairs is h_conflicts-1; the write path's
+`value` filings are `supersession`'s.
+
+### Map, by function
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `CONFLICTS_FILENAME` | 113 | nothing | conflicts-2 |
+| `_VALID_STATUSES`, `_DEFAULT_JACCARD_THRESHOLD`, `_NEGATION_MARKERS` | 115, 248, 444-468 | nothing | built (`VALID_STATUSES`, `DEFAULT_JACCARD_THRESHOLD`, `NEGATION_MARKERS`) |
+| `_body_hash`, `_pair_id` | 118-141 | nothing | built (`body_hash`, `pair_id`) |
+| `ConflictCandidate` with `to_dict`, `from_dict` | 143-240 | nothing | built |
+| `DedupCandidate`, `PolaritySkippedPair` with `to_dict` | 251-321 | nothing | built |
+| `ConflictingPair` | 324-344 | nothing | built (`ConflictError::ConflictingPair`) |
+| `_pick_keeper` | 347-404 | nothing | built (`pick_keeper`) |
+| `_find_dedup_with_skips` | 407-428 | nothing | built (`find_dedup_with_skips`) |
+| `_NEGATION_TOKEN_RE`, `_has_negation` | 470-484 | the engine | built (`has_negation`) |
+| `_numeric_divergence` | 487-496 | nothing | built |
+| `_CLAUSE_SPLIT_RE`, `_clause_polarity` | 511-538 | the engine, the tokenizer | built (`clause_polarity`) |
+| `_BodySignals`, `_body_signals` | 541-566 | the engine, the tokenizer | built (`BodySignals`, `body_signals`) |
+| `_polarity_flip`, `_conflict_signal` | 569-609 | nothing | built |
+| `_polarity_skip`, `_find_dedup_jaccard` | 612-689 | the tokenizer | built (`find_dedup_jaccard`; `_polarity_skip` private) |
+| `skip_to_candidate`, `find_conflict_candidates` | 692-729 | the clock | built (`now` an argument) |
+| `ConflictQueue`, `scan_conflicts`, `split_judgeable`, `conflicts_pending_count` | 732-986 | the store | conflicts-2 |
+
+### What each part reproduces, and the decisions
+
+- **The hashes.** `body_hash` is the first 16 hex digits of SHA-256 over
+  the body's UTF-8 and `pair_id` `cf-` and the first 12 over `lo:hi`, the
+  two ids sorted in code point order (a `PyStr` compares as Python's
+  `str`: U+1F600 sorts after U+FFFF, where UTF-16 order would put it
+  first). A lone surrogate raises UnicodeEncodeError, the class only
+  (`ConflictError::Encode`), never a replacement character.
+- **The row.** `ConflictCandidate` holds every text as a `PyStr` and the
+  similarity as `f64`. `to_dict` answers a `PyValue::Dict` in the
+  reference's key order, the similarity through `search::num::round4`
+  and each optional key only when set. `from_dict` takes a dict's items
+  and reads them in the reference's order: `status` first (outside
+  `_VALID_STATUSES` it reads `pending`), then `id`, `a_id`, `b_id` (a
+  missing one is KeyError, `ConflictError::Key`), then the rest with
+  their defaults. `str()` is `pyvalue::py_str_limited` (`None` reads
+  `None`, a float its `repr`, a container its `repr`; ValueError for an
+  int past 4,300 digits, RecursionError past `repr`'s depth). `float()`
+  reads a bool, a float, an int (OverflowError past the float range) and
+  a `str` by `float`'s grammar (Python's ASCII whitespace stripped and
+  each space past ASCII read as one, underscores between digits, `inf`,
+  `infinity` and `nan` in any case, digits past ASCII through
+  `config::py_float_from_str`), and anything else is TypeError. The
+  four optional fields are `str()` of a value that is not `None`.
+  `gitsystem::record` holds the same `float()` privately; this module
+  holds its own copy rather than editing that file.
+- **The negation readings.** `has_negation` lowers with
+  `unicode::lower`, drops U+2019 and `'` (a left quote U+2018 stays and
+  splits a contraction), and asks whether any `[a-z0-9]+` match is a
+  marker: the class is ASCII, so `ﬁ` is no token and `İ` lowers to `i`
+  and a combining dot. `clause_polarity` splits on `[.;!?\n]+` (empty
+  pieces kept and skipped as tokenless; a comma is no boundary), files
+  each clause's raw content tokens as negated or asserted whole, and
+  drops from each side what the other holds. `body_signals` reads all
+  four signals off `strip_provenance(body)`, so a transcript stamp that
+  carries a negator or a number counts for nothing.
+- **The guards.** `polarity_flip` is whole-body (exactly one side
+  negates) or clause-mutual (each side asserts a term the other
+  negates); `numeric_divergence` is mutual (each side holds a number the
+  other lacks); `conflict_signal` names polarity first. The reference's
+  own documented gap stands: both bodies negating and a single term
+  swapping polarity pass both rules. So does a second one the review
+  found (Linear ENG-427): the clause split also cuts at a dot between
+  digits, so "18.x is not supported; 20.x is supported" against its
+  inverse reads no flip and is proposed as a duplicate. The port keeps
+  it until the reference changes.
+- **The keeper.** `pick_keeper` raises `ConflictingPair` before any tier
+  (a `ConflictError` variant the scan alone catches; every other error
+  goes on). A signal not given is computed from the body, `a`'s first.
+  Tier 0 is attestation (`verified_paths` non-empty or
+  `last_verified_at` set); tier 1 `updated`, two aware values compared as
+  instants (one instant at two offsets is a tie and falls through), two
+  naive by the wall clock, a naive against an aware one unequal and then
+  TypeError (`ConflictError::NaiveAware`) when ordered, so only a pair
+  that reaches tier 1 raises; tier 2 the count of `verified_paths`; tier
+  3 `a.id > b.id`, so an equal id answers `(b, a)`.
+- **The scan.** `find_dedup_jaccard` holds per memory the raw token set
+  of the stripped body and the signals of the raw body, in order, then
+  walks pairs `i < j`, skipping an empty set on either side before
+  scoring and a score under the threshold (`sim < threshold`, so a NaN
+  threshold admits every pair). `find_dedup_with_skips` answers nothing
+  under two memories, takes `None` as 0.75 and sorts both lists by
+  similarity descending with a stable sort (`list.sort(reverse=True)`
+  keeps equal scores in scan order). `find_conflict_candidates` takes
+  `now` (the reference's `utcnow()`, aware UTC) and stamps each row with
+  `now.isoformat()`, keeping the first row per pair id, so of two pairs
+  of one id the one the sort put first wins. A summary is
+  `models_text::snippet_for(body, 100)` of the raw body, stamp and all.
+- **Errors of the engine.** Neither pattern can fail to build or to run
+  on any text; were the engine to refuse one, the call answers
+  `ConflictError::Pattern` or `Call` (and `Numeric` for
+  `supersession::numeric_token_set`), never a panic.
+
+**Patterns.** `_NEGATION_TOKEN_RE` (`findall`) and `_CLAUSE_SPLIT_RE`
+(`split`) are the engine's `Regex`, built once from the reference's own
+text with no flags (the clause pattern is a raw string: its `\n` is two
+characters the parser reads as a newline). Both are in the engine's
+inventory already (T1), so nothing is added to it.
+
+**Platforms.** Nothing here reads the machine: no path, no errno, no
+locale. The similarities are one IEEE division each, the same on every
+target, so neither golden file needs a platform gate, and the Windows
+flavour answers as the others do (no `_not_posix` test).
+
+### Fixtures and tests
+
+`tests/contract/gen_conflicts.py` writes `conflicts.jsonl` (264 cases,
+ASCII bodies with curly quotes, a code point past the BMP and lone
+surrogates, class i) and `conflicts_unicode.jsonl` (33 cases, gated on
+Unicode: `str.lower`, the tokenizer, `str.strip`, a float's digits and
+spaces and `repr` past ASCII). The rows hold the hashes with a surrogate
+and ids in code point order; `has_negation` over every marker,
+contractions with both apostrophes and a left quote, markers inside
+words; `clause_polarity` over every boundary, a comma list, a term on
+both sides; `body_signals` with stamps that carry a negator or not;
+the guards over whole-body and inverse-clause pairs, one-sided and
+mutual numbers and both signals at once; `pick_keeper` at every tier
+both ways and each tie, an instant at two offsets, naive values; every
+field shape of `from_dict` and each raise in the order of reads (39
+similarity spellings); `to_dict` with and without the optional keys and
+at the rounding's edges; and the scan at the default, NaN, infinite,
+negative and zero thresholds, equal scores, repeated ids, the stamp, a
+naive raise and a surrogate id. The `sweep` row draws 2,000 sets of 2 to
+12 memories from a seeded generator (a base body from a word list rich
+in negators, contractions and numbers, each member with up to two words
+replaced, a stamp, an id from ten, `updated` at four values two of which
+are one instant, and drawn attestation) and pins the scan and
+`find_conflict_candidates` at 0.5, 0.75 and 0.9 by count (6,000 lines)
+and SHA-256; the lines hold 48,425 candidates and 4,503 skipped pairs
+(3,518 by polarity, 985 numeric), 377 of them sharing a pair id. Writing
+the ASCII file takes about 10 s under CPython 3.13.13.
+
+`golden_conflicts` checks every row whole and regenerates the sweep.
+`conflicts_kills` (11) pins the guard ahead of attestation, negation read
+off the raw body (the dedup token sets of "Do not use sudo" and "Use
+sudo" are equal), a comma that is no clause boundary, numeric divergence
+mutual, the stamp out of the signals, equal scores in scan order (66
+pairs of one score, and 276 candidates whose two scores interleave),
+`updated` as an instant, ties by code point order and an equal id, an
+unknown status read as pending with `status` read before `id`, a
+surrogate never hashed by replacement, and a NaN threshold; each of nine
+such mutants of the port (an unstable sort, a comma boundary, a
+one-sided numeric test, the stamp kept, the guard after tier 0, wall
+clocks, the status kept, a replacement hash, negation read off the
+token sets) fails it. `conflicts_robustness` (5) runs 2,000 memories (1,999,000
+pairs; 200 against 2,000 within six hundred times, the reference's
+quadratic loop with the room a linear claim gets), bodies of a million
+code points in eleven shapes and of lone surrogates (100,000 against a
+million within `TENFOLD`), two such bodies scanned, every threshold
+bound and `from_dict` at the depth, digit and float bounds. The
+reference takes 0.14 s over 200 memories and 8.85 s over 2,000, and
+0.02 to 0.42 s on `_body_signals` of a million code points by shape
+(Apple M-series).
 
 ## The store, read only
 
@@ -29819,6 +29990,10 @@ What the reference has and this build does not, by area:
 - Of the caller's resolution
   `prime_roots` and `middleware`, the MCP server's wire path (`identity`
   resolves the rest; its admission is `store::caller`).
+- `conflicts.py` past its detection half (conflicts-1, built in
+  `conflicts`): `CONFLICTS_FILENAME`, `ConflictQueue`, `scan_conflicts`,
+  `split_judgeable` and `conflicts_pending_count` (conflicts-2), and the
+  handler that lists and judges pairs (h_conflicts-1).
 - `membership_resolve.py` past rung 2 of the ladder (`_token_now`,
   `_token_read`, `_by_object` and `_rung_two` are built in
   `membership::rung` and the tally and tie wording in

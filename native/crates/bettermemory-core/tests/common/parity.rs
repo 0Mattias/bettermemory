@@ -363,6 +363,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // The tokenizer, `str.lower` and the features' patterns past ASCII
         // (`gen_supersession_detect`).
         "supersession_detect_unicode.jsonl" => &[Unicode],
+        // `str.lower`, the tokenizer, `str.strip`, `float`'s digits and spaces
+        // and `repr` past ASCII (`gen_conflicts`).
+        "conflicts_unicode.jsonl" => &[Unicode],
         // The tokenizer, `str.strip` and `\w` past ASCII (`gen_search_snippet`).
         "search_snippet_unicode.jsonl" => &[Unicode],
         // `\s` and the tokenizer past ASCII (`gen_review_tables`).
