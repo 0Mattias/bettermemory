@@ -278,6 +278,9 @@ fn state_reading(
                 item["text"] = json!(scrub(&text, root));
             } else if name.ends_with(".key") || name.ends_with(".pending") {
                 item["sha256"] = json!(hex(&Sha256::digest(fs::read(&p).expect("key"))));
+            } else if p.is_dir() {
+                // A directory's size is the file system's: a host fact.
+                item["dir"] = json!(true);
             } else {
                 item["size"] = json!(fs::metadata(&p).expect("meta").len());
             }

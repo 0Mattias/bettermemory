@@ -745,6 +745,10 @@ def state(case: Path, root: Path) -> dict[str, Any]:
                 )
             elif p.name.endswith((".key", ".pending")):
                 item["sha256"] = hashlib.sha256(p.read_bytes()).hexdigest()
+            elif p.is_dir():
+                # A directory's size is the file system's (64 on APFS, 4096
+                # on ext4): a host fact, so a directory is named as one.
+                item["dir"] = True
             else:
                 item["size"] = p.stat().st_size
             out["keys"].append(item)
