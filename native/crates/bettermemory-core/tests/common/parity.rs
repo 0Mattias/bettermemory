@@ -240,6 +240,10 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "pysyntax_module.jsonl"
         // Its f-string tokens in the parser's mode (`gen_pysyntax_fstring`).
         | "pysyntax_fstring.jsonl"
+        // What `ast.parse` of 3.13.13 accepts and builds (`gen_pysyntax_expr`);
+        // its rows past Windows' C recursion limit are POSIX only.
+        | "pysyntax_expr.jsonl"
+        | "pysyntax_expr_posix.jsonl"
         | "machine_identity_python.jsonl"
         | "store_rotation_python.jsonl"
         // A reader's origin anchor or rekey payload nested past where

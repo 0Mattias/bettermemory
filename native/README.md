@@ -147,7 +147,11 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `builder` | `builder.py`'s two pure schema scrubs: `_strip_titles`, `_fold_nullable` | `builder_schema.jsonl` |
 | `claims`, `claim_drift` | units 1 to 3 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`); `claim_drift`: `_Headers`, `build_binding_index`, `claim_level_drift`, the trait `LiteralLines` for the literal helpers | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl`, `claim_drift.jsonl`, `claim_drift_unicode.jsonl`, `claim_drift_python.jsonl` |
 | `symbols` | unit symcheck of `symbols.py`: the bounds (`_MAX_*`, `_FILE_SUFFIXES`), `SymbolCitation`, `SymbolDriftReport` (`missing`, `__bool__`, `to_dict`), `check_symbol_citations` over citations already parsed, `_tier`, `_live_root`, `_resolve_module`, `_module_bindings`; `ast.parse` and the name walks are a trait (`ModuleNames`) | `symbols.jsonl`, `symbols_platform.jsonl` |
+<<<<<<< HEAD
 | `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII read since unit claims-6 (`verify_identifier` over the raw run, the parser's NFKC in `literal`). Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl` |
+=======
+| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts. Unit pyexpr (claims-5b2): the expression grammar `ast.parse` reads over those tokens (`module_expr::parse_expression_module`, `Parser`): acceptance with the first pass's actions, the parser's stack limit and `ast2obj`'s depth, the node arena with the names `symbols._all_names` reads; statements declined | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl`, `pysyntax_expr.jsonl`, `pysyntax_expr_posix.jsonl` |
+>>>>>>> wt/pyexpr
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json`, `store_restore_lock_hold_python.json`, `store_restore_lock_python.json` (POSIX only) |
 | `store::returned` | `store_returned.py`'s backfill half on the writable store: `missing_links`, `returned_rows`, `backfill`, `ensure_backfilled` (`has_key` given, its log lines returned); `Store._put_relinked` as `store::writers::put_relinked`; the `returned_put` row a backfill appends (`Transaction::mutate_returned_put`) | `store_returned.jsonl`, `store_returned_posix.jsonl` (POSIX only) |
@@ -10107,6 +10111,9 @@ that Unicode too.
 | `pysyntax_module_kills` (10), `pysyntax_module_robustness` (3) | none | i |
 | `golden_pysyntax_fstring`: `pysyntax_fstring_every_case` | `pysyntax_fstring.jsonl` | ii (Python) |
 | `pysyntax_fstring_kills` (10), `pysyntax_fstring_robustness` (5) | none | i |
+| `golden_pysyntax_expr`: `pysyntax_expr_every_case` | `pysyntax_expr.jsonl` | ii (Python) |
+| `golden_pysyntax_expr_posix`: `pysyntax_expr_posix_every_case` (POSIX only; `golden_pysyntax_expr_not_posix` records the gap as os) | `pysyntax_expr_posix.jsonl` | ii (Python), os |
+| `pysyntax_expr_kills` (15), `pysyntax_expr_robustness` (5) | none | i |
 | `golden_ulid`: `ulid_every_case`, `ulid_order_and_round_trip` | `ulid.jsonl` (the second none) | i |
 | `golden_githead`: `githead_every_case` (both flavours) | `githead.jsonl` | i |
 | `golden_githead`: `githead_posix_every_case` (unix) | `githead_posix.jsonl` | i; os elsewhere (`githead_not_posix`) |
@@ -24168,9 +24175,16 @@ none edits another's.
 | --- | --- | --- | --- |
 | `lex` | the eval-mode tokenizer (`Parser/lexer/lexer.c`'s `tok_get_normal_mode`), the newline translation of `_PyTokenizer_FromString`, the string decoders (`_PyUnicode_DecodeUnicodeEscapeInternal`, `_PyBytes_DecodeEscape`) and the number readers (`parsenumber`, `int`'s 4,300-digit limit) | nothing | built (unit pylex) |
 | `literal` | the eval-mode parser over `lex`'s tokens, `literal_eval`'s evaluation and `claims._canonical_repr` | nothing | built (unit pylit) |
+<<<<<<< HEAD
 | `module_lex`, `fstring_lex` | the module-mode tokenizer for `ast.parse` at 672 (unit 5a) and its f-string modes (5b, first part); the expression grammar (5b2), the statement grammar (5c) and the top-level binding read (5d) follow | nothing | 5a built (unit pymodlex), 5b first part built (unit pyfstring) |
 | the XID tables | whether a name past ASCII is an identifier (`verify_identifier`) | Unicode tables (`unicode::xid`) | built (unit claims-6) |
 | `\N{...}` | the Unicode name table (`getcode`) | Unicode tables (`unicode::names`) | built (unit claims-6) |
+=======
+| `module_lex`, `fstring_lex` | the module-mode tokenizer for `ast.parse` at 672 (unit 5a) and its f-string modes (5b, first part); the statement grammar (5c) and the top-level binding read (5d) follow | nothing | 5a built (unit pymodlex), 5b first part built (unit pyfstring) |
+| `module_expr` | the expression grammar of `ast.parse` over those tokens (5b2): acceptance, the first pass's actions, the parser's stack limit, `ast2obj`'s depth, and the tree with the names `symbols._all_names` reads | the C recursion limit of the host's CPython build (a `cfg` constant) | built (unit pyexpr) |
+| the XID tables | whether a name past ASCII is an identifier | Unicode tables | lane pyident |
+| `\N{...}` | the Unicode name table | Unicode tables | unit pysyntax-names |
+>>>>>>> wt/pyexpr
 
 ### The tokenizer (`lex`)
 
@@ -24547,6 +24561,7 @@ fields, a megabyte of literal text and 200 nestings to 149 levels
 within ten times the time of a tenth, the deepest nesting on a 64 KiB
 thread, hostile shapes without a panic) hold the rest.
 
+<<<<<<< HEAD
 ### Names past ASCII and `\N{...}` (unit claims-6)
 
 Unit claims-6 closes the two declines `lex` answered. Reference: CPython
@@ -24674,6 +24689,228 @@ branches of `module_lex` and `fstring_lex` that answer them: since unit
 claims-6 nothing produces them. For `module_lex`: the expression
 grammar over module tokens (unit 5b2), the statement grammar (5c), and
 the reads of the parsed module by `check_claim` and `symbols` (5d).
+=======
+### The expression grammar (`module_expr`)
+
+`parse_expression_module(text) -> Result<Tree, ExprError>` reproduces
+`ast.parse(source)` of CPython 3.13.13 for a module of expression
+statements: `module_tokens`, then each logical line as
+`star_expressions NEWLINE`, then ENDMARKER. `Grammar/python.gram` and
+the C parser are not on the build machine: every rule below was read from
+the interpreter and is held by `pysyntax_expr.jsonl`.
+
+- The machine. `Parser` holds the module's tokens (COMMENT and NL left
+  out), a position, the arena and a vector of frames: an operator
+  awaiting its operand (`-`, `not`, `await`, a binary operator, `**`,
+  `*`, `:=`, a lambda's body, a conditional's `else` part) or an owner
+  awaiting its next element (the statement's `star_expressions`, a
+  parenthesis, list, brace, call, subscript, comprehension, lambda's
+  parameters, string concatenation, f-string and replacement field).
+  One loop reads an operand (prefixes, then an atom, or a new owner),
+  then its trailers, then an infix operator, closing operator frames by
+  level; a token no operator takes ends the operand, and the owner
+  under it reads that token. Nothing recurses, so the deepest source the
+  reference accepts is read on a 64 KiB thread. Each slot has a level
+  (named expression, expression, disjunction, inversion, bitwise or,
+  factor, primary) that decides which prefixes open it and which
+  operators may follow inside it: a comparison takes no `not`, a
+  comprehension's `in` and `if` parts take no conditional or lambda, a
+  target takes a primary only. Keywords are NAME tokens whose raw text
+  is a keyword (`ｉｆ` is the name `if`); a Name keeps `Module::name`'s
+  NFKC text.
+- First-pass actions that refuse: bytes beside str or an f-string
+  (`_PyPegen_concatenate_strings`); `<>` (`_PyPegen_check_barry_as_flufl`
+  without the future flag); an identifier whose NFKC is `True`, `False`
+  or `None` (`_PyPegen_new_identifier`, a ValueError, for a Name, an
+  attribute, a keyword, a parameter, a walrus target, a conversion); an
+  f-string conversion other than `s`, `r` or `a`, or not right after its
+  `!` (`_PyPegen_check_fstring_conversion`). The grammar alone refuses a
+  walrus whose target is not a name, a generator beside other call
+  arguments, `*` after `**` and a positional argument after a keyword in
+  a call, a starred group, `*` before `or` in a display, a parameter
+  without a default after one with one, a bare `*` with no keyword-only
+  parameter, `/` first or twice or after `*`, anything after `**k`, a
+  conversion after `=`, an empty field. `ast.parse` runs neither the
+  compiler nor the symbol table: a repeated keyword argument, a
+  repeated lambda parameter, a lone `*a`, `yield` and `await` outside a
+  function, `__debug__ :=` and `for *a in` are accepted.
+- Trees. Each node is an `ast` class with its span, its context (Load,
+  or Store for a walrus target and a comprehension's target, through
+  tuples, lists and starred), its identifier (Name, Attribute, `arg`,
+  `keyword`) and its children in field order; operators are nodes, as
+  `ast.walk` meets them. A span is a pair of code point offsets into
+  `Module::source`, `ast`'s `col_offset` and `end_col_offset` on one
+  line: a display, call or subscript spans its closing bracket, a
+  keyword its name or `**`, a generator argument its parentheses, an
+  Expr its expression, and a node whose first part is parenthesised
+  starts at the outermost `(` while that part keeps its own span
+  (`(x) * y`: BinOp 0 to 7, Name 1 to 2). An f-string's literal parts and a specification's
+  JoinedStr carry the string's or the field's span instead; operators,
+  `arguments` and `comprehension`, which `ast` gives no position, an
+  empty one. Adjacent strings are one Constant, or a
+  JoinedStr whose literal parts (FSTRING_MIDDLE decoded, plain strings,
+  a field's `=` text) are joined where adjacent and dropped where
+  empty; a field is a FormattedValue with its specification as a
+  JoinedStr.
+- The parser's stack. CPython counts every rule call against
+  `MAXSTACK` (6,000) and raises MemoryError ("Parser stack overflowed")
+  past it, which `check_claim` does not catch (below). The port counts
+  the calls on the path to each operand's atom, which the parser seeks
+  whatever token follows (an operand-less chain overflows where a named
+  leaf would): 31 from a statement to a name, one
+  per `-`, `+`, `~` and `not`, two per `**` and lambda body, one per
+  conditional `else` part, three into a comparison's right side, two
+  into a later `and` or `or` operand, two into a statement's later item,
+  minus five under a statement's `*`, one more for a number or `...`,
+  four for a string, seven for an f-string. These are exact: each chain's
+  deepest accepted and first refused source is pinned. Brackets are
+  bounded, not counted: the rule calls into a bracket's elements depend
+  on the element's place and on which alternative first parsed it (a
+  statement tries assignment targets first, which reach a leading
+  bracket's contents 19 calls sooner), so each bracket adds a range
+  (parenthesis 22 to 29, list and brace 23 to 29, call 24 to 27,
+  subscript 24 to 26, field 28 to 33, wider after the first comma, a
+  comprehension target -40 to 11 past its bracket, a specification's
+  field -10 to 9 past its field) and the first bracket lowers the least
+  estimate by 60. A source whose least estimate passes 6,000 is refused
+  as `stack` where the operand is sought, so nothing past it is read
+  (a million `-` cost what ten thousand do, past the tokens); one whose
+  most passes and least does not is declined (`stack bound`). Between
+  the two lie only sources thousands of calls deep inside brackets. The
+  first-pass actions come after the stack: a NAME whose identifier is a
+  constant overflows first, except at a slot `:=` may open, where
+  `assignment_expression` makes the identifier up to 22 calls above the
+  atom (that slot answers ValueError within 22 calls less than its least
+  estimate, else declines), and a lambda's parameter, whose identifier
+  is made one call past its slot's atom; the concatenation check follows
+  the strings' rules.
+- The second pass. A first pass that ends in SyntaxError (not
+  ValueError, which ends the parse) makes `_PyPegen_run_parser` read the
+  whole source again with its `invalid_*` rules, which go deeper (7
+  calls past a leaf on a `-` chain) and read past the first failure
+  (`[*` + `lambda: ` * 2,979 + `1]` fails at the first `lambda`; the
+  second pass reads the lambdas and overflows), and its MemoryError
+  stands. The port bounds any reading of each logical line by its tokens
+  (`Parser::reach`: 38 per open bracket, and since its opening the most
+  each prefix, operator and keyword may add, nothing taken off before
+  the bracket closes) and declines (`stack bound`) a refusal whose bound
+  with 20 calls more passes 6,000. Below that the refusal stands
+  (`-` * 5,902 + `x $` is SyntaxError; 5,963 MemoryError). Two error
+  rules nest on a flat line: `invalid_legacy_expression`
+  (`NAME !'(' star_expressions`) reads the rest of the bracket or line
+  inside every expression that opens with a NAME a possible operand
+  follows, six calls deeper each (`x + x, ` * 994 + `x $` raises
+  MemoryError, 993 SyntaxError), and `invalid_arithmetic` and
+  `invalid_factor` read the inversion after an arithmetic operator's
+  `not` eleven calls deeper (`x` + ` + not x` * 543 raises MemoryError).
+  The bound counts six for every NAME after a token an expression may
+  follow (a bracket, `,`, `=`, `:`, `:=`, `else`, `yield`, `from`, `for`,
+  a prefix `*` or `**`) that a possible operand other than `(` follows,
+  kept to the bracket's or line's end, and eleven for every `not` after
+  an arithmetic operator; where such a NAME does not open an expression
+  the rule takes it, the bound counts more than the parser goes, and a
+  line of about a thousand such elements is declined below the
+  reference's edge.
+- `ast2obj`'s depth. `ast.parse` converts the tree with a recursion check
+  against `Py_C_RECURSION_LIMIT` (10,000 on unix, 3,000 on Windows x64,
+  1,000 on Windows arm64: `C_RECURSION_LIMIT` by `cfg`, the rule
+  `recursion_answer(depth, limit)` tested at all three) from the C depth
+  its caller already holds: 3 when a script calls it, 30 under pytest
+  (the interpreter's last converted sum is 9,995 terms from a script and
+  9,967 under pytest). A left-nested chain
+  (`x+x+...`, `x.a.a...`) reaches it long before the parser's stack: a
+  tree deeper than the limit less 3 is refused as `recursion`, one within
+  100 of that is declined (`recursion bound`), since a deeper caller
+  (an asyncio server's) starts further down.
+- Statements. A logical line opening with a statement keyword or `@`, or
+  holding outside brackets `;`, `=` or an augmented assignment, or a `:`
+  no `lambda` before it takes, is declined (`statement`) where every
+  line before it parses: unit 5c owns statements. `match`, `case` and
+  `type` statements hold such a `:` or `=`, so `match(x)` stays an
+  expression. INDENT and DEDENT refuse, as an unexpected indent does.
+- Entries for unit 5c: `Parser::new(&Module)`, `star_expressions` and
+  `expression` (named or not), each reading from the position to the
+  first token it cannot use; `statement_line`.
+
+Reference finding (not a defect of the port): a source nested past the
+parser's stack makes `ast.parse` raise MemoryError, which
+`check_claim` (`claims.py` 671-677) does not catch with SyntaxError,
+ValueError and RecursionError, so the reference raises out of
+`check_claim` for such a file (`-` * 5970 + `x` is one). The port
+answers `Refused("stack")` so that unit 5d can reproduce that, and
+declines where it cannot tell MemoryError from another answer.
+
+Stated difference: the port reads every token before the grammar, and
+the reference's parser drives its tokenizer, reading a token only when
+a rule asks for it. A tokenizer refusal later in the source therefore
+comes first in the port where the reference's parser overflows before
+reaching it: `[a, ` * 201 + `x` + `]` * 201 is refused as `too many
+nested parentheses` (the reference raises MemoryError inside the 200th
+bracket), `-` * 5,970 + `x '` as `unterminated string` and `-` * 5,970
++ `x)` as `unmatched bracket`.
+`pysyntax_expr_kills::a_tokenizer_refusal_comes_first` pins all three. Only
+a source within the parser's stack bound and a tokenizer refusal is
+concerned; reading tokens on demand would need a streaming
+`module_lex`.
+
+No regular expression is involved: the reference is the C parser.
+
+Size: the module is about 2,000 lines of Rust source after `cargo fmt`,
+more than three times the 600 planned; the planned cut (comprehensions, lambda
+parameters and f-string fields as a unit 5b3) would have removed about
+450 and is not made.
+
+Fixtures: `tests/contract/gen_pysyntax_expr.py` writes
+`pysyntax_expr.jsonl` and `pysyntax_expr_posix.jsonl`, both gated on
+the Python release (under another interpreter each generator writes the
+header alone). The second holds the rows whose answer follows the C
+recursion limit (a source the parser reads into a tree deeper than
+Windows' `ast2obj` converts, and the sums near the limit), is POSIX
+only (`golden_pysyntax_expr_not_posix` records the gap on Windows) and
+its generator declines on a host whose limit is not 10,000; the first
+holds every other row, which every host answers alike. A row holds the
+source, the class `ast.parse` raises or `ok`, and for an accepted source
+the names `symbols._all_names` reads from expressions (Store Names,
+`arg`s, attributes, keywords) and the tree's shape in preorder by class
+(by length and SHA-256 past 300 characters), which holds every count
+`ast.walk` gives. The cases: every form above and its near misses, the
+statements the port declines (`want` `D`, by the generator's copy of
+`statement_line`), every `pysyntax_fstring.jsonl` case, raw f-strings
+with an upper-case `R`, each exact
+chain's boundary pair found by bisection over the interpreter, chains
+the first pass refuses (with no leaf, with a syntax error, an indent,
+`<>`, bytes beside str, a constant identifier, a lambda's constant
+parameter, a flat line of NAME-led elements, a chain of `+ not`) at the
+second pass's boundary pair (`band`), below it and where the first pass
+overflows, 30
+bracket stacks drawn by a fixed LCG around a `-` chain at their boundary
+pair (`band`: the port answers as the reference or declines) and 150
+calls either side (answered exactly), brackets
+to the tokenizer's 200, and for a sum and an attribute chain the port's
+last accepted, first declined and first refused depths of `ast2obj`
+(the interpreter's own edge moves with its caller, so it is not pinned). Two sweep rows pin by count and SHA-256 the answers to
+the 20,000 sources of `pysyntax_fstring.jsonl`'s sweep and to 20,000
+expressions drawn by a fixed LCG from 51 templates three deep, in
+parentheses, a third with one character inserted or deleted.
+`golden_pysyntax_expr` and `golden_pysyntax_expr_posix` check every
+row; `pysyntax_expr_kills` (each bracket's bounds by one, the stack
+before the leaf, the second pass, spans, the entries for 5c) and
+`pysyntax_expr_robustness` (each boundary on a 64 KiB thread, 100,000
+lines and a 1,000,000-term sum within ten times the time of a tenth, a
+million prefix operators within twice the time of ten thousand, token
+soups and every truncation of a long line without a panic) hold the
+rest.
+
+### Left for later units
+
+The XID tables (lane pyident) and the name table of `\N{...}` (unit
+pysyntax-names), which `lex` answers with `NeedsIdentTable` and
+`NeedsNameTable` until they are built. For `module_lex`: the statement
+grammar (5c, which calls `module_expr`'s entries and owns the lines it
+declines), and the reads of the parsed module by `check_claim` and
+`symbols` (5d, which also decides what `Refused("stack")` becomes, since
+the reference raises MemoryError out of `check_claim`).
+>>>>>>> wt/pyexpr
 
 What unit 5b2 must know of `pysyntax_fstring.jsonl`:
 
@@ -27511,8 +27748,8 @@ What the reference has and this build does not, by area:
 - Each hit's signals and drift report: `claims.py` past its leaves,
   its literal reader, its drift index, its module tokenizer (unit
   5a) and that tokenizer's f-string modes (unit 5b, first part) (the
-  declare-time oracle: the expression grammar 5b2, the statement grammar
-  5c and the binding read 5d),
+  declare-time oracle: the statement grammar 5c and the binding read
+  5d),
   `verify_candidates.py` past the validation of one candidate, its
   three extraction patterns (`_BACKTICK_RE`, `_BARE_RE`,
   `_DOMAIN_ROUTE_RE`) and the candidate scan (`_normalize_for_compare`

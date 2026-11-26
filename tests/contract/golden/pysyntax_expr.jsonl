@@ -1,0 +1,837 @@
+{"fixture":"pysyntax_expr","python":"3.13.13","rows":836}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module","t":""}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)))","t":"x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)))","t":"x\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)),Expr(Name(Load)))","t":"x\ny\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)))","t":"x  # c\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Name(Load),Load)))","t":"(x,\n y)\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(Name(Load),Add,Name(Load))))","t":"x \\\n + y\n"}
+{"parse":"IndentationError","t":"  x\n"}
+{"parse":"IndentationError","t":"x\n  y\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"1"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"1.5"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"1j"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"0x1f"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"'s'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"b'b'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"'a' 'b'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"u'a' 'b'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"b'a' b'b'"}
+{"parse":"SyntaxError","t":"b'a' 'b'"}
+{"parse":"SyntaxError","t":"'a' b'b'"}
+{"parse":"SyntaxError","t":"b'a' f'{x}'"}
+{"parse":"SyntaxError","t":"'a' f'{x}' b'c'"}
+{"parse":"SyntaxError","t":"f'{x}' b''"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"rb'a' Rb'b'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"..."}
+{"facts":[[],[],["__class__"],[]],"parse":"ok","shape":"Module(Expr(Attribute(Constant,Load)))","t":"....__class__"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"True"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"False"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"None"}
+{"facts":[[],[],["x"],[]],"parse":"ok","shape":"Module(Expr(Attribute(Constant,Load)))","t":"True.x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Constant)))","t":"None()"}
+{"facts":[[],[],["y"],[]],"parse":"ok","shape":"Module(Expr(Attribute(Name(Load),Load)))","t":"x.y"}
+{"facts":[[],[],["y","z"],[]],"parse":"ok","shape":"Module(Expr(Attribute(Attribute(Name(Load),Load),Load)))","t":"x.y.z"}
+{"parse":"SyntaxError","t":"x.True"}
+{"facts":[[],[],["match"],[]],"parse":"ok","shape":"Module(Expr(Attribute(Name(Load),Load)))","t":"x.match"}
+{"facts":[[],[],["y"],[]],"parse":"ok","shape":"Module(Expr(Attribute(Name(Load),Load)))","t":"x .y"}
+{"parse":"SyntaxError","t":"x.\ny"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load))))","t":"f()"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))))","t":"f(x)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))))","t":"f(x,)"}
+{"parse":"SyntaxError","t":"f(,)"}
+{"parse":"SyntaxError","t":"f(x,,)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Call(Name(Load),Name(Load)),Name(Load))))","t":"f(x)(y)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Call(Name(Load),Name(Load)),Name(Load),Load)))","t":"f(x)[y]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Name(Load),Load)))","t":"x[y]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Name(Load),Name(Load),Load),Load)))","t":"x[y, z]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Name(Load),Load),Load)))","t":"x[y,]"}
+{"parse":"SyntaxError","t":"x[]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice,Load)))","t":"x[:]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice,Load)))","t":"x[::]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice(Constant,Constant),Load)))","t":"x[1:2]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice(Constant,Constant,Constant),Load)))","t":"x[1:2:3]"}
+{"parse":"SyntaxError","t":"x[1:2:3:4]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Slice,Slice,Load),Load)))","t":"x[:, :]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Slice(Constant,Constant),Constant,Load),Load)))","t":"x[1:2, 3]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Starred(Name(Load),Load),Load),Load)))","t":"x[*a]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Starred(Name(Load),Load),Name(Load),Load),Load)))","t":"x[*a, b]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Slice(Name(Load),Name(Load)),Starred(Name(Load),Load),Load),Load)))","t":"x[a:b, *c]"}
+{"parse":"SyntaxError","t":"x[*a:b]"}
+{"facts":[["a"],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),NamedExpr(Name(Store),Constant),Load)))","t":"x[a:=1]"}
+{"parse":"SyntaxError","t":"x[a:b:=1]"}
+{"facts":[["b"],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Name(Load),NamedExpr(Name(Store),Constant),Load),Load)))","t":"x[a, b:=1]"}
+{"facts":[["a"],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice(NamedExpr(Name(Store),Constant),Constant),Load)))","t":"x[(a:=1):2]"}
+{"parse":"SyntaxError","t":"x[a:=1:2]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Constant,Load)))","t":"x[...]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Lambda(arguments,Constant),Load)))","t":"x[lambda: 1]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice(Name(Load),Lambda(arguments,Name(Load))),Load)))","t":"x[a:lambda: b]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Tuple(Starred(BoolOp(Or,Name(Load),Name(Load)),Load),Load),Load)))","t":"x[*a or b]"}
+{"facts":[[],[],[],["a"]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),keyword(Constant))))","t":"f(a=1)"}
+{"facts":[[],[],[],["a"]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),keyword(Constant),keyword(Constant))))","t":"f(a=1, a=2)"}
+{"facts":[[],[],[],["b"]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load),keyword(Constant))))","t":"f(a, b=1)"}
+{"parse":"SyntaxError","t":"f(a=1, b)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Starred(Name(Load),Load))))","t":"f(*a)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),keyword(Name(Load)))))","t":"f(**a)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Starred(Name(Load),Load),Name(Load))))","t":"f(*a, b)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load),Starred(Name(Load),Load),Name(Load))))","t":"f(a, *b, c)"}
+{"facts":[[],[],[],["a"]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Starred(Name(Load),Load),keyword(Constant))))","t":"f(a=1, *b)"}
+{"parse":"SyntaxError","t":"f(a=1, *b, c)"}
+{"facts":[[],[],[],["b"]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),keyword(Name(Load)),keyword(Constant))))","t":"f(**a, b=1)"}
+{"parse":"SyntaxError","t":"f(**a, *b)"}
+{"parse":"SyntaxError","t":"f(**a, b)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),keyword(Name(Load)),keyword(Name(Load)))))","t":"f(**a, **b)"}
+{"facts":[[],[],[],["d"]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load),Starred(Name(Load),Load),keyword(Name(Load)),keyword(Constant))))","t":"f(a, *b, **c, d=1)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Starred(BoolOp(Or,Name(Load),Name(Load)),Load))))","t":"f(*a or b)"}
+{"facts":[["a"],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),NamedExpr(Name(Store),Constant))))","t":"f(a:=1)"}
+{"parse":"SyntaxError","t":"f(a=b:=1)"}
+{"facts":[["b"],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load),NamedExpr(Name(Store),Constant))))","t":"f(a, b:=1)"}
+{"parse":"SyntaxError","t":"f(True=1)"}
+{"parse":"SyntaxError","t":"f(x.y=1)"}
+{"parse":"SyntaxError","t":"f((a)=1)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Compare(Name(Load),Eq,Constant))))","t":"f(a==1)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Lambda(arguments,Name(Load)))))","t":"f(lambda: x)"}
+{"parse":"SyntaxError","t":"f(*)"}
+{"parse":"SyntaxError","t":"f(**)"}
+{"parse":"SyntaxError","t":"f(a=)"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load))))))","t":"f(x for x in y)"}
+{"parse":"SyntaxError","t":"f(x for x in y, 1)"}
+{"parse":"SyntaxError","t":"f(x for x in y,)"}
+{"parse":"SyntaxError","t":"f(1, x for x in y)"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load))),Constant)))","t":"f((x for x in y), 1)"}
+{"parse":"SyntaxError","t":"f(*x for x in y)"}
+{"parse":"SyntaxError","t":"f(a=1 for x in y)"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Call(Name(Load),GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load)))),Name(Load))))","t":"f(x for x in y)(z)"}
+{"facts":[["x","y"],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),GeneratorExp(NamedExpr(Name(Store),Constant),comprehension(Name(Store),Name(Load))))))","t":"f(x := 1 for y in z)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(UnaryOp(USub,Name(Load))))","t":"-x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(UnaryOp(UAdd,Name(Load))))","t":"+x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(UnaryOp(Invert,Name(Load))))","t":"~x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(UnaryOp(Not,Name(Load))))","t":"not x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(UnaryOp(Not,UnaryOp(Not,Name(Load)))))","t":"not not x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(UnaryOp(USub,UnaryOp(USub,Name(Load)))))","t":"--x"}
+{"parse":"SyntaxError","t":"-not x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(UnaryOp(Not,UnaryOp(USub,Name(Load)))))","t":"not -x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(UnaryOp(USub,Await(Name(Load)))))","t":"- await x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Await(Name(Load))))","t":"await x"}
+{"parse":"SyntaxError","t":"await -x"}
+{"parse":"SyntaxError","t":"await await x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(Await(Name(Load)),Pow,Constant)))","t":"await x ** 2"}
+{"facts":[[],[],["y"],[]],"parse":"ok","shape":"Module(Expr(Await(Call(Attribute(Name(Load),Load)))))","t":"await x.y()"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(Name(Load),Pow,BinOp(Name(Load),Pow,Name(Load)))))","t":"x ** y ** z"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(UnaryOp(USub,BinOp(Name(Load),Pow,UnaryOp(USub,Name(Load))))))","t":"-x ** -y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(Name(Load),Pow,UnaryOp(USub,Name(Load)))))","t":"x ** -y"}
+{"parse":"SyntaxError","t":"x ** not y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(Name(Load),Add,BinOp(Name(Load),Mult,Name(Load)))))","t":"x + y * z"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(BinOp(Name(Load),Mult,Name(Load)),Add,Name(Load))))","t":"x * y + z"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(BinOp(Name(Load),Add,Name(Load)),Mult,Name(Load))))","t":"(x + y) * z"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(BinOp(Name(Load),Sub,Name(Load)),Sub,Name(Load))))","t":"x - y - z"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(Name(Load),Sub,BinOp(Name(Load),Sub,Name(Load)))))","t":"x - (y - z)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":{"h":"f165d7f8a06ee2e6f7b8b0bc0dabb215d735f02a41b55193ed9de305ab344fe6","n":312},"t":"x | y ^ z & w << v >> u + t - s * r / q // p % o @ n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(Name(Load),FloorDiv,Name(Load))))","t":"x // y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(Name(Load),MatMult,Name(Load))))","t":"x @ y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Compare(Name(Load),Lt,Name(Load))))","t":"x < y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Compare(Name(Load),Lt,Lt,Name(Load),Name(Load))))","t":"x < y < z"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Compare(Name(Load),Lt,Eq,Gt,Name(Load),Name(Load),Name(Load))))","t":"x < y == z > w"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Compare(Name(Load),NotIn,Name(Load))))","t":"x not in y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Compare(Name(Load),IsNot,Name(Load))))","t":"x is not y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Compare(Name(Load),Is,Name(Load))))","t":"x is y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Compare(Name(Load),In,Name(Load))))","t":"x in y"}
+{"parse":"SyntaxError","t":"x not y"}
+{"parse":"SyntaxError","t":"x is not not y"}
+{"parse":"SyntaxError","t":"x in not y"}
+{"parse":"SyntaxError","t":"x < not y"}
+{"parse":"SyntaxError","t":"x <> y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Compare(Name(Load),NotEq,Name(Load))))","t":"x != y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(UnaryOp(Not,Compare(Name(Load),Eq,Name(Load)))))","t":"not x == y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(UnaryOp(Not,Compare(Name(Load),In,Name(Load)))))","t":"not x in y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BoolOp(And,Name(Load),Name(Load))))","t":"x and y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BoolOp(And,Name(Load),Name(Load),Name(Load))))","t":"x and y and z"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BoolOp(Or,Name(Load),BoolOp(And,Name(Load),Name(Load)))))","t":"x or y and z"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BoolOp(Or,BoolOp(And,Name(Load),Name(Load)),Name(Load))))","t":"x and y or z"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BoolOp(And,Name(Load),BoolOp(And,Name(Load),Name(Load)))))","t":"x and (y and z)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BoolOp(And,Name(Load),UnaryOp(Not,Name(Load)))))","t":"x and not y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BoolOp(Or,Name(Load),UnaryOp(Not,Name(Load)))))","t":"x or not y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(IfExp(Name(Load),Name(Load),Name(Load))))","t":"x if y else z"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(IfExp(Name(Load),Name(Load),IfExp(Name(Load),Name(Load),Name(Load)))))","t":"x if y else z if w else v"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(IfExp(Name(Load),IfExp(Name(Load),Name(Load),Name(Load)),Name(Load))))","t":"(x if y else z) if w else v"}
+{"parse":"SyntaxError","t":"x if y if z else w else v"}
+{"parse":"SyntaxError","t":"x if y"}
+{"parse":"SyntaxError","t":"x if lambda: y else z"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(IfExp(Name(Load),Name(Load),Lambda(arguments,Name(Load)))))","t":"x if y else lambda: z"}
+{"facts":[["y"],[],[],[]],"parse":"ok","shape":"Module(Expr(IfExp(NamedExpr(Name(Store),Constant),Name(Load),Name(Load))))","t":"x if (y := 1) else z"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments,Name(Load))))","t":"lambda: x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments,IfExp(Name(Load),Name(Load),Name(Load)))))","t":"lambda: x if y else z"}
+{"facts":[[],["x"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Name(Load))))","t":"lambda x: x"}
+{"facts":[[],["x","y"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg),Name(Load))))","t":"lambda x, y: x"}
+{"facts":[[],["x"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,Constant),Name(Load))))","t":"lambda x=1: x"}
+{"facts":[[],["x","y"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg,Constant),Name(Load))))","t":"lambda x, y=1: x"}
+{"parse":"SyntaxError","t":"lambda x=1, y: x"}
+{"facts":[[],["a"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Name(Load))))","t":"lambda *a: a"}
+{"facts":[[],["k"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Name(Load))))","t":"lambda **k: k"}
+{"facts":[[],["a","k"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg),Constant)))","t":"lambda *a, **k: 0"}
+{"facts":[[],["a"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Name(Load))))","t":"lambda *, a: a"}
+{"parse":"SyntaxError","t":"lambda *: 0"}
+{"parse":"SyntaxError","t":"lambda *,: 0"}
+{"facts":[[],["a"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Constant)))","t":"lambda a, /: 0"}
+{"parse":"SyntaxError","t":"lambda /: 0"}
+{"facts":[[],["a","b"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg),Constant)))","t":"lambda a, /, b: 0"}
+{"parse":"SyntaxError","t":"lambda a=1, /, b: 0"}
+{"facts":[[],["a","b"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg,Constant,Constant),Constant)))","t":"lambda a=1, /, b=2: 0"}
+{"parse":"SyntaxError","t":"lambda *a=1: 0"}
+{"parse":"SyntaxError","t":"lambda **k=1: 0"}
+{"parse":"SyntaxError","t":"lambda **k, a: 0"}
+{"facts":[[],["k"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Constant)))","t":"lambda **k,: 0"}
+{"facts":[[],["a","b","c"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg,arg),Constant)))","t":"lambda a, /, b, *, c: 0"}
+{"parse":"SyntaxError","t":"lambda a, *, /: 0"}
+{"parse":"SyntaxError","t":"lambda a, /, /: 0"}
+{"parse":"SyntaxError","t":"lambda *a, *b: 0"}
+{"facts":[[],["a","b"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg),Constant)))","t":"lambda *a, **b, : 0"}
+{"facts":[[],["a","b","c","d"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg,arg,arg,Constant),Constant)))","t":"lambda a, *b, c=1, d: 0"}
+{"facts":[[],["a","b","c","d","e"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg,arg,arg,Constant,arg,Constant),Tuple(Name(Load),Name(Load),Load))))","t":"lambda a=1, *b, c, d=2, **e: (a, b)"}
+{"facts":[[],["a"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg),Constant)))","t":"lambda a, a: 0"}
+{"parse":"SyntaxError","t":"lambda ,: 0"}
+{"facts":[[],["a"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg),Constant)))","t":"lambda a,: 0"}
+{"parse":"SyntaxError","t":"lambda a b: 0"}
+{"parse":"SyntaxError","t":"lambda (a): 0"}
+{"parse":"SyntaxError","t":"lambda a=: 0"}
+{"parse":"SyntaxError","t":"lambda *, **k: 0"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments,Yield)))","t":"lambda: (yield)"}
+{"parse":"SyntaxError","t":"lambda: yield"}
+{"parse":"SyntaxError","t":"lambda x=yield: 0"}
+{"parse":"SyntaxError","t":"lambda: x := 1"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments,Lambda(arguments,Name(Load)))))","t":"lambda: lambda: x"}
+{"facts":[[],["a","b"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,Lambda(arguments(arg,Constant),Name(Load))),Name(Load))))","t":"lambda a=lambda b=1: b: a"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)))","t":"(x)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Load)))","t":"(x,)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Name(Load),Load)))","t":"(x, y)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Load)))","t":"()"}
+{"parse":"SyntaxError","t":"(,)"}
+{"parse":"SyntaxError","t":"(*x)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Starred(Name(Load),Load),Load)))","t":"(*x,)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Starred(Name(Load),Load),Name(Load),Load)))","t":"(*x, y)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)))","t":"((x))"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(NamedExpr(Name(Store),Constant)))","t":"(x := 1)"}
+{"parse":"SyntaxError","t":"(x.y := 1)"}
+{"parse":"SyntaxError","t":"((x) := 1)"}
+{"parse":"SyntaxError","t":"(x := y := 1)"}
+{"facts":[["x","y"],[],[],[]],"parse":"ok","shape":"Module(Expr(NamedExpr(Name(Store),NamedExpr(Name(Store),Constant))))","t":"(x := (y := 1))"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(NamedExpr(Name(Store),Constant),Name(Load),Load)))","t":"(x := 1, y)"}
+{"parse":"SyntaxError","t":"x := 1"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(NamedExpr(Name(Store),IfExp(Name(Load),Constant,Name(Load)))))","t":"(x := 1 if y else z)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments,Constant)))","t":"(lambda: 1)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Yield))","t":"(yield)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Yield(Name(Load))))","t":"(yield x)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Yield(Tuple(Name(Load),Name(Load),Load))))","t":"(yield x, y)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Yield(Tuple(Starred(Name(Load),Load),Name(Load),Load))))","t":"(yield *x, y)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Yield(Starred(Name(Load),Load))))","t":"(yield *x)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(YieldFrom(Name(Load))))","t":"(yield from x)"}
+{"parse":"SyntaxError","t":"(yield from x, y)"}
+{"parse":"SyntaxError","t":"(yield from)"}
+{"parse":"SyntaxError","t":"(yield, 1)"}
+{"parse":"SyntaxError","t":"(yield yield)"}
+{"parse":"SyntaxError","t":"(yield x for x in y)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Yield,Constant,Load)))","t":"((yield), 1)"}
+{"parse":"SyntaxError","t":"[yield]"}
+{"parse":"SyntaxError","t":"f(yield)"}
+{"facts":[[],[],["x"],[]],"parse":"ok","shape":"Module(Expr(Attribute(Yield,Load)))","t":"(yield).x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(Yield,Add,Constant)))","t":"(yield) + 1"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(List(Name(Load),Load)))","t":"[x]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(List(Load)))","t":"[]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(List(Name(Load),Name(Load),Load)))","t":"[x, y,]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(List(Starred(Name(Load),Load),Starred(Name(Load),Load),Name(Load),Load)))","t":"[*x, *y, z]"}
+{"parse":"SyntaxError","t":"[*x or y]"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(List(NamedExpr(Name(Store),Constant),Load)))","t":"[x := 1]"}
+{"parse":"SyntaxError","t":"[,]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Dict))","t":"{}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Set(Name(Load))))","t":"{x}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Set(Name(Load),Name(Load))))","t":"{x, y}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Set(Starred(Name(Load),Load),Name(Load))))","t":"{*x, y}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Dict(Name(Load),Name(Load))))","t":"{x: y}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Dict(Name(Load),Name(Load),Name(Load),Name(Load))))","t":"{x: y, z: w}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Dict(Name(Load))))","t":"{**x}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Dict(Name(Load),Name(Load),Name(Load))))","t":"{**x, y: z}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Dict(Name(Load),Name(Load),Name(Load))))","t":"{y: z, **x}"}
+{"parse":"SyntaxError","t":"{x, y: z}"}
+{"parse":"SyntaxError","t":"{x: y, z}"}
+{"parse":"SyntaxError","t":"{**x or y}"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(Set(NamedExpr(Name(Store),Constant))))","t":"{x := 1}"}
+{"parse":"SyntaxError","t":"{x: y := 1}"}
+{"parse":"SyntaxError","t":"{x := 1: y}"}
+{"parse":"SyntaxError","t":"{*x: y}"}
+{"parse":"SyntaxError","t":"{x: *y}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Set(Lambda(arguments,Constant))))","t":"{lambda: 1}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Dict(Lambda(arguments,Constant),Constant)))","t":"{lambda: 1: 2}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Dict(Name(Load),Lambda(arguments,Name(Load)))))","t":"{x: lambda: y}"}
+{"parse":"SyntaxError","t":"{**x, y}"}
+{"parse":"SyntaxError","t":"{x:}"}
+{"parse":"SyntaxError","t":"{:x}"}
+{"parse":"SyntaxError","t":"{,}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Set(Name(Load))))","t":"{x,}"}
+{"parse":"SyntaxError","t":"{**}"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load)))))","t":"[x for x in y]"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load),Name(Load)))))","t":"[x for x in y if z]"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load),Name(Load),Name(Load)))))","t":"[x for x in y if z if w]"}
+{"facts":[["x","z"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load)),comprehension(Name(Store),Name(Load)))))","t":"[x for x in y for z in w]"}
+{"facts":[["w","x"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load),Name(Load)),comprehension(Name(Store),Name(Load),Name(Load)))))","t":"[x for x in y if z for w in v if u]"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load)))))","t":"[x async for x in y]"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load),Await(Name(Load))))))","t":"[x for x in y if await z]"}
+{"parse":"SyntaxError","t":"[x async x in y]"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Tuple(Name(Store),Store),Name(Load)))))","t":"[x for x, in y]"}
+{"facts":[["x","y"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Tuple(Name(Store),Name(Store),Store),Name(Load)))))","t":"[x for x, y in z]"}
+{"facts":[["x","y"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Tuple(Starred(Name(Store),Store),Name(Store),Store),Name(Load)))))","t":"[x for *x, y in z]"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Starred(Name(Store),Store),Name(Load)))))","t":"[x for *x in y]"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load)))))","t":"[x for (x) in y]"}
+{"facts":[["x","y"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Tuple(Name(Store),Name(Store),Store),Name(Load)))))","t":"[x for (x, y) in z]"}
+{"facts":[["x","y"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(List(Name(Store),Name(Store),Store),Name(Load)))))","t":"[x for [x, y] in z]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Tuple(Store),Name(Load)))))","t":"[x for () in y]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(List(Store),Name(Load)))))","t":"[x for [] in y]"}
+{"facts":[[],[],["y"],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Attribute(Name(Load),Store),Name(Load)))))","t":"[x for x.y in z]"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Subscript(Name(Load),Constant,Store),Name(Load)))))","t":"[x for x[0] in z]"}
+{"parse":"SyntaxError","t":"[x for f() in z]"}
+{"facts":[[],[],["real"],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Attribute(Constant,Store),Name(Load)))))","t":"[x for 1 .real in z]"}
+{"facts":[[],[],["y"],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Attribute(Name(Load),Store),Name(Load)))))","t":"[x for (x.y) in z]"}
+{"parse":"SyntaxError","t":"[x for x + y in z]"}
+{"parse":"SyntaxError","t":"[x for -x in y]"}
+{"parse":"SyntaxError","t":"[x for x in *y]"}
+{"parse":"SyntaxError","t":"[x for x in y, z]"}
+{"parse":"SyntaxError","t":"[x for x in lambda: y]"}
+{"parse":"SyntaxError","t":"[x for x in y if lambda: z]"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),BoolOp(Or,Name(Load),Name(Load))))))","t":"[x for x in y or z]"}
+{"parse":"SyntaxError","t":"[x for x in y if z else w]"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),Name(Load),BoolOp(Or,Name(Load),Name(Load))))))","t":"[x for x in y if z or w]"}
+{"facts":[["x","y"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(NamedExpr(Name(Store),Constant),comprehension(Name(Store),Name(Load)))))","t":"[x := 1 for y in z]"}
+{"facts":[["y","z"],[],[],[]],"parse":"ok","shape":"Module(Expr(ListComp(Name(Load),comprehension(Name(Store),NamedExpr(Name(Store),Name(Load))))))","t":"[x for y in (z := w)]"}
+{"parse":"SyntaxError","t":"[x for y in z := w]"}
+{"parse":"SyntaxError","t":"[x for y in z if w := v]"}
+{"parse":"SyntaxError","t":"[*x for x in y]"}
+{"parse":"SyntaxError","t":"[x, y for x in z]"}
+{"parse":"SyntaxError","t":"[x for x in y,]"}
+{"parse":"SyntaxError","t":"[x for x in]"}
+{"parse":"SyntaxError","t":"[x for in y]"}
+{"parse":"SyntaxError","t":"[x for]"}
+{"parse":"SyntaxError","t":"[x if y for z in w]"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load)))))","t":"(x for x in y)"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load),Name(Load)))))","t":"(x for x in y if z)"}
+{"parse":"SyntaxError","t":"(x, y for x in z)"}
+{"parse":"SyntaxError","t":"(*x for x in y)"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(SetComp(Name(Load),comprehension(Name(Store),Name(Load)))))","t":"{x for x in y}"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(DictComp(Name(Load),Name(Load),comprehension(Name(Store),Name(Load)))))","t":"{x: y for x in z}"}
+{"parse":"SyntaxError","t":"{**x for x in y}"}
+{"facts":[["x","y"],[],[],[]],"parse":"ok","shape":"Module(Expr(DictComp(Name(Load),Name(Load),comprehension(Tuple(Name(Store),Name(Store),Store),Name(Load)))))","t":"{x: y for x, y in z}"}
+{"parse":"SyntaxError","t":"{x, y for x in z}"}
+{"parse":"SyntaxError","t":"{x: y, z: w for x in v}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr))","t":"f''"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x!r}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x!s:>3}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x!a}'"}
+{"parse":"SyntaxError","t":"f'{x!z}'"}
+{"parse":"SyntaxError","t":"f'{x!A}'"}
+{"parse":"SyntaxError","t":"f'{x!rr}'"}
+{"parse":"SyntaxError","t":"f'{x! r}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x !r}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x!r }'"}
+{"parse":"SyntaxError","t":"f'{x!}'"}
+{"parse":"SyntaxError","t":"f'{x!r!s}'"}
+{"parse":"SyntaxError","t":"f'{x!r=}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'{x=!r}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'{x=}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'{x = }'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x=:>3}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)))))))","t":"f'{x=!s:{y}}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr))))","t":"f'{x:}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load),JoinedStr))))","t":"f'{x=:}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr))))","t":"f'{x!r:}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)))))))","t":"f'{x:{y}}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant,FormattedValue(Name(Load)),Constant)))))","t":"f'{x:a{y}b}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant,FormattedValue(Name(Load)))))))","t":"f'{x:{y=}}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)))))))))","t":"f'{x:{y!r:{z}}}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)),Constant)))))","t":"f'{x:{y}!r}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)),Constant)))))","t":"f'{x!r:{y}=}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Dict))))))","t":"f'{x:{{}}}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)),Constant)),Constant)))","t":"f'{x:{y}{{z}}}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x:=1}'"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(NamedExpr(Name(Store),Constant)))))","t":"f'{(x:=1)}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Tuple(Name(Load),Load)))))","t":"f'{x,}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Tuple(Name(Load),Load)))))","t":"f'{x, }'"}
+{"parse":"SyntaxError","t":"f'{x,,}'"}
+{"parse":"SyntaxError","t":"f'{*x,,}'"}
+{"parse":"SyntaxError","t":"f'{x, ,}'"}
+{"parse":"SyntaxError","t":"f'{x,, y}'"}
+{"parse":"SyntaxError","t":"f'{x:{y,,}}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Tuple(Name(Load),Name(Load),Load)))))","t":"f'{x, y}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Starred(Name(Load),Load)))))","t":"f'{*x}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Tuple(Starred(Name(Load),Load),Load)))))","t":"f'{*x,}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Tuple(Starred(Name(Load),Load),Name(Load),Load)))))","t":"f'{*x, y}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Yield))))","t":"f'{yield}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Yield(Name(Load))))))","t":"f'{yield x}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(YieldFrom(Name(Load))))))","t":"f'{yield from x}'"}
+{"parse":"SyntaxError","t":"f'{lambda: 1}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Lambda(arguments,Constant)))))","t":"f'{(lambda: 1)}'"}
+{"parse":"SyntaxError","t":"f'{x for x in y}'"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load)))))))","t":"f'{(x for x in y)}'"}
+{"parse":"SyntaxError","t":"f'{}'"}
+{"parse":"SyntaxError","t":"f'{ }'"}
+{"parse":"SyntaxError","t":"f'{=}'"}
+{"parse":"SyntaxError","t":"f'{!r}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)),Constant,FormattedValue(Name(Load)))))","t":"f'{x}' 'a' f'b{y}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"'a' f'{x}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'' 'a'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr))","t":"f'' ''"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a{{b}}c'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)),Constant)))","t":"f'{x}{{'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'{{'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr))","t":"f'\\\n'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)),FormattedValue(Name(Load)))))","t":"f'{x}\\\n{y}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x:\\x41}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"rf'{x:\\x41}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)),Constant)))))","t":"f'{x:{y}\\x41}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)),Constant,FormattedValue(Name(Load)))))","t":"f'{x=}' f'{y=}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'a{x=}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)),FormattedValue(Name(Load)))))","t":"f'{x}' f'{y}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(JoinedStr(FormattedValue(Name(Load)))))))","t":"f'{f'{x}'}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(JoinedStr(FormattedValue(JoinedStr(FormattedValue(Name(Load)))))))))","t":"f'{f'{f'{x}'}'}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x!\uff52}'"}
+{"parse":"ValueError","t":"f'{x!\uff2e\uff4f\uff4e\uff45}'"}
+{"parse":"SyntaxError","t":"f'{x!if}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)))))))))","t":"f'{x:{y:{z}}}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)))","t":"\uff58"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)))","t":"\uff49\uff46"}
+{"parse":"SyntaxError","t":"\uff49\uff46 x"}
+{"parse":"ValueError","t":"\uff34\uff52\uff55\uff45"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)))","t":"\uff34\uff32\uff35\uff25"}
+{"parse":"ValueError","t":"\uff2e\uff4f\uff4e\uff45.a"}
+{"facts":[[],[],["if"],[]],"parse":"ok","shape":"Module(Expr(Attribute(Name(Load),Load)))","t":"x.\uff49\uff46"}
+{"parse":"ValueError","t":"x.\uff34\uff52\uff55\uff45"}
+{"parse":"ValueError","t":"f(\uff34\uff52\uff55\uff45=1)"}
+{"parse":"ValueError","t":"lambda \uff34\uff52\uff55\uff45: 0"}
+{"parse":"ValueError","t":"(\uff2e\uff4f\uff4e\uff45 := 1)"}
+{"parse":"ValueError","t":"[x for \uff26\uff41\uff4c\uff53\uff45 in y]"}
+{"parse":"ValueError","t":"f'{x!\uff34\uff52\uff55\uff45}'"}
+{"facts":[["__debug__"],[],[],[]],"parse":"ok","shape":"Module(Expr(NamedExpr(Name(Store),Constant)))","t":"(__debug__ := 1)"}
+{"parse":"SyntaxError","t":"x y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Load)))","t":"x,"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Name(Load),Load)))","t":"x, y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Name(Load),Load)))","t":"x, y,"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Starred(Name(Load),Load)))","t":"*x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Starred(Name(Load),Load),Load)))","t":"*x,"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Starred(Name(Load),Load),Starred(Name(Load),Load),Load)))","t":"*x, *y"}
+{"parse":"SyntaxError","t":"**x"}
+{"parse":"SyntaxError","t":"*x or y,"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Starred(BinOp(Name(Load),BitOr,Name(Load)),Load),Load)))","t":"*x | y,"}
+{"parse":"SyntaxError","t":"*not x,"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Starred(UnaryOp(USub,Name(Load)),Load),Load)))","t":"*-x,"}
+{"parse":"SyntaxError","t":"*x if y else z,"}
+{"parse":"SyntaxError","t":"1 if 2 else *x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Name(Load),Starred(Name(Load),Load),Load)))","t":"x, *y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Starred(Name(Load),Load),Name(Load),Load)))","t":"*x, y"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(Starred(Name(Load),Load),Name(Load),Load)))","t":"(*x, y)"}
+{"parse":"SyntaxError","t":"x $ y"}
+{"parse":"SyntaxError","t":"x ? y"}
+{"parse":"SyntaxError","t":"x ` y"}
+{"parse":"ok","t":"x;","want":"D"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))))","t":"match(x)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))))","t":"type(x)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Call(Name(Load),Name(Load))))","t":"case(x)"}
+{"parse":"SyntaxError","t":"match x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)))","t":"_"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(BinOp(Name(Load),RShift,Name(Load)),Name(Load),Load)))","t":"print >> f, x"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)),Expr(Name(Load)))","t":"x\n\ny\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)),Expr(Name(Load)))","t":"x\n#c\ny\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Constant))","t":"'\\N{EM DASH}'"}
+{"parse":"SyntaxError","t":"x $\n'\\N{EM DASH}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"fR'''\\\n'''"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"Rf'\\\n{x}'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"RF'\\\n'"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"FR'{x:\\\n}'"}
+{"parse":"ok","t":"x = 1","want":"D"}
+{"parse":"ok","t":"x: int","want":"D"}
+{"parse":"ok","t":"x: int = 1","want":"D"}
+{"parse":"ok","t":"x += 1","want":"D"}
+{"parse":"ok","t":"x **= 2","want":"D"}
+{"parse":"ok","t":"x; y","want":"D"}
+{"parse":"ok","t":"x;","want":"D"}
+{"parse":"ok","t":"del x","want":"D"}
+{"parse":"ok","t":"pass","want":"D"}
+{"parse":"ok","t":"yield x","want":"D"}
+{"parse":"ok","t":"yield","want":"D"}
+{"parse":"ok","t":"if x: pass","want":"D"}
+{"parse":"ok","t":"if x:\n    y\n","want":"D"}
+{"parse":"ok","t":"for x in y: pass","want":"D"}
+{"parse":"ok","t":"@d\ndef f(): pass","want":"D"}
+{"parse":"ok","t":"import x","want":"D"}
+{"parse":"ok","t":"from x import y","want":"D"}
+{"parse":"ok","t":"async def f(): pass","want":"D"}
+{"parse":"ok","t":"match x:\n    case 1: pass\n","want":"D"}
+{"parse":"ok","t":"type X = int","want":"D"}
+{"parse":"ok","t":"x = lambda a=1: a","want":"D"}
+{"facts":[[],["a"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,Constant),Name(Load))))","t":"lambda a=1: a"}
+{"facts":[[],["a","b","c"],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments(arg,arg,Lambda(arguments(arg,Constant),Name(Load))),Name(Load))))","t":"lambda a, b=lambda c=1: c: b"}
+{"parse":"ok","t":"x\ny = 1\n","want":"D"}
+{"parse":"SyntaxError","t":"x +\ny = 1\n"}
+{"parse":"SyntaxError","t":"x = 1\nx +\n","want":"D"}
+{"parse":"ok","t":"(x) = 1","want":"D"}
+{"parse":"ok","t":"x[y] = z","want":"D"}
+{"parse":"SyntaxError","t":"f(x) = 1","want":"D"}
+{"parse":"SyntaxError","t":"x + 1 = 2","want":"D"}
+{"parse":"SyntaxError","t":"x := 1\ny = 2\n"}
+{"parse":"ok","t":"print(x) # c\nreturn\n","want":"D"}
+{"parse":"SyntaxError","t":"x if y else z = w","want":"D"}
+{"parse":"SyntaxError","t":"f'{x:y}' = 1","want":"D"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Dict(Name(Load),Name(Load))))","t":"{x: y}"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Subscript(Name(Load),Slice(Name(Load),Name(Load)),Load)))","t":"x[a:b]"}
+{"parse":"SyntaxError","t":"lambda: x, y = 1","want":"D"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(Lambda(arguments,NamedExpr(Name(Store),Constant))))","t":"lambda: (x := 1)"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"F'a'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"rf'a'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"Rf'a'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"fR'a'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"FR'a'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f\"a\"\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'''a\nb'''\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"rF\"\"\"a\n\"\"\"\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr))","t":"f''\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr))","t":"f\"\"\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr))","t":"f''''''\n"}
+{"parse":"SyntaxError","t":"f'''''''\n"}
+{"parse":"SyntaxError","t":"f'''a''''\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'''a'' '''\n"}
+{"parse":"SyntaxError","t":"fb'a'\n"}
+{"parse":"SyntaxError","t":"bf'a'\n"}
+{"parse":"SyntaxError","t":"uf'a'\n"}
+{"parse":"SyntaxError","t":"fu'a'\n"}
+{"parse":"SyntaxError","t":"frb'a'\n"}
+{"parse":"SyntaxError","t":"f 'a'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a' 'b' f'c'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a'\"b\"\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'{{'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'{{}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a{{b}}c'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'{{a'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)),Constant)))","t":"f'{{{x}}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'{{{{x'\n"}
+{"parse":"SyntaxError","t":"f'}'\n"}
+{"parse":"SyntaxError","t":"f'a}b'\n"}
+{"parse":"SyntaxError","t":"f'{'\n"}
+{"parse":"SyntaxError","t":"f'{x'\n"}
+{"parse":"SyntaxError","t":"f'{x}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)),Constant)))","t":"f'{x}}}'\n"}
+{"parse":"SyntaxError","t":"f'{}'\n"}
+{"parse":"SyntaxError","t":"f'{ }'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)),FormattedValue(Name(Load)))))","t":"f'{x}{y}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)),Constant,FormattedValue(Name(Load)),Constant)))","t":"f'a{x}b{y}c'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)),Constant)))","t":"f'{x}{{'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'{{{x}'\n"}
+{"parse":"SyntaxError","t":"f'{x:'}\n"}
+{"parse":"SyntaxError","t":"f'{x:'}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Constant))))","t":"f'{'a'}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{(x)}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(List(Name(Load),Load)))))","t":"f'{[x]}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'{{x: 1}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Dict(Name(Load),Constant)))))","t":"f'{ {x: 1} }'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Subscript(Dict(Name(Load),Constant),Name(Load),Load)))))","t":"f'{ {x: 1}[x] }'\n"}
+{"parse":"SyntaxError","t":"f'{(x}'\n"}
+{"parse":"SyntaxError","t":"f'{x)}'\n"}
+{"parse":"SyntaxError","t":"f'{x]}'\n"}
+{"parse":"SyntaxError","t":"f'{(x:y)}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Subscript(Name(Load),Slice(Constant,Constant),Load)))))","t":"f'{x[1:2]}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x:y}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x:=1}'\n"}
+{"facts":[["x"],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(NamedExpr(Name(Store),Constant)))))","t":"f'{(x:=1)}'\n"}
+{"parse":"SyntaxError","t":"f'{lambda x: 1}'\n"}
+{"facts":[[],["x"],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Lambda(arguments(arg),Constant)))))","t":"f'{(lambda x: 1)}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x!r}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x!s:>3}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Compare(Name(Load),NotEq,Name(Load))))))","t":"f'{x!=y}'\n"}
+{"parse":"SyntaxError","t":"f'{x!}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x !r}'\n"}
+{"parse":"SyntaxError","t":"f'{x!z}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'{x=}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'{x=!r}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x=:>3}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'{x = }'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Compare(Name(Load),Eq,Name(Load))))))","t":"f'{x==y}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)))))))","t":"f'{x:{y}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)),Constant,FormattedValue(Name(Load)))))))","t":"f'{x:{y}>{z}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant,FormattedValue(Name(Load)),Constant)))))","t":"f'{x:a{y}b}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Set(Name(Load))))))))","t":"f'{x:{{y}}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)),Constant)),Constant)))","t":"f'{x:{y}{{z}}}'\n"}
+{"parse":"SyntaxError","t":"f'{x:}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)))))))))","t":"f'{x:{y:{z}}}'\n"}
+{"parse":"SyntaxError","t":"f'{x:{y:{z:{w}}}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x:!r}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)))))))","t":"f'{x:{y!r}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x:a:b}'\n"}
+{"parse":"SyntaxError","t":"f'{x:a\nb}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'''{x:a\nb}'''\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load)),Constant)))))","t":"f'''{x:{y}\nb}'''\n"}
+{"parse":"SyntaxError","t":"f'{x:{y}\n}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Constant))))","t":"f'{\"a\"}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Constant))))","t":"f'{'a'}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Constant))))","t":"f'{'''a'''}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(JoinedStr(FormattedValue(Name(Load)))))))","t":"f'{f'{x}'}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(JoinedStr(FormattedValue(Name(Load)))))))","t":"f'{f\"{x}\"}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(JoinedStr(FormattedValue(JoinedStr(FormattedValue(Name(Load)))))))))","t":"f'{f'{f'{x}'}'}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Constant))))","t":"f\"{'}'}\"\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Constant))))","t":"f'{'}'}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Constant))))","t":"f'{\"'\"}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x\n}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{\nx}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'''{\nx\n}'''\n"}
+{"parse":"SyntaxError","t":"f'{x # c}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'''{x # c\n}'''\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'''{x # c}\n}'''\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x \\\n}'\n"}
+{"parse":"SyntaxError","t":"f'{x \\ }'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Constant),FormattedValue(Constant),FormattedValue(Constant),FormattedValue(Constant))))","t":"f'{1}{1.5}{0x1}{1j}'\n"}
+{"parse":"SyntaxError","t":"f'{1_}'\n"}
+{"parse":"SyntaxError","t":"f'{'\\x'}'\n"}
+{"parse":"SyntaxError","t":"f'{x}' y\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))),Expr(Name(Load)))","t":"f'{x}'\ny\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(JoinedStr(FormattedValue(Name(Load))),Add,JoinedStr(FormattedValue(Name(Load))))))","t":"f'{x}' + f'{y}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Tuple(JoinedStr(FormattedValue(Name(Load))),JoinedStr(FormattedValue(Name(Load))),Load)))","t":"(f'{x}',\n f'{y}')\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(List(JoinedStr(FormattedValue(Name(Load))),Load)))","t":"[f'{x\n}'\n]\n"}
+{"parse":"ok","t":"if x:\n    f'{y}'\n    z\n","want":"D"}
+{"parse":"ok","t":"if x:\n    f'''{y\n}'''\nz\n","want":"D"}
+{"parse":"IndentationError","t":"if x:\n    f'''a\nb'''\n  z\n"}
+{"parse":"IndentationError","t":"f'{x}'\n  y\n"}
+{"parse":"ok","t":"x = f'{y}' # c\n","want":"D"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)),FormattedValue(Name(Load)),Constant)))","t":"f'{x}' f'{y}' 'z'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(BinOp(JoinedStr(FormattedValue(Name(Load),JoinedStr(FormattedValue(Name(Load))))),Add,Constant)))","t":"f'{x:{y}}' + 1\n"}
+{"parse":"SyntaxError","t":"f'{lambda: 1}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Yield))))","t":"f'{yield}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Starred(Name(Load),Load)))))","t":"f'{*x}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Tuple(Name(Load),Name(Load),Load)))))","t":"f'{x,y}'\n"}
+{"parse":"SyntaxError","t":"f'{x for x in y}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'\\''\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'\\\"'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'''\\''''\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a\\n'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'a\\{x}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a\\}}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a\\{{'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'\\{x}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"rf'\\{x}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":[102,39,92,92,123,120,125,39,10]}
+{"parse":"SyntaxError","t":"f'\\N{DASH}'\n"}
+{"parse":"SyntaxError","t":"f'\\N{DASH}{x}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"rf'\\N{x}'\n"}
+{"parse":"SyntaxError","t":"f'\\N'\n"}
+{"parse":"SyntaxError","t":"f'\\N{'\n"}
+{"parse":"SyntaxError","t":"f'\\N{a}b}'\n"}
+{"parse":"SyntaxError","t":"f'\\x'\n"}
+{"parse":"SyntaxError","t":"f'\\x4'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)))))","t":"f'\\x41{x}'\n"}
+{"parse":"SyntaxError","t":"f'\\x4{x}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"rf'\\x'\n"}
+{"parse":"SyntaxError","t":"f'\\u12'\n"}
+{"parse":"SyntaxError","t":"f'\\U00110000'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'\\U0010ffff'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'\\q'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'\\\u00e9'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr))","t":"f'\\\n'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'a\\\nb'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'\\101'\n"}
+{"parse":"UnicodeDecodeError","t":"f'{x:\\x}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"rf'{x:\\x}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x:\\x41}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f'{x:\\}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load),JoinedStr(Constant,FormattedValue(Name(Load)))))))","t":"f'{x:\\{y}}'\n"}
+{"parse":"SyntaxError","t":"f'\\\n"}
+{"parse":"SyntaxError","t":"f'\\"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)),Constant)))","t":"f'\u00e9{x}\u20ac'\n"}
+{"parse":"SyntaxError","t":"f'a\n"}
+{"parse":"SyntaxError","t":"f'a"}
+{"parse":"SyntaxError","t":"f'{x}\n"}
+{"parse":"SyntaxError","t":"f'{x}"}
+{"parse":"SyntaxError","t":"f'{x"}
+{"parse":"SyntaxError","t":"f'{x\n"}
+{"parse":"SyntaxError","t":"f'''a\n"}
+{"parse":"SyntaxError","t":"f'''a"}
+{"parse":"SyntaxError","t":"f'''{x}\n"}
+{"parse":"SyntaxError","t":"f'''a''\n"}
+{"parse":"SyntaxError","t":"f'{x:a"}
+{"parse":"SyntaxError","t":"f'{x:a\n"}
+{"parse":"SyntaxError","t":"f'''{x:a"}
+{"parse":"SyntaxError","t":"x = (f'a\n)\n"}
+{"parse":"SyntaxError","t":"f'a\r\nb'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant)))","t":"f'''a\r\nb'''\r\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":"f'{x\r\n}'\r\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load),JoinedStr(Constant)))))","t":"f\"\"\"{x=:\n}\"\"\"\n"}
+{"parse":"UnicodeDecodeError","t":"Rf\"\"\"{x:\\x4\\}\"\"\"\n  x\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(JoinedStr(FormattedValue(Name(Load)))))))","t":"f'{f'{x}'}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(JoinedStr(FormattedValue(JoinedStr(FormattedValue(Name(Load)))))))))","t":"f'{f'{f'{x}'}'}'\n"}
+{"facts":[[],[],[],[]],"parse":"ok","shape":{"h":"fb3870c1c701fc4d5cb4e76b7593271ca475a126c9b06c185c94edb4223a16fa","n":4020},"t":{"r":[["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["x",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":{"h":"0fc24f4d6d2d04e39847ac3b9e4ef54283bd9be694c7a4d3fa2b35a5532e5af4","n":4047},"t":{"r":[["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["x",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["f",1],["'",1],["{",1],["x",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["}",1],["'",1],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":{"h":"fb3870c1c701fc4d5cb4e76b7593271ca475a126c9b06c185c94edb4223a16fa","n":4020},"t":{"r":[["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["x",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["f",1],["'",1],["{",1],["f",1],["\"",1],["{",1],["x",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["}",1],["\"",1],["}",1],["'",1],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":{"r":[["f",1],["'",1],["{",1],["(",199],["x",1],[")",199],["}",1],["'",1],["\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["f",1],["'",1],["{",1],["(",200],["x",1],[")",200],["}",1],["'",1],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":{"r":[["(",198],["f",1],["'",1],["{",1],["(",1],["x",1],[")",1],["}",1],["'",1],[")",198],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(FormattedValue(Name(Load)))))","t":{"r":[["(",199],["f",1],["'",1],["{",1],["x",1],["}",1],["'",1],[")",199],["\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["(",199],["f",1],["'",1],["{",1],["(",1],["x",1],[")",1],["}",1],["'",1],[")",199],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(JoinedStr(Constant,FormattedValue(Name(Load)),Constant)))","t":{"r":[["f",1],["'",1],["a",500],["{",1],["x",1],["}",201],["'",1],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":{"h":"1e199e579b111181ebe55e1de7ebe7fe326fc66b7d5ea575f360da1f60012ccc","n":5424},"t":{"r":[["f",1],["'",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["{",1],["x",1],["}",1],["'",1],["\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5970],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["+",5970],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["~",5970],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["not ",5970],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["lambda: ",2985],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["x if y else ",5970],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x",1],["**x",2985],["\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["*",1],["-",5975],["x,\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x, ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x < ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x or ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5969],["1\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5966],["'s'\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5963],["f'a'\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["lambda: ",1],["-",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x if y else ",1],["-",5969],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["not ",1],["-",5969],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x\n",1],["-",5970],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x and ",1],["not ",5968],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-x ** ",1990],["x\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["",1],["-",5903],["\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["",1],["-",5963],["\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["",1],["-",5964],["\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5970],["\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["",1],["-",5902],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["",1],["-",5962],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["",1],["-",5963],["x $\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5970],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["",1],["-",5902],["x x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["",1],["-",5962],["x x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["",1],["-",5963],["x x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5970],["x x\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["",1],["-",5902],["1 if\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["",1],["-",5962],["1 if\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["",1],["-",5963],["1 if\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5970],["1 if\n",1]]}}
+{"parse":"IndentationError","t":{"r":[["",1],["-",5902],["x\n  y\n",1]]}}
+{"band":true,"parse":"IndentationError","t":{"r":[["",1],["-",5962],["x\n  y\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["",1],["-",5963],["x\n  y\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5970],["x\n  y\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["",1],["-",5902],["x <> y\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["",1],["-",5962],["x <> y\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["",1],["-",5963],["x <> y\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5970],["x <> y\n",1]]}}
+{"parse":"ValueError","t":{"r":[["",1],["-",5909],["\uff34rue\n",1]]}}
+{"parse":"ValueError","t":{"r":[["",1],["-",5969],["\uff34rue\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5970],["\uff34rue\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["",1],["-",5905],["b'' 'a'\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["",1],["-",5965],["b'' 'a'\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["-",5966],["b'' 'a'\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["",1],["not ",5903],["\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["",1],["not ",5963],["\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["",1],["not ",5964],["\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["not ",5970],["\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["",1],["x if y else ",5903],["\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["",1],["x if y else ",5963],["\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["",1],["x if y else ",5964],["\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["x if y else ",5970],["\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["",1],["lambda: ",581],["\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["",1],["lambda: ",2981],["\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["",1],["lambda: ",2982],["\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["lambda: ",2985],["\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["x",1],["**x",2950],["**\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["x",1],["**x",2980],["**\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x",1],["**x",2981],["**\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x",1],["**x",2985],["**\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["(a.b := ",1],["-",5855],["1)\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["(a.b := ",1],["-",5955],["1)\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["(a.b := ",1],["-",5956],["1)\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["f(a=1, ",1],["-",5855],["b c)\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["f(a=1, ",1],["-",5955],["b c)\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["f(a=1, ",1],["-",5956],["b c)\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["[*",1],["lambda: ",578],["1]\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["[*",1],["lambda: ",2978],["1]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["[*",1],["lambda: ",2979],["1]\n",1]]}}
+{"parse":"ValueError","t":{"r":[["",1],["x if y else ",5908],["lambda \uff34rue: 1\n",1]]}}
+{"parse":"ValueError","t":{"r":[["",1],["x if y else ",5968],["lambda \uff34rue: 1\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["x if y else ",5969],["lambda \uff34rue: 1\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["",1],["x if y else ",5970],["lambda \uff34rue: 1\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["",1],["x + x, ",933],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["",1],["x + x, ",993],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["",1],["x + x, ",994],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["x",1],[" + not x",482],["\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["x",1],[" + not x",542],["\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x",1],[" + not x",543],["\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["a if b else (",1],["-",5941],["x)\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["a if b else (",1],["-",6091],["x)\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["f(a=await (x[:",1],["-",5910],["x]))\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["f(a=await (x[:",1],["-",6060],["x]))\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["(a := ",1],["-",5960],["x)\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["(a := ",1],["-",6110],["x)\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["[a for a in b if {**",1],["-",5937],["x}]\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["[a for a in b if {**",1],["-",6087],["x}]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["lambda a=lambda: (([a for a in b if ",1],["-",5875],["x]).z): b\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["lambda a=lambda: (([a for a in b if ",1],["-",6025],["x]).z): b\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["{({a: ",1],["-",5903],["x}).z}\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["{({a: ",1],["-",6053],["x}).z}\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["{a: {**f'{(yield ",1],["-",5875],["x)}'}}\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["{a: {**f'{(yield ",1],["-",6025],["x)}'}}\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["-(",1],["-",5941],["x)\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["-(",1],["-",6091],["x)\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x.y(",1],["-",5965],["x)\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x.y(",1],["-",6115],["x)\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["lambda a=[[a for a in b if ",1],["-",5904],["x]]: b\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["lambda a=[[a for a in b if ",1],["-",6054],["x]]: b\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["{",1],["-",5960],["x}\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["{",1],["-",6110],["x}\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["{-(",1],["-",5931],["x)}\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["{-(",1],["-",6081],["x)}\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["f\"{a:{f(a, f(a=[",1],["-",5868],["x for a in b]))}}\"\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["f\"{a:{f(a, f(a=[",1],["-",6018],["x for a in b]))}}\"\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["([a for a in ",1],["-",5961],["x]).z\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["([a for a in ",1],["-",6111],["x]).z\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["f'{[",1],["-",5927],["x for a in b]}'\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["f'{[",1],["-",6077],["x for a in b]}'\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["f\"{a:{await ((yield ",1],["-",5895],["x))}}\"\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["f\"{a:{await ((yield ",1],["-",6045],["x))}}\"\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["await (f\"{a:{{**",1],["-",5882],["x}}}\")\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["await (f\"{a:{{**",1],["-",6032],["x}}}\")\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["await (([a, ",1],["-",5884],["x]).z)\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["await (([a, ",1],["-",6034],["x]).z)\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["[",1],["-",5960],["x for a in b]\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["[",1],["-",6110],["x for a in b]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["x[a, ",1],["-",5962],["x]\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["x[a, ",1],["-",6112],["x]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["f(a=[a for x[(a := ",1],["-",5898],["x)] in b])\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["f(a=[a for x[(a := ",1],["-",6048],["x)] in b])\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["a if b else (x[f\"{a:{",1],["-",5880],["x}}\"])\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["a if b else (x[f\"{a:{",1],["-",6030],["x}}\"])\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["[a for a in ",1],["-",5962],["x]\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["[a for a in ",1],["-",6112],["x]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["[(a := ",1],["-",5931],["x) for a in b]\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["[(a := ",1],["-",6081],["x) for a in b]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["f((yield f(a if b else (",1],["-",5883],["x))))\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["f((yield f(a if b else (",1],["-",6033],["x))))\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["f'{[",1],["-",5927],["x for a in b]}'\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["f'{[",1],["-",6077],["x for a in b]}'\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["f(a, x[:lambda: (",1],["-",5907],["x)])\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["f(a, x[:lambda: (",1],["-",6057],["x)])\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["[a for a in b if f(f(*not (",1],["-",5880],["x)))]\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["[a for a in b if f(f(*not (",1],["-",6030],["x)))]\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["{a: await ([a for x[",1],["-",5897],["x] in b])}\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["{a: await ([a for x[",1],["-",6047],["x] in b])}\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["(yield ",1],["-",5960],["x)\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["(yield ",1],["-",6110],["x)\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)))","t":{"r":[["(",199],["x",1],[")",199],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":"Module(Expr(Name(Load)))","t":{"r":[["(",200],["x",1],[")",200],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":{"h":"48f96c99d3248d1b1040512372a46ce54c583416179bf0f50a52f5d15f31a98b","n":2213},"t":{"r":[["[",199],["x",1],["]",199],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":{"h":"f9da4a82c3eb9273e6c0972b221095ea9eba27afb208e6c9c0f8efb3b5dda233","n":2224},"t":{"r":[["[",200],["x",1],["]",200],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":{"h":"956fff080740038d6a31167cd9c428f4b6a56481aac892a420d24999701f4d50","n":3407},"t":{"r":[["f(",199],["x",1],[")",199],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":{"h":"f118aa8ef4362f4a225e2bf3632fafa63afc3fd5493e1652bca53f1e2aee8fdb","n":3424},"t":{"r":[["f(",200],["x",1],[")",200],["\n",1]]}}
+{"band":true,"facts":[[],[],[],[]],"parse":"ok","shape":{"h":"0455f5438fb73e7a54ec843b6da892dde614f9fec9530e8b0f9d44c171b921a3","n":4601},"t":{"r":[["(a, ",199],["x",1],[")",199],["\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["(a, ",200],["x",1],[")",200],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":{"h":"4e327eeafcd734f8060081345536c2a76e714a4aaf1a5937c15925007a245c0a","n":5397},"t":{"r":[["x[",199],["x",1],["]",199],["\n",1]]}}
+{"facts":[[],[],[],[]],"parse":"ok","shape":{"h":"a010a33c2bd2868cd47409e7d741eb13e4106e77621401b4869ccae74299bdf6","n":5424},"t":{"r":[["x[",200],["x",1],["]",200],["\n",1]]}}
+{"count":20000,"sha256":"c8399a7c7c29643b4961e3308668f231f2ba14f83e3e9c0518abb1fb898d3c93","sweep":"fstring_pieces"}
+{"count":20000,"sha256":"1f8c6e63c833cac8f36cc91ef7e6c6267a147e440be7526cc1099fc6c03f7dc0","sweep":"expr_templates"}
