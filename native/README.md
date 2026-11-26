@@ -147,11 +147,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `builder` | `builder.py`'s two pure schema scrubs: `_strip_titles`, `_fold_nullable` | `builder_schema.jsonl` |
 | `claims`, `claim_drift` | units 1 to 3 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`); `claim_drift`: `_Headers`, `build_binding_index`, `claim_level_drift`, the trait `LiteralLines` for the literal helpers | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl`, `claim_drift.jsonl`, `claim_drift_unicode.jsonl`, `claim_drift_python.jsonl` |
 | `symbols` | unit symcheck of `symbols.py`: the bounds (`_MAX_*`, `_FILE_SUFFIXES`), `SymbolCitation`, `SymbolDriftReport` (`missing`, `__bool__`, `to_dict`), `check_symbol_citations` over citations already parsed, `_tier`, `_live_root`, `_resolve_module`, `_module_bindings`; `ast.parse` and the name walks are a trait (`ModuleNames`) | `symbols.jsonl`, `symbols_platform.jsonl` |
-<<<<<<< HEAD
-| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII read since unit claims-6 (`verify_identifier` over the raw run, the parser's NFKC in `literal`). Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl` |
-=======
-| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII deferred. Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts. Unit pyexpr (claims-5b2): the expression grammar `ast.parse` reads over those tokens (`module_expr::parse_expression_module`, `Parser`): acceptance with the first pass's actions, the parser's stack limit and `ast2obj`'s depth, the node arena with the names `symbols._all_names` reads; statements declined | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl`, `pysyntax_expr.jsonl`, `pysyntax_expr_posix.jsonl` |
->>>>>>> wt/pyexpr
+| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII read since unit claims-6 (`verify_identifier` over the raw run, the parser's NFKC in `literal`). Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts. Unit pyexpr (claims-5b2): the expression grammar `ast.parse` reads over those tokens (`module_expr::parse_expression_module`, `Parser`): acceptance with the first pass's actions, the parser's stack limit and `ast2obj`'s depth, the node arena with the names `symbols._all_names` reads; statements declined | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl`, `pysyntax_expr.jsonl`, `pysyntax_expr_posix.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json`, `store_restore_lock_hold_python.json`, `store_restore_lock_python.json` (POSIX only) |
 | `store::returned` | `store_returned.py`'s backfill half on the writable store: `missing_links`, `returned_rows`, `backfill`, `ensure_backfilled` (`has_key` given, its log lines returned); `Store._put_relinked` as `store::writers::put_relinked`; the `returned_put` row a backfill appends (`Transaction::mutate_returned_put`) | `store_returned.jsonl`, `store_returned_posix.jsonl` (POSIX only) |
@@ -24327,16 +24323,10 @@ none edits another's.
 | --- | --- | --- | --- |
 | `lex` | the eval-mode tokenizer (`Parser/lexer/lexer.c`'s `tok_get_normal_mode`), the newline translation of `_PyTokenizer_FromString`, the string decoders (`_PyUnicode_DecodeUnicodeEscapeInternal`, `_PyBytes_DecodeEscape`) and the number readers (`parsenumber`, `int`'s 4,300-digit limit) | nothing | built (unit pylex) |
 | `literal` | the eval-mode parser over `lex`'s tokens, `literal_eval`'s evaluation and `claims._canonical_repr` | nothing | built (unit pylit) |
-<<<<<<< HEAD
-| `module_lex`, `fstring_lex` | the module-mode tokenizer for `ast.parse` at 672 (unit 5a) and its f-string modes (5b, first part); the expression grammar (5b2), the statement grammar (5c) and the top-level binding read (5d) follow | nothing | 5a built (unit pymodlex), 5b first part built (unit pyfstring) |
-| the XID tables | whether a name past ASCII is an identifier (`verify_identifier`) | Unicode tables (`unicode::xid`) | built (unit claims-6) |
-| `\N{...}` | the Unicode name table (`getcode`) | Unicode tables (`unicode::names`) | built (unit claims-6) |
-=======
 | `module_lex`, `fstring_lex` | the module-mode tokenizer for `ast.parse` at 672 (unit 5a) and its f-string modes (5b, first part); the statement grammar (5c) and the top-level binding read (5d) follow | nothing | 5a built (unit pymodlex), 5b first part built (unit pyfstring) |
 | `module_expr` | the expression grammar of `ast.parse` over those tokens (5b2): acceptance, the first pass's actions, the parser's stack limit, `ast2obj`'s depth, and the tree with the names `symbols._all_names` reads | the C recursion limit of the host's CPython build (a `cfg` constant) | built (unit pyexpr) |
-| the XID tables | whether a name past ASCII is an identifier | Unicode tables | lane pyident |
-| `\N{...}` | the Unicode name table | Unicode tables | unit pysyntax-names |
->>>>>>> wt/pyexpr
+| the XID tables | whether a name past ASCII is an identifier (`verify_identifier`) | Unicode tables (`unicode::xid`) | built (unit claims-6) |
+| `\N{...}` | the Unicode name table (`getcode`) | Unicode tables (`unicode::names`) | built (unit claims-6) |
 
 ### The tokenizer (`lex`)
 
@@ -24713,7 +24703,6 @@ fields, a megabyte of literal text and 200 nestings to 149 levels
 within ten times the time of a tenth, the deepest nesting on a 64 KiB
 thread, hostile shapes without a panic) hold the rest.
 
-<<<<<<< HEAD
 ### Names past ASCII and `\N{...}` (unit claims-6)
 
 Unit claims-6 closes the two declines `lex` answered. Reference: CPython
@@ -24833,15 +24822,6 @@ interpreter that writes them.
 Cost: the table compiles alone in about 0.03 s; the first lookup decodes
 it once.
 
-### Left for later units
-
-Unit 5d removes `LexError::NeedsIdentTable` and `NeedsNameTable`,
-`LiteralError`'s and `ModuleError`'s variants passing them on, and the
-branches of `module_lex` and `fstring_lex` that answer them: since unit
-claims-6 nothing produces them. For `module_lex`: the expression
-grammar over module tokens (unit 5b2), the statement grammar (5c), and
-the reads of the parsed module by `check_claim` and `symbols` (5d).
-=======
 ### The expression grammar (`module_expr`)
 
 `parse_expression_module(text) -> Result<Tree, ExprError>` reproduces
@@ -25055,14 +25035,14 @@ rest.
 
 ### Left for later units
 
-The XID tables (lane pyident) and the name table of `\N{...}` (unit
-pysyntax-names), which `lex` answers with `NeedsIdentTable` and
-`NeedsNameTable` until they are built. For `module_lex`: the statement
-grammar (5c, which calls `module_expr`'s entries and owns the lines it
+Unit 5d removes `LexError::NeedsIdentTable` and `NeedsNameTable`,
+`LiteralError`'s and `ModuleError`'s variants passing them on, and the
+branches of `module_lex` and `fstring_lex` that answer them: since unit
+claims-6 nothing produces them. For `module_lex`: the statement grammar
+(5c, which calls `module_expr`'s entries and owns the lines it
 declines), and the reads of the parsed module by `check_claim` and
 `symbols` (5d, which also decides what `Refused("stack")` becomes, since
 the reference raises MemoryError out of `check_claim`).
->>>>>>> wt/pyexpr
 
 What unit 5b2 must know of `pysyntax_fstring.jsonl`:
 
