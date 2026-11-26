@@ -58,6 +58,10 @@
 //!   leaves and the memo of author dates, and (`origin_history::located`)
 //!   the repository's key, the history guard and the shallow cuts
 //!   (`cuts_in`);
+//! - [`origin_reach`]: unit origin-3a of `origin.py`: the repository
+//!   root and head reads (`repo_toplevel`, `repo_toplevel_and_head`,
+//!   `toplevel_and_head_from_files`, `head_sha`), `commit_reachable` and
+//!   the reachable walk (`_walk_reachable`);
 //! - [`origin_model`]: `Origin` as a caller captures it, the stored part
 //!   with the private capture state beside it;
 //! - [`origin_dates`]: the author dates a drift count is read off, its
@@ -537,6 +541,7 @@ pub mod origin_gitfiles;
 pub mod origin_history;
 pub mod origin_match;
 pub mod origin_model;
+pub mod origin_reach;
 pub mod origin_remote;
 pub mod owner_prompt;
 pub mod path_drift_steps;

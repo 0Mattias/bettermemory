@@ -93,6 +93,7 @@ from . import (
     gen_gitconfig_tree,
     gen_gitconfig_remote_rules,
     gen_origin_git,
+    gen_origin_reach,
     gen_origin_gitfiles,
     gen_origin_gitfiles_attrs,
     gen_origin_gitfiles_facts,
@@ -596,6 +597,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "origin_git": gen_origin_git.generate,
     "origin_git_python": gen_origin_git.generate_python,
     "origin_git_posix": gen_origin_git.generate_posix,
+    "origin_reach": gen_origin_reach.generate,
+    "origin_reach_posix": gen_origin_reach.generate_posix,
     "origin_gitfiles_leaves": gen_origin_gitfiles.generate,
     "origin_gitfiles_leaves_python": gen_origin_gitfiles.generate_python,
     "origin_gitfiles_machine": gen_origin_gitfiles_machine.generate,
@@ -1394,6 +1397,9 @@ PLATFORM_GATED = frozenset(
 #: POSIX (`gen_origin_gitfiles_attrs`).
 #: ``origin_gitfiles_walk_posix`` discovers repositories through the owner's
 #: check, which declines off POSIX (`gen_origin_gitfiles_walk`).
+#: ``origin_reach_posix`` asks the host's git in repositories made in a
+#: temporary directory and finds them through the owner's check, which
+#: declines off POSIX (`gen_origin_reach`).
 #: ``store_rotation`` and ``store_rotation_python`` finish key rotations
 #: over links, hard links, mode-000 files and read-only folders
 #: (`gen_store_rotation`).
@@ -1534,6 +1540,7 @@ POSIX_ONLY = frozenset(
         "origin_gitfiles_root_posix",
         "origin_gitfiles_attrs_posix",
         "origin_git_posix",
+        "origin_reach_posix",
         "origin_gitfiles_walk_posix",
         "origin_cache_posix",
         "origin_match_posix",

@@ -36,6 +36,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_model` | `origin_model.py`'s `Origin` as captured: `CapturedOrigin`, the stored `records::Origin` with `_repo_url_alternates`, `git_indeterminate` and `git_refusal` beside it | `origin_model.jsonl` |
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves; `origin_dates::memo`: `_instant`, `commit_author_timestamps` and `_remember_dates` over the caller's `TimestampsMemo`, `MemoLeaves` and `ShallowHold` | `origin_dates_reads.jsonl`, `origin_dates_memo.jsonl` |
 | `origin_git` | The Git process and repository identity probes in `origin.py`. `OriginRunner` implements `origin_dates::OriginGit` and shares the calling thread’s counts with its other Git readers. |
+| `origin_reach` | Unit origin-3a of `origin.py`: `repo_toplevel`, `repo_toplevel_and_head`, `toplevel_and_head_from_files`, `head_sha`, `commit_reachable` and `_walk_reachable`, over `OriginRunner` and the `Reads` trait (`RepositoryReads` over the ported readers) | `origin_reach.jsonl`, `origin_reach_posix.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`); the names `\N{...}` reads, `getcode` of `unicodedata._ucnhash_CAPI` without named sequences (`unicode::names::lookup`, `stored`; unit claims-6) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl`, `unicode_names.jsonl` |
 | `use_tokens` | the per-turn use-token bookkeeping of `handlers/_shared.py`: `_drain_expired_use_tokens`, `_emit_expired_use_tokens`, `_advance_turn`, `_event_ts_epoch`, `_scan_settled_use_events`, `_already_recorded_pending_ids` and its alias `_hook_attributed_pending_ids`, `_attach_use_tokens`; the recorder and its log are a trait (`UseLog`) | `use_tokens.jsonl`, `use_tokens_python.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth. Unit pyre-5b: `_sre`'s ASSERT and ASSERT_NOT (`Op::Look`, `Op::LookEnd`) run in `exec` as sub-attempts on the same stack; `supports` refuses nothing. Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`). Unit pyre-6b: `Pattern.sub`, `subn` and `split` with a count, a literal or a function replacement, a literal holding a backslash refused as a template (`replace::ReplaceError::Template`). Unit pyre-7 (tests only): every pattern of the reference the engine runs, built from its own text and flags, against `re` over texts that tell its mutants apart, the four data-built families, the tripwire on the reference's sites. Unit pyre-9: the call-owned memo (`memo::Memo`, `Setting`, `Way`, `Stats`, `last_call`, `premises`; `exec::exec_with`), failure bits per node and position, runs and failed ends per repeat, the steps of a whole call | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl`, `pyre_inventory.jsonl`, `pyre_memo.jsonl` |
@@ -10470,6 +10471,8 @@ that Unicode too.
 | `golden_origin_git`: `scripted_processes` | `origin_git.jsonl` | i |
 | `golden_origin_git`: `directory_error_by_python` | `origin_git_python.jsonl` | ii (Python) |
 | `golden_origin_git_posix`: `normal_repositories` | `origin_git_posix.jsonl` | iii (platform) |
+| `golden_origin_reach`: `scripted_reads`; `origin_reach_kills` (10), `origin_reach_robustness` (3) | `origin_reach.jsonl` (the last two none) | i |
+| `golden_origin_reach_posix`: `local_repositories` (unix; `origin_reach_not_posix` records the gap off it as class os) | `origin_reach_posix.jsonl` | i |
 | `golden_origin_dates_reads`: `every_row`; `origin_dates_kills` (7), `origin_dates_robustness` (3) | `origin_dates_reads.jsonl` (the last two none) | i |
 | `golden_origin_dates_memo`: `every_row`; `origin_dates_memo_kills` (7), `origin_dates_memo_robustness` (2) | `origin_dates_memo.jsonl` (the last two none) | i |
 | `golden_origin_history_located`: `origin_history_located_every_query`, `origin_history_located_modes_every_query` (unix; `golden_origin_history_located_not_posix` records the gap off it as class os); `origin_history_located_kills` (15), `origin_history_located_robustness` (7) | `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` (the last two none) | i |
@@ -20190,6 +20193,127 @@ repositories, a refused entry, a Git ownership refusal, a missing
 directory and a regular file. The ownership probe checks the first
 stderr line against the one its Git executable actually wrote.
 
+## Repository roots, heads and the reachable walk (`origin.py`)
+
+`origin_reach` is unit origin-3a of `src/bettermemory/origin.py` (line
+numbers at v9's 2f78d303, 1,860 lines): the repository root and head reads,
+`commit_reachable` and the reachable walk. The module's other units are
+built elsewhere (`origin_git`, `origin_match`, `origin_cache`) or left:
+
+| unit | functions (reference lines) | needs from the machine | status |
+| --- | --- | --- | --- |
+| origin-3a | `repo_toplevel` (1046-1065), `repo_toplevel_and_head` (1068-1100), `toplevel_and_head_from_files` (1103-1149), `head_sha` (1152-1162), `commit_reachable` (1165-1229), `_walk_reachable` (1507-1588) | git through `origin_git::OriginRunner`; discovery, HEAD, the repository's and the machine's config, `_spelled_as_git`, `Path.resolve` and the shallow cuts through `origin_reach::Reads` | built: `origin_reach` |
+| origin-3b | the walk memo (`_WALK_MEMO_CAP` to `_keep_timed_out_walk`, 1230-1336), `commits_since_anchor` (1342-1484), `_held_anchor` (1487-1504) | the walk of 3a, `walk_files_signature`, the clock | not built |
+| origin-4 | `resolve_repo_pathspecs` (1591-1686) | 3a's `repo_toplevel`, `relative_to_root` | not built |
+| origin-5 | `MAX_PATCH_STREAM_COMMITS`, `commit_patch_stream` (1689-1860) | git, `_dequote_patch_headers` | not built |
+| origin-1 | `capture`, `_resolved`, `capture_caller` and their cache wiring (120-500) | every probe above, the cache of `origin_cache` | not built |
+
+**What each function reproduces.** Each takes the runner (`_git` is
+`OriginRunner::output`, `_git_result` is `result`, `_agreed` is `agreed`)
+and, where it reads files, a `Reads`; `cwd` is `Option<&[u8]>`, None being
+the reference's `cwd is None`.
+
+- `repo_toplevel`: `rev-parse --show-toplevel` with `verbatim` and `paths`,
+  `printed_path` (a CR kept on POSIX, taken off before the LF under the
+  Windows flavour, as `_WINDOWS` does), None for an empty root or one
+  `_agreed` refuses, else `str(Path(root).resolve())`; an OSError of the
+  resolve is None, a ValueError (a NUL) is `Error::Files(Failure::Value)`,
+  which the reference lets out.
+- `repo_toplevel_and_head`: `toplevel_and_head_from_files` first; else one
+  `rev-parse --show-toplevel HEAD`, `printed_path(raw).rpartition("\n")`
+  and the root printed again with its newline put back, so a root holding
+  a newline splits at the last one and a root ending in a space keeps it;
+  the head must be a full lowercase hash, then `_agreed`, then the resolve.
+- `toplevel_and_head_from_files`: `find_gitdir`, `head_sha(gd)`, then
+  `head is None`, `_config_moves_worktree(gd)` and `_machine_config_dies`
+  in that order, each read only where the one before let it through;
+  `_spelled_as_git(gd.worktree_root)`, None declining; the root is
+  `str()` of the spelled path.
+- `head_sha`: `rev-parse --verify --quiet HEAD^{commit}`, `str.strip` and
+  `str.lower` (`claims::strip`, `unicode::lower`), a full hash or None.
+- `commit_reachable`: the reference's calls and exits in its order:
+  `merge-base --is-ancestor` under `-c advice.graftFileDeprecated=false`;
+  0 is True; any other exit logs `git merge-base exited N in CWD: ...` at
+  DEBUG (`log_nonzero_exit` over the two words the reference passes); a
+  negative exit or 1 with a non-blank stderr is None; `rev-parse
+  --is-shallow-repository` must exit 0 and print `false` after a strip;
+  then 1 is False; `head_sha` None is None; `rev-parse --verify --quiet
+  <sha>^{commit}` exiting 1 with a blank stderr is False; anything else
+  None. Each process counts on the runner as the reference's count
+  (`_git_result` is not `_git`: a could-not-run there adds nothing to
+  `_UNANSWERED`).
+- `walk_reachable` (`_walk_reachable`): anchor equal to head is the empty
+  walk (`listed` True, `timed_out` False); else `log --boundary
+  --format=\x01%m%H` with `-c core.quotePath=false`, `AS_STORED_DIFF`,
+  `--no-renames`, `-c` and `--name-only` only with `names`, timeout 5,
+  `empty_ok`, `verbatim`, text. None or empty output is None. Lines split
+  on LF only; a mark line's mark is `line[1:2]`, its hash `line[2:]`
+  stripped and lowered; a hash that is not full notes a failure on the
+  runner (`OriginGit::note_failed`) and answers None; `-` is a boundary
+  and ends the current commit, any other mark (an unknown one too) a
+  commit. A path line is skipped when empty or before any commit; one
+  quoted at both ends goes through `unquote_c_path`, kept raw where that
+  answers None, `Error::Unquote` where it raises. The anchor not among the
+  boundaries is None; the shallow cuts None, or holding a listed commit,
+  are None (read only after the boundary check); `listed` is `names`.
+
+**Decisions.**
+- The file reads are the trait `Reads`; `RepositoryReads` implements it
+  over `find_gitdir`, `githead::head_sha` (`CtxRefs`),
+  `config_moves_worktree` with the caller's `ConfigMemo`,
+  `machine_config_dies` over `gitconfig::stamped::machine_config_reads`
+  with the caller's `StampedReads`, `Inputs` and clock, `spelled_as_git`,
+  `fsdata::realpath` and `origin_history::cuts(toplevel, walk=False)`. A
+  native decline of any of them (`NotPorted`, `Refused::NotOffered`,
+  `Unresolved::NotPorted`) is `Error::NotPorted`, which a caller declines
+  on.
+- `Reads::resolve` is given `str(Path(raw))`: the PurePosixPath spelling
+  (`githead::discovery::pure`) under the POSIX flavour, which is what the
+  reference's `Path(raw).resolve()` hands `realpath`. Under the Windows
+  flavour it is given the printed text as it is, not the PureWindowsPath
+  spelling (a trailing separator kept, `/` not turned into `\`), which no
+  answer reads while that flavour's `realpath` declines; porting it
+  (ENG-124) must spell the root as `PureWindowsPath` does first.
+- The root is text (`PyStr`): `answers::fsdecode` of the resolved or
+  spelled bytes, as the drift readers' keys are.
+- `_WALK_MARK` is `origin_dates::WALK_MARK`.
+- No regular expression is read by these functions.
+- Under the Windows flavour `realpath` is not ported, so a root git names
+  answers `Error::NotPorted` where the reference resolves it, and the cuts
+  and `spelled_as_git` decline the same way: the crate's stated Windows
+  gap (ENG-124), recorded in `origin_reach_not_posix` (class os).
+
+**Left for later units.** The walk memo and counting through a timed-out
+walk (`timed_out`, the commits listed alone) are origin-3b's; a caller that
+skips this walk's boundary or cut test would count where the reference
+falls back to the dates. Wiring `response_history`'s `HistoryReads`
+(`files_pair`, `git_pair`) and `verify_basis` to these functions is a later
+unit's.
+
+**Fixtures.** `gen_origin_reach.py` writes `origin_reach.jsonl` (not gated:
+103 rows of scripted git replies and scripted file reads, `printed_path`
+read as POSIX's and no path holding a separator, the null device spelled
+`<devnull>`; every exit branch of each function, stdout with CRLF, a
+trailing newline, a root holding a newline, quoted paths with octal escapes
+and invalid quotes, marks out of order, a short or uppercase hash, an
+unknown mark, a NUL and bytes that are not UTF-8 in a walk's path, with the
+calls, the file reads in order, the five tallies and the log lines) and
+`origin_reach_posix.jsonl` (POSIX_ONLY: the host's git in repositories the
+generator makes in a temporary directory with HOME and git's global and
+system config isolated as `gen_origin_git` does, each row carrying the
+steps that make it: no repository, no commit, linear history with quoted
+and non-ASCII names, a merge and a branch that is no ancestor, a shallow
+file cutting the merge's side, a `--depth 2` clone with an anchor past its
+cut, a linked worktree, `core.worktree` set, a bare repository, a machine
+config git's parser refuses, where the files decline and git answers, and
+reads from a subdirectory, where the walk finds no shallow file at the
+folder and answers None; the generator refuses a temporary directory with a
+`.git` or `HEAD` entry above it). `golden_origin_reach` and
+`golden_origin_reach_posix` (unix) compare every row;
+`origin_reach_kills` and `origin_reach_robustness` hold the rest, among
+them a root ending in a CR under the Windows flavour and
+`RepositoryReads`' root spelling with the darwin flag set and clear.
+
 ## HEAD and refs from a git directory's files
 
 `githead` is the resolution half of `src/bettermemory/githead.py` (line
@@ -28168,7 +28292,8 @@ What the reference has and this build does not, by area:
   its rollback journal and its modes).
 - Checkout capture still requires the orchestration in `origin.py`;
   `origin_match` holds its caller matching, `origin_git` its Git probes and
-  `origin_cache` its signature and cache, while registration and lookup
+  `origin_cache` its signature and cache, `origin_reach` the root, head
+  and reachable-walk reads (origin-3a), while registration and lookup
   wiring stay with the capture's consumers.
   Other work remains in `location.py` past its view continuity, the
   capture's filesystem leaves and its capture signature and cache
