@@ -30,7 +30,7 @@ fn at(ts: &DateTime) -> i128 {
 }
 
 /// `ts + ANSWER_WINDOW`: OverflowError past year 9999 (wall time).
-fn plus_window(ts: &DateTime) -> Answer<DateTime> {
+pub(crate) fn plus_window(ts: &DateTime) -> Answer<DateTime> {
     ts.minus_micros(-i128::from(ANSWER_WINDOW_US))
         .map_err(|_| CountersError::OverflowError)
 }

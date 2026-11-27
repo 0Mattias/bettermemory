@@ -460,6 +460,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "review_decision": gen_review_decision.generate,
     "review_counters_rows": gen_review_counters.generate,
     "review_counters_chains": gen_review_counters.generate_chains,
+    "review_counters_report": gen_review_counters.generate_report,
     "standing_reads": gen_standing_reads.generate,
     "mirror_format": gen_mirror_format.generate,
     "unicode_sequences": gen_unicode.sequences,

@@ -47,7 +47,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `records::summaries` | unit 3 of `models.py`, the result models: `MemoryHit` (`MemoryHit::new` with the model's defaults), `MemorySummary` and `TombstonedSummary` (`of` a record, as `store_records.list_summaries` and `list_tombstones` build them), and the two listings' scope filters (`summaries`, `tombstone_summaries`) | `models_hits.jsonl` |
 | `standing` | unit 1 of `standing.py`, the store-free half: `TAU_STANDING`, `SOURCE_*`, `SOURCES`, `BATCH`, `_CALL`, `_ANSWER_FORMAT` (and `review`'s `RELATED_CAP`, `RELATED_TEXT_CHARS`, `STANDING_STATEMENT`, re-exported), `asking`, `is_standing`, `check_probability`, `answered_by`, `answer_of`, `record_text`, `backlog_line`, `held_lines`, `held_line`, `question`, `batch_hint`; unit 2, the store reads: the body sha memo (`SHA_BOUND`, `clear_shas`), `current`, `answers`, `Backlog`, `backlog`, `guarded_ids`, `makes_standing`, `held_ids`, `standing_ids`, `refusal_rows`, `held_by_removal` over `StandingStore` and `Admission` | `standing.jsonl`, `standing_reads.jsonl` |
 | `review` | unit 1 of `review.py`, the sealed tables: `RELATED_TOP`, `RELATED_CAP`, `RELATED_TEXT_CHARS`, `RELATED_CONSTANTS`, `ROSTER_TEXT_CHARS`, `TAU_UNSAFE`, `TAU_SECRET`, `Tau`, `current_tau`, `tau_override`, `tau_unset` (and `tau_patched`), the labels, `LABEL_CHOICES`, the four statements, `QUESTIONS`, `questions_payload`, `questions_sha256`, `constants_sha256`, `seal_shas`, `ACTION_*`, `DETECTOR_*`, `REVIEW_ISSUED`, `UNDECLARED`, `REVIEW_LINK_NOTE`, `RelatedEntry`, `RelatedSet` (with `CueReport`), `related_text`, `related_entry`, `RosterLine`, `_write_sentences`; unit 2, the answers: `ReviewAnswerError` (`AnswerFault`), `ANSWER_FORMAT`, `NAMED_FORMAT`, `UPDATE_ANSWER_FORMAT`, `ReviewAnswers` with `to_event` and `is_zero_attestation`, `_score`, `_chain_keys`, `parse_answers`, `parse_update_answers`, `check_answered_ids`, `check_named`; the pure decision, `ReviewDecision::to_event`, `replaced_ids`, `apply_review` | `review_tables.jsonl`, `review_tables_unicode.jsonl`, `review_answers.jsonl`, `review_decision.jsonl` |
-| `review_counters` | units review_counters-1a and 1b of `review_counters.py`: `ANSWER_WINDOW` (`ANSWER_WINDOW_US`), `REVIEW_GRADE`, `REFUSAL_ACTIONS`, `DETECTORS`, `_STATUS_ACTION`, `_str`, `_ids`, `_session_of`, `_bucket_value`, `_score`, `IssuedRow` (`chain_key`, `from_event`), `DecidedRow` (`committed`, `zero_attestation`, `from_event`), `GradeRow` (`from_event`), `is_review_row`; in `review_counters::chains`, `ReviewChain` (`ChainState`, every property, `last_issued_before`), `build_chains`, `_in_window`, `chains_in_window`, `_share`, `_median`, `_iso_week` (with `date.isocalendar`'s year and week) and `_Tally` (`add`, `committed`, `refused`, `filings_per_100`, `to_dict`); and `review.py`'s `REVIEW_ISSUED` and `UNDECLARED` in `review` | `review_counters_rows.jsonl`, `review_counters_chains.jsonl` |
+| `review_counters` | units review_counters-1a and 1b of `review_counters.py`: `ANSWER_WINDOW` (`ANSWER_WINDOW_US`), `REVIEW_GRADE`, `REFUSAL_ACTIONS`, `DETECTORS`, `_STATUS_ACTION`, `_str`, `_ids`, `_session_of`, `_bucket_value`, `_score`, `IssuedRow` (`chain_key`, `from_event`), `DecidedRow` (`committed`, `zero_attestation`, `from_event`), `GradeRow` (`from_event`), `is_review_row`; in `review_counters::chains`, `ReviewChain` (`ChainState`, every property, `last_issued_before`), `build_chains`, `_in_window`, `chains_in_window`, `_share`, `_median`, `_iso_week` (with `date.isocalendar`'s year and week) and `_Tally` (`add`, `committed`, `refused`, `filings_per_100`, `to_dict`); in `review_counters::report` (unit 2), `ReviewReport` (`to_dict`) and `compute_review_report`; and `review.py`'s `REVIEW_ISSUED` and `UNDECLARED` in `review` | `review_counters_rows.jsonl`, `review_counters_chains.jsonl`, `review_counters_report.jsonl` |
 | `mirror_format` | `mirror_format.py` whole: `TOMBSTONE_DIR`, `EPISODES_DIR`, `TOMBSTONE_SUFFIX`, `_ID_TOMBSTONE_RE` (by hand, `id_tombstone_stem`), `memory_filename`, `tombstone_filename`, `active_filename_for_tombstone`, `is_legacy_tombstone_name`, the four key tables, `memory_metadata`, `episode_metadata` | `mirror_format.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
 | `verify_candidates` | unit 1 of `verify_candidates.py`: the constants, `_normalize_candidate`, `_trim_candidate`, `_command_shaped`, `_anchored_candidate`, `_LINE_SUFFIX_RE`, `_is_placeholder_path`, `_is_single_segment_routelike`, `_refused_spelling`, `_escapes_root`, `_fold_altsep`, `_bounded_scan_text`, `str.islower` of one code point; unit 2: `_BACKTICK_RE`, `_BARE_RE`, `_DOMAIN_ROUTE_RE` under `finditer`; unit 3: `_normalize_for_compare` (POSIX), `_scan_candidates`, `_extract_candidates` without its memo; unit 4 (POSIX): `_claim_key`, `_ClaimKeys` (with its recursion limit), `_is_under_home`, `_home_ignores_case` (with `str.swapcase`), `_is_multi_segment_routelike`, `_path_exists` over the file-system trait | `verify_candidates.jsonl`, `verify_candidates_unicode.jsonl`, `verify_candidates_patterns.jsonl`, `verify_candidates_patterns_unicode.jsonl`, `verify_candidates_scan.jsonl`, `verify_candidates_scan_unicode.jsonl`, `verify_candidates_keys.jsonl`, `verify_candidates_keys_unicode.jsonl`, `verify_candidates_keys_python.jsonl` |
@@ -15383,9 +15383,10 @@ Store-backed review chains and related-set construction belong to later units.
 
 `review_counters.py` (780 lines) reads the event log's review rows and
 counts the write review's chains for `bettermemory eval` and `bettermemory
-review samples`. It is cut into three units, leaves first. Unit
+review samples`. It is cut into three units, leaves first, all built. Unit
 review_counters-1a is built in `src/review_counters.rs`, unit
-review_counters-1b in its child module `src/review_counters/chains.rs`.
+review_counters-1b in its child module `src/review_counters/chains.rs`, and
+unit review_counters-2 in its child module `src/review_counters/report.rs`.
 
 | Function | Lines | Needs from the machine | Status |
 | --- | --- | --- | --- |
@@ -15396,7 +15397,7 @@ review_counters-1b in its child module `src/review_counters/chains.rs`.
 | `GradeRow` (`from_event`) | 248-279 | nothing | built (1a) |
 | `is_review_row` | 282-288 | nothing | built (1a) |
 | `ReviewChain`, `build_chains`, `_in_window`, `chains_in_window`, `_share`, `_median`, `_iso_week`, `_Tally` | 296-610 | nothing (rows and the clock are arguments) | built (1b) |
-| `ReviewReport`, `compute_review_report` | 613-780 | the event log's rows, the clock as an argument | review_counters-2 |
+| `ReviewReport` (`to_dict`), `compute_review_report` | 613-780 | nothing (the events, the window and `now` are arguments) | built (2) |
 
 `review.py`'s `REVIEW_ISSUED` (`"review_issued"`) and `UNDECLARED`
 (`"none"`) sit in `review/mod.rs` beside `ACTION_*`; they are the only
@@ -15494,9 +15495,9 @@ times the reference's time and 16 times its memory (188 MB against
 value as code points (4 bytes each) where the reference shares its `str`
 objects; `IssuedRow` likewise clones the id lists it keeps.
 
-Left for review_counters-2: `ReviewReport` and `compute_review_report`
-(613-780), which fill `_Tally.response_chars`, group the chains by client,
-model and ISO week, and read the grades.
+`ReviewReport` and `compute_review_report` (613-780), which fill
+`_Tally.response_chars`, group the chains by client, model and ISO week,
+and read the grades, are built in unit review_counters-2 (below).
 
 ### Unit 1b, built (`review_counters::chains`)
 
@@ -15661,6 +15662,87 @@ answers None at `i64`'s bounds, years 0 and 10,000, months 0, 13 and
 `u32::MAX` and days past the month; median texts with a sign, whitespace,
 underscores or Unicode digits read as `int()` reads them, and texts no
 `int` has panic.
+
+### Unit 2, built (`review_counters::report`)
+
+`src/review_counters/report.rs` reproduces lines 613-780:
+`ReviewReport` with `to_dict`, and `compute_review_report`. It needs
+nothing from the machine: the events, `start`, `end` and `now` are
+arguments, and it calls unit 1b's `chains_in_window`, `in_window`,
+`iso_week` and `Tally`, and unit 1a's row readers. `chains.rs`'s
+`plus_window` is `pub(crate)` for `judged_through`. The module has no
+regular expression.
+
+- **The rows.** `compute_review_report` keeps the events that are dicts
+  and for which `is_review_row` holds, as `isinstance(e, Mapping)` skips
+  the rest without raising, and reads the chains of the window from them.
+- **Buckets keep the reference's dicts.** `by_client`, `by_model` and
+  `filings_by_week` are `Keyed` maps in insertion order filled by
+  `setdefault`, as the reference's dicts are; `to_dict` sorts them by key.
+  A key is a `PyStr` of code points, so the sort is Python's code point
+  order (U+FF21 before U+1F600, where UTF-16 order is the reverse), and a
+  week is its text, so `999-W22` sorts after `2027-W01`.
+- **Filings by week.** Each filing of an answered chain whose decision
+  committed bumps its detector in the dict of the decision's ISO week
+  (`_iso_week` of the UTC date), made as `dict.fromkeys(DETECTORS, 0)`; a
+  detector outside `DETECTORS` goes last in first-seen order. The week is
+  read per filing, so a decision whose UTC date leaves years 1 to 9999
+  raises OverflowError only when it has a filing.
+- **Response sizes.** Read off each `review_issued` row by
+  `IssuedRow.from_event`, not off the chain: a row that is pre-answered,
+  has no `int` size (a bool is not one), lists a roster, or whose own `ts`
+  is outside the window is left out; a size is added to the total and to
+  the tallies of the row's own client and model, made by `setdefault`, so
+  a follow-up inside the window counts though its root is outside, and a
+  client met only there gets a tally with no chains.
+- **Grades.** The latest `review_grade` row per review_id whose
+  `sample_ts` (not its `ts`) is inside the window, by `>=` on instants: a
+  later row at the same instant replaces the earlier one. The counts are
+  `n`, `right_both`, `right_answers`, `right_action` and
+  `pre_answered_n`.
+- **judged_through.** `now` when `end` is None, else the earlier of `now`
+  and `end + ANSWER_WINDOW` by instant, `now` on a tie (Python's `min`
+  keeps its first argument), so the spelling of its offset is kept.
+  `end + ANSWER_WINDOW` past 9999-12-31 is OverflowError, raised first in
+  `chains_in_window`. `to_dict` writes it by `isoformat_utc`, which
+  replaces only a `+00:00` offset.
+- **to_dict's order of raises.** `Tally::to_dict` raises OverflowError
+  from a median past the float range. The total's is called first, then
+  each client's in key order, then each model's, as the reference builds
+  the dict literal; `pre_answered_zero` reads the counts only.
+- **Floats.** The shares, medians and rates are `Tally::to_dict`'s; the
+  report copies them, so its rounding is unit 1b's.
+
+`gen_review_counters.generate_report` writes the ungated
+`review_counters_report.jsonl`: hand-built logs (clients and models met
+in several orders, texts outside ASCII and a lone surrogate as keys, a
+foreign detector and refused chains with filings, weeks across a year
+end, ISO week 53 and year 999, a decision at year 1 with and without a
+filing, roster pages, pre-answered rows, sizes as a bool, a float, a
+text, a negative and an `int` past 2**64, a key repeated in a JSON text,
+sizes past the float range under a client and under a model, grades tied
+at one instant across offsets, `sample_ts` and `ts` on either side of the
+window, and values that are not rows) under six windows for the clients'
+log and two for the others, with `end` None, `end` with an offset, `now`
+before, after and at `end + ANSWER_WINDOW`, and `end` near 9999-12-31;
+and a sweep of 2,000 logs, unit 1b's `_chain_log` with a client, a model
+and a response size drawn for each event and up to two grades, through
+two windows, by count and SHA-256. Texts outside ASCII sit in JSON texts
+or as code points, every time is an aware `fromisoformat` form 3.11 to
+3.14 read alike, and the floats are unit 1b's, so the file is not gated.
+`golden_review_counters_report` checks every row and the sweep, drawn
+here by the generator's rule. `review_counters_report_kills` pins
+`by_client` and `by_model` sorted in code point order, the weeks sorted
+as texts with a foreign detector kept, a roster's and a pre-answered
+row's size left out, the size read off each row under its own client, a
+later grade at the same instant replacing the first, the grade window on
+`sample_ts`, and `judged_through` as the earlier with `now` on a tie.
+`review_counters_report_robustness` holds 100,000 chains over 1,000
+clients and 1,000 models (with 50,000 filings and 10,000 grades) within
+linear growth from 10,000 (`timing::TENFOLD`), a week map of 10,000
+weeks sorted, sizes past the float range (OverflowError), `end` at the
+calendar's end, and values that are not rows or are nested 10,000 deep,
+without a panic in debug and release.
 
 ## The hook mains' argument parser (`argparse`, units argparse-1a and argparse-1b)
 

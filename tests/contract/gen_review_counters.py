@@ -1292,3 +1292,398 @@ def generate_chains() -> dict[str, bytes]:
         "logs": CHAIN_LOGS,
     }
     return {"review_counters_chains.jsonl": jsonl([header, *rows])}
+
+
+# ---------------------------------------------------------------------------
+# review_counters-2: the report (``review_counters_report.jsonl``)
+# ---------------------------------------------------------------------------
+#
+# The header holds ``logs`` as the chains file does: each a list of events,
+# an event a JSON object or a JSON text (`json.loads` reads it: the way to
+# hold an `int` past 2**64 or a text that is not ASCII). Then one row per
+# case, kind ``report``: `compute_review_report(logs[log], start=, end=,
+# now=).to_dict()` spelled by `_rspell` under ``r``. `_rspell` writes a
+# dict as ``[[key, value], ...]`` in its order, a float as its `repr`, a
+# text by `_t` (ASCII as itself, otherwise its code points), and an
+# exception as ``{"x": class}``. Times are written as `isoformat()`.
+#
+# The last line is a sweep: ``count`` logs drawn by `_report_log` from
+# ``seed`` (`_chain_log`'s events, each given a client and a model from
+# ``pools``, each issued row a response size, then 0 to 2 grades), the
+# SHA-256 of `_report_answer` of each as `_common.dumps_line` and a
+# newline.
+#
+# Not gated: the texts that are not ASCII are written as code points or
+# inside JSON texts `json.loads` reads alike on every release, every time
+# is an aware `fromisoformat` form 3.11 to 3.14 read alike, and the floats
+# are medians and correctly rounded quotients, alike everywhere.
+
+REPORT_SEED = 20261127
+REPORT_COUNT = 2000
+RP_CLIENTS = ["c2", "c1", "c10"]
+RP_MODELS = ["m2", "m1"]
+RP_CHARS: list[Any] = [None, 5, 12, 40, True]
+_D0, _D1 = rc.DETECTORS
+
+
+def _cm(ev: dict[str, Any], client: str, model: str, **more: Any) -> dict[str, Any]:
+    return {**ev, "client": client, "model": model, **more}
+
+
+def _text(ev: dict[str, Any]) -> str:
+    return json.dumps(ev, ensure_ascii=True)
+
+
+def _week_log() -> list[Any]:
+    """Committed chains decided in weeks met out of order."""
+    stamps = [
+        "2027-01-04T09:00:00+00:00",
+        "0999-06-01T09:00:00+00:00",
+        "2026-12-31T09:00:00+00:00",
+        "2027-01-01T09:00:00+00:00",
+        "2027-01-04T00:30:00+01:00",
+        "2020-12-31T09:00:00+00:00",
+        "2026-12-28T00:10:00+00:00",
+    ]
+    log: list[Any] = []
+    for i, stamp in enumerate(stamps):
+        dec = datetime.fromisoformat(stamp)
+        issued = (dec - timedelta(minutes=5)).isoformat()
+        rid = f"w{i}"
+        filings = (_D1,) if i % 2 else ("zz", _D0)
+        log.append(_iss(rid, issued))
+        log.append(_dec(rid, stamp, filings=filings))
+    return log
+
+
+REPORT_LOGS: dict[str, list[Any]] = {
+    "empty": [],
+    "clients": [
+        _cm(_iss("a", _at(0)), "c2", "m1", response_chars=10),
+        _cm(_iss("b", _at(1)), "c1", "m3", response_chars=30),
+        _cm(_iss("c", _at(2)), "c10", "m2", response_chars=20),
+        _cm(_iss("d", _at(50)), "C1", "m1", response_chars=41),
+        _cm(_iss("e", _at(3)), "c1", "m2"),
+        _dec("a", _at(5), filings=(_D0, _D1, _D0), links=("l1",), upd=("u1",)),
+        _dec("b", _at(6), "refused_secret", filings=(_D0,)),
+        _dec("e", _at(7), "refused_unsafe"),
+        ["not", "an", "event"],
+        "plain text",
+        5,
+        {"kind": "write", "review_id": 7, "ts": _at(8)},
+    ],
+    "unicode_clients": [
+        _text(_cm(_iss("u1", _at(0)), "Ａ", "\U0001f600", response_chars=3)),
+        _text(_cm(_iss("u2", _at(1)), "\U0001f600", "Ａ", response_chars=4)),
+        _text(_cm(_iss("u3", _at(2)), "\ud800", "a", response_chars=5)),
+        _text(_cm(_iss("u4", _at(3)), "a", "\ud800", response_chars=6)),
+        _text(_cm(_iss("u5", _at(4)), "é", "Z", response_chars=7)),
+        _dec("u1", _at(5)),
+    ],
+    "detectors": [
+        _iss("f1", _at(0)),
+        _dec("f1", _at(2), filings=("zz", _D0, "aa", "zz")),
+        _iss("f2", _at(1)),
+        _dec("f2", _at(3), filings=("aa", _D1, "yy")),
+        _iss("f3", _at(4)),
+        _dec("f3", _at(6), "refused_secret", filings=("qq",)),
+        _iss("f4", _at(5)),
+        _dec("f4", _at(7), "refused_standing", filings=("pp",)),
+        _iss("f5", _at(8)),
+        _dec("f5", _at(9), "odd", filings=("oo",)),
+    ],
+    "weeks": _week_log(),
+    "week_overflow": [
+        _iss("o1", "0001-01-01T00:25:00+01:00"),
+        _dec("o1", "0001-01-01T00:30:00+01:00", filings=(_D0,)),
+    ],
+    "week_overflow_unfiled": [
+        _iss("o1", "0001-01-01T00:25:00+01:00"),
+        _dec("o1", "0001-01-01T00:30:00+01:00"),
+    ],
+    "sizes": [
+        _cm(_iss("r1", _at(0)), "c1", "m1", response_chars=100),
+        _cm(_iss("r2", _at(1), roster=("m",)), "c1", "m1", response_chars=99999),
+        _cm(_iss("r3", _at(2), parent="r2"), "c2", "m2", response_chars=1),
+        _cm(_iss("r4", _at(3), pre=True), "c1", "m1", response_chars=7),
+        _cm(_iss("r5", _at(4)), "c1", "m1", response_chars=True),
+        _cm(_iss("r6", _at(5)), "c1", "m1", response_chars=False),
+        _cm(_iss("r7", _at(6)), "c1", "m1", response_chars=2.5),
+        _cm(_iss("r8", _at(7)), "c1", "m1", response_chars="12"),
+        _cm(_iss("r9", _at(8)), "c1", "m1", response_chars=-3),
+        _cm(_iss("r10", _at(9)), "c1", "m1", response_chars=0, door="x"),
+        _cm(_iss("r11", _at(-5)), "c3", "m3", response_chars=60),
+        _cm(_iss("r12", _at(4), parent="r11"), "c9", "m9", response_chars=70),
+        _cm(_iss("r13", _at(46), parent="r1"), "c8", "m8", response_chars=80),
+        '{"kind": "review_issued", "review_id": "r14", "ts": "'
+        + _at(10)
+        + '", "client": "c1", "model": "m1", "response_chars": 18446744073709551617}',
+        '{"kind": "review_issued", "review_id": "r15", "ts": "'
+        + _at(11)
+        + '", "client": "c1", "model": "m1", "response_chars": 1, "response_chars": 4}',
+    ],
+    "size_overflow": [
+        _cm(_iss("v1", _at(0)), "c1", "m1", response_chars=1),
+        _cm(_iss("v2", _at(1)), "c1", "m1", response_chars=1),
+        '{"kind": "review_issued", "review_id": "v3", "ts": "'
+        + _at(2)
+        + '", "client": "c2", "model": "m2", "response_chars": 1'
+        + "0" * 400
+        + "}",
+    ],
+    "size_overflow_model": [
+        _cm(_iss("v1", _at(0)), "c1", "m1", response_chars=1),
+        _cm(_iss("v2", _at(1)), "c1", "m1", response_chars=1),
+        _cm(_iss("v3", _at(2)), "c1", "m1", response_chars=1),
+        '{"kind": "review_issued", "review_id": "v4", "ts": "'
+        + _at(3)
+        + '", "client": "c1", "model": "m2", "response_chars": 1'
+        + "0" * 400
+        + "}",
+    ],
+    "grades": [
+        {
+            "kind": "review_grade",
+            "review_id": "g1",
+            "ts": _at(100),
+            "sample_ts": _at(1),
+            "right_answers": True,
+            "right_action": True,
+        },
+        {
+            "kind": "review_grade",
+            "review_id": "g1",
+            "ts": _at(100),
+            "sample_ts": _at(1),
+            "right_answers": False,
+            "right_action": True,
+            "pre_answered": True,
+        },
+        {
+            "kind": "review_grade",
+            "review_id": "g2",
+            "ts": _at(200),
+            "sample_ts": _at(2),
+            "right_answers": True,
+            "right_action": False,
+        },
+        {
+            "kind": "review_grade",
+            "review_id": "g2",
+            "ts": _at(150),
+            "sample_ts": _at(2),
+            "right_answers": False,
+            "right_action": False,
+        },
+        {
+            "kind": "review_grade",
+            "review_id": "g3",
+            "ts": _at(300),
+            "right_answers": True,
+            "right_action": True,
+        },
+        {
+            "kind": "review_grade",
+            "review_id": "g4",
+            "ts": _at(10),
+            "sample_ts": _at(-10),
+            "right_answers": True,
+            "right_action": True,
+        },
+        {
+            "kind": "review_grade",
+            "review_id": "g5",
+            "ts": _at(-10),
+            "sample_ts": _at(10),
+            "right_answers": True,
+            "right_action": True,
+            "pre_answered": 1,
+        },
+        {
+            "kind": "review_grade",
+            "review_id": "g6",
+            "ts": _at(10),
+            "sample_ts": _at(10),
+            "right_answers": 1,
+            "right_action": True,
+        },
+        {
+            "kind": "review_grade",
+            "review_id": "g7",
+            "ts": "2026-11-21T11:40:00+01:00",
+            "sample_ts": _at(3),
+            "right_answers": True,
+            "right_action": True,
+        },
+        {
+            "kind": "review_grade",
+            "review_id": "g7",
+            "ts": _at(40),
+            "sample_ts": _at(3),
+            "right_answers": False,
+            "right_action": False,
+            "pre_answered": True,
+        },
+        {
+            "kind": "review_grade",
+            "review_id": "g8",
+            "ts": _at(40),
+            "sample_ts": _at(45),
+            "right_answers": True,
+            "right_action": True,
+        },
+        {
+            "kind": "review_grade",
+            "review_id": "g9",
+            "ts": _at(40),
+            "sample_ts": "2026-11-21T10:44:59.999999+00:00",
+            "right_answers": True,
+            "right_action": False,
+            "pre_answered": True,
+        },
+        {
+            "kind": "review_grade",
+            "review_id": "g10",
+            "ts": _at(40),
+            "sample_ts": "2026-11-21T11:00:00+01:00",
+            "right_answers": False,
+            "right_action": True,
+        },
+    ],
+    "late": [
+        _iss("z1", "9999-12-31T22:00:00+00:00"),
+        _dec("z1", "9999-12-31T22:10:00+00:00", filings=(_D0,)),
+    ],
+}
+
+_REPORT_WINDOWS: list[tuple[str | None, str | None, str]] = [
+    (None, None, _at(60)),
+    (_at(0), _at(45), _at(120)),
+    (_at(0), _at(45), _at(60)),
+    (None, "2026-11-21T11:45:00+01:00", _at(120)),
+    (None, "2026-11-21T11:00:00+01:00", _at(30)),
+    (_at(-60), None, "2026-11-21T15:30:00+05:30"),
+]
+
+_REPORT_EXTRA: list[tuple[str, str | None, str | None, str]] = [
+    ("weeks", None, None, "2027-02-01T00:00:00+00:00"),
+    (
+        "weeks",
+        "2026-12-31T00:00:00+00:00",
+        "2027-01-04T08:55:00+00:00",
+        "2027-02-01T00:00:00+00:00",
+    ),
+    ("week_overflow", None, None, "0001-01-02T00:00:00+00:00"),
+    ("week_overflow_unfiled", None, None, "0001-01-02T00:00:00+00:00"),
+    ("late", None, "9999-12-31T23:45:00+00:00", "9999-12-31T23:50:00+00:00"),
+    ("late", None, "9999-12-31T23:00:00+00:00", "9999-12-31T23:59:59.999999+00:00"),
+    ("late", None, "9999-12-31T23:00:00+00:00", "9999-12-31T23:10:00+00:00"),
+    ("late", "9999-12-31T21:00:00+00:00", None, "9999-12-31T23:00:00+00:00"),
+    ("grades", _at(0), _at(45), _at(400)),
+    ("grades", _at(5), None, _at(400)),
+]
+
+
+def _rspell(value: Any) -> Any:
+    if isinstance(value, dict):
+        return [[_rspell(k), _rspell(v)] for k, v in value.items()]
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, str):
+        return _t(value)
+    return value
+
+
+def _report(events: list[Any], start: Any, end: Any, now: Any) -> Any:
+    return _try(
+        lambda: rc.compute_review_report(
+            events, start=start, end=end, now=now
+        ).to_dict(),
+        _rspell,
+    )
+
+
+def _report_rows() -> list[dict[str, Any]]:
+    cases: list[tuple[str, str | None, str | None, str]] = [
+        (name, start, end, now)
+        for name in REPORT_LOGS
+        if name not in ("late", "week_overflow", "week_overflow_unfiled")
+        for start, end, now in (
+            _REPORT_WINDOWS if name == "clients" else _REPORT_WINDOWS[:2]
+        )
+    ]
+    cases.extend(_REPORT_EXTRA)
+    return [
+        {
+            "k": "report",
+            "log": name,
+            "start": start,
+            "end": end,
+            "now": now,
+            "r": _report(_events(REPORT_LOGS[name]), _iso(start), _iso(end), _iso(now)),
+        }
+        for name, start, end, now in cases
+    ]
+
+
+def _report_log(draw: _Draw) -> list[dict[str, Any]]:
+    """`_chain_log`'s events with a client, a model and a response size
+    drawn for each in order, then 0 to 2 grades drawn field by field."""
+    events = _chain_log(draw)
+    for ev in events:
+        ev["client"] = RP_CLIENTS[draw.pick(len(RP_CLIENTS))]
+        ev["model"] = RP_MODELS[draw.pick(len(RP_MODELS))]
+        if ev["kind"] == "review_issued":
+            chars = RP_CHARS[draw.pick(len(RP_CHARS))]
+            if chars is not None:
+                ev["response_chars"] = chars
+    for _ in range(draw.pick(3)):
+        rid = SW_IDS[draw.pick(len(SW_IDS))]
+        ts = _sw_ts(draw)
+        sample_ts = _sw_ts(draw)
+        events.append(
+            {
+                "kind": "review_grade",
+                "review_id": rid,
+                "ts": ts,
+                "sample_ts": sample_ts,
+                "right_answers": draw.pick(2) == 1,
+                "right_action": draw.pick(2) == 1,
+                "pre_answered": draw.pick(2) == 1,
+            }
+        )
+    return events
+
+
+def _report_answer(events: list[Any]) -> Any:
+    start, end, now = _T0, _T0 + timedelta(minutes=45), _T0 + timedelta(minutes=70)
+    return {
+        "w": _report(events, start, end, now),
+        "a": _report(events, None, None, _T0 + timedelta(minutes=50)),
+    }
+
+
+def _report_sweep() -> dict[str, Any]:
+    draw = _Draw(REPORT_SEED)
+    h = hashlib.sha256()
+    for _ in range(REPORT_COUNT):
+        line = dumps_line(_report_answer(_report_log(draw)))
+        h.update((line + "\n").encode("ascii"))
+    return {
+        "k": "sweep",
+        "seed": REPORT_SEED,
+        "count": REPORT_COUNT,
+        "sha256": h.hexdigest(),
+    }
+
+
+def generate_report() -> dict[str, bytes]:
+    rows = _report_rows()
+    rows.append(_report_sweep())
+    header = {
+        "k": "header",
+        "count": len(rows),
+        "logs": REPORT_LOGS,
+        "pools": {"clients": RP_CLIENTS, "models": RP_MODELS, "chars": RP_CHARS},
+    }
+    return {"review_counters_report.jsonl": jsonl([header, *rows])}

@@ -24,7 +24,9 @@ use crate::review::{
 use crate::unicode::cps;
 
 mod chains;
+mod report;
 pub use chains::*;
+pub use report::*;
 
 /// `ANSWER_WINDOW` (30 minutes), in microseconds.
 pub const ANSWER_WINDOW_US: i64 = 30 * 60 * 1_000_000;
