@@ -25,7 +25,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `admission` | `admission.py` 59-127 beside `store::caller`'s `Admission` and `NO_RESOLUTION` (re-exported): `DriftScope`, `CountedRecords`, `EveryRecord` (with `admits_row`), `EVERY_RECORD`, `admitted_nothing` | unit tests |
 | `health_summary` | `health_summary.py` whole: `section_names`, `health_summary` (with `_empty`, `_attention`), `health_section`, `SUMMARY_IDS`, `HEADLINE_KEYS` | `health_summary.jsonl` |
 | `health_model` | units health_model-1 and health_model-2 of `health_model.py`: `_ENDORSEMENT_GRACE_DAYS`, `_freshest_touch_ts`, `_has_unresolved_contradiction`, `_is_dead_weight`, `is_hook_telemetry_event`, `applied_tier`, `endorsement_tier`, `TelemetryCoverage`, `_HOOKLESS_REASON`, `MemoryStats`, `MarkerStats`, `ScopeHealth`, `ActorSlice` (each `to_dict`), `explicit_ratio`, `_iso`; `round(x, 3)` through `search::num::round_digits`; unit 2 (`health_model::debt`): `ActorSlices`, `VerificationDebt`, `CommitDriftRow`, `CommitDriftDebt`, `CrossRepoDriftGroup`, `CrossRepoDrift`, `ColdEndorsementMemories`, `SilentMissStats`, `RecentSilentMiss` (each `to_dict`), `clamp_ratio_threshold`, `weakly_endorsed`, `_is_weakly_endorsed`, `unread_fields`, `_unread_dict` and the six caps | `health_model.jsonl`, `health_model_debt.jsonl` |
-| `eval_model` | unit eval_model-1 of `eval_model.py`: `DEFAULT_SINCE_SPEC`, `DEFAULT_ENDORSEMENT_MIN_RETRIEVALS`, `DEFAULT_SILENT_MISS_LIMIT`, `_WILSON_Z`, `_SINCE_PATTERN` (on the engine), `_SINCE_UNIT_TO_SECONDS`, `_EARLIEST_START`, `EARLIER_RULES`, `RateCI` (`from_counts`, `to_dict`), `_wilson_interval`, `ColdEndorsementMemoriesRow` (`endorsement_ratio`, `to_dict`), `SilentMissCandidate`, `parse_since`, `parse_timestamp_utc`, `parse_window_bound` (`now` an argument), `resolve_window`, `_show_in_window`, `_canonical_top_hit_id`, `_silent_miss_from_event`; unit 2 (`eval_model::rules`): `ThresholdRule`, the rules v1 to v4 and w1, w2, `THRESHOLD_RULES`, `WIDENING_RULES`, `ThresholdSweepRow`, `_ReplayableAudits`, `_collect_replayable_audits`, `_probe_query_display`, `WideningFlaggedTurn`, `WideningMemoryRollup`, `WideningRuleDetail` (each `to_dict`); `_package_version` is the caller's argument | `eval_model.jsonl`, `eval_model_python.jsonl`, `eval_model_rules.jsonl` |
+| `eval_model` | unit eval_model-1 of `eval_model.py`: `DEFAULT_SINCE_SPEC`, `DEFAULT_ENDORSEMENT_MIN_RETRIEVALS`, `DEFAULT_SILENT_MISS_LIMIT`, `_WILSON_Z`, `_SINCE_PATTERN` (on the engine), `_SINCE_UNIT_TO_SECONDS`, `_EARLIEST_START`, `EARLIER_RULES`, `RateCI` (`from_counts`, `to_dict`), `_wilson_interval`, `ColdEndorsementMemoriesRow` (`endorsement_ratio`, `to_dict`), `SilentMissCandidate`, `parse_since`, `parse_timestamp_utc`, `parse_window_bound` (`now` an argument), `resolve_window`, `_show_in_window`, `_canonical_top_hit_id`, `_silent_miss_from_event`; unit 2 (`eval_model::rules`): `ThresholdRule`, the rules v1 to v4 and w1, w2, `THRESHOLD_RULES`, `WIDENING_RULES`, `ThresholdSweepRow`, `_ReplayableAudits`, `_collect_replayable_audits`, `_probe_query_display`, `WideningFlaggedTurn`, `WideningMemoryRollup`, `WideningRuleDetail` (each `to_dict`); `_package_version` is the caller's argument; unit 1b (`eval_model::split`): `_with_rule_split` (`with_rule_split`), `surface_rule_split` with its `group_of` and `membership_delta` (`MembershipDelta`); unit 3 (`eval_model::tools`): `_TOOL_EVENT_KIND_TO_TOOL` (with `tool_of_kind`), `TOOLS_WITHOUT_TELEMETRY`, `_KNOWN_SIDE_EFFECT_KINDS`, `_IN_SESSION_SIDE_EFFECT_KINDS` (each with its membership test), `ToolUsageRow` (`to_dict`) | `eval_model.jsonl`, `eval_model_python.jsonl`, `eval_model_rules.jsonl`, `eval_model_split.jsonl`, `eval_model_tools.jsonl` |
 | `eval` | unit 1 of `eval.py`: `EvalReport` (the reference's fields and defaults, `NO_RATE`) and its `to_dict` | `eval_render.jsonl`, `eval_render_unicode.jsonl` |
 | `eval_render` | unit eval_render-1 of `eval_render.py` (lines 49-384): `render_text`, `_text`, `_review_text_lines`, `_rate_from_dict`, `_SURFACE_RATES`, `_surface_text_lines`, `_rule_split_text_lines`, `_format_rate`, `_bar`, `_truncate`, `_humanize_seconds`, `_short_ts` | `eval_render.jsonl`, `eval_render_unicode.jsonl` |
 | `health_roots` | `health_roots.py` 21-73: `EstateProgress` (`ordered`, `attempt`), `_LAST_CHECKED_CAP`; `progress_for_store` is the open Store's own `EstateProgress` | `health_roots.jsonl` |
@@ -4343,9 +4343,10 @@ show's rule, and the tool-usage kind map. It imports
 `health_model.explicit_ratio` (built, `health_model::explicit_ratio`)
 and `time_utils.parse_event_ts` (built, `datetime::parse_event_ts`).
 Nothing in unit 1 asks the machine: the clock (`now`) and every event
-are arguments. It is cut into four units, leaves first; unit
-eval_model-1 is built (`src/eval_model.rs`, 574 lines of Rust outside
-tests), and unit eval_model-2 (`src/eval_model/rules.rs`, a child module
+are arguments. It is cut into four units, leaves first, and all four
+are built: unit eval_model-1 (`src/eval_model.rs`, 574 lines of Rust
+outside tests), and units eval_model-2, eval_model-1b and eval_model-3
+(`src/eval_model/rules.rs`, `split.rs` and `tools.rs`, child modules
 re-exported from `eval_model`).
 
 | function | reference lines | needs | unit, status |
@@ -4365,17 +4366,19 @@ re-exported from `eval_model`).
 | `_parse_ts` | 529 | `datetime::parse_event_ts` itself | 1, built (an alias) |
 | `_canonical_top_hit_id` (`canonical_top_hit_id`) | 532-554 | nothing | 1, built |
 | `_silent_miss_from_event` (`silent_miss_from_event`) | 557-608 | nothing | 1, built |
-| `_with_rule_split`, `surface_rule_split` | 376-389, 404-494 | `recall_counters` (`compute_surface_report`, `SURFACES`, `is_surface_show`, `shown_ids`), `recall.RULE` (`recall_settle::RULE`) | 1b, after recall_counters-1 |
+| `_with_rule_split` (`with_rule_split`), `surface_rule_split` (with `group_of`, `MembershipDelta`) | 376-389, 404-494 | `recall_counters` (`compute_surface_report`, `SURFACES`, `is_surface_show`, `shown_ids`), `recall.RULE` (`recall_state::RULE`) | 1b, built |
 | `_package_version` | 611-625 | the installed package's metadata | 2, the caller's argument (not ported) |
 | `ThresholdRule`, the four threshold rules, `THRESHOLD_RULES`, `ThresholdSweepRow` | 653-786 | nothing | 2, built |
 | the two widening rules, `WIDENING_RULES`, `_ReplayableAudits`, `_collect_replayable_audits`, `_probe_query_display` | 788-1021 | the audited turns' events, the caller's `now` | 2, built |
 | `WideningFlaggedTurn`, `WideningMemoryRollup`, `WideningRuleDetail` | 1024-1116 | nothing | 2, built |
-| `_TOOL_EVENT_KIND_TO_TOOL`, `TOOLS_WITHOUT_TELEMETRY`, `_KNOWN_SIDE_EFFECT_KINDS`, `_IN_SESSION_SIDE_EFFECT_KINDS`, `ToolUsageRow` | 1117-1320 | nothing | 3 |
+| `_TOOL_EVENT_KIND_TO_TOOL`, `TOOLS_WITHOUT_TELEMETRY`, `_KNOWN_SIDE_EFFECT_KINDS`, `_IN_SESSION_SIDE_EFFECT_KINDS`, `ToolUsageRow` | 1117-1320 | nothing | 3, built |
 
 Unit eval_model-1b is lines 376-494 less `EARLIER_RULES` and
 `_show_in_window`; unit eval_model-2 lines 611-1116; unit eval_model-3
-lines 1117-1320. `compute_eval` and the rates belong to the eval units
-(`eval.py`).
+lines 1117-1320. All four are built. `compute_eval` and the rates
+belong to the eval units (`eval.py`), as do `ADMIN_RECORDED_EVENT_KINDS`
+and `is_admin_recorded_event` (`eval.py`, eval-3), which read unit 3's
+rosters.
 
 What unit 1 reproduces, and why:
 
@@ -4532,8 +4535,8 @@ Known costs, measured in release against CPython 3.13.13 on one machine
   read from the end for each key, the crate-wide representation, and
   building such an input is linear already.
 
-Left for later: units eval_model-1b and eval_model-3 as mapped above.
-Unit eval_model-2 is built (below).
+Units eval_model-2, eval_model-1b and eval_model-3 are built (below);
+nothing of `eval_model.py` is left for later.
 
 ### Unit 2, built (`eval_model::rules`)
 
@@ -4666,6 +4669,143 @@ float second score; hits holding 10**6 keys are about 19,000 times
 slower (the crate's dict as a list of pairs, unit 1's known cost); the
 probe display of a 10**6 code-point text about 870 times. Real scores
 are floats and hits hold a few keys.
+
+### Unit 1b, built (`eval_model::split`)
+
+`src/eval_model/split.rs` (190 lines outside tests) is a child module of
+`eval_model`, declared with `mod split;` and re-exported with `pub use
+split::*;`, as unit 2 is. It reproduces lines 376-389 and 404-494:
+`_with_rule_split` (`with_rule_split`) and `surface_rule_split`, with the
+inner `group_of` (public) and `in_group` (a closure), and the
+`membership_delta` dict as `MembershipDelta` (`to_dict` in the
+reference's key order). Nothing in it asks the machine: the rows and the
+window are arguments.
+
+- The group. `group_of(show)` is `RULE` exactly when `show.get("rule")
+  == RULE` holds, which only the `str` `"rs-v8"` (`recall_state::RULE`,
+  which `recall.RULE` re-exports) satisfies; a missing key, None, an
+  `int`, a `bool`, a float, a list holding the rule, a dict keyed by it,
+  or a near spelling (`"rs-v8 "`, `"RS-V8"`, `"rs-v"`) is
+  `EARLIER_RULES`. A show falls in exactly one group, so the groups add
+  up to the section (the ledger's hazard). The docstring's "rs-v5" is
+  history: the rule is whatever `RULE` holds.
+- The shows are the rows that are dicts, surface shows
+  (`is_surface_show`) and inside `[start, end)` (`show_in_window`). A
+  naive bound against a show with a readable stamp raises TypeError
+  there, before either report.
+- The reports. For `RULE` then `EARLIER_RULES`,
+  `compute_surface_report` over every row with the group as its pick, so
+  the pick runs inside the report: every row still joins, and a show of
+  either rule still ends the follow-ups of the id's earlier show. A raise
+  in the first report (an unhashable kind, an unhashable `surface` on a
+  `use` row, a truthy `suppressed_ids` that is not iterable) stops before
+  the second. The rows go to the report unfiltered: it skips a value that
+  is not a dict itself and counts positions among the dict surface rows,
+  as the reference's `surface_rows` would read.
+- The group's entry is `rules`, the non-empty `str` rules its in-window
+  shows named, as a set sorted by code point (`BTreeSet` of code points;
+  `"\u{ffff}"` before `"\u{10000}"`, where UTF-16 order would put it
+  after), then each surface of `SURFACES` in order: the report's part, or
+  None for a report that is None. `report[surface]` of a report without
+  the surface is KeyError in the reference; every report
+  `compute_surface_report` answers holds both surfaces, so that raise is
+  unreachable here and the lookup holds it as an invariant.
+- The delta reads, in order, the shows of the `RULE` group whose
+  `rc3_admitted` is a list: `rc3` is the set of the list's `str` items
+  (the empty `str` included; a `bool`, an `int`, None or a nested list
+  left out) and `delivered` the set of `shown_ids(show)` (non-empty `str`
+  ids only), so an `""` in `rc3` always counts in `rc3_not_delivered`. A
+  tuple, a dict, a `str` or None is not read. Each count is an `i64`:
+  it is bounded by the rows times their ids.
+- `with_rule_split(surfaces, rows, start, end)`: None (or Python's None)
+  stays None and the split is not made, so a log that would raise, or a
+  naive bound, answers None. Else `{**surfaces, "by_rule": ...,
+  "membership_delta": ...}`: a key already present keeps its place and
+  takes the new value, a new one goes last. A section that is not a dict
+  is TypeError (`{**x}` of a non-mapping); no caller passes one. The
+  port checks that before the split, the reference after it, so for a
+  non-dict section with a naive bound the class is the same TypeError
+  but the port's message is empty where the reference names the
+  naive-aware comparison.
+- Errors. `compute_surface_report`'s `PyError` and the `{**x}` TypeError
+  become `EvalModelError::Raised(PyError)` (`From<PyError>` in
+  `eval_model.rs`), by class only: `PyError` carries no text, so
+  `message()` is empty for them. The naive-bound TypeError keeps unit 1's
+  `TypeError` with its text.
+- A naive bound with no stamped show in the window but a stamped
+  settlement, `segment_opened`, `review_unanswered` or `recall_grade`
+  row: the reference raises TypeError in `compute_surface_report`, which
+  reads a naive bound as UTC (recall counters' stated difference). No
+  caller hands a naive bound: eval's window is always aware.
+- No regular expression is added to the engine's inventory.
+
+Fixtures and tests: `gen_eval_model.generate_split` writes
+`eval_model_split.jsonl` (not gated: ASCII ids and rules, stamps with
+offsets, the reports' floats and orders the same under every release;
+36 rows and a sweep, 51 KB). It holds `surface_rule_split` over 25 logs
+(shows under rs-v8, under earlier rules, without a rule, with non-`str`
+rules on briefs and on prompt rows, with an empty rule and near
+spellings; `rc3_admitted` a list with non-`str` items, with the empty
+`str`, a dict, a tuple, a `str`, None, empty and missing; delivered equal
+to rc3, a superset, a subset, disjoint, with repeats; shows out of the
+window and without a readable stamp; every combination of `start` and
+`end` None; naive bounds; an unhashable kind and surface; non-dict rows)
+and `_with_rule_split` over 11 sections (the log's own, None over a
+raising log and under a naive bound, an empty dict, one already holding
+`by_rule` and `membership_delta`, a list and a `str`). The sweep draws
+3,000 logs from `gen_recall_counters`' pools with a rule pool of the
+current, earlier and non-`str` rules and an `rc3_admitted` pool, in its
+four windows, and pins `surface_rule_split` and `_with_rule_split` of
+each log's own section by line count and SHA-256 (of the 6,000
+answers, 586 raise and 1,100 hold a delta of at least one row). `golden_eval_model_split.rs`
+checks every row and the sweep; `eval_model_split_kills.rs` holds the
+cases a plausible wrong port fails (the group by truthiness, by `in` or
+by a non-`str` rule, the pick applied before the report, the groups not
+adding up to the section, the rules unsorted or in UTF-16 order or with
+the empty rule, the delta over earlier-rule or out-of-window shows, a
+non-`str` rc3 item kept or the empty one dropped, `by_rule` appended,
+the split run for a None section, the tool map out of order);
+`eval_model_split_robustness.rs` splits a log of 100,000 rows holding
+20,000 shows within linear growth against 10,000 rows (`tests/timing`),
+compares 20 shows of 10,000 ids each with rc3 lists as long (the
+reference takes 17 s there: its `_ids` is quadratic), and puts lists
+nested 100,000 deep, a 10**6-code-point rule, an `int` of 5,000 digits,
+NaN and lists of 100,000 mixed items at `rule`, `rc3_admitted`,
+`shown_ids`, `ids`, `ts` and `kind`, with no panic.
+
+### Unit 3, built (`eval_model::tools`)
+
+`src/eval_model/tools.rs` (128 lines outside tests) is a child module of
+`eval_model`, re-exported as unit 2 is. It reproduces lines 1117-1320.
+
+- `_TOOL_EVENT_KIND_TO_TOOL` is `TOOL_EVENT_KIND_TO_TOOL`, its 18
+  `(kind, tool)` pairs in the reference's insertion order (the seven
+  memory tools, `episode` twice, `memory_admin` nine times); its `.get` is
+  `tool_of_kind`, a lookup by code points answering None for a kind the
+  map does not hold. `TOOLS_WITHOUT_TELEMETRY` is empty.
+- `_KNOWN_SIDE_EFFECT_KINDS` (13) and `_IN_SESSION_SIDE_EFFECT_KINDS` (9)
+  are `frozenset`s that nothing reads in order, so each is a table sorted
+  by code point with a membership test (`is_known_side_effect_kind`,
+  `is_in_session_side_effect_kind`). eval-3's `ADMIN_RECORDED_EVENT_KINDS`
+  (`_KNOWN - _IN_SESSION`: `capture_grade`, `recall_grade`,
+  `review_grade`, `silent_miss_cutoff`) and `is_admin_recorded_event` are
+  not built here; they read these two.
+- `ToolUsageRow(tool, count, share, has_telemetry=True)`: `count` an
+  `i64` (the rollup counts events), `share` `Option<f64>`, `new` with the
+  default; `to_dict` in the reference's key order, the share as a float
+  or None.
+
+Fixtures and tests: `gen_eval_model.generate_tools` writes
+`eval_model_tools.jsonl` (not gated: ASCII text and floats whose `repr`
+no release changes; 79 rows, 12 KB): the map's items in order, the empty
+list and both rosters sorted in its header; the lookup and both
+memberships over every kind of the map and the rosters and six more
+(near spellings, the empty kind, kinds only a v8 log holds); and `ToolUsageRow.to_dict` over shares None, 0.0, -0.0, 1.0,
+0.5, 1/3, 2/3, 0.1, 1e-7, 5e-324, the least normal, the greatest finite,
+1e16 and a 17-digit float, counts 0, 1, 7, `i64::MAX` and -1, and
+`has_telemetry` defaulted, true and false. `golden_eval_model_tools.rs`
+checks every row; `eval_model_split_kills.rs` holds the map's order and
+the admin difference.
 
 ## The eval family's renderers (`eval_render.py`)
 
@@ -4995,9 +5135,9 @@ reported; a truthy `suppressed_ids` that does not iterate raises
 `TypeError` and ends the whole section; `_latest_grades` tests the
 window a second time over rows already in it.
 
-Left for later: nothing of this module. Its callers are later units:
-eval_model-1b (`_with_rule_split`, `surface_rule_split`, the pick's
-maker), eval-1 (`_eval_report`, which passes the surface rows),
+Left for later: nothing of this module. Its callers are
+`eval_model::split` (eval_model-1b, built: `_with_rule_split`,
+`surface_rule_split`, the pick's maker) and later units: eval-1 (`_eval_report`, which passes the surface rows),
 eval_rates-1 (its use of `is_surface_row`) and recall_review-1 (its
 sampling over the same rows).
 

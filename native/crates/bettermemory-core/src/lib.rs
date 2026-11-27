@@ -39,7 +39,10 @@
 //!   the silent-miss readers of one event; unit 2 (`eval_model::rules`):
 //!   the threshold and widening rule registries, the sweep row, the
 //!   replayable-audit walk, `_probe_query_display` and the widening
-//!   detail types;
+//!   detail types; and its last two, unit 1b (`eval_model::split`): the
+//!   surfaces' split on each show's rule with the membership delta, and
+//!   unit 3 (`eval_model::tools`): the tool-usage tables and
+//!   `ToolUsageRow`;
 //! - [`eval`]: `eval.py`, its first unit: `EvalReport` with its
 //!   `to_dict`;
 //! - [`eval_render`]: the eval family's renderers (`eval_render.py`), its

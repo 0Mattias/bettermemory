@@ -1,0 +1,80 @@
+{"count":79,"fixture":"eval_model_tools","in_session":["prompt_recall","recall_held","review_unanswered","search_miss","segment_opened","session_brief","standing_guard","turn_audited","use_token_expired"],"known":["capture_grade","prompt_recall","recall_grade","recall_held","review_grade","review_unanswered","search_miss","segment_opened","session_brief","silent_miss_cutoff","standing_guard","turn_audited","use_token_expired"],"map":[["search","memory_search"],["show","memory_show"],["write","memory_write"],["update","memory_update"],["remove","memory_remove"],["verify","memory_verify"],["use","memory_record_use"],["episode_write","episode"],["episode_handoff","episode"],["restore","memory_admin"],["list_tombstones","memory_admin"],["rename_scope","memory_admin"],["scope_disable","memory_admin"],["scope_enable","memory_admin"],["miss_ack","memory_admin"],["conflict_scan","memory_admin"],["conflict_verdict","memory_admin"],["answer_standing","memory_admin"]],"without":[]}
+{"in_session":false,"k":"kind","kind":"search","known":false,"tool":"memory_search"}
+{"in_session":false,"k":"kind","kind":"show","known":false,"tool":"memory_show"}
+{"in_session":false,"k":"kind","kind":"write","known":false,"tool":"memory_write"}
+{"in_session":false,"k":"kind","kind":"update","known":false,"tool":"memory_update"}
+{"in_session":false,"k":"kind","kind":"remove","known":false,"tool":"memory_remove"}
+{"in_session":false,"k":"kind","kind":"verify","known":false,"tool":"memory_verify"}
+{"in_session":false,"k":"kind","kind":"use","known":false,"tool":"memory_record_use"}
+{"in_session":false,"k":"kind","kind":"episode_write","known":false,"tool":"episode"}
+{"in_session":false,"k":"kind","kind":"episode_handoff","known":false,"tool":"episode"}
+{"in_session":false,"k":"kind","kind":"restore","known":false,"tool":"memory_admin"}
+{"in_session":false,"k":"kind","kind":"list_tombstones","known":false,"tool":"memory_admin"}
+{"in_session":false,"k":"kind","kind":"rename_scope","known":false,"tool":"memory_admin"}
+{"in_session":false,"k":"kind","kind":"scope_disable","known":false,"tool":"memory_admin"}
+{"in_session":false,"k":"kind","kind":"scope_enable","known":false,"tool":"memory_admin"}
+{"in_session":false,"k":"kind","kind":"miss_ack","known":false,"tool":"memory_admin"}
+{"in_session":false,"k":"kind","kind":"conflict_scan","known":false,"tool":"memory_admin"}
+{"in_session":false,"k":"kind","kind":"conflict_verdict","known":false,"tool":"memory_admin"}
+{"in_session":false,"k":"kind","kind":"answer_standing","known":false,"tool":"memory_admin"}
+{"in_session":false,"k":"kind","kind":"capture_grade","known":true,"tool":null}
+{"in_session":true,"k":"kind","kind":"prompt_recall","known":true,"tool":null}
+{"in_session":false,"k":"kind","kind":"recall_grade","known":true,"tool":null}
+{"in_session":true,"k":"kind","kind":"recall_held","known":true,"tool":null}
+{"in_session":false,"k":"kind","kind":"review_grade","known":true,"tool":null}
+{"in_session":true,"k":"kind","kind":"review_unanswered","known":true,"tool":null}
+{"in_session":true,"k":"kind","kind":"search_miss","known":true,"tool":null}
+{"in_session":true,"k":"kind","kind":"segment_opened","known":true,"tool":null}
+{"in_session":true,"k":"kind","kind":"session_brief","known":true,"tool":null}
+{"in_session":false,"k":"kind","kind":"silent_miss_cutoff","known":true,"tool":null}
+{"in_session":true,"k":"kind","kind":"standing_guard","known":true,"tool":null}
+{"in_session":true,"k":"kind","kind":"turn_audited","known":true,"tool":null}
+{"in_session":true,"k":"kind","kind":"use_token_expired","known":true,"tool":null}
+{"in_session":false,"k":"kind","kind":"Search","known":false,"tool":null}
+{"in_session":false,"k":"kind","kind":"search ","known":false,"tool":null}
+{"in_session":false,"k":"kind","kind":"","known":false,"tool":null}
+{"in_session":true,"k":"kind","kind":"turn_audited","known":true,"tool":null}
+{"in_session":false,"k":"kind","kind":"pending_expired","known":false,"tool":null}
+{"in_session":false,"k":"kind","kind":"doctor_fix","known":false,"tool":null}
+{"count":0,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": 0, \"share\": null, \"has_telemetry\": true}","share":null,"tool":"memory_search"}
+{"count":0,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 0, \"share\": null, \"has_telemetry\": true}","share":null,"tel":true,"tool":"memory_admin"}
+{"count":0,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 0, \"share\": null, \"has_telemetry\": false}","share":null,"tel":false,"tool":"memory_admin"}
+{"count":1,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": 1, \"share\": 0.0, \"has_telemetry\": true}","share":"0.0","tool":"memory_search"}
+{"count":1,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 1, \"share\": 0.0, \"has_telemetry\": true}","share":"0.0","tel":true,"tool":"memory_admin"}
+{"count":1,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 1, \"share\": 0.0, \"has_telemetry\": false}","share":"0.0","tel":false,"tool":"memory_admin"}
+{"count":7,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": 7, \"share\": -0.0, \"has_telemetry\": true}","share":"-0.0","tool":"memory_search"}
+{"count":7,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 7, \"share\": -0.0, \"has_telemetry\": true}","share":"-0.0","tel":true,"tool":"memory_admin"}
+{"count":7,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 7, \"share\": -0.0, \"has_telemetry\": false}","share":"-0.0","tel":false,"tool":"memory_admin"}
+{"count":9223372036854775807,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": 9223372036854775807, \"share\": 1.0, \"has_telemetry\": true}","share":"1.0","tool":"memory_search"}
+{"count":9223372036854775807,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 9223372036854775807, \"share\": 1.0, \"has_telemetry\": true}","share":"1.0","tel":true,"tool":"memory_admin"}
+{"count":9223372036854775807,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 9223372036854775807, \"share\": 1.0, \"has_telemetry\": false}","share":"1.0","tel":false,"tool":"memory_admin"}
+{"count":-1,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": -1, \"share\": 0.5, \"has_telemetry\": true}","share":"0.5","tool":"memory_search"}
+{"count":-1,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": -1, \"share\": 0.5, \"has_telemetry\": true}","share":"0.5","tel":true,"tool":"memory_admin"}
+{"count":-1,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": -1, \"share\": 0.5, \"has_telemetry\": false}","share":"0.5","tel":false,"tool":"memory_admin"}
+{"count":0,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": 0, \"share\": 0.3333333333333333, \"has_telemetry\": true}","share":"0.3333333333333333","tool":"memory_search"}
+{"count":0,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 0, \"share\": 0.3333333333333333, \"has_telemetry\": true}","share":"0.3333333333333333","tel":true,"tool":"memory_admin"}
+{"count":0,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 0, \"share\": 0.3333333333333333, \"has_telemetry\": false}","share":"0.3333333333333333","tel":false,"tool":"memory_admin"}
+{"count":1,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": 1, \"share\": 0.6666666666666666, \"has_telemetry\": true}","share":"0.6666666666666666","tool":"memory_search"}
+{"count":1,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 1, \"share\": 0.6666666666666666, \"has_telemetry\": true}","share":"0.6666666666666666","tel":true,"tool":"memory_admin"}
+{"count":1,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 1, \"share\": 0.6666666666666666, \"has_telemetry\": false}","share":"0.6666666666666666","tel":false,"tool":"memory_admin"}
+{"count":7,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": 7, \"share\": 0.1, \"has_telemetry\": true}","share":"0.1","tool":"memory_search"}
+{"count":7,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 7, \"share\": 0.1, \"has_telemetry\": true}","share":"0.1","tel":true,"tool":"memory_admin"}
+{"count":7,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 7, \"share\": 0.1, \"has_telemetry\": false}","share":"0.1","tel":false,"tool":"memory_admin"}
+{"count":9223372036854775807,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": 9223372036854775807, \"share\": 1e-07, \"has_telemetry\": true}","share":"1e-07","tool":"memory_search"}
+{"count":9223372036854775807,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 9223372036854775807, \"share\": 1e-07, \"has_telemetry\": true}","share":"1e-07","tel":true,"tool":"memory_admin"}
+{"count":9223372036854775807,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 9223372036854775807, \"share\": 1e-07, \"has_telemetry\": false}","share":"1e-07","tel":false,"tool":"memory_admin"}
+{"count":-1,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": -1, \"share\": 5e-324, \"has_telemetry\": true}","share":"5e-324","tool":"memory_search"}
+{"count":-1,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": -1, \"share\": 5e-324, \"has_telemetry\": true}","share":"5e-324","tel":true,"tool":"memory_admin"}
+{"count":-1,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": -1, \"share\": 5e-324, \"has_telemetry\": false}","share":"5e-324","tel":false,"tool":"memory_admin"}
+{"count":0,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": 0, \"share\": 2.2250738585072014e-308, \"has_telemetry\": true}","share":"2.2250738585072014e-308","tool":"memory_search"}
+{"count":0,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 0, \"share\": 2.2250738585072014e-308, \"has_telemetry\": true}","share":"2.2250738585072014e-308","tel":true,"tool":"memory_admin"}
+{"count":0,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 0, \"share\": 2.2250738585072014e-308, \"has_telemetry\": false}","share":"2.2250738585072014e-308","tel":false,"tool":"memory_admin"}
+{"count":1,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": 1, \"share\": 1.7976931348623157e+308, \"has_telemetry\": true}","share":"1.7976931348623157e+308","tool":"memory_search"}
+{"count":1,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 1, \"share\": 1.7976931348623157e+308, \"has_telemetry\": true}","share":"1.7976931348623157e+308","tel":true,"tool":"memory_admin"}
+{"count":1,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 1, \"share\": 1.7976931348623157e+308, \"has_telemetry\": false}","share":"1.7976931348623157e+308","tel":false,"tool":"memory_admin"}
+{"count":7,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": 7, \"share\": 1e+16, \"has_telemetry\": true}","share":"1e+16","tool":"memory_search"}
+{"count":7,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 7, \"share\": 1e+16, \"has_telemetry\": true}","share":"1e+16","tel":true,"tool":"memory_admin"}
+{"count":7,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 7, \"share\": 1e+16, \"has_telemetry\": false}","share":"1e+16","tel":false,"tool":"memory_admin"}
+{"count":9223372036854775807,"k":"row","r":"{\"tool\": \"memory_search\", \"count\": 9223372036854775807, \"share\": 123456789012345.67, \"has_telemetry\": true}","share":"123456789012345.67","tool":"memory_search"}
+{"count":9223372036854775807,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 9223372036854775807, \"share\": 123456789012345.67, \"has_telemetry\": true}","share":"123456789012345.67","tel":true,"tool":"memory_admin"}
+{"count":9223372036854775807,"k":"row","r":"{\"tool\": \"memory_admin\", \"count\": 9223372036854775807, \"share\": 123456789012345.67, \"has_telemetry\": false}","share":"123456789012345.67","tel":false,"tool":"memory_admin"}

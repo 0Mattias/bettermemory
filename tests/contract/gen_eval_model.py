@@ -69,13 +69,17 @@ otherwise than 3.13.13 too (``PYTHON_VERSION`` in `generate.py`).
 from __future__ import annotations
 
 import hashlib
+import json
 import struct
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from bettermemory import eval_model as em
+from bettermemory import recall_counters
+from bettermemory.recall_state import RULE
 
+from . import gen_recall_counters as rc_gen
 from ._common import jsonl, neutral, text_field
 
 _MASK = (1 << 64) - 1
@@ -1678,3 +1682,482 @@ def generate_rules() -> dict[str, bytes]:
         "sha256": rules_sweep_digest(),
     }
     return {"eval_model_rules.jsonl": jsonl([header, *rows, sweep])}
+
+
+# ---------------------------------------------------------------------------
+# unit eval_model-1b: the surfaces' split on each show's rule
+# (``eval_model_split.jsonl``)
+# ---------------------------------------------------------------------------
+
+SPLIT_SEED = 20261127
+SPLIT_COUNT = 3000
+_R = "rs-v8"
+
+
+def _split_text(answer: Any) -> str:
+    """The compact text of an answer, rate dicts as ``[n, d]`` and
+    ``note`` left out (`gen_recall_counters._compact`)."""
+    return json.dumps(rc_gen._compact(answer), separators=(",", ":"))
+
+
+def _split_out(fn: Callable[[], Any]) -> Any:
+    try:
+        answer = fn()
+    except Exception as exc:  # the class is the answer
+        return {"x": type(exc).__name__}
+    return None if answer is None else _split_text(answer)
+
+
+def _split_row(
+    name: str, events: list[Any], start: str | None = None, end: str | None = None
+) -> dict[str, Any]:
+    s, e = rc_gen._dt(start), rc_gen._dt(end)
+    return {
+        "k": "split",
+        "name": name,
+        "ev": rc_gen._enc(events),
+        "start": start,
+        "end": end,
+        "out": _split_out(lambda: list(em.surface_rule_split(events, start=s, end=e))),
+    }
+
+
+_NO_SURFACES = object()
+
+
+def _with_row(
+    name: str,
+    surfaces: Any,
+    events: list[Any],
+    start: str | None = None,
+    end: str | None = None,
+) -> dict[str, Any]:
+    """``surfaces`` is the section, or `_NO_SURFACES` for
+    `compute_surface_report` of the log in the window. The row spells it
+    null, ``{"report": true}`` for the log's own section, ``{"pairs":
+    [[key, value], ...]}`` for a dict (its order kept) or ``{"value":
+    value}`` for anything else."""
+    s, e = rc_gen._dt(start), rc_gen._dt(end)
+    spelled: Any
+    if surfaces is _NO_SURFACES:
+        surfaces = recall_counters.compute_surface_report(events, start=s, end=e)
+        spelled = {"report": True}
+    elif surfaces is None:
+        spelled = None
+    elif isinstance(surfaces, dict):
+        spelled = {"pairs": [[k, rc_gen._enc(v)] for k, v in surfaces.items()]}
+    else:
+        spelled = {"value": rc_gen._enc(surfaces)}
+    return {
+        "k": "with",
+        "name": name,
+        "surfaces": spelled,
+        "ev": rc_gen._enc(events),
+        "start": start,
+        "end": end,
+        "out": _split_out(
+            lambda: em._with_rule_split(surfaces, events, start=s, end=e)
+        ),
+    }
+
+
+def _rec(minute: int, ids: Any, rule: Any = _R, **more: Any) -> dict[str, Any]:
+    return rc_gen._recall("c1", minute, ids, rule, **more)
+
+
+def _brf(minute: int, ids: Any, **more: Any) -> dict[str, Any]:
+    return rc_gen._brief("c1", minute, ids, **more)
+
+
+def _opn(minute: int, memory_id: str) -> dict[str, Any]:
+    return {**rc_gen._open(minute, memory_id), "session": "c1"}
+
+
+def _usd(minute: int, ids: list[str]) -> dict[str, Any]:
+    return {**rc_gen._use(minute, ids), "session": "c1"}
+
+
+_T = rc_gen._ts
+_NAIVE_BOUND = "2026-01-01T12:00:00"
+
+
+def _split_rows() -> list[dict[str, Any]]:
+    r = _split_row
+    mixed = [
+        _rec(1, ["m1", "m2"], rc3_admitted=["m1", "m2"]),
+        _opn(2, "m1"),
+        _rec(3, ["m1"], "rs-v4"),
+        _opn(4, "m1"),
+        _usd(5, ["m2"]),
+        _brf(6, ["m3"]),
+        _opn(7, "m3"),
+    ]
+    out = [
+        r("empty", []),
+        r("no surface rows", [{"kind": "search", "ts": _T(1)}, "x", 5, None]),
+        r(
+            "current rule only",
+            [
+                _rec(1, ["m1", "m2"], rc3_admitted=["m1", "m2"]),
+                _opn(2, "m1"),
+                _usd(3, ["m2"]),
+            ],
+        ),
+        r(
+            "earlier rules only",
+            [_rec(1, ["m1"], "rs-v4"), _rec(2, ["m2"], "rs-v1"), _brf(3, ["m3"])],
+        ),
+        r("mixed, follow-ups joined over every row", mixed),
+        r("mixed, window from minute 3", mixed, start=_T(3)),
+        r("mixed, window to minute 3", mixed, end=_T(3)),
+        r("mixed, window 2 to 6", mixed, start=_T(2), end=_T(6)),
+        r("mixed, empty window", mixed, start=_T(30)),
+        r(
+            "the rule's spellings",
+            [
+                _rec(1, ["m1"], ""),
+                _rec(2, ["m1"], "RS-V8"),
+                _rec(3, ["m1"], "rs-v8 "),
+                _rec(4, ["m1"], " rs-v8"),
+                _rec(5, ["m1"], "rs-v10"),
+                _rec(6, ["m1"], "rs-v2"),
+                _rec(7, ["m1"], "Z"),
+                _rec(8, ["m1"], "a"),
+                _rec(9, ["m1"], "rs-v2"),
+                _rec(10, ["m1"], _R),
+            ],
+        ),
+        r(
+            "non-str rules on briefs",
+            [
+                _brf(1, ["m1"], rule=1),
+                _brf(2, ["m2"], rule=True),
+                _brf(3, ["m3"], rule=None),
+                _brf(4, ["m4"], rule=[_R]),
+                _brf(5, ["m5"], rule={_R: 1}),
+                _brf(6, ["m6"], rule=_R, rc3_admitted=["m6"]),
+                _brf(7, ["m7"], rule=0),
+                _brf(8, ["m8"], rule=8.0),
+            ],
+        ),
+        r(
+            "non-str rules on prompt rows are no shows",
+            [_rec(1, ["m1"], 1), _rec(2, ["m1"], True), _rec(3, ["m1"], None)],
+        ),
+        r(
+            "rc3_admitted shapes",
+            [
+                _rec(1, ["m1"], rc3_admitted=["m1", 1, True, None, ["m2"], {"m3": 1}]),
+                _rec(2, ["m1"], rc3_admitted={"m1": 1}),
+                _rec(3, ["m1"]),
+                _rec(4, ["m1"], rc3_admitted="m1"),
+                _rec(5, ["m1"], rc3_admitted=("m1",)),
+                _rec(6, ["m1"], rc3_admitted=[]),
+                _rec(7, ["m1"], rc3_admitted=None),
+                _rec(8, ["m1"], rc3_admitted=["", "m1"]),
+                _rec(9, ["m1", "", "m1"], rc3_admitted=["m1", "m1"]),
+            ],
+        ),
+        r(
+            "delivered against rc3",
+            [
+                _rec(1, ["m1", "m2"], rc3_admitted=["m2", "m1"]),
+                _rec(2, ["m1", "m2", "m3"], rc3_admitted=["m1"]),
+                _rec(3, ["m1"], rc3_admitted=["m1", "m2", "m3"]),
+                _rec(4, ["m1", "m2"], rc3_admitted=["m3", "m4", "m5"]),
+                _rec(5, [], rc3_admitted=["m1"]),
+                _rec(6, "m1", rc3_admitted=["m1"]),
+                _rec(7, "", rc3_admitted=[]),
+                _brf(8, ["m1", "m2"], rule=_R, rc3_admitted=["m2"]),
+            ],
+        ),
+        r(
+            "rc3 under earlier rules is not read",
+            [
+                _rec(1, ["m1"], "rs-v4", rc3_admitted=["m9"]),
+                _rec(2, ["m1"], "", rc3_admitted=["m9"]),
+                _brf(3, ["m1"], rc3_admitted=["m9"]),
+            ],
+        ),
+    ]
+    windowed = [
+        _rec(1, ["m1"], rc3_admitted=["z1"]),
+        _rec(3, ["m2"], rc3_admitted=["m2"]),
+        _rec(4, ["m3"], "rs-v4"),
+        _rec(6, ["m4"], rc3_admitted=["z2"]),
+        {**_rec(0, ["m5"], rc3_admitted=["z3"]), "ts": "bad"},
+        {**_rec(0, ["m6"], "rs-v3"), "ts": 5},
+        {**_rec(0, ["m7"], rc3_admitted=["z4"]), "ts": _T(5, "+02:00")},
+    ]
+    for start, end in [(None, None), (_T(2), None), (None, _T(5)), (_T(2), _T(5))]:
+        out.append(r(f"window {start} to {end}", windowed, start=start, end=end))
+    out += [
+        r(
+            "naive start against a stamped show",
+            [_rec(1, ["m1"])],
+            start=_NAIVE_BOUND,
+        ),
+        r("naive end against a stamped show", [_rec(1, ["m1"])], end=_NAIVE_BOUND),
+        r(
+            "unhashable kind raises in the first report",
+            [_rec(1, ["m1"]), {"kind": ["use"], "ts": _T(2)}],
+        ),
+        r(
+            "unhashable surface on a use row",
+            [_rec(1, ["m1"]), {**_usd(2, ["m1"]), "surface": ["recall"]}],
+        ),
+        r(
+            "non-dict rows among shows",
+            [
+                "x",
+                _rec(1, ["m1"], rc3_admitted=["m1"]),
+                5,
+                None,
+                [],
+                _rec(2, ["m2"], "rs-v4"),
+            ],
+        ),
+        r(
+            "a settlement and a segment without shows",
+            [
+                {**_usd(1, ["m1"]), "surface": "recall"},
+                {"kind": "segment_opened", "session": "c1", "segment": 1, "ts": _T(2)},
+            ],
+        ),
+    ]
+    return out
+
+
+def _with_rows() -> list[dict[str, Any]]:
+    w = _with_row
+    log = [
+        _rec(1, ["m1", "m2"], rc3_admitted=["m1"]),
+        _opn(2, "m1"),
+        _rec(3, ["m1"], "rs-v4"),
+    ]
+    raising = [_rec(1, ["m1"]), {"kind": ["use"], "ts": _T(2)}]
+    return [
+        w("the section of the log", _NO_SURFACES, log),
+        w("the section in a window", _NO_SURFACES, log, start=_T(2)),
+        w("None stays None", None, log),
+        w("None stays None, the split not run", None, raising),
+        w("None stays None for a naive bound", None, log, start=_NAIVE_BOUND),
+        w("an empty section", {}, log),
+        w(
+            "keys already present keep their place",
+            {"membership_delta": 1, "rules": [], "by_rule": "old", "tail": True},
+            log,
+        ),
+        w("a section with other keys", {"rules": ["x"], "brief": None}, []),
+        w("a list is no mapping", ["by_rule"], log),
+        w("a str is no mapping", "x", log),
+        w("a section over a raising log", {}, raising),
+    ]
+
+
+_SPLIT_POOLS: list[tuple[str, list[Any]]] = [
+    (key, pool) for key, pool in rc_gen.POOLS if key != "rule"
+] + [
+    ("rule", [rc_gen.ABSENT, _R, _R, _R, "rs-v4", "rs-v1", "", "r1", 1, True, None]),
+    (
+        "rc3_admitted",
+        [
+            rc_gen.ABSENT,
+            rc_gen.ABSENT,
+            ["m1"],
+            ["m1", "m2"],
+            ["m2", 1, True],
+            [],
+            [""],
+            {"m1": 1},
+            "m1",
+        ],
+    ),
+]
+
+
+def _draw_split_log(d: _Draw) -> list[dict[str, Any]]:
+    events = []
+    for _ in range(3 + d.pick(14)):
+        event: dict[str, Any] = {}
+        for key, pool in _SPLIT_POOLS:
+            value = pool[d.pick(len(pool))]
+            if value != rc_gen.ABSENT:
+                event[key] = value
+        events.append(event)
+    return events
+
+
+def _sweep_answer(fn: Callable[[], Any]) -> str:
+    try:
+        out = fn()
+    except Exception as exc:  # the class is the answer
+        return "!" + type(exc).__name__
+    return "~" if out is None else json.dumps(out)
+
+
+def split_sweep_lines() -> list[str]:
+    """Per log ``i`` and the window ``w`` drawn after it: ``i w=<w>
+    s=<answer>`` (`surface_rule_split` as a list) and ``i w=<w>
+    t=<answer>`` (`_with_rule_split` of `compute_surface_report` of the
+    log in the window), each `json.dumps` of the answer, ``~`` for None,
+    ``!`` and the class for an exception."""
+    d = _Draw(SPLIT_SEED)
+    lines: list[str] = []
+    for i in range(SPLIT_COUNT):
+        events = _draw_split_log(d)
+        w = d.pick(len(rc_gen.WINDOWS))
+        s, e = (rc_gen._dt(t) for t in rc_gen.WINDOWS[w])
+
+        def split() -> Any:
+            return list(em.surface_rule_split(events, start=s, end=e))
+
+        def with_split() -> Any:
+            section = recall_counters.compute_surface_report(events, start=s, end=e)
+            return em._with_rule_split(section, events, start=s, end=e)
+
+        lines.append(f"{i} w={w} s={_sweep_answer(split)}")
+        lines.append(f"{i} w={w} t={_sweep_answer(with_split)}")
+    return lines
+
+
+def generate_split() -> dict[str, bytes]:
+    """``eval_model_split.jsonl``, read in
+    ``native/crates/bettermemory-core/src/eval_model/split.rs``.
+
+    The header holds `RULE`, `EARLIER_RULES` and `SURFACES`. Then one row
+    per case under ``k``; an event and a section are spelled as
+    `gen_recall_counters` spells them (a tuple ``{"$t": [...]}``), a bound
+    is `fromisoformat` text or null, and ``out`` is null for None,
+    ``{"x": class}`` for an exception, or the answer's compact text (rate
+    dicts as ``[numerator, denominator]``, ``note`` left out):
+
+    - ``split``: ``name``, ``ev``, ``start``, ``end`` and ``out``,
+      `surface_rule_split` as the list ``[by_rule, membership_delta]``;
+    - ``with``: the same with ``surfaces``, `_with_rule_split`; the
+      section is null, ``{"report": true}`` (`compute_surface_report` of
+      the log in the window), ``{"pairs": [[key, value], ...]}`` (a dict
+      in its order) or ``{"value": value}``.
+
+    The last line is the sweep: ``count`` logs drawn with `_Draw` from
+    ``seed`` out of the pools the line holds (``"~"``: the key is absent;
+    `gen_recall_counters`' pools with a ``rule`` pool of the current rule,
+    earlier and non-str rules, and an ``rc3_admitted`` pool), each in the
+    window ``windows[w]``; ``sha256`` is the digest of
+    `split_sweep_lines`, joined by newlines.
+
+    Not gated: every id, rule and stamp is ASCII, every stamp carries an
+    offset, and the reports' floats, set and dict order are the same under
+    3.11 to 3.14 on every system.
+    """
+    rows = [*_split_rows(), *_with_rows()]
+    lines = split_sweep_lines()
+    sweep = {
+        "k": "sweep",
+        "seed": SPLIT_SEED,
+        "count": SPLIT_COUNT,
+        "pools": [[key, rc_gen._enc(pool)] for key, pool in _SPLIT_POOLS],
+        "windows": rc_gen.WINDOWS,
+        "lines": len(lines),
+        "sha256": hashlib.sha256("\n".join(lines).encode("ascii")).hexdigest(),
+    }
+    header = {
+        "fixture": "eval_model_split",
+        "count": len(rows) + 1,
+        "rule": RULE,
+        "earlier": em.EARLIER_RULES,
+        "surfaces": list(recall_counters.SURFACES),
+    }
+    return {"eval_model_split.jsonl": jsonl([header, *rows, sweep])}
+
+
+# ---------------------------------------------------------------------------
+# unit eval_model-3: the tool-usage tables (``eval_model_tools.jsonl``)
+# ---------------------------------------------------------------------------
+
+_KIND_PROBES = [
+    "Search",
+    "search ",
+    "",
+    "turn_audited",
+    "pending_expired",
+    "doctor_fix",
+]
+_SHARES: list[float | None] = [
+    None,
+    0.0,
+    -0.0,
+    1.0,
+    0.5,
+    1 / 3,
+    2 / 3,
+    0.1,
+    1e-7,
+    5e-324,
+    2.2250738585072014e-308,
+    1.7976931348623157e308,
+    1e16,
+    123456789012345.67,
+]
+_COUNTS = [0, 1, 7, I64_MAX, -1]
+
+
+def generate_tools() -> dict[str, bytes]:
+    """``eval_model_tools.jsonl``, read in
+    ``native/crates/bettermemory-core/src/eval_model/tools.rs``.
+
+    The header holds ``map`` (`_TOOL_EVENT_KIND_TO_TOOL`'s items in
+    order), ``without`` (`TOOLS_WITHOUT_TELEMETRY`), ``known`` and
+    ``in_session`` (the two side-effect rosters, sorted). Then one row per
+    case under ``k``:
+
+    - ``kind``: ``kind``, ``tool`` (the map's `get`, or null), ``known``
+      and ``in_session`` (membership);
+    - ``row``: ``tool``, ``count``, ``share`` (null or the float's
+      ``repr``), ``tel`` (``has_telemetry``; absent for the default) and
+      ``r``, `json.dumps` of `ToolUsageRow.to_dict`.
+
+    Not gated: ASCII text and floats whose ``repr`` no release changes.
+    """
+    kinds = [
+        *em._TOOL_EVENT_KIND_TO_TOOL,
+        *sorted(em._KNOWN_SIDE_EFFECT_KINDS),
+        *_KIND_PROBES,
+    ]
+    rows: list[dict[str, Any]] = [
+        {
+            "k": "kind",
+            "kind": kind,
+            "tool": em._TOOL_EVENT_KIND_TO_TOOL.get(kind),
+            "known": kind in em._KNOWN_SIDE_EFFECT_KINDS,
+            "in_session": kind in em._IN_SESSION_SIDE_EFFECT_KINDS,
+        }
+        for kind in kinds
+    ]
+    for i, share in enumerate(_SHARES):
+        for tel in (None, True, False):
+            count = _COUNTS[i % len(_COUNTS)]
+            row = (
+                em.ToolUsageRow("memory_search", count, share)
+                if tel is None
+                else em.ToolUsageRow("memory_admin", count, share, tel)
+            )
+            case: dict[str, Any] = {
+                "k": "row",
+                "tool": row.tool,
+                "count": count,
+                "share": None if share is None else repr(share),
+            }
+            if tel is not None:
+                case["tel"] = tel
+            case["r"] = json.dumps(row.to_dict())
+            rows.append(case)
+    header = {
+        "fixture": "eval_model_tools",
+        "count": len(rows),
+        "map": [list(item) for item in em._TOOL_EVENT_KIND_TO_TOOL.items()],
+        "without": list(em.TOOLS_WITHOUT_TELEMETRY),
+        "known": sorted(em._KNOWN_SIDE_EFFECT_KINDS),
+        "in_session": sorted(em._IN_SESSION_SIDE_EFFECT_KINDS),
+    }
+    return {"eval_model_tools.jsonl": jsonl([header, *rows])}

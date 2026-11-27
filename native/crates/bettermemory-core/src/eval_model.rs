@@ -21,12 +21,16 @@ use crate::datetime::{parse_event_ts, DateTime};
 use crate::events::truthy;
 use crate::health_model::{dict, explicit_ratio, int, is_text, opt_float, text};
 use crate::pyre::regex::Regex;
-use crate::pyvalue::{int_from_str, repr_str, type_name, PyStr, PyValue};
+use crate::pyvalue::{int_from_str, repr_str, type_name, PyError, PyStr, PyValue};
 use crate::search::num::{int_true_div, py_max};
 use crate::unicode::{self, cps, py_strip};
 
 mod rules;
+mod split;
+mod tools;
 pub use rules::*;
+pub use split::*;
+pub use tools::*;
 
 /// `DEFAULT_SINCE_SPEC`.
 pub const DEFAULT_SINCE_SPEC: &str = "30d";
@@ -71,6 +75,16 @@ pub enum EvalModelError {
     AttributeError(&'static str),
     /// OverflowError: `now - span` left the calendar.
     OverflowError,
+    /// An exception a called module raises, by class only (`PyError`
+    /// carries no text): `compute_surface_report`'s TypeErrors, and
+    /// `{**surfaces}` of a section that is not a dict.
+    Raised(PyError),
+}
+
+impl From<PyError> for EvalModelError {
+    fn from(e: PyError) -> Self {
+        EvalModelError::Raised(e)
+    }
 }
 
 impl EvalModelError {
@@ -81,10 +95,12 @@ impl EvalModelError {
             EvalModelError::TypeError(_) => "TypeError",
             EvalModelError::AttributeError(_) => "AttributeError",
             EvalModelError::OverflowError => "OverflowError",
+            EvalModelError::Raised(e) => e.name(),
         }
     }
 
-    /// `str(exc)`.
+    /// `str(exc)`; empty for [`EvalModelError::Raised`], whose text the
+    /// called module does not carry.
     pub fn message(&self) -> PyStr {
         match self {
             EvalModelError::ValueError(text) => text.clone(),
@@ -93,6 +109,7 @@ impl EvalModelError {
                 cps(&format!("'{kind}' object has no attribute 'get'"))
             }
             EvalModelError::OverflowError => cps("date value out of range"),
+            EvalModelError::Raised(_) => Vec::new(),
         }
     }
 }

@@ -352,6 +352,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "eval_model": gen_eval_model.generate,
     "eval_model_python": gen_eval_model.generate_python,
     "eval_model_rules": gen_eval_model.generate_rules,
+    "eval_model_split": gen_eval_model.generate_split,
+    "eval_model_tools": gen_eval_model.generate_tools,
     "eval_render": gen_eval_render.generate,
     "eval_render_unicode": gen_eval_render.generate_unicode,
     "log_chain": gen_log.generate,
