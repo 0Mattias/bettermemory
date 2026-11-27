@@ -508,8 +508,10 @@ jobs:
     # generator's whole time. The estimate assumes a cold target folder,
     # which is not cached (see the cache step). The limit is twice the
     # expected worst case. A job that is cancelled reports nothing about
-    # parity.
-    timeout-minutes: 60
+    # parity. By push 54 (4675803e, 2026-11-27) the macOS shards took 34 to
+    # 52 minutes and shard 1 once hit the 60-minute limit, so the limit is
+    # 90 until the shards are rebalanced.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
