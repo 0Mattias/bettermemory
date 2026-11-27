@@ -159,7 +159,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `builder` | `builder.py`'s two pure schema scrubs: `_strip_titles`, `_fold_nullable` | `builder_schema.jsonl` |
 | `claims`, `claim_drift` | units 1 to 3 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`); `claim_drift`: `_Headers`, `build_binding_index`, `claim_level_drift`, the trait `LiteralLines` for the literal helpers | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl`, `claim_drift.jsonl`, `claim_drift_unicode.jsonl`, `claim_drift_python.jsonl` |
 | `symbols` | unit symcheck of `symbols.py`: the bounds (`_MAX_*`, `_FILE_SUFFIXES`), `SymbolCitation`, `SymbolDriftReport` (`missing`, `__bool__`, `to_dict`), `check_symbol_citations` over citations already parsed, `_tier`, `_live_root`, `_resolve_module`, `_module_bindings`; `ast.parse` and the name walks are a trait (`ModuleNames`) | `symbols.jsonl`, `symbols_platform.jsonl` |
-| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII read since unit claims-6 (`verify_identifier` over the raw run, the parser's NFKC in `literal`). Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts. Unit pyexpr (claims-5b2): the expression grammar `ast.parse` reads over those tokens (`module_expr::parse_expression_module`, `Parser`): acceptance with the first pass's actions, the parser's stack limit and `ast2obj`'s depth, the node arena with the names `symbols._all_names` reads; statements declined. Unit pystmt (claims-5c1): the simple statements (`module_expr::parse_module`, `module_expr::stmt`): assignments, annotations and augmented assignments with their targets in Store context, `del` in Del, `return`, `raise`, `assert`, `yield`, `pass`, `break`, `continue`, `global`, `nonlocal`, `import` and `from` (`_PyPegen_checked_future_import`'s flag), each slot's stack offset, an annotated target read as `assignment`'s group commits, what the second pass reads past a refused target read for its ValueError, a `match` line's subject read first; compound statements and `type` declined | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl`, `pysyntax_expr.jsonl`, `pysyntax_expr_posix.jsonl`, `pysyntax_stmt.jsonl`, `pysyntax_stmt_posix.jsonl` |
+| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII read since unit claims-6 (`verify_identifier` over the raw run, the parser's NFKC in `literal`). Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts. Unit pyexpr (claims-5b2): the expression grammar `ast.parse` reads over those tokens (`module_expr::parse_expression_module`, `Parser`): acceptance with the first pass's actions, the parser's stack limit and `ast2obj`'s depth, the node arena with the names `symbols._all_names` reads; statements declined. Unit pystmt (claims-5c1): the simple statements (`module_expr::parse_module`, `module_expr::stmt`): assignments, annotations and augmented assignments with their targets in Store context, `del` in Del, `return`, `raise`, `assert`, `yield`, `pass`, `break`, `continue`, `global`, `nonlocal`, `import` and `from` (`_PyPegen_checked_future_import`'s flag), each slot's stack offset, an annotated target read as `assignment`'s group commits, what the second pass reads past a refused target read for its ValueError, a `match` line's subject read first; compound statements and `type` declined. Unit pyblock (claims-5c2a): blocks and the compound statements (`module_expr::parse_module_blocks`, `module_expr::compound`): `if`, `elif`, `else`, `while`, `for`, `with`, `async for` and `async with`, INDENT and DEDENT to 99 levels with each level's and slot's stack offset, the IndentationError of a missing block, the forced `:` of `else`, the second pass counted from the deepest block, the parenthesised `with` tried first; `def`, `class`, `try`, decorators and `match` declined through `definition` and `matching` | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl`, `pysyntax_expr.jsonl`, `pysyntax_expr_posix.jsonl`, `pysyntax_stmt.jsonl`, `pysyntax_stmt_posix.jsonl`, `pysyntax_compound.jsonl`, `pysyntax_compound_posix.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json`, `store_restore_lock_hold_python.json`, `store_restore_lock_python.json` (POSIX only) |
 | `store::returned` | `store_returned.py`'s backfill half on the writable store: `missing_links`, `returned_rows`, `backfill`, `ensure_backfilled` (`has_key` given, its log lines returned); `Store._put_relinked` as `store::writers::put_relinked`; the `returned_put` row a backfill appends (`Transaction::mutate_returned_put`) | `store_returned.jsonl`, `store_returned_posix.jsonl` (POSIX only) |
@@ -27124,8 +27124,8 @@ none edits another's.
 | --- | --- | --- | --- |
 | `lex` | the eval-mode tokenizer (`Parser/lexer/lexer.c`'s `tok_get_normal_mode`), the newline translation of `_PyTokenizer_FromString`, the string decoders (`_PyUnicode_DecodeUnicodeEscapeInternal`, `_PyBytes_DecodeEscape`) and the number readers (`parsenumber`, `int`'s 4,300-digit limit) | nothing | built (unit pylex) |
 | `literal` | the eval-mode parser over `lex`'s tokens, `literal_eval`'s evaluation and `claims._canonical_repr` | nothing | built (unit pylit) |
-| `module_lex`, `fstring_lex` | the module-mode tokenizer for `ast.parse` at 672 (unit 5a) and its f-string modes (5b, first part); the compound statements (5c2) and the top-level binding read (5d) follow | nothing | 5a built (unit pymodlex), 5b first part built (unit pyfstring) |
-| `module_expr` | the expression grammar of `ast.parse` over those tokens (5b2): acceptance, the first pass's actions, the parser's stack limit, `ast2obj`'s depth, and the tree with the names `symbols._all_names` reads; its child `stmt`, the simple statements (5c1): assignments, the keyword statements and imports, with Store and Del targets | the C recursion limit of the host's CPython build (a `cfg` constant) | built (units pyexpr and pystmt); compound statements declined |
+| `module_lex`, `fstring_lex` | the module-mode tokenizer for `ast.parse` at 672 (unit 5a) and its f-string modes (5b, first part); the definitions, `try` and `match` (5c2b, 5c2c), type parameters (5c2d) and the top-level binding read (5d) follow | nothing | 5a built (unit pymodlex), 5b first part built (unit pyfstring) |
+| `module_expr` | the expression grammar of `ast.parse` over those tokens (5b2): acceptance, the first pass's actions, the parser's stack limit, `ast2obj`'s depth, and the tree with the names `symbols._all_names` reads; its child `stmt`, the simple statements (5c1): assignments, the keyword statements and imports, with Store and Del targets; its child `compound`, blocks and `if`, `while`, `for` and `with` with their async forms (5c2a) | the C recursion limit of the host's CPython build (a `cfg` constant) | built (units pyexpr, pystmt and pyblock); definitions, `try`, `match` and `type` declined |
 | the XID tables | whether a name past ASCII is an identifier (`verify_identifier`) | Unicode tables (`unicode::xid`) | built (unit claims-6) |
 | `\N{...}` | the Unicode name table (`getcode`) | Unicode tables (`unicode::names`) | built (unit claims-6) |
 
@@ -27780,7 +27780,9 @@ comes first in the port where the reference's parser overflows before
 reaching it: `[a, ` * 201 + `x` + `]` * 201 is refused as `too many
 nested parentheses` (the reference raises MemoryError inside the 200th
 bracket), `-` * 5,970 + `x '` as `unterminated string` and `-` * 5,970
-+ `x)` as `unmatched bracket`.
++ `x)` as `unmatched bracket`. The same holds where the reference
+raises ValueError at a constant's identifier before the tokenizer's
+refusal (`m(atch -Ｎｏｎｅ` then a blank line is `bracket never closed`).
 `pysyntax_expr_kills::a_tokenizer_refusal_comes_first` pins all three. Only
 a source within the parser's stack bound and a tokenizer refusal is
 concerned; reading tokens on demand would need a streaming
@@ -28088,17 +28090,223 @@ expression line, `subject` and `after_subject`); the reading past a
 refused target, the annotated target's group and the `match` subject's
 two passes take it past the 600 planned; the imports stay in this unit.
 
+### The compound statements (`module_expr::compound`)
+
+`parse_module_blocks(text) -> Result<Tree, ExprError>` reproduces
+`ast.parse(source)` of CPython 3.13.13 for a module of statements in
+blocks (unit claims-5c2a): `statements ENDMARKER`, each statement a
+compound statement's head and its block, or a line of simple statements
+read as `parse_module` reads it (its `match` subject first). It is a
+child module of `module_expr`, beside `stmt`, and drives the same
+`Parser`. `parse_module` keeps unit 5c1's answers (every compound line
+declined), so `pysyntax_stmt.jsonl` and `pysyntax_stmt_kills` hold
+unchanged, but for an unexpected indent after a `match` line whose
+subject the second pass refuses, now SyntaxError as below; unit 5d reads
+modules with `parse_module_blocks`. As before,
+every rule was read from the interpreter and is held by
+`pysyntax_compound.jsonl`.
+
+- The statements, in `compound_stmt`'s order: `if`, `while`, `for` and
+  `with`, `async for` and `async with` (the parser accepts both at a
+  module's level; the compiler alone refuses them), then a definition,
+  `try` or decorator (`definition.rs`) and a `match` line ending in `:`
+  (`matching.rs`), both declined (`statement`) through one call each,
+  so that units 5c2b and 5c2c each edit only their own file; any other
+  `async` and a compound keyword after `;` or on a head's line are
+  `simple_stmts`' SyntaxError, and `type` keeps `stmt`'s decline (5c2d).
+- `block` is `NEWLINE INDENT statements DEDENT` or `simple_stmts` on the
+  head's line, where no `match_stmt` is tried (`if x: match(*a)` reads no
+  subject, so its second pass refuses nothing). `if` and each `elif`
+  take a `named_expression`, `while` too; `elif` and `else` follow an
+  `if`, `else` a `while` or `for`; an `elif` is an If alone in its
+  parent's `orelse`. A `for` target is `star_targets` (each element a
+  primary, starred or not, joined by `,` up to `in`, then given Store as
+  `stmt`'s targets are), then the cut and `star_expressions`. A `with`
+  tries `'(' ','.with_item+ ','? ')'` before `:` first and undoes it on a
+  SyntaxError (`with (a, b):` is two items, `with (a, b) as c:` one, `with
+  (yield):` and `with (a := 1):` one each); a ValueError or MemoryError
+  there stands. A `with_item` is `expression 'as' star_target` with the
+  lookahead `&(',' | ')' | ':')`, else `expression`.
+- Errors and their classes. A head whose `:` is followed by NEWLINE and
+  no INDENT is IndentationError ("expected an indented block", the
+  `invalid_*_stmt` rules, kind `expected an indented block`); an
+  unexpected INDENT is IndentationError (`indent`); a head without its
+  `:`, a branch after `else` or off its statement and anything else the
+  grammar refuses is SyntaxError; the tokenizer's IndentationError and
+  TabError are `module_lex`'s. The reference raises both parser
+  IndentationErrors only once its second pass has read the module again
+  from its start and raised nothing (`Parser::second_pass_first`): a
+  `match` line before, read as an expression statement, whose subject
+  that pass refuses (`match(x)`, `match -x`, `match(*a)` and the other
+  forms `stmt`'s `match_subject` names) makes either a SyntaxError, in
+  both entries, and a legacy `print` or `exec` before (`print -x`,
+  `invalid_legacy_expression`) is declined (`second pass`), as `stmt`
+  declines a ValueError there. `else` takes its `:` as a forced token
+  (`'else' &&':'`): the first pass raises at once and no second pass
+  follows (`Parser::forced`), so `if ` + `-` * 5970 + `x: pass` then
+  `else pass` is SyntaxError where a missing `:` after `elif` is a
+  MemoryError of the second pass. Past a target that is none (or a `for`
+  target with no `in` after it, or a `with` target the lookahead refuses)
+  the second pass reads on (`invalid_for_target`: `star_expressions`
+  after `for`; `invalid_with_item`: an `expression` after `as`), and a
+  constant's identifier there is a ValueError, answered through
+  `stmt`'s `read_on`.
+- Nothing recurses. The compound statements whose indented block is
+  being read wait on a stack (`Open`), which a DEDENT pops; an `elif`
+  chain and the blocks on heads' lines are read in a loop, so 99 levels
+  are read on a 64 KiB thread, and a chain of 100,000 `elif`s is
+  declined there (`stack bound`, from about 5,957 branches) without the
+  rest being read.
+- The stack. A statement has a place past `BASE` (`Parser::place`), from
+  which its expressions count. Each slot's place past its statement's,
+  read by bisection on a `-` chain at the interpreter, is exact and
+  pinned by its boundary pair: the `if` and `while` test -1 and the k-th
+  `elif`'s k - 1, a `for` iterable 0 (the expression grammar's later
+  item 2 and starred -5 hold), a `for` target's first element 0 and each
+  later one 2, a `with` item 0 and each later one 1 (in either form), its
+  target one past its item (a target is a primary, so a chain reaches
+  depth in one only inside a bracket: the later element's 2, a starred
+  one's 2 and the `as` target's 1 move the edges of the bracket's
+  decline band by as much, which
+  `pysyntax_compound_kills::later_targets_move_the_bracket_band` pins in
+  place of a boundary pair); a block on the head's line 3 (k more after
+  the k-th `elif`), an `else` block on its line one past the last
+  branch's, and an indented block 3 past the same block on the head's
+  line, so 6 a level of nested `if`, 594 at 99 levels. A target's or an
+  item's brackets keep the expression grammar's ranges, counted from the
+  statement's place 90 levels deep as at the module's level
+  (`a_bracket_deep_in_blocks_counts_from_its_statement`). A `with` whose
+  parenthesised form fails is read again bare, where the reference's
+  memo holds the first reading's results: a source near the stack there
+  is declined (`stack bound`) within the parenthesis' range. A statement
+  whose place lies within `STATEMENT_PASS` (10) of `MAXSTACK` is declined
+  (`stack bound`), since the calls a keyword statement makes without an
+  operand (one more than a name's for `pass`, two for `return`, three for
+  `yield`) are not counted: only an `elif` chain about 5,950 long gets
+  there (`if x: pass` then 5,966 `elif x: pass` overflows; the port
+  declines from 5,957).
+- The second pass. `Parser::placed` holds the deepest place a statement
+  or slot was read at, and the bound of `Parser::reach` adds it: a
+  refusal is declined (`stack bound`) where the reach with the
+  statements' margin and that place passes 6,000. Each head's slot and
+  each block's statement was bisected with a trailing `$`, a missing `:`
+  and a missing block (`if x:` nested 20 deep then `-` * 5842 + `x $` is
+  SyntaxError, one more MemoryError, and the port declines from 5,811),
+  and 60 pieces below each boundary the port answers SyntaxError.
+  `FOR_PASS` (where `invalid_for_target` reads `star_expressions` after
+  `for`) and the `with` target's second reading at `AS_TARGET` change no
+  answer: `read_on` drops a stack refusal, and the bound declines first
+  (`for ` + `-` * k + `x in y: pass` is SyntaxError to 5,919 and
+  declined from 5,920, where the reference raises MemoryError from
+  5,965). What a slot adds to `placed` past its statement's place (a
+  later `with` item 1, a later `for` element 2, the k-th `elif` test
+  k - 1) lies within the margin (`SECOND_PASS` 20 and `STATEMENT_PASS`
+  10) and is not shown to change an answer.
+- `ast2obj`'s depth: a compound statement is a level above its test,
+  target, items and each statement of its blocks, a `withitem` a level
+  above its expression and target, and `recursion_answer` is asked of
+  the deepest statement with the Module counted.
+
+Which forms are exact: every slot above on a `-` chain, 98 and 99
+levels, and the forced `:` of `else`. Declined within the margin: a
+refusal near the second pass's bound, a target or item inside brackets
+near the stack, a bare `with` read after its parenthesised form failed
+near the stack, and an `elif` chain within `STATEMENT_PASS` of the
+stack.
+
+Fixtures: `tests/contract/gen_pysyntax_compound.py` writes
+`pysyntax_compound.jsonl` and `pysyntax_compound_posix.jsonl`, both
+gated on the Python release (the header alone under another
+interpreter). The POSIX file holds the rows `ast.parse` reads into trees
+deeper than the port answers under Windows' limit (each slot's deepest
+accepted chain, the `elif` chains below their boundary, the bracket
+sources below theirs); it is POSIX only
+(`golden_pysyntax_compound_not_posix` records the gap on Windows) and
+its generator declines where the limit is not 10,000. A row holds what
+a `pysyntax_stmt.jsonl` row holds; a statement the port declines has
+`want` `D` where the module up to it, with `pass` in its place, parses.
+The cases: each form and its near misses (a missing `:`, a missing
+block, a block on the head's line, `else` and `elif` off their
+statement, a dedent to a level never opened, tabs and spaces mixed, 99
+and 100 levels, `for` targets of every expression kind, `for x in *a,
+b:`, the `with` forms above, a compound head after `;` and on another
+head's line, the declined statements inside blocks), names past ASCII
+and constant identifiers in each slot and past a refused target, 15
+`match` lines read as expression statements (11 whose subject the
+second pass refuses, four it does not) before each of eight missing
+blocks and unexpected indents, at the module's level, both in a block,
+and the line in a block with what follows after it, each
+slot's boundary pair, 27 modules the first pass refuses at the second
+pass's boundary pair (`band`) and 60 pieces below it, six `elif` chains
+likewise, nine brackets in targets and items at their boundary pair
+(`band`) and 150 calls either side, sums past every host's `ast2obj` in
+six slots, and a sweep row pinning by count and SHA-256 the answers to
+20,000 modules drawn from 14 head and 15 statement templates three
+levels deep, four in nine with a token inserted, a character deleted or
+a line's indentation deepened or shallowed by a step (one in nine each,
+the shallowing only where the line starts with four spaces; the class
+`ast.parse` raises, a subclass of SyntaxError as SyntaxError where the
+tokenizer refuses the module). `golden_pysyntax_compound` and
+`golden_pysyntax_compound_posix` check every row and read every
+`pysyntax_stmt*.jsonl` row again through `parse_module_blocks` (a row
+`parse_module` declines answered with the class `ast.parse` gives, or
+declined); `pysyntax_compound_kills` (each class, a missing block, a
+branch off its statement, the lookahead, the parenthesised `with`, the
+async forms, each slot's offset by one, the second pass from a block,
+the forced `:`, the `elif` chain's bound, an earlier line the second
+pass refuses before a missing block or an unexpected indent, a bracket
+90 levels deep, the later targets' band edges, a `for` target that is
+none near the stack, the two decline files and
+`parse_module`'s declines, the head's line without a subject, the
+levels, the stated difference below) and `pysyntax_compound_robustness`
+(99 levels of each head at each boundary and a 100,000-branch `elif`
+chain declined on a 64 KiB thread, 100,000 statements in a block and 100,000
+sibling blocks within ten times the time of a tenth, indentation soups
+and every truncation of a 30-level module without a panic) hold the
+rest. Every assertion whose answer follows a tree deeper than about 900
+levels states the host's limit, as Windows' `ast2obj` refuses such
+trees.
+
+Stated difference: a constant's identifier that only
+`invalid_legacy_expression` reads in the `star_expressions`
+`invalid_for_target` reads (`for x Ｎｏｎｅ: pass`) is refused as `syntax`
+where the reference raises ValueError, as `stmt`'s stated difference
+says for the expression grammar's second pass;
+`pysyntax_compound_kills::a_constant_only_the_legacy_rule_reads_is_syntax`
+pins it. The tokenizer's refusal still comes first where the reference's
+parser raises sooner: a MemoryError, a parser's IndentationError or a
+ValueError at a constant's identifier before a later TabError or
+IndentationError of the tokenizer (`if Ｎｏｎｅ: pass` then a block mixing
+a tab and spaces is TabError, where the reference raises ValueError at
+line 1), and the sweep compares the family there. `check_claim` and
+`symbols` catch all three alike, so unit 5d may not rely on the class.
+
+No regular expression is involved.
+
+Size: `compound.rs` is 407 lines of Rust source after `cargo fmt`,
+`definition.rs` and `matching.rs` 16 and 15, `stmt.rs` grew by 32 (the
+line loop shared by both entries, visibility, `second_pass_first`) and
+`module_expr.rs` by 19 (the child modules, `place`, `placed` and
+`forced`), 489 in all: within
+the 600 planned, so `with` and `async with` stay in this unit.
+
 ### Left for later units
 
 Unit 5d removes `LexError::NeedsIdentTable` and `NeedsNameTable`,
 `LiteralError`'s and `ModuleError`'s variants passing them on, and the
 branches of `module_lex` and `fstring_lex` that answer them: since unit
-claims-6 nothing produces them. For `module_lex`: the compound
-statements (5c2: blocks, decorators, `def` and `class` with their
-parameters, `async` forms, `match` and its patterns, type parameters
-and the `type` statement, which `parse_module` declines), and the reads of the parsed module by `check_claim` and
-`symbols` (5d, which also decides what `Refused("stack")` becomes, since
-the reference raises MemoryError out of `check_claim`).
+claims-6 nothing produces them. For `module_lex`: the rest of the compound
+statements (unit 5c2a reads blocks, `if`, `while`, `for` and `with`):
+5c2b `def`, `async def`, `class`, decorators and `try` in
+`module_expr/definition.rs`, whose `definition` returns the head of a
+statement `compound`'s `proceed` reads the block of (an `Open`; `try`'s
+clauses join `elif`'s and `else`'s there); 5c2c `match` and its patterns
+in `module_expr/matching.rs` (`match_stmt`, likewise); 5c2d type
+parameters and the `type` statement, which `stmt`'s `simple` declines;
+and the reads of the parsed module (`parse_module_blocks`) by
+`check_claim` and `symbols` (5d, which also decides what
+`Refused("stack")` becomes, since the reference raises MemoryError out
+of `check_claim`).
 
 What unit 5b2 must know of `pysyntax_fstring.jsonl`:
 
@@ -30967,9 +31175,9 @@ What the reference has and this build does not, by area:
 - Each hit's signals and drift report: `claims.py` past its leaves,
   its literal reader, its drift index, its module tokenizer (unit
   5a) and that tokenizer's f-string modes (unit 5b, first part) (the
-  declare-time oracle: the statement grammar's second part 5c2, the
-  first part 5c1 being built in `pysyntax::module_expr`, and the
-  binding read 5d),
+  declare-time oracle: the statement grammar's definitions and
+  `try` (5c2b) and `match` (5c2c), 5c1 and the blocks 5c2a being
+  built in `pysyntax::module_expr`, and the binding read 5d),
   `verify_candidates.py` past the validation of one candidate, its
   three extraction patterns (`_BACKTICK_RE`, `_BARE_RE`,
   `_DOMAIN_ROUTE_RE`) and the candidate scan (`_normalize_for_compare`

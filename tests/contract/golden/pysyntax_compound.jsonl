@@ -1,0 +1,883 @@
+{"fixture":"pysyntax_compound","python":"3.13.13","rows":882}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Pass))","t":"if x: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Pass))","t":"if x:\n    pass\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Pass,Pass))","t":"if x: pass\nelse: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Name(Load)),Expr(Name(Load))))","t":"if x:\n    a\nelse:\n    b\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Name(Load)),If(Name(Load),Expr(Name(Load)),If(Name(Load),Expr(Name(Load)),Expr(Name(Load))))))","t":"if x: a\nelif y: b\nelif z: c\nelse: d","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Name(Load)),If(Name(Load),Expr(Name(Load)),Expr(Name(Load)))))","t":"if x:\n    a\nelif y:\n    b\nelse:\n    c\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Name(Load)),Expr(Name(Load))))","t":"if x: a; b;","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Name(Load)),Expr(Name(Load))))","t":"if x: a; b","top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Pass),Assign(Name(Store),Constant))","t":"if x: pass\ny = 1","top":["y"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Name(Load)),Expr(Name(Load))),Expr(Name(Load)))","t":"if x:\n    a\n    b\nc\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),If(Name(Load),Expr(Name(Load)),Expr(Name(Load))),Expr(Name(Load))))","t":"if x:\n    if y:\n        a\n    else:\n        b\nelse:\n    c\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),If(Name(Load),Pass,Pass),Pass))","t":"if a:\n if b:\n  pass\n else: pass\nelse: pass\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Pass))","t":"if x:  # c\n    pass\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Pass))","t":"if x:\n\n    # c\n    pass\n\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Pass))","t":"if x:\n\tpass\n","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(If(NamedExpr(Name(Store),Constant),Pass))","t":"if x := 1: pass","top":["x"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Yield,Pass))","t":"if (yield): pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Lambda(arguments,Name(Load)),Pass))","t":"if lambda: x: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(IfExp(Name(Load),Name(Load),Name(Load)),Pass))","t":"if x if y else z: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(UnaryOp(Not,Name(Load)),Pass))","t":"if not x: pass","top":[]}
+{"parse":"SyntaxError","t":"if x\n    pass\n"}
+{"parse":"SyntaxError","t":"if x pass"}
+{"parse":"IndentationError","t":"if x:"}
+{"parse":"IndentationError","t":"if x:\n"}
+{"parse":"IndentationError","t":"if x:\npass\n"}
+{"parse":"IndentationError","t":"if x:\n\n# c\n"}
+{"parse":"SyntaxError","t":"if : pass"}
+{"parse":"SyntaxError","t":"if x:: pass"}
+{"parse":"SyntaxError","t":"if *a: pass"}
+{"parse":"SyntaxError","t":"if a, b: pass"}
+{"parse":"SyntaxError","t":"if yield: pass"}
+{"parse":"SyntaxError","t":"if x: ; pass"}
+{"parse":"SyntaxError","t":"if x: pass\nelse: pass\nelse: pass"}
+{"parse":"SyntaxError","t":"if x: pass\nelse: pass\nelif y: pass"}
+{"parse":"SyntaxError","t":"else: pass"}
+{"parse":"SyntaxError","t":"elif x: pass"}
+{"parse":"SyntaxError","t":"if x: pass\nelse pass"}
+{"parse":"SyntaxError","t":"if x: pass\nelse\n    pass"}
+{"parse":"IndentationError","t":"if x: pass\nelse:\n"}
+{"parse":"IndentationError","t":"if x: pass\nelse:\npass"}
+{"parse":"SyntaxError","t":"if x: pass\nelif y\n"}
+{"parse":"IndentationError","t":"if x: pass\nelif y:\n"}
+{"parse":"IndentationError","t":"if x: pass\nelif y:\npass"}
+{"parse":"IndentationError","t":"if x: pass\n  elif y: pass"}
+{"parse":"IndentationError","t":"if x:\n  pass\n elif y: pass"}
+{"parse":"IndentationError","t":"if x:\n  pass\n    pass"}
+{"parse":"IndentationError","t":"if x:\n    pass\n  pass"}
+{"parse":"TabError","t":"if x:\n\tpass\n        pass"}
+{"parse":"TabError","t":"if x:\n        pass\n\tpass"}
+{"parse":"TabError","t":"if x:\n    pass\n\tpass"}
+{"parse":"SyntaxError","t":"if x: if y: pass"}
+{"parse":"SyntaxError","t":"if x: pass; if y: pass"}
+{"parse":"SyntaxError","t":"x; if y: pass"}
+{"parse":"IndentationError","t":"if x: pass\n    y"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Pass,Pass,Expr(Name(Load))),Expr(Name(Load)))","t":"if x:\n    pass\nelse:\n    pass\n    y\nz","top":[]}
+{"parse":"SyntaxError","t":"if x: else: pass"}
+{"parse":"SyntaxError","t":"if x: elif y: pass"}
+{"parse":"IndentationError","t":"if x:\n    pass\n  else: pass\n"}
+{"parse":"SyntaxError","t":"if x: pass\nelse: if y: pass"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Return,If(Name(Load),Expr(Yield(Name(Load))),Delete(Name(Del)))))","t":"if x: return\nelif y: yield z\nelse: del a","top":[]}
+{"all":["c","d"],"ids":"alias a.b c;ImportFrom  1;alias d ","parse":"ok","shape":"Module(If(Name(Load),Import(alias),ImportFrom(alias)))","t":"if x: import a.b as c\nelse: from . import d","top":["c","d"]}
+{"all":[],"ids":"Global a,b","parse":"ok","shape":"Module(If(Name(Load),Global))","t":"if x: global a, b","top":[]}
+{"all":["a","b"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Assign(Name(Store),Name(Store),Name(Load))))","t":"if x: a = b = c","top":["a","b"]}
+{"all":["a"],"ids":"AnnAssign 1","parse":"ok","shape":"Module(If(Name(Load),AnnAssign(Name(Store),Name(Load),Constant)))","t":"if x: a: int = 1","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),AugAssign(Name(Store),Add,Constant)))","t":"if x: a += 1","top":["a"]}
+{"parse":"SyntaxError","t":"if x: f() = 1"}
+{"parse":"SyntaxError","t":"if x: x $"}
+{"parse":"IndentationError","t":"if x:\n    x = 1\n  y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Pass))","t":"if x:\n    pass\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Pass,Pass))","t":"if x: pass\n\n\nelse: pass\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Pass,Pass))","t":"if x: pass\n# c\nelse: pass\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(While(Name(Load),Pass))","t":"while x: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(While(Name(Load),Expr(Name(Load)),Expr(Name(Load))))","t":"while x:\n    a\nelse:\n    b\n","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(While(Name(Load),Expr(Name(Load)),Expr(Name(Load))))","t":"while x: a\nelse: b","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(While(NamedExpr(Name(Store),Call(Name(Load))),Pass))","t":"while x := f(): pass","top":["x"]}
+{"parse":"SyntaxError","t":"while x\n"}
+{"parse":"IndentationError","t":"while x:\n"}
+{"parse":"SyntaxError","t":"while x: pass\nelse: pass\nelse: pass"}
+{"parse":"SyntaxError","t":"while x: pass\nelif y: pass"}
+{"parse":"SyntaxError","t":"while : pass"}
+{"parse":"SyntaxError","t":"while *a: pass"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(While(Name(Load),Break,Continue))","t":"while x: break; continue","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Name(Load),Pass))","t":"for x in y: pass","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Name(Load),Expr(Name(Load)),Expr(Name(Load))))","t":"for x in y:\n    a\nelse:\n    b\n","top":["x"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(For(Tuple(Name(Store),Name(Store),Store),Name(Load),Pass))","t":"for x, y in z: pass","top":["x","y"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Tuple(Name(Store),Store),Name(Load),Pass))","t":"for x, in y: pass","top":["x"]}
+{"all":["x","y","z"],"ids":"","parse":"ok","shape":"Module(For(Tuple(Tuple(Name(Store),Name(Store),Store),Name(Store),Store),Name(Load),Pass))","t":"for (x, y), z in w: pass","top":["x","y","z"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(For(List(Name(Store),Starred(Name(Store),Store),Store),Name(Load),Pass))","t":"for [x, *y] in z: pass","top":["x","y"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(For(Tuple(Starred(Name(Store),Store),Name(Store),Store),Name(Load),Pass))","t":"for *x, y in z: pass","top":["x","y"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Starred(Name(Store),Store),Name(Load),Pass))","t":"for *x in y: pass","top":["x"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(For(Tuple(Starred(Name(Store),Store),Starred(Name(Store),Store),Store),Name(Load),Pass))","t":"for *x, *y in z: pass","top":["x","y"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Name(Load),Pass))","t":"for (x) in y: pass","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Name(Load),Pass))","t":"for ((x)) in y: pass","top":["x"]}
+{"all":["y","z"],"ids":"","parse":"ok","shape":"Module(For(Attribute(Attribute(Name(Load),Load),Store),Name(Load),Pass))","t":"for x.y.z in w: pass","top":[]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(For(Attribute(Constant,Store),Name(Load),Pass))","t":"for 'a'.b in c: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(For(Subscript(Name(Load),Constant,Store),Name(Load),Pass))","t":"for x[0] in y: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(For(Subscript(Name(Load),Slice(Name(Load),Name(Load)),Store),Name(Load),Pass))","t":"for x[a:b] in c: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(For(Subscript(Name(Load),Tuple(Starred(Name(Load),Load),Load),Store),Name(Load),Pass))","t":"for x[*a] in b: pass","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Attribute(Call(Name(Load)),Store),Name(Load),Pass))","t":"for f().x in y: pass","top":[]}
+{"all":["c"],"ids":"","parse":"ok","shape":"Module(For(Attribute(Call(Name(Load),Name(Load)),Store),Name(Load),Pass))","t":"for (a)(b).c in d: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(For(Tuple(Store),Name(Load),Pass))","t":"for () in x: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(For(List(Store),Name(Load),Pass))","t":"for [] in x: pass","top":[]}
+{"all":["a","b"],"ids":"","parse":"ok","shape":"Module(For(Starred(Tuple(Name(Store),Name(Store),Store),Store),Name(Load),Pass))","t":"for *(a, b) in c: pass","top":["a","b"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(For(Starred(List(Name(Store),Store),Store),Name(Load),Pass))","t":"for *[a] in b: pass","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(For(Attribute(Yield,Store),Name(Load),Pass))","t":"for (yield).a in b: pass","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Tuple(Starred(Name(Load),Load),Name(Load),Load),Pass))","t":"for x in *a, b: pass","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Starred(Name(Load),Load),Pass))","t":"for x in *a: pass","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Tuple(Name(Load),Load),Pass))","t":"for x in a, : pass","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Tuple(Name(Load),Name(Load),Load),Pass))","t":"for x in a, b, : pass","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),IfExp(Name(Load),Name(Load),Name(Load)),Pass))","t":"for x in y if z else w: pass","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Lambda(arguments,Name(Load)),Pass))","t":"for x in lambda: y: pass","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Compare(Name(Load),In,Name(Load)),Pass))","t":"for x in y in z: pass","top":["x"]}
+{"all":["x","y"],"ids":"","parse":"ok","shape":"Module(For(Tuple(Name(Store),Name(Store),Store),Tuple(Name(Load),Name(Load),Load),Pass))","t":"for x, y in z, w: pass","top":["x","y"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Await(Name(Load)),Pass))","t":"for x in await y: pass","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),UnaryOp(USub,Name(Load)),Pass))","t":"for x in -a: pass","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),UnaryOp(Not,Name(Load)),Pass))","t":"for x in not a: pass","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Yield,Pass))","t":"for x in (yield): pass","top":["x"]}
+{"parse":"SyntaxError","t":"for x in y\n"}
+{"parse":"IndentationError","t":"for x in y:\n"}
+{"parse":"SyntaxError","t":"for x in : pass"}
+{"parse":"SyntaxError","t":"for in y: pass"}
+{"parse":"SyntaxError","t":"for x y: pass"}
+{"parse":"SyntaxError","t":"for x: pass"}
+{"parse":"SyntaxError","t":"for x in y pass"}
+{"parse":"SyntaxError","t":"for f() in y: pass"}
+{"parse":"SyntaxError","t":"for x() in y: pass"}
+{"parse":"SyntaxError","t":"for x[0]() in y: pass"}
+{"parse":"SyntaxError","t":"for (*a) in b: pass"}
+{"parse":"SyntaxError","t":"for None in b: pass"}
+{"parse":"SyntaxError","t":"for x in yield: pass"}
+{"parse":"SyntaxError","t":"for x in y := 1: pass"}
+{"parse":"SyntaxError","t":"for (x in y) in z: pass"}
+{"parse":"SyntaxError","t":"for await x in y: pass"}
+{"parse":"SyntaxError","t":"for (x for x in y) in z: pass"}
+{"parse":"SyntaxError","t":"for [x for x in y] in z: pass"}
+{"parse":"SyntaxError","t":"for a + b in c: pass"}
+{"parse":"SyntaxError","t":"for -a in b: pass"}
+{"parse":"SyntaxError","t":"for a if b else c in d: pass"}
+{"parse":"SyntaxError","t":"for lambda: x in y: pass"}
+{"parse":"SyntaxError","t":"for (a := b) in c: pass"}
+{"parse":"SyntaxError","t":"for **a in b: pass"}
+{"parse":"SyntaxError","t":"for x,, in y: pass"}
+{"parse":"SyntaxError","t":"for x in y, *: pass"}
+{"parse":"SyntaxError","t":"for a in b: pass\nelif c: pass"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Name(Load),Pass,Pass))","t":"for x in y: pass\nelse: pass","top":["x"]}
+{"all":["y","z"],"ids":"","parse":"ok","shape":"Module(For(Attribute(Call(Attribute(Name(Load),Load)),Store),Name(Load),Pass))","t":"for x.y() .z in w: pass","top":[]}
+{"parse":"SyntaxError","t":"for 1 in x: pass"}
+{"parse":"SyntaxError","t":"for 'a' in x: pass"}
+{"parse":"SyntaxError","t":"for {a} in x: pass"}
+{"parse":"SyntaxError","t":"for a.b(c) in d: pass"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(AsyncFor(Name(Store),Name(Load),Pass))","t":"async for x in y: pass","top":["x"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(AsyncFor(Name(Store),Name(Load),Expr(Name(Load)),Expr(Name(Load))))","t":"async for x in y:\n    a\nelse:\n    b\n","top":["x"]}
+{"parse":"SyntaxError","t":"async for f() in y: pass"}
+{"parse":"SyntaxError","t":"async for x in y\n"}
+{"parse":"SyntaxError","t":"async x"}
+{"parse":"SyntaxError","t":"async if x: pass"}
+{"parse":"SyntaxError","t":"async while x: pass"}
+{"parse":"SyntaxError","t":"async = 1"}
+{"parse":"SyntaxError","t":"async\nfor x in y: pass"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load)),Pass))","t":"with a: pass","top":[]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),Pass))","t":"with a as b: pass","top":["b"]}
+{"all":["b","d"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),withitem(Name(Load),Name(Store)),Pass))","t":"with a as b, c as d: pass","top":["b","d"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load)),withitem(Name(Load)),Pass))","t":"with a, b: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load)),withitem(Name(Load)),Pass))","t":"with (a, b): pass","top":[]}
+{"all":["c"],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(Name(Load),Name(Load),Load),Name(Store)),Pass))","t":"with (a, b) as c: pass","top":["c"]}
+{"all":["b","d"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),withitem(Name(Load),Name(Store)),Pass))","t":"with (a as b, c as d,): pass","top":["b","d"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Yield),Pass))","t":"with (yield): pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load)),Pass))","t":"with (a): pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load)),Pass))","t":"with (a,): pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(Load)),Pass))","t":"with (): pass","top":[]}
+{"parse":"SyntaxError","t":"with a as b.c(): pass"}
+{"all":["b","c"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Tuple(Name(Store),Name(Store),Store)),Pass))","t":"with a as (b, c): pass","top":["b","c"]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),Pass))","t":"with (a as b): pass","top":["b"]}
+{"parse":"SyntaxError","t":"with (a as b) as c: pass"}
+{"all":["c"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load)),withitem(Name(Load),Name(Store)),Pass))","t":"with (a, b as c): pass","top":["c"]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),withitem(Name(Load)),Pass))","t":"with (a as b, c): pass","top":["b"]}
+{"parse":"SyntaxError","t":"with (a as b)\n: pass"}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Starred(Name(Store),Store)),Pass))","t":"with a as *b: pass","top":["b"]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),List(Name(Store),Store)),Pass))","t":"with a as [b]: pass","top":["b"]}
+{"parse":"SyntaxError","t":"with a as f(): pass"}
+{"parse":"SyntaxError","t":"with a as b c: pass"}
+{"parse":"SyntaxError","t":"with (a as b).c: pass"}
+{"all":["c"],"ids":"","parse":"ok","shape":"Module(With(withitem(Attribute(Tuple(Name(Load),Name(Load),Load),Load)),Pass))","t":"with (a, b).c: pass","top":[]}
+{"parse":"SyntaxError","t":"with (a as b, c) + 1: pass"}
+{"parse":"SyntaxError","t":"with *a: pass"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(Starred(Name(Load),Load),Name(Load),Load)),Pass))","t":"with (*a, b): pass","top":[]}
+{"parse":"SyntaxError","t":"with a,: pass"}
+{"all":["c"],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(Name(Load),Starred(Name(Load),Load),Load),Name(Store)),Pass))","t":"with (a, *b) as c: pass","top":["c"]}
+{"parse":"SyntaxError","t":"with a\n"}
+{"parse":"IndentationError","t":"with a:\n"}
+{"parse":"SyntaxError","t":"with (a)\n"}
+{"parse":"SyntaxError","t":"with (a, b)\n"}
+{"parse":"SyntaxError","t":"with (a as b)\n"}
+{"parse":"IndentationError","t":"with (a as b, c as d):\n"}
+{"parse":"IndentationError","t":"with a as b:\n"}
+{"parse":"SyntaxError","t":"with : pass"}
+{"parse":"SyntaxError","t":"with a as : pass"}
+{"parse":"SyntaxError","t":"with a as b as c: pass"}
+{"parse":"SyntaxError","t":"with a, : pass"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load)),Pass))","t":"with (a, ): pass","top":[]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),Pass))","t":"with (a as b,): pass","top":["b"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(Name(Load),Name(Load),Load)),Pass))","t":"with ((a, b)): pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load)),withitem(Name(Load)),Pass))","t":"with (a), (b): pass","top":[]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),withitem(Name(Load)),Pass))","t":"with (a) as b, (c): pass","top":["b"]}
+{"all":["c","d"],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(Name(Load),Name(Load),Load),Tuple(Name(Store),Name(Store),Store)),Pass))","t":"with (a, b) as (c, d): pass","top":["c","d"]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),Pass))","t":"with a as (b): pass","top":["b"]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Tuple(Name(Store),Store)),Pass))","t":"with a as (b,): pass","top":["b"]}
+{"all":["c"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Attribute(Name(Load),Store)),Pass))","t":"with a as b.c: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Subscript(Name(Load),Constant,Store)),Pass))","t":"with a as b[0]: pass","top":[]}
+{"parse":"SyntaxError","t":"with a as None: pass"}
+{"parse":"SyntaxError","t":"with a as b + c: pass"}
+{"parse":"SyntaxError","t":"with a as b if c else d: pass"}
+{"parse":"SyntaxError","t":"with (a as b + c): pass"}
+{"parse":"SyntaxError","t":"with (a as b.c()): pass"}
+{"parse":"SyntaxError","t":"with a as b.c(), d: pass"}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(With(withitem(NamedExpr(Name(Store),Constant)),Pass))","t":"with (a := 1): pass","top":["a"]}
+{"parse":"SyntaxError","t":"with a := 1: pass"}
+{"all":["a","b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(NamedExpr(Name(Store),Constant),NamedExpr(Name(Store),Constant),Load)),Pass))","t":"with (a := 1, b := 2): pass","top":["a","b"]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(Name(Load),NamedExpr(Name(Store),Constant),Load)),Pass))","t":"with (a, b := 2): pass","top":["b"]}
+{"parse":"SyntaxError","t":"with yield: pass"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Yield(Name(Load))),Pass))","t":"with (yield x): pass","top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(With(withitem(Yield(Name(Load)),Name(Store)),Pass))","t":"with (yield x) as y: pass","top":["y"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Yield),withitem(Name(Load)),Pass))","t":"with (yield), a: pass","top":[]}
+{"parse":"SyntaxError","t":"with (a, yield): pass"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Lambda(arguments,Name(Load))),Pass))","t":"with lambda: x: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Lambda(arguments,Name(Load))),Pass))","t":"with (lambda: x): pass","top":[]}
+{"parse":"SyntaxError","t":"with (*a): pass"}
+{"all":["c"],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(Starred(Name(Load),Load),Name(Load),Load),Name(Store)),Pass))","t":"with (*a, b) as c: pass","top":["c"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(Name(Load),Starred(Name(Load),Load),Load)),Pass))","t":"with (a, *b): pass","top":[]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(With(withitem(GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load)))),Pass))","t":"with (a for a in b): pass","top":["a"]}
+{"all":["a"],"ids":"","parse":"ok","shape":"Module(With(withitem(GeneratorExp(Name(Load),comprehension(Name(Store),Name(Load)))),withitem(Name(Load)),Pass))","t":"with (a for a in b), c: pass","top":["a"]}
+{"parse":"SyntaxError","t":"with (a, b for b in c): pass"}
+{"all":["c"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load)),withitem(Name(Load),Name(Store)),withitem(Name(Load)),Pass))","t":"with a, b as c, d: pass","top":["c"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load)),withitem(Name(Load)),Pass))","t":"with (a), b: pass","top":[]}
+{"parse":"SyntaxError","t":"with (a): pass\nelse: pass"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Call(Name(Load),Name(Load))),Pass))","t":"with (a) (b): pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Call(Name(Load),Name(Load))),Pass))","t":"with (a)(b): pass","top":[]}
+{"all":["b","c"],"ids":"","parse":"ok","shape":"Module(With(withitem(Attribute(Name(Load),Load),Name(Store)),Pass))","t":"with (a).b as c: pass","top":["c"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Subscript(Tuple(Name(Load),Name(Load),Load),Constant,Load)),Pass))","t":"with (a, b)[0]: pass","top":[]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(Name(Load),Load),Name(Store)),Pass))","t":"with (a,) as b: pass","top":["b"]}
+{"parse":"SyntaxError","t":"with (a as b), c: pass"}
+{"all":["c"],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(Name(Load),Name(Load),Load),Name(Store)),withitem(Tuple(Name(Load),Name(Load),Load)),Pass))","t":"with (a, b) as c, (d, e): pass","top":["c"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load)),withitem(Name(Load)),Pass))","t":"with (a,\n b): pass","top":[]}
+{"all":["b","d"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),withitem(Name(Load),Name(Store)),Pass))","t":"with (\n a as b,\n c as d,\n): pass","top":["b","d"]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Starred(Name(Store),Store)),withitem(Name(Load)),Pass))","t":"with a as *b, c: pass","top":["b"]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Starred(Name(Store),Store)),Pass))","t":"with (a as *b): pass","top":["b"]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),List(Starred(Name(Store),Store),Store)),Pass))","t":"with a as [*b]: pass","top":["b"]}
+{"parse":"SyntaxError","t":"with a as b, *c: pass"}
+{"parse":"SyntaxError","t":"with a as (*b): pass"}
+{"parse":"SyntaxError","t":"with a as b\n"}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),Expr(Name(Load))))","t":"with a as b:\n    c\n","top":["b"]}
+{"all":["c"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Subscript(Attribute(Name(Load),Load),Name(Load),Store)),Pass))","t":"with a as b.c[d]: pass","top":[]}
+{"parse":"SyntaxError","t":"with a as b[c].d(): pass"}
+{"parse":"SyntaxError","t":"with (a as b) (c): pass"}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),Pass))","t":"with ((a) as b): pass","top":["b"]}
+{"parse":"SyntaxError","t":"with (a as b c): pass"}
+{"parse":"SyntaxError","t":"with (a as b,) as c: pass"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load)),withitem(Name(Load)),Pass))","t":"with ((a), b): pass","top":[]}
+{"all":["c"],"ids":"","parse":"ok","shape":"Module(With(withitem(Tuple(Name(Load),Name(Load),Load),Name(Store)),Pass))","t":"with ((a), b) as c: pass","top":["c"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(AsyncWith(withitem(Name(Load)),Pass))","t":"async with a: pass","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(AsyncWith(withitem(Name(Load)),withitem(Name(Load)),Pass))","t":"async with (a, b): pass","top":[]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(AsyncWith(withitem(Name(Load),Name(Store)),withitem(Name(Load)),Pass))","t":"async with a as b, c: pass","top":["b"]}
+{"parse":"SyntaxError","t":"async with a\n"}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(AsyncWith(withitem(Name(Load),Name(Store)),Pass))","t":"async with (a as b): pass\n","top":["b"]}
+{"all":["u","z"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),While(Name(Load),For(Name(Store),Name(Load),With(withitem(Name(Load),Name(Store)),Pass)))))","t":"if x:\n    while y:\n        for z in w:\n            with v as u:\n                pass\n","top":["u","z"]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Name(Load),If(Name(Load),Break,Continue),Pass))","t":"for x in y:\n    if x: break\n    else: continue\nelse:\n    pass\n","top":["x"]}
+{"all":["b"],"ids":"","parse":"ok","shape":"Module(While(Name(Load),With(withitem(Name(Load),Name(Store)),withitem(Name(Load)),Expr(Name(Load))),Expr(Name(Load))))","t":"while x:\n    with a as b, c:\n        d\n    e\n","top":["b"]}
+{"parse":"ok","t":"if x:\n    def f(): pass\n","want":"D"}
+{"parse":"ok","t":"if x:\n    class C: pass\n","want":"D"}
+{"parse":"ok","t":"if x:\n    try:\n        pass\n    finally:\n        pass\n","want":"D"}
+{"parse":"ok","t":"if x:\n    @d\n    def f(): pass\n","want":"D"}
+{"parse":"ok","t":"if x:\n    async def f(): pass\n","want":"D"}
+{"parse":"ok","t":"if x:\n    match y:\n        case 1: pass\n","want":"D"}
+{"parse":"ok","t":"if x:\n    type X = int\n","want":"D"}
+{"parse":"ok","t":"if x: type X = int","want":"D"}
+{"parse":"ok","t":"if x: y; type X = int","want":"D"}
+{"parse":"SyntaxError","t":"if x: def f(): pass"}
+{"parse":"SyntaxError","t":"if x: class C: pass"}
+{"parse":"SyntaxError","t":"if x: match y:"}
+{"parse":"SyntaxError","t":"if x: try: pass"}
+{"parse":"ok","t":"for x in y:\n    pass\ndef f(): pass\n","want":"D"}
+{"parse":"SyntaxError","t":"if x $:\n    def f(): pass\n"}
+{"parse":"SyntaxError","t":"if x:\n    y $\n    def f(): pass\n"}
+{"parse":"IndentationError","t":"if x:\ndef f(): pass\n"}
+{"parse":"IndentationError","t":"if x:\n    def f(): pass\n  y\n"}
+{"parse":"ok","t":"if x: pass\nelse:\n    @d\n    class C: pass\n","want":"D"}
+{"parse":"SyntaxError","t":"with a:\n    match(x)\n    f() = 1\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Call(Name(Load),Starred(Name(Load),Load)))))","t":"if x: match(*a)","top":[]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Call(Name(Load),Starred(Name(Load),Load)))))","t":"if x:\n    match(*a)\n","top":[]}
+{"all":["match","y"],"ids":"AnnAssign 0","parse":"ok","shape":"Module(If(Name(Load),Assign(Name(Store),Constant),AnnAssign(Attribute(Name(Load),Store),Name(Load),Constant)))","t":"if x:\n    match = 1\n    match.y: int = 2\n","top":["match"]}
+{"all":["case"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Assign(Name(Store),Constant)))","t":"if x: case = 1","top":["case"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),Pass)))))))))))","t":"if x:\n if x:\n  if x:\n   if x:\n    if x:\n     if x:\n      if x:\n       if x:\n        if x:\n         if x:\n          pass\n","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),If(Name(Load),Assign(Name(Store),Constant)),Expr(Name(Load))))))))))))","t":"if x:\n if x:\n  if x:\n   if x:\n    if x:\n     if x:\n      if x:\n       if x:\n        if x:\n         if x:\n          x = 1\n         y\n","top":["x"]}
+{"all":["a","b","c","j","l"],"ids":"AnnAssign 1;Global h;Nonlocal i;alias j ;ImportFrom k 0;alias l ","parse":"ok","shape":"Module(If(Name(Load),Assign(Name(Store),Constant),AnnAssign(Name(Store),Name(Load)),AugAssign(Name(Store),Add,Constant),Delete(Name(Del)),Return(Name(Load)),Raise(Name(Load)),Assert(Name(Load)),Global,Nonlocal,Import(alias),ImportFrom(alias),Expr(Yield(Name(Load))),Pass))","t":"if x:\n    a = 1\n    b: int\n    c += 1\n    del d\n    return e\n    raise f\n    assert g\n    global h\n    nonlocal i\n    import j\n    from k import l\n    yield m\n    pass\n","top":["a","b","c","j","l"]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Assign(Name(Store),Constant)))","t":"if \uff58: \uff59 = 1","top":["y"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(While(Name(Load),Pass))","t":"while \uff58: pass","top":[]}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Name(Load),Pass))","t":"for \uff58 in \uff59: pass","top":["x"]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(For(Attribute(Name(Load),Store),Name(Load),Pass))","t":"for \uff58.\uff59 in z: pass","top":[]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),Pass))","t":"with \uff58 as \uff59: pass","top":["y"]}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(With(withitem(Name(Load),Name(Store)),Pass))","t":"with (\uff58 as \uff59): pass","top":["y"]}
+{"all":["x","z"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Assign(Name(Store),Constant),If(Name(Load),Pass,Assign(Name(Store),Constant))))","t":"if x:\n    \uff58 = 1\nelif \uff59: pass\nelse: \uff5a = 2\n","top":["x","z"]}
+{"parse":"ValueError","t":"if \uff2e\uff4f\uff4e\uff45: pass"}
+{"parse":"ValueError","t":"if x: pass\nelif \uff2e\uff4f\uff4e\uff45: pass"}
+{"parse":"ValueError","t":"while \uff2e\uff4f\uff4e\uff45: pass"}
+{"parse":"ValueError","t":"for \uff2e\uff4f\uff4e\uff45 in x: pass"}
+{"parse":"ValueError","t":"for x in \uff2e\uff4f\uff4e\uff45: pass"}
+{"parse":"ValueError","t":"for x.\uff2e\uff4f\uff4e\uff45 in y: pass"}
+{"parse":"ValueError","t":"for *\uff2e\uff4f\uff4e\uff45 in x: pass"}
+{"parse":"ValueError","t":"for f(\uff2e\uff4f\uff4e\uff45) in x: pass"}
+{"parse":"ValueError","t":"for -\uff2e\uff4f\uff4e\uff45 in x: pass"}
+{"parse":"ValueError","t":"for f() in \uff2e\uff4f\uff4e\uff45: pass"}
+{"parse":"ValueError","t":"for x in -\uff2e\uff4f\uff4e\uff45: pass"}
+{"parse":"ValueError","t":"for x, -\uff2e\uff4f\uff4e\uff45 in y: pass"}
+{"parse":"ValueError","t":"async for -\uff2e\uff4f\uff4e\uff45 in x: pass"}
+{"parse":"ValueError","t":"with \uff2e\uff4f\uff4e\uff45: pass"}
+{"parse":"ValueError","t":"with a as \uff2e\uff4f\uff4e\uff45: pass"}
+{"parse":"ValueError","t":"with a as *\uff2e\uff4f\uff4e\uff45: pass"}
+{"parse":"ValueError","t":"with (a, \uff2e\uff4f\uff4e\uff45): pass"}
+{"parse":"ValueError","t":"with a as b + \uff2e\uff4f\uff4e\uff45: pass"}
+{"parse":"ValueError","t":"with (a as b + \uff2e\uff4f\uff4e\uff45): pass"}
+{"parse":"ValueError","t":"with a as b.c(\uff2e\uff4f\uff4e\uff45): pass"}
+{"parse":"ValueError","t":"with (a as b + \uff2e\uff4f\uff4e\uff45), c: pass"}
+{"parse":"ValueError","t":"with (a) + \uff2e\uff4f\uff4e\uff45: pass"}
+{"parse":"ValueError","t":"with a as (b, -\uff2e\uff4f\uff4e\uff45): pass"}
+{"parse":"ValueError","t":"if x: \uff2e\uff4f\uff4e\uff45 = 1"}
+{"parse":"ValueError","t":"if x:\n    \uff2e\uff4f\uff4e\uff45 = 1\n"}
+{"parse":"ValueError","t":"if x: pass\nelse: \uff2e\uff4f\uff4e\uff45 = 1"}
+{"parse":"SyntaxError","t":"if x\n\uff2e\uff4f\uff4e\uff45\n"}
+{"parse":"SyntaxError","t":"for x in y\nf() = \uff2e\uff4f\uff4e\uff45\n"}
+{"parse":"IndentationError","t":"if x:\nf() = \uff2e\uff4f\uff4e\uff45\n"}
+{"parse":"SyntaxError","t":"with a as b c: \uff2e\uff4f\uff4e\uff45\n"}
+{"parse":"ValueError","t":"if x: f() = \uff2e\uff4f\uff4e\uff45"}
+{"parse":"ValueError","t":"if x:\n    f() = \uff2e\uff4f\uff4e\uff45\n"}
+{"parse":"ValueError","t":"if x: match(*a)\nf() = \uff2e\uff4f\uff4e\uff45\n"}
+{"parse":"SyntaxError","t":"if x:\n    match(*a)\nf() = \uff2e\uff4f\uff4e\uff45\n"}
+{"parse":"SyntaxError","t":"if x:\n    match(*a)\n    f() = \uff2e\uff4f\uff4e\uff45\n"}
+{"parse":"SyntaxError","t":"match(*a)\nif x: f() = \uff2e\uff4f\uff4e\uff45\n"}
+{"parse":"SyntaxError","t":"match(x)\nfor -\uff2e\uff4f\uff4e\uff45 in y: pass\n"}
+{"parse":"SyntaxError","t":"match(x)\nwith a as b + \uff2e\uff4f\uff4e\uff45: pass\n"}
+{"parse":"SyntaxError","t":"match(x)\nwhile y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\n    while y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\nwhile y:\n"}
+{"parse":"SyntaxError","t":"match(x)\n    y\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\n        y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Call(Name(Load),Name(Load))),Expr(Name(Load))))","t":"if q:\n    match(x)\n    y\n","top":[]}
+{"parse":"SyntaxError","t":"match(x)\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\n    if y: pass\n      z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"match(x)\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\n    for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"match(x)\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\n    with a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"match(x)\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"match(x)\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\n    async for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"match(x)\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\n    if a:\n        b\n            c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"match -x\nwhile y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\n    while y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\nwhile y:\n"}
+{"parse":"SyntaxError","t":"match -x\n    y\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\n        y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(BinOp(Name(Load),Sub,Name(Load))),Expr(Name(Load))))","t":"if q:\n    match -x\n    y\n","top":[]}
+{"parse":"SyntaxError","t":"match -x\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\n    if y: pass\n      z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"match -x\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\n    for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"match -x\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\n    with a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"match -x\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"match -x\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\n    async for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"match -x\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\n    if a:\n        b\n            c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match -x\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"match[x]\nwhile y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\n    while y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\nwhile y:\n"}
+{"parse":"SyntaxError","t":"match[x]\n    y\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\n        y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Subscript(Name(Load),Name(Load),Load)),Expr(Name(Load))))","t":"if q:\n    match[x]\n    y\n","top":[]}
+{"parse":"SyntaxError","t":"match[x]\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\n    if y: pass\n      z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"match[x]\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\n    for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"match[x]\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\n    with a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"match[x]\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"match[x]\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\n    async for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"match[x]\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\n    if a:\n        b\n            c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match[x]\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"match(x).y\nwhile y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\n    while y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\nwhile y:\n"}
+{"parse":"SyntaxError","t":"match(x).y\n    y\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\n        y\n"}
+{"all":["y"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Attribute(Call(Name(Load),Name(Load)),Load)),Expr(Name(Load))))","t":"if q:\n    match(x).y\n    y\n","top":[]}
+{"parse":"SyntaxError","t":"match(x).y\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\n    if y: pass\n      z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"match(x).y\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\n    for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"match(x).y\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\n    with a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"match(x).y\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"match(x).y\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\n    async for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"match(x).y\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\n    if a:\n        b\n            c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x).y\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"match(x) + 1\nwhile y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\n    while y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\nwhile y:\n"}
+{"parse":"SyntaxError","t":"match(x) + 1\n    y\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\n        y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(BinOp(Call(Name(Load),Name(Load)),Add,Constant)),Expr(Name(Load))))","t":"if q:\n    match(x) + 1\n    y\n","top":[]}
+{"parse":"SyntaxError","t":"match(x) + 1\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\n    if y: pass\n      z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"match(x) + 1\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\n    for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"match(x) + 1\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\n    with a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"match(x) + 1\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"match(x) + 1\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\n    async for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"match(x) + 1\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\n    if a:\n        b\n            c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x) + 1\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"match((x))\nwhile y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\n    while y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\nwhile y:\n"}
+{"parse":"SyntaxError","t":"match((x))\n    y\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\n        y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Call(Name(Load),Name(Load))),Expr(Name(Load))))","t":"if q:\n    match((x))\n    y\n","top":[]}
+{"parse":"SyntaxError","t":"match((x))\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\n    if y: pass\n      z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"match((x))\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\n    for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"match((x))\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\n    with a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"match((x))\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"match((x))\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\n    async for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"match((x))\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\n    if a:\n        b\n            c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match((x))\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"match(x)(y)\nwhile y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\n    while y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\nwhile y:\n"}
+{"parse":"SyntaxError","t":"match(x)(y)\n    y\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\n        y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Call(Call(Name(Load),Name(Load)),Name(Load))),Expr(Name(Load))))","t":"if q:\n    match(x)(y)\n    y\n","top":[]}
+{"parse":"SyntaxError","t":"match(x)(y)\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\n    if y: pass\n      z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"match(x)(y)\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\n    for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"match(x)(y)\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\n    with a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"match(x)(y)\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"match(x)(y)\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\n    async for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"match(x)(y)\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\n    if a:\n        b\n            c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x)(y)\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"match [*a]\nwhile y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\n    while y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\nwhile y:\n"}
+{"parse":"SyntaxError","t":"match [*a]\n    y\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\n        y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Subscript(Name(Load),Tuple(Starred(Name(Load),Load),Load),Load)),Expr(Name(Load))))","t":"if q:\n    match [*a]\n    y\n","top":[]}
+{"parse":"SyntaxError","t":"match [*a]\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\n    if y: pass\n      z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"match [*a]\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\n    for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"match [*a]\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\n    with a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"match [*a]\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"match [*a]\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\n    async for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"match [*a]\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\n    if a:\n        b\n            c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match [*a]\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"match(*a)\nwhile y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\n    while y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\nwhile y:\n"}
+{"parse":"SyntaxError","t":"match(*a)\n    y\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\n        y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Call(Name(Load),Starred(Name(Load),Load))),Expr(Name(Load))))","t":"if q:\n    match(*a)\n    y\n","top":[]}
+{"parse":"SyntaxError","t":"match(*a)\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\n    if y: pass\n      z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"match(*a)\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\n    for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"match(*a)\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\n    with a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"match(*a)\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"match(*a)\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\n    async for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"match(*a)\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\n    if a:\n        b\n            c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a)\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"match(*a, b)\nwhile y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\n    while y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\nwhile y:\n"}
+{"parse":"SyntaxError","t":"match(*a, b)\n    y\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\n        y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Call(Name(Load),Starred(Name(Load),Load),Name(Load))),Expr(Name(Load))))","t":"if q:\n    match(*a, b)\n    y\n","top":[]}
+{"parse":"SyntaxError","t":"match(*a, b)\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\n    if y: pass\n      z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"match(*a, b)\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\n    for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"match(*a, b)\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\n    with a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"match(*a, b)\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"match(*a, b)\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\n    async for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"match(*a, b)\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\n    if a:\n        b\n            c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(*a, b)\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"match(x, *y)\nwhile y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\n    while y:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\nwhile y:\n"}
+{"parse":"SyntaxError","t":"match(x, *y)\n    y\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\n        y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Call(Name(Load),Name(Load),Starred(Name(Load),Load))),Expr(Name(Load))))","t":"if q:\n    match(x, *y)\n    y\n","top":[]}
+{"parse":"SyntaxError","t":"match(x, *y)\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\n    if y: pass\n      z\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\nif y: pass\n  z\n"}
+{"parse":"SyntaxError","t":"match(x, *y)\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\n    for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\nfor a in b:\n"}
+{"parse":"SyntaxError","t":"match(x, *y)\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\n    with a as b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\nwith a as b:\n"}
+{"parse":"SyntaxError","t":"match(x, *y)\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\nif a:\n    b\nelse:\nc\n"}
+{"parse":"SyntaxError","t":"match(x, *y)\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\n    async for a in b:\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\nasync for a in b:\n"}
+{"parse":"SyntaxError","t":"match(x, *y)\nif a:\n    b\n        c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\n    if a:\n        b\n            c\n"}
+{"parse":"SyntaxError","t":"if q:\n    match(x, *y)\nif a:\n    b\n        c\n"}
+{"parse":"IndentationError","t":"match(x); y\nwhile y:\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\n    while y:\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\nwhile y:\n"}
+{"parse":"IndentationError","t":"match(x); y\n    y\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\n        y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Call(Name(Load),Name(Load))),Expr(Name(Load)),Expr(Name(Load))))","t":"if q:\n    match(x); y\n    y\n","top":[]}
+{"parse":"IndentationError","t":"match(x); y\nif y: pass\n  z\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\n    if y: pass\n      z\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\nif y: pass\n  z\n"}
+{"parse":"IndentationError","t":"match(x); y\nfor a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\n    for a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\nfor a in b:\n"}
+{"parse":"IndentationError","t":"match(x); y\nwith a as b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\n    with a as b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\nwith a as b:\n"}
+{"parse":"IndentationError","t":"match(x); y\nif a:\n    b\nelse:\nc\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\nif a:\n    b\nelse:\nc\n"}
+{"parse":"IndentationError","t":"match(x); y\nasync for a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\n    async for a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\nasync for a in b:\n"}
+{"parse":"IndentationError","t":"match(x); y\nif a:\n    b\n        c\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\n    if a:\n        b\n            c\n"}
+{"parse":"IndentationError","t":"if q:\n    match(x); y\nif a:\n    b\n        c\n"}
+{"parse":"IndentationError","t":"match * x\nwhile y:\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\n    while y:\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\nwhile y:\n"}
+{"parse":"IndentationError","t":"match * x\n    y\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\n        y\n"}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(BinOp(Name(Load),Mult,Name(Load))),Expr(Name(Load))))","t":"if q:\n    match * x\n    y\n","top":[]}
+{"parse":"IndentationError","t":"match * x\nif y: pass\n  z\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\n    if y: pass\n      z\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\nif y: pass\n  z\n"}
+{"parse":"IndentationError","t":"match * x\nfor a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\n    for a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\nfor a in b:\n"}
+{"parse":"IndentationError","t":"match * x\nwith a as b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\n    with a as b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\nwith a as b:\n"}
+{"parse":"IndentationError","t":"match * x\nif a:\n    b\nelse:\nc\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\nif a:\n    b\nelse:\nc\n"}
+{"parse":"IndentationError","t":"match * x\nasync for a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\n    async for a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\nasync for a in b:\n"}
+{"parse":"IndentationError","t":"match * x\nif a:\n    b\n        c\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\n    if a:\n        b\n            c\n"}
+{"parse":"IndentationError","t":"if q:\n    match * x\nif a:\n    b\n        c\n"}
+{"parse":"IndentationError","t":"match.x\nwhile y:\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\n    while y:\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\nwhile y:\n"}
+{"parse":"IndentationError","t":"match.x\n    y\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\n        y\n"}
+{"all":["x"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Attribute(Name(Load),Load)),Expr(Name(Load))))","t":"if q:\n    match.x\n    y\n","top":[]}
+{"parse":"IndentationError","t":"match.x\nif y: pass\n  z\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\n    if y: pass\n      z\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\nif y: pass\n  z\n"}
+{"parse":"IndentationError","t":"match.x\nfor a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\n    for a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\nfor a in b:\n"}
+{"parse":"IndentationError","t":"match.x\nwith a as b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\n    with a as b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\nwith a as b:\n"}
+{"parse":"IndentationError","t":"match.x\nif a:\n    b\nelse:\nc\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\nif a:\n    b\nelse:\nc\n"}
+{"parse":"IndentationError","t":"match.x\nasync for a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\n    async for a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\nasync for a in b:\n"}
+{"parse":"IndentationError","t":"match.x\nif a:\n    b\n        c\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\n    if a:\n        b\n            c\n"}
+{"parse":"IndentationError","t":"if q:\n    match.x\nif a:\n    b\n        c\n"}
+{"parse":"IndentationError","t":"match = 1\nwhile y:\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\n    while y:\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\nwhile y:\n"}
+{"parse":"IndentationError","t":"match = 1\n    y\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\n        y\n"}
+{"all":["match"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Assign(Name(Store),Constant),Expr(Name(Load))))","t":"if q:\n    match = 1\n    y\n","top":["match"]}
+{"parse":"IndentationError","t":"match = 1\nif y: pass\n  z\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\n    if y: pass\n      z\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\nif y: pass\n  z\n"}
+{"parse":"IndentationError","t":"match = 1\nfor a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\n    for a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\nfor a in b:\n"}
+{"parse":"IndentationError","t":"match = 1\nwith a as b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\n    with a as b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\nwith a as b:\n"}
+{"parse":"IndentationError","t":"match = 1\nif a:\n    b\nelse:\nc\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\n    if a:\n        b\n    else:\n    c\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\nif a:\n    b\nelse:\nc\n"}
+{"parse":"IndentationError","t":"match = 1\nasync for a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\n    async for a in b:\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\nasync for a in b:\n"}
+{"parse":"IndentationError","t":"match = 1\nif a:\n    b\n        c\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\n    if a:\n        b\n            c\n"}
+{"parse":"IndentationError","t":"if q:\n    match = 1\nif a:\n    b\n        c\n"}
+{"parse":"IndentationError","t":"if a: match(x)\nwhile y:\n"}
+{"parse":"IndentationError","t":"print(x)\nwhile y:\n"}
+{"parse":"IndentationError","t":"print.x\n    y\n"}
+{"parse":"MemoryError","t":{"r":[["if ",1],["-",5971],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["while ",1],["-",5971],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: pass\nelif ",1],["-",5970],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: pass\nelif y: pass\nelif ",1],["-",5969],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: pass\nelif y: pass\nelif y: pass\nelif ",1],["-",5968],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["for x in ",1],["-",5970],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["for x in y, ",1],["-",5968],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["for x in *",1],["-",5975],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["for x in y, *",1],["-",5973],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["async for x in ",1],["-",5970],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: y; ",1],["-",5965],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n    ",1],["-",5964],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n    y\n    ",1],["-",5964],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n if x:\n  ",1],["-",5958],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n if x:\n  if x:\n   ",1],["-",5952],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n if ",1],["-",5965],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n while ",1],["-",5965],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n for y in ",1],["-",5964],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n if y: pass\n elif ",1],["-",5964],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n if y: ",1],["-",5961],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: pass\nelse:\n if ",1],["-",5964],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: pass\nelse: ",1],["-",5966],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: pass\nelse:\n    ",1],["-",5963],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: pass\nelif y: ",1],["-",5966],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: pass\nelif y: pass\nelif z: ",1],["-",5965],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: pass\nelif y: pass\nelse: ",1],["-",5965],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: pass\nelif y:\n    ",1],["-",5963],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x: pass\nelif y: pass\nelse:\n    ",1],["-",5962],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["while x: ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["while x:\n    ",1],["-",5964],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["while x: pass\nelse: ",1],["-",5966],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["for x in y: ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["for x in y:\n    ",1],["-",5964],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["for x in y: pass\nelse: ",1],["-",5966],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["async for x in y: ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with ",1],["-",5970],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with a, ",1],["-",5969],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with a, b, ",1],["-",5969],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with a as b, ",1],["-",5969],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with (",1],["-",5970],["x): pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with (a, ",1],["-",5969],["x): pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with (a, b, ",1],["-",5969],["x): pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with (",1],["-",5970],["x,): pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with (a as b, ",1],["-",5969],["x): pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with (a, b) as c, ",1],["-",5969],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with x: ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with x:\n    ",1],["-",5964],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with (x): ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with (a, b): ",1],["-",5967],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["async with ",1],["-",5970],["x: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["async with (a, ",1],["-",5969],["x): pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["async with x: ",1],["-",5967],["x\n",1]]}}
+{"parse":"ValueError","t":{"r":[["if ",1],["-",5970],["\uff2e\uff4f\uff4e\uff45: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if ",1],["-",5971],["\uff2e\uff4f\uff4e\uff45: pass\n",1]]}}
+{"parse":"ValueError","t":{"r":[["if x:\n    x = ",1],["-",5961],["\uff2e\uff4f\uff4e\uff45\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n    x = ",1],["-",5962],["\uff2e\uff4f\uff4e\uff45\n",1]]}}
+{"parse":"ValueError","t":{"r":[["with a as b, ",1],["-",5968],["\uff2e\uff4f\uff4e\uff45: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with a as b, ",1],["-",5969],["\uff2e\uff4f\uff4e\uff45: pass\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["if ",1],["-",5970],["x: pass\nelse pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if ",1],["-",5971],["x: pass\nelse pass\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["while ",1],["-",5970],["x: pass\nelse\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["while ",1],["-",5971],["x: pass\nelse\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n",1],[" if x:\n",1],["  if x:\n",1],["   if x:\n",1],["    if x:\n",1],["     if x:\n",1],["      if x:\n",1],["       if x:\n",1],["        if x:\n",1],["         if x:\n",1],["          if x:\n",1],["           if x:\n",1],["            if x:\n",1],["             if x:\n",1],["              if x:\n",1],["               if x:\n",1],["                if x:\n",1],["                 if x:\n",1],["                  if x:\n",1],["                   if x:\n",1],["                    if x:\n",1],["                     if x:\n",1],["                      if x:\n",1],["                       if x:\n",1],["                        if x:\n",1],["                         if x:\n",1],["                          if x:\n",1],["                           if x:\n",1],["                            if x:\n",1],["                             if x:\n",1],["                              if x:\n",1],["                               if x:\n",1],["                                if x:\n",1],["                                 if x:\n",1],["                                  if x:\n",1],[" ",35],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",36],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",37],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",38],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",39],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",40],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",41],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",42],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",43],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",44],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",45],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",46],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",47],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",48],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",49],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",50],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",51],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",52],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",53],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",54],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",55],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",56],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",57],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",58],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",59],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",60],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",61],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",62],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",63],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",64],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",65],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",66],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",67],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",68],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",69],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",70],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",71],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",72],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",73],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",74],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",75],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",76],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",77],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",78],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",79],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",80],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",81],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",82],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",83],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",84],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",85],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",86],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",87],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",88],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",89],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",90],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",91],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",92],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",93],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",94],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",95],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",96],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",97],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",98],["-",5382],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n",1],[" if x:\n",1],["  if x:\n",1],["   if x:\n",1],["    if x:\n",1],["     if x:\n",1],["      if x:\n",1],["       if x:\n",1],["        if x:\n",1],["         if x:\n",1],["          if x:\n",1],["           if x:\n",1],["            if x:\n",1],["             if x:\n",1],["              if x:\n",1],["               if x:\n",1],["                if x:\n",1],["                 if x:\n",1],["                  if x:\n",1],["                   if x:\n",1],["                    if x:\n",1],["                     if x:\n",1],["                      if x:\n",1],["                       if x:\n",1],["                        if x:\n",1],["                         if x:\n",1],["                          if x:\n",1],["                           if x:\n",1],["                            if x:\n",1],["                             if x:\n",1],["                              if x:\n",1],["                               if x:\n",1],["                                if x:\n",1],["                                 if x:\n",1],["                                  if x:\n",1],[" ",35],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",36],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",37],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",38],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",39],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",40],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",41],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",42],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",43],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",44],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",45],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",46],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",47],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",48],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",49],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",50],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",51],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",52],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",53],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",54],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",55],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",56],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",57],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",58],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",59],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",60],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",61],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",62],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",63],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",64],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",65],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",66],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",67],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",68],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",69],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",70],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",71],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",72],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",73],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",74],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",75],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",76],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",77],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",78],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",79],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",80],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",81],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",82],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",83],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",84],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",85],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",86],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",87],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",88],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",89],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",90],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",91],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",92],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",93],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",94],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",95],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",96],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",97],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",98],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",99],["-",5376],["x\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n",1],[" if x:\n",1],["  if x:\n",1],["   if x:\n",1],["    if x:\n",1],["     if x:\n",1],["      if x:\n",1],["       if x:\n",1],["        if x:\n",1],["         if x:\n",1],["          if x:\n",1],["           if x:\n",1],["            if x:\n",1],["             if x:\n",1],["              if x:\n",1],["               if x:\n",1],["                if x:\n",1],["                 if x:\n",1],["                  if x:\n",1],["                   if x:\n",1],["                    if x:\n",1],["                     if x:\n",1],["                      if x:\n",1],["                       if x:\n",1],["                        if x:\n",1],["                         if x:\n",1],["                          if x:\n",1],["                           if x:\n",1],["                            if x:\n",1],["                             if x:\n",1],["                              if x:\n",1],["                               if x:\n",1],["                                if x:\n",1],["                                 if x:\n",1],["                                  if x:\n",1],[" ",35],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",36],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",37],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",38],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",39],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",40],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",41],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",42],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",43],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",44],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",45],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",46],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",47],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",48],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",49],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",50],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",51],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",52],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",53],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",54],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",55],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",56],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",57],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",58],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",59],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",60],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",61],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",62],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",63],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",64],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",65],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",66],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",67],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",68],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",69],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",70],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",71],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",72],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",73],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",74],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",75],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",76],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",77],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",78],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",79],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",80],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",81],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",82],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",83],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",84],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",85],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",86],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",87],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",88],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",89],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",90],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",91],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",92],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",93],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",94],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",95],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",96],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",97],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",98],["i",1],["f",1],[" ",1],["-",5383],["x: pass\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["if ",1],["-",5904],["x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["if ",1],["-",5964],["x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if ",1],["-",5965],["x\n",1]]}}
+{"parse":"IndentationError","t":{"r":[["if ",1],["-",5904],["x:\n",1]]}}
+{"band":true,"parse":"IndentationError","t":{"r":[["if ",1],["-",5964],["x:\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if ",1],["-",5965],["x:\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["if ",1],["-",5904],["x: $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["if ",1],["-",5964],["x: $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if ",1],["-",5965],["x: $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["if ",1],["-",5904],["x $: pass\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["if ",1],["-",5964],["x $: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if ",1],["-",5965],["x $: pass\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["if x: ",1],["-",5899],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["if x: ",1],["-",5959],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x: ",1],["-",5960],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["if x:\n    ",1],["-",5896],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["if x:\n    ",1],["-",5956],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x:\n    ",1],["-",5957],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["if x:\n if x:\n  ",1],["-",5890],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["if x:\n if x:\n  ",1],["-",5950],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x:\n if x:\n  ",1],["-",5951],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["while ",1],["-",5904],["x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["while ",1],["-",5964],["x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["while ",1],["-",5965],["x\n",1]]}}
+{"parse":"IndentationError","t":{"r":[["while ",1],["-",5904],["x:\n",1]]}}
+{"band":true,"parse":"IndentationError","t":{"r":[["while ",1],["-",5964],["x:\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["while ",1],["-",5965],["x:\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["if x: pass\nelif ",1],["-",5903],["x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["if x: pass\nelif ",1],["-",5963],["x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x: pass\nelif ",1],["-",5964],["x\n",1]]}}
+{"parse":"IndentationError","t":{"r":[["if x: pass\nelif ",1],["-",5903],["x:\n",1]]}}
+{"band":true,"parse":"IndentationError","t":{"r":[["if x: pass\nelif ",1],["-",5963],["x:\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x: pass\nelif ",1],["-",5964],["x:\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["for x in ",1],["-",5904],["x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["for x in ",1],["-",5964],["x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["for x in ",1],["-",5965],["x\n",1]]}}
+{"parse":"IndentationError","t":{"r":[["for x in ",1],["-",5904],["x:\n",1]]}}
+{"band":true,"parse":"IndentationError","t":{"r":[["for x in ",1],["-",5964],["x:\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["for x in ",1],["-",5965],["x:\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["for x in y, ",1],["-",5902],["x $: pass\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["for x in y, ",1],["-",5962],["x $: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["for x in y, ",1],["-",5963],["x $: pass\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["for ",1],["-",5904],["x in y\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["for ",1],["-",5964],["x in y\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["for ",1],["-",5965],["x in y\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["for ",1],["-",5904],["x in y: pass\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["for ",1],["-",5964],["x in y: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["for ",1],["-",5965],["x in y: pass\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["for x, ",1],["-",5902],["x $ in y: pass\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["for x, ",1],["-",5962],["x $ in y: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["for x, ",1],["-",5963],["x $ in y: pass\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["with ",1],["-",5904],["x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["with ",1],["-",5964],["x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["with ",1],["-",5965],["x\n",1]]}}
+{"parse":"IndentationError","t":{"r":[["with ",1],["-",5904],["x:\n",1]]}}
+{"band":true,"parse":"IndentationError","t":{"r":[["with ",1],["-",5964],["x:\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["with ",1],["-",5965],["x:\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["with a, ",1],["-",5903],["x $: pass\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["with a, ",1],["-",5963],["x $: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["with a, ",1],["-",5964],["x $: pass\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["with (",1],["-",5873],["x)\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["with (",1],["-",5933],["x)\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["with (",1],["-",5934],["x)\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["with (a, ",1],["-",5871],["x)\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["with (a, ",1],["-",5931],["x)\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["with (a, ",1],["-",5932],["x)\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["with a as ",1],["-",5904],["x + 1: pass\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["with a as ",1],["-",5964],["x + 1: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["with a as ",1],["-",5965],["x + 1: pass\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["with a as b, ",1],["-",5903],["x\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["with a as b, ",1],["-",5963],["x\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["with a as b, ",1],["-",5964],["x\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["if x: pass\nelse: ",1],["-",5898],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["if x: pass\nelse: ",1],["-",5958],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x: pass\nelse: ",1],["-",5959],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["if x: pass\nelse:\n    ",1],["-",5895],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["if x: pass\nelse:\n    ",1],["-",5955],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x: pass\nelse:\n    ",1],["-",5956],["x $\n",1]]}}
+{"parse":"SyntaxError","t":{"r":[["if x:\n if x:\n  if x:\n   if x:\n    if x:\n     if x:\n      if x:\n       if x:\n        if x:\n         if x:\n          if x:\n           if x:\n            if x:\n             if x:\n              if x:\n               if x:\n                if x:\n                 if x:\n                  if x:\n                   if x:\n                    ",1],["-",5782],["x $\n",1]]}}
+{"band":true,"parse":"SyntaxError","t":{"r":[["if x:\n if x:\n  if x:\n   if x:\n    if x:\n     if x:\n      if x:\n       if x:\n        if x:\n         if x:\n          if x:\n           if x:\n            if x:\n             if x:\n              if x:\n               if x:\n                if x:\n                 if x:\n                  if x:\n                   if x:\n                    ",1],["-",5842],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x:\n if x:\n  if x:\n   if x:\n    if x:\n     if x:\n      if x:\n       if x:\n        if x:\n         if x:\n          if x:\n           if x:\n            if x:\n             if x:\n              if x:\n               if x:\n                if x:\n                 if x:\n                  if x:\n                   if x:\n                    ",1],["-",5843],["x $\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x: pass\n",1],["elif x: pass\n",5966],["",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x: pass\n",1],["elif x: x\n",5967],["",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x: pass\n",1],["elif x:\n pass\n",5963],["",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x: pass\n",1],["elif x: pass\n",5965],["else: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x: pass\n",1],["elif x: return\n",5965],["",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x: pass\n",1],["elif x: x = 1\n",5964],["",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["for a[",1],["-",5965],["x] in y: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["for a[",1],["-",6115],["x] in y: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["for a, b[",1],["-",5963],["x] in y: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["for a, b[",1],["-",6113],["x] in y: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["for [a[",1],["-",5936],["x]] in y: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["for [a[",1],["-",6086],["x]] in y: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["for *a[",1],["-",5963],["x] in y: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["for *a[",1],["-",6113],["x] in y: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["with a as b[",1],["-",5964],["x]: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with a as b[",1],["-",6114],["x]: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["with (",1],["-",5970],["x) + 1: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with (",1],["-",6120],["x) + 1: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["with ([",1],["-",5941],["x]): pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with ([",1],["-",6091],["x]): pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["with (",1],["-",5970],["x) as y: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["with (",1],["-",6120],["x) as y: pass\n",1]]}}
+{"band":true,"parse":"MemoryError","t":{"r":[["if x:\n    for a[",1],["-",5959],["x] in y: pass\n",1]]}}
+{"parse":"MemoryError","t":{"r":[["if x:\n    for a[",1],["-",6109],["x] in y: pass\n",1]]}}
+{"all":[],"ids":"","parse":"ok","shape":{"h":"ca13e49aa5b51099b2d2b1adfd709694102c5577ae6601db35257aecb856c60d","n":1497},"t":{"r":[["if x:\n",1],[" if x:\n",1],["  if x:\n",1],["   if x:\n",1],["    if x:\n",1],["     if x:\n",1],["      if x:\n",1],["       if x:\n",1],["        if x:\n",1],["         if x:\n",1],["          if x:\n",1],["           if x:\n",1],["            if x:\n",1],["             if x:\n",1],["              if x:\n",1],["               if x:\n",1],["                if x:\n",1],["                 if x:\n",1],["                  if x:\n",1],["                   if x:\n",1],["                    if x:\n",1],["                     if x:\n",1],["                      if x:\n",1],["                       if x:\n",1],["                        if x:\n",1],["                         if x:\n",1],["                          if x:\n",1],["                           if x:\n",1],["                            if x:\n",1],["                             if x:\n",1],["                              if x:\n",1],["                               if x:\n",1],["                                if x:\n",1],["                                 if x:\n",1],["                                  if x:\n",1],[" ",35],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",36],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",37],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",38],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",39],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",40],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",41],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",42],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",43],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",44],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",45],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",46],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",47],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",48],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",49],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",50],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",51],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",52],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",53],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",54],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",55],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",56],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",57],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",58],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",59],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",60],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",61],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",62],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",63],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",64],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",65],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",66],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",67],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",68],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",69],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",70],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",71],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",72],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",73],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",74],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",75],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",76],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",77],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",78],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",79],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",80],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",81],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",82],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",83],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",84],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",85],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",86],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",87],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",88],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",89],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",90],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",91],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",92],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",93],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",94],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",95],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",96],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",97],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",98],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",99],["p",1],["a",1],["s",2],["\n",1]]},"top":[]}
+{"parse":"IndentationError","t":{"r":[["if x:\n",1],[" if x:\n",1],["  if x:\n",1],["   if x:\n",1],["    if x:\n",1],["     if x:\n",1],["      if x:\n",1],["       if x:\n",1],["        if x:\n",1],["         if x:\n",1],["          if x:\n",1],["           if x:\n",1],["            if x:\n",1],["             if x:\n",1],["              if x:\n",1],["               if x:\n",1],["                if x:\n",1],["                 if x:\n",1],["                  if x:\n",1],["                   if x:\n",1],["                    if x:\n",1],["                     if x:\n",1],["                      if x:\n",1],["                       if x:\n",1],["                        if x:\n",1],["                         if x:\n",1],["                          if x:\n",1],["                           if x:\n",1],["                            if x:\n",1],["                             if x:\n",1],["                              if x:\n",1],["                               if x:\n",1],["                                if x:\n",1],["                                 if x:\n",1],["                                  if x:\n",1],[" ",35],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",36],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",37],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",38],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",39],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",40],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",41],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",42],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",43],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",44],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",45],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",46],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",47],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",48],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",49],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",50],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",51],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",52],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",53],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",54],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",55],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",56],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",57],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",58],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",59],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",60],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",61],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",62],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",63],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",64],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",65],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",66],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",67],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",68],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",69],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",70],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",71],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",72],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",73],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",74],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",75],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",76],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",77],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",78],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",79],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",80],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",81],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",82],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",83],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",84],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",85],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",86],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",87],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",88],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",89],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",90],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",91],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",92],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",93],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",94],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",95],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",96],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",97],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",98],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",99],["i",1],["f",1],[" ",1],["x",1],[":",1],["\n",1],[" ",100],["p",1],["a",1],["s",2],["\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["if x",1],["+x",10500],[": pass\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["if x:\n    x",1],["+x",10500],["\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["if x: pass\nelse: x",1],["+x",10500],["\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["for x in x",1],["+x",10500],[": pass\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["with x",1],["+x",10500],[": pass\n",1]]}}
+{"parse":"RecursionError","t":{"r":[["with a as b[x",1],["+x",10500],["]: pass\n",1]]}}
+{"count":20000,"sha256":"de5615454cf23f6202b39552e9f2b99d750917d3f08ca8761dd9ab0fd29a8381","sweep":"block_templates"}

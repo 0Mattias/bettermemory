@@ -12,7 +12,11 @@ use super::lex::{decode_str, Tok};
 use super::module_lex::{module_tokens, Kind, ModToken, Module, ModuleError};
 use std::collections::HashMap;
 
+mod compound;
+mod definition;
+mod matching;
 mod stmt;
+pub use compound::parse_module_blocks;
 pub use stmt::parse_module;
 
 /// `MAXSTACK`: the parser's rule calls nested at once.
@@ -362,6 +366,16 @@ pub struct Parser<'m> {
     /// pass refuses (`invalid_match_stmt`, "expected ':'", or
     /// `invalid_named_expression`): its SyntaxError comes first.
     match_head: bool,
+    /// The place past [`BASE`] of the statement being read: its
+    /// expressions' depths count from it (a statement in a block lies
+    /// deeper than one at the module's level).
+    place: i32,
+    /// The deepest place a statement or a compound statement's slot was
+    /// read at, which the second pass reads again.
+    placed: i32,
+    /// The refusal is a forced token's (`else` without its `:`), which
+    /// the first pass raises with no second pass.
+    forced: bool,
     /// The last node a parenthesis returned as its value: a walrus there
     /// is no longer bare.
     grouped: u32,
@@ -441,6 +455,9 @@ impl<'m> Parser<'m> {
             barry: false,
             second: false,
             match_head: false,
+            place: 0,
+            placed: 0,
+            forced: false,
             grouped: u32::MAX,
             opened: HashMap::new(),
         }
@@ -522,9 +539,11 @@ impl<'m> Parser<'m> {
     /// its first pass refused: it reads every line again, deeper by its
     /// error rules, and past the first pass's failure (`[*lambda: ...]`
     /// fails at `lambda`; `invalid_starred_expression` then reads the
-    /// lambdas).
+    /// lambdas). A statement in a block counts from its place
+    /// (`placed`, the deepest read); a forced token's refusal has no
+    /// second pass.
     fn second_pass_may_overflow(&self, margin: i32) -> bool {
-        BASE + self.reach() + SECOND_PASS + margin > MAXSTACK
+        !self.forced && BASE + self.reach() + SECOND_PASS + margin + self.placed > MAXSTACK
     }
 
     /// What may follow `NAME` in `invalid_legacy_expression`: a token
@@ -863,7 +882,7 @@ impl<'m> Parser<'m> {
         let (hi, lo, br) = self
             .frames
             .last()
-            .map_or((0, 0, false), |f| (f.hi, f.lo, f.br));
+            .map_or((self.place, self.place, false), |f| (f.hi, f.lo, f.br));
         let lo = lo + edge.1 - if bracket && !br { TOP_DISCOUNT } else { 0 };
         self.frames.push(Frame {
             fr,

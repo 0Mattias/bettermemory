@@ -11,8 +11,9 @@
 #![allow(dead_code)]
 
 use bettermemory_core::pysyntax::module_expr::{
-    parse_expression_module, parse_module, Ctx, ExprError, Tree,
+    parse_expression_module, parse_module, parse_module_blocks, Ctx, ExprError, Tree,
 };
+use bettermemory_core::pysyntax::module_lex::module_tokens;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -254,6 +255,27 @@ pub fn ids(t: &Tree) -> String {
     out.join(";")
 }
 
+/// One block sweep source's answer line (`gen_pysyntax_compound._line`).
+pub fn block_line(t: &[u32]) -> String {
+    match parse_module_blocks(t) {
+        Ok(tree) => {
+            let mut parts: Vec<String> = names(&tree).iter().map(|l| l.join(",")).collect();
+            parts.push(ids(&tree));
+            parts.push(shape(&tree));
+            parts.join("|")
+        }
+        // Where the tokenizer refuses, the family (`_line`).
+        Err(ExprError::Refused(k)) => match refused_as(k) {
+            "IndentationError" | "TabError" if module_tokens(t).is_err() => {
+                "E SyntaxError".to_string()
+            }
+            class => format!("E {class}"),
+        },
+        Err(ExprError::Declined("statement")) => "D".to_string(),
+        Err(e) => panic!("declined {}: {e:?}", ident(t)),
+    }
+}
+
 /// One statement sweep source's answer line (`gen_pysyntax_stmt._line`).
 pub fn stmt_line(t: &[u32]) -> String {
     match parse_module(t) {
@@ -284,6 +306,7 @@ pub fn refused_as(k: &str) -> &'static str {
         "recursion" => "RecursionError",
         "value" => "ValueError",
         "indent"
+        | "expected an indented block"
         | "unexpected indent"
         | "unindent does not match any outer indentation level"
         | "too many levels of indentation" => "IndentationError",
@@ -296,12 +319,44 @@ pub fn refused_as(k: &str) -> &'static str {
 /// compares an expression row, with each refusal's kind tied to the class
 /// `ast.parse` raises ([`refused_as`]).
 pub fn check_stmt(row: &Value, n: &mut Counts) {
+    check_with(row, n, parse_module, false);
+}
+
+/// One `pysyntax_compound*.jsonl` row against `parse_module_blocks`, as
+/// [`check_stmt`] compares a statement row.
+pub fn check_block(row: &Value, n: &mut Counts) {
+    check_with(row, n, parse_module_blocks, false);
+}
+
+/// One `pysyntax_stmt.jsonl` row against `parse_module_blocks`: a row
+/// `parse_module` reads is read alike; one it declines (`want` `D`, a
+/// compound statement or a type alias) is declined, or answered with the
+/// class `ast.parse` gives (its tree is not in the row).
+pub fn check_stmt_as_block(row: &Value, n: &mut Counts) {
+    check_with(row, n, parse_module_blocks, true);
+}
+
+fn check_with(
+    row: &Value,
+    n: &mut Counts,
+    entry: fn(&[u32]) -> Result<Tree, ExprError>,
+    open_d: bool,
+) {
     let t = text(&row["t"]);
     let parse = row["parse"].as_str().unwrap();
     let band = row["band"].as_bool().unwrap_or(false);
     let want_d = row["want"] == "D";
     n.banded += usize::from(band);
-    match parse_module(&t) {
+    if open_d && want_d {
+        match entry(&t) {
+            Ok(_) => assert_eq!(parse, "ok", "accepted"),
+            Err(ExprError::Refused(k)) => assert_eq!(parse, refused_as(k), "refused ({k})"),
+            Err(ExprError::Declined(why)) => assert_eq!(why, "statement", "declined"),
+        }
+        n.statements += 1;
+        return;
+    }
+    match entry(&t) {
         Ok(tree) => {
             assert!(!want_d, "read a compound statement");
             assert_eq!(parse, "ok", "accepted");

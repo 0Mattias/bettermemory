@@ -179,6 +179,7 @@ from . import (
     gen_pysyntax_fstring,
     gen_pysyntax_expr,
     gen_pysyntax_stmt,
+    gen_pysyntax_compound,
     gen_models,
     gen_origin_history,
     gen_origin_cache,
@@ -775,6 +776,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "pysyntax_expr_posix": gen_pysyntax_expr.generate_posix,
     "pysyntax_stmt": gen_pysyntax_stmt.generate,
     "pysyntax_stmt_posix": gen_pysyntax_stmt.generate_posix,
+    "pysyntax_compound": gen_pysyntax_compound.generate,
+    "pysyntax_compound_posix": gen_pysyntax_compound.generate_posix,
     "gitfile_leaves": gen_gitfile_leaves.generate,
     "gitfile_leaves_posix": gen_gitfile_leaves.generate_posix,
     "store_provenance": gen_store_provenance.generate,
@@ -1029,7 +1032,9 @@ PYTHON_VERSION = "3.13.13"
 #: which is the release's too. ``pysyntax_stmt`` holds what it accepts of
 #: modules of simple statements, by the same grammar, and
 #: ``pysyntax_stmt_posix`` its rows whose answer follows the C recursion
-#: limit (`gen_pysyntax_stmt`).
+#: limit (`gen_pysyntax_stmt`); ``pysyntax_compound`` and
+#: ``pysyntax_compound_posix`` the same of modules of statements in blocks
+#: (`gen_pysyntax_compound`).
 #: ``location_stamps_platform`` holds `os.major` and `os.minor` of NODEV
 #: (-1) and of numbers past ``dev_t``. 3.11 truncates a number macOS's
 #: 32-bit ``dev_t`` cannot hold, where 3.12.13 and 3.13 raise; 3.11 and
@@ -1160,8 +1165,10 @@ PYTHON_GATED = frozenset(
         "pysyntax_fstring",
         "pysyntax_expr",
         "pysyntax_stmt",
+        "pysyntax_compound",
         "pysyntax_expr_posix",
         "pysyntax_stmt_posix",
+        "pysyntax_compound_posix",
         "capture_vocabulary_python",
         "fs_realpath_python",
         "fs_realpath_strict_python",
@@ -1493,7 +1500,8 @@ PLATFORM_GATED = frozenset(
 #: deeper than 3,000, which ``ast2obj`` converts where the C recursion
 #: limit is 10,000 (POSIX) and refuses on Windows (`gen_pysyntax_expr`);
 #: ``pysyntax_stmt_posix`` the same of modules of simple statements
-#: (`gen_pysyntax_stmt`).
+#: (`gen_pysyntax_stmt`), ``pysyntax_compound_posix`` of modules of
+#: statements in blocks (`gen_pysyntax_compound`).
 #: ``store_event_reads_naive`` reads a naive instant under a ``TZ`` the
 #: generator sets with `time.tzset`, which Windows lacks
 #: (`gen_store_event_reads`).
@@ -1540,9 +1548,11 @@ POSIX_ONLY = frozenset(
         "checkout_token_remint_posix",
         "project_file_parse_posix",
         # `ast2obj` converts to `Py_C_RECURSION_LIMIT`, 10,000 on POSIX and
-        # 3,000 or 1,000 on Windows (`gen_pysyntax_expr`, `gen_pysyntax_stmt`).
+        # 3,000 or 1,000 on Windows (`gen_pysyntax_expr`, `gen_pysyntax_stmt`,
+        # `gen_pysyntax_compound`).
         "pysyntax_expr_posix",
         "pysyntax_stmt_posix",
+        "pysyntax_compound_posix",
         "store_restore_lock",
         "store_restore_lock_hold",
         "store_restore_lock_python",

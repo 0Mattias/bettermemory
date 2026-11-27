@@ -46,7 +46,7 @@ const SUBJECT_STAR: i32 = -6;
 /// The most a statement's second pass may go past what
 /// [`Parser::reach`] counts for an expression statement: `del`'s later
 /// targets after `;` (`DEL` + 2 + [`LATER`]).
-const STATEMENT_PASS: i32 = DEL + 2 + LATER;
+pub(super) const STATEMENT_PASS: i32 = DEL + 2 + LATER;
 
 const AUGMENTED: [(&str, &str); 13] = [
     ("+=", "Add"),
@@ -78,36 +78,49 @@ impl Parser<'_> {
     /// Every logical line as `simple_stmts` up to ENDMARKER: the depth of
     /// the deepest statement.
     fn statements(&mut self) -> Res<u32> {
-        let mut deepest = 0;
         loop {
             match self.t(0).kind {
-                Kind::EndMarker => return Ok(deepest),
-                Kind::Indent | Kind::Dedent => return Err(ExprError::Refused("indent")),
+                Kind::EndMarker => return Ok(self.deepest()),
+                Kind::Indent | Kind::Dedent => return Err(self.second_pass_first("indent")),
                 _ => {}
             }
             if self.compound() {
                 return Err(ExprError::Declined("statement"));
             }
-            let (value, reach) = self.subject()?;
-            match self.simple_stmts(&mut deepest) {
-                Ok(()) => {}
-                // The second pass reads the subject before the line.
-                Err(ExprError::Refused("syntax")) if value.is_some() => {
-                    return Err(self.second_value(value == Some(true)))
-                }
-                Err(e) => return Err(self.after_subject(e, reach)),
-            }
+            let mut body = std::mem::take(&mut self.tree.body);
+            let line = self.line(&mut body);
+            self.tree.body = body;
+            line?;
         }
     }
 
-    /// One logical line's statements and its NEWLINE, each statement's
-    /// depth raising `deepest`.
-    fn simple_stmts(&mut self, deepest: &mut u32) -> Res<()> {
+    /// The depth of the module's deepest statement.
+    pub(super) fn deepest(&self) -> u32 {
+        let nodes = &self.tree.nodes;
+        let heights = self.tree.body.iter().map(|&s| nodes[s as usize].height);
+        heights.max().unwrap_or(0)
+    }
+
+    /// A logical line of simple statements that `statement` reads,
+    /// `match_stmt`'s subject first, its statements pushed to `out`.
+    pub(super) fn line(&mut self, out: &mut Vec<u32>) -> Res<()> {
+        let (value, reach) = self.subject()?;
+        match self.simple_stmts(out) {
+            Ok(()) => Ok(()),
+            // The second pass reads the subject before the line.
+            Err(ExprError::Refused("syntax")) if value.is_some() => {
+                Err(self.second_value(value == Some(true)))
+            }
+            Err(e) => Err(self.after_subject(e, reach)),
+        }
+    }
+
+    /// One logical line's statements and its NEWLINE, pushed to `out`.
+    pub(super) fn simple_stmts(&mut self, out: &mut Vec<u32>) -> Res<()> {
         let mut at = 0;
         loop {
             let s = self.simple(at)?;
-            *deepest = (*deepest).max(self.tree.nodes[s as usize].height);
-            self.tree.body.push(s);
+            out.push(s);
             at = LATER;
             if self.is(0, ";") {
                 self.bump();
@@ -130,7 +143,7 @@ impl Parser<'_> {
 
     /// Whether the line at the cursor is a compound statement's head: a
     /// compound keyword or `@` first, or `match` first and `:` last.
-    fn compound(&self) -> bool {
+    pub(super) fn compound(&self) -> bool {
         if self.is(0, "@") || self.kw(0).is_some_and(|k| COMPOUND.contains(&k)) {
             return true;
         }
@@ -299,7 +312,7 @@ impl Parser<'_> {
     /// (`match(x)` with no `:`), or at a legacy `print` or `exec` before
     /// the constant (`invalid_legacy_expression`, where an `expression`
     /// opens with it), which the port declines (`second pass`).
-    fn read_on(&mut self, read: impl FnOnce(&mut Self) -> Res<u32>) -> Res<()> {
+    pub(super) fn read_on(&mut self, read: impl FnOnce(&mut Self) -> Res<u32>) -> Res<()> {
         match read(self) {
             Err(ExprError::Refused("value")) => {
                 let legacy = self.legacy_before();
@@ -368,6 +381,25 @@ impl Parser<'_> {
         } else {
             self.second = true;
             ExprError::Refused("value")
+        }
+    }
+
+    /// A refusal of class `kind` the reference raises only once its second
+    /// pass has read the module from its start and raised nothing: a
+    /// missing indented block (`invalid_block` and its kin, an
+    /// IndentationError) or an unexpected indent, which
+    /// `_PyPegen_set_syntax_error` raises after that pass. A SyntaxError
+    /// that pass raises at an earlier line comes first: at a line whose
+    /// `match_stmt` subject it refuses ([`Parser::match_subject`]), and at
+    /// a legacy `print` or `exec` (`invalid_legacy_expression`), which the
+    /// port declines (`second pass`).
+    pub(super) fn second_pass_first(&self, kind: &'static str) -> ExprError {
+        if self.match_head {
+            ExprError::Refused("syntax")
+        } else if self.legacy_before() {
+            ExprError::Declined("second pass")
+        } else {
+            ExprError::Refused(kind)
         }
     }
 
@@ -685,7 +717,7 @@ impl Parser<'_> {
 
     /// `star_targets` (Store) or `del_targets` (Del, which takes no
     /// Starred) given `ctx` through tuples, lists and starred.
-    fn target(&mut self, target: u32, ctx: Ctx) -> Res<()> {
+    pub(super) fn target(&mut self, target: u32, ctx: Ctx) -> Res<()> {
         let mut stack = vec![target];
         while let Some(n) = stack.pop() {
             match self.kind(n) {
