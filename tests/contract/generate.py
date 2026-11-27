@@ -351,6 +351,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "health_summary": gen_health_summary.generate,
     "health_model": gen_health_model.generate,
     "health_model_debt": gen_health_model.generate_debt,
+    "health_model_report": gen_health_model.generate_report,
     "eval_model": gen_eval_model.generate,
     "eval_model_python": gen_eval_model.generate_python,
     "eval_model_rules": gen_eval_model.generate_rules,

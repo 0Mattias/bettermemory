@@ -24,7 +24,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `in_force` | `in_force.py` whole: `InForce` (with `history`), `in_force` and its inner `newest`, `newest_head`, `admitted_sources`, `head`; the store's reads and the admission are traits (`LinkReader`, `RecordView`) | `in_force.jsonl` |
 | `admission` | `admission.py` 59-127 beside `store::caller`'s `Admission` and `NO_RESOLUTION` (re-exported): `DriftScope`, `CountedRecords`, `EveryRecord` (with `admits_row`), `EVERY_RECORD`, `admitted_nothing` | unit tests |
 | `health_summary` | `health_summary.py` whole: `section_names`, `health_summary` (with `_empty`, `_attention`), `health_section`, `SUMMARY_IDS`, `HEADLINE_KEYS` | `health_summary.jsonl` |
-| `health_model` | units health_model-1 and health_model-2 of `health_model.py`: `_ENDORSEMENT_GRACE_DAYS`, `_freshest_touch_ts`, `_has_unresolved_contradiction`, `_is_dead_weight`, `is_hook_telemetry_event`, `applied_tier`, `endorsement_tier`, `TelemetryCoverage`, `_HOOKLESS_REASON`, `MemoryStats`, `MarkerStats`, `ScopeHealth`, `ActorSlice` (each `to_dict`), `explicit_ratio`, `_iso`; `round(x, 3)` through `search::num::round_digits`; unit 2 (`health_model::debt`): `ActorSlices`, `VerificationDebt`, `CommitDriftRow`, `CommitDriftDebt`, `CrossRepoDriftGroup`, `CrossRepoDrift`, `ColdEndorsementMemories`, `SilentMissStats`, `RecentSilentMiss` (each `to_dict`), `clamp_ratio_threshold`, `weakly_endorsed`, `_is_weakly_endorsed`, `unread_fields`, `_unread_dict` and the six caps | `health_model.jsonl`, `health_model_debt.jsonl` |
+| `health_model` | units health_model-1 and health_model-2 of `health_model.py`: `_ENDORSEMENT_GRACE_DAYS`, `_freshest_touch_ts`, `_has_unresolved_contradiction`, `_is_dead_weight`, `is_hook_telemetry_event`, `applied_tier`, `endorsement_tier`, `TelemetryCoverage`, `_HOOKLESS_REASON`, `MemoryStats`, `MarkerStats`, `ScopeHealth`, `ActorSlice` (each `to_dict`), `explicit_ratio`, `_iso`; `round(x, 3)` through `search::num::round_digits`; unit 2 (`health_model::debt`): `ActorSlices`, `VerificationDebt`, `CommitDriftRow`, `CommitDriftDebt`, `CrossRepoDriftGroup`, `CrossRepoDrift`, `ColdEndorsementMemories`, `SilentMissStats`, `RecentSilentMiss` (each `to_dict`), `clamp_ratio_threshold`, `weakly_endorsed`, `_is_weakly_endorsed`, `unread_fields`, `_unread_dict` and the six caps; unit 3 (`health_model::report`): `Recommendation`, `ProvenanceRow`, `ProvenanceDebt`, `HealthReport` (each `to_dict`), `EpisodeVolume.to_dict` (`episode_volume_dict`), `RECOMMENDATION_KINDS` and the three caps | `health_model.jsonl`, `health_model_debt.jsonl`, `health_model_report.jsonl` |
 | `eval_model` | unit eval_model-1 of `eval_model.py`: `DEFAULT_SINCE_SPEC`, `DEFAULT_ENDORSEMENT_MIN_RETRIEVALS`, `DEFAULT_SILENT_MISS_LIMIT`, `_WILSON_Z`, `_SINCE_PATTERN` (on the engine), `_SINCE_UNIT_TO_SECONDS`, `_EARLIEST_START`, `EARLIER_RULES`, `RateCI` (`from_counts`, `to_dict`), `_wilson_interval`, `ColdEndorsementMemoriesRow` (`endorsement_ratio`, `to_dict`), `SilentMissCandidate`, `parse_since`, `parse_timestamp_utc`, `parse_window_bound` (`now` an argument), `resolve_window`, `_show_in_window`, `_canonical_top_hit_id`, `_silent_miss_from_event`; unit 2 (`eval_model::rules`): `ThresholdRule`, the rules v1 to v4 and w1, w2, `THRESHOLD_RULES`, `WIDENING_RULES`, `ThresholdSweepRow`, `_ReplayableAudits`, `_collect_replayable_audits`, `_probe_query_display`, `WideningFlaggedTurn`, `WideningMemoryRollup`, `WideningRuleDetail` (each `to_dict`); `_package_version` is the caller's argument; unit 1b (`eval_model::split`): `_with_rule_split` (`with_rule_split`), `surface_rule_split` with its `group_of` and `membership_delta` (`MembershipDelta`); unit 3 (`eval_model::tools`): `_TOOL_EVENT_KIND_TO_TOOL` (with `tool_of_kind`), `TOOLS_WITHOUT_TELEMETRY`, `_KNOWN_SIDE_EFFECT_KINDS`, `_IN_SESSION_SIDE_EFFECT_KINDS` (each with its membership test), `ToolUsageRow` (`to_dict`) | `eval_model.jsonl`, `eval_model_python.jsonl`, `eval_model_rules.jsonl`, `eval_model_split.jsonl`, `eval_model_tools.jsonl` |
 | `eval` | unit 1 of `eval.py`: `EvalReport` (the reference's fields and defaults, `NO_RATE`) and its `to_dict` | `eval_render.jsonl`, `eval_render_unicode.jsonl` |
 | `eval_render` | unit eval_render-1 of `eval_render.py` (lines 49-384): `render_text`, `_text`, `_review_text_lines`, `_rate_from_dict`, `_SURFACE_RATES`, `_surface_text_lines`, `_rule_split_text_lines`, `_format_rate`, `_bar`, `_truncate`, `_humanize_seconds`, `_short_ts` | `eval_render.jsonl`, `eval_render_unicode.jsonl` |
@@ -4050,11 +4050,14 @@ fills: its dataclasses, caps and shared predicates. It imports
 (`store::journal::EpisodeVolume`), `time_utils.isoformat_utc_optional` and
 `verify.BASIS_AUTHOR_DATE`, all built. Nothing in it asks the machine: the
 datetimes, counts and events are arguments. It is cut into three units,
-leaves first; unit health_model-1 is built (`src/health_model.rs`, 571
-lines of Rust outside tests, and `round(x, ndigits)` in `search::num`),
-and unit health_model-2 (`src/health_model/debt.rs`, a child module
-re-exported from `health_model`, 493 lines, and the module line and its
-`pub use` in `src/health_model.rs`, 9 lines).
+leaves first, and all three are built: unit health_model-1
+(`src/health_model.rs`, 571 lines of Rust outside tests, and
+`round(x, ndigits)` in `search::num`), unit health_model-2
+(`src/health_model/debt.rs`, a child module re-exported from
+`health_model`, 493 lines, and the module line and its `pub use` in
+`src/health_model.rs`, 9 lines) and unit health_model-3
+(`src/health_model/report.rs`, a child module re-exported the same way,
+338 lines, and 5 lines in `src/health_model.rs`).
 
 | function | reference lines | needs | unit, status |
 | --- | --- | --- | --- |
@@ -4078,12 +4081,12 @@ re-exported from `health_model`, 493 lines, and the module line and its
 | `CommitDriftRow`, `CommitDriftDebt`, `unread_fields` (with `UnreadFields`), `_unread_dict` (`unread_dict`) | 875-999 | `verify.BASIS_AUTHOR_DATE`, `origin_history.HistoryUnread` | 2, built |
 | `_CROSS_REPO_MAX_ROOTS`, `CrossRepoDriftGroup`, `CrossRepoDrift`, `_COMMIT_DRIFT_DEBT_CAP`, `_RECENT_SILENT_MISSES_CAP` | 1002-1082 | nothing | 2, built |
 | `ColdEndorsementMemories`, `SilentMissStats`, `RecentSilentMiss` | 1086-1241 | nothing | 2, built |
-| `Recommendation`, `_RECOMMENDATION_ROW_CAP`, `_RECOMMENDATION_SIZE_FLOOR` | 1244-1303 | nothing | 3 |
-| `_PROVENANCE_ROW_CAP`, `ProvenanceRow`, `ProvenanceDebt` | 1322-1368 | nothing | 3 |
-| `HealthReport` | 1371-1567 | `store.EpisodeVolume` | 3 |
+| `Recommendation`, `_RECOMMENDATION_ROW_CAP` (`RECOMMENDATION_ROW_CAP`), `_RECOMMENDATION_SIZE_FLOOR` (`RECOMMENDATION_SIZE_FLOOR`), `RECOMMENDATION_KINDS` | 1244-1319 | nothing | 3, built |
+| `_PROVENANCE_ROW_CAP` (`PROVENANCE_ROW_CAP`), `ProvenanceRow`, `ProvenanceDebt` | 1322-1368 | nothing | 3, built |
+| `HealthReport` (and `EpisodeVolume.to_dict`, `store_schema.py` 551-558, as `episode_volume_dict`) | 1371-1567 | `store.EpisodeVolume` (`store::journal::EpisodeVolume`) | 3, built |
 
 Unit health_model-2 is lines 662-1241 less `explicit_ratio`, unit
-health_model-3 lines 1244-1567. `eval_model.py` imports only
+health_model-3 lines 1244-1567; with it the module is built whole. `eval_model.py` imports only
 `explicit_ratio` from this module, so eval_model-1 waits on this unit
 alone. `compute_health` and the event walk belong to the health and
 health_stats units.
@@ -4331,7 +4334,83 @@ rows 846 ms against 588 ms, `CommitDriftDebt` 126 ms against 129 ms,
 `CrossRepoDrift` over 100,000 groups and skipped entries 83 ms against
 52 ms, `ActorSlices` over 100,000 declared slices 92 ms against 51 ms.
 
-Left for later: unit health_model-3 as mapped above.
+### Unit 3, built (`health_model::report`)
+
+Unit health_model-3 is `src/health_model/report.rs` (338 lines of Rust
+outside tests), a child module of `health_model` whose public names are
+re-exported from it. It reproduces lines 1244-1567:
+
+- `Recommendation` (`new` with `memory_ids` empty and no scope) and its
+  `to_dict`, `memory_ids` copied whole: the cap of ten ids is the caller's
+  (`health_recommend`), not `to_dict`'s. `_RECOMMENDATION_ROW_CAP`,
+  `_RECOMMENDATION_SIZE_FLOOR` and `RECOMMENDATION_KINDS` (the seven kinds
+  in the reference's order) are public for `health_recommend`.
+- `ProvenanceRow`, `created` written through `_iso`
+  (`isoformat_utc_optional`, which does not convert to UTC: an offset is
+  kept, `+00:00` is written `Z` and a naive datetime has no offset), and
+  `ProvenanceDebt` (`new` with no rows), `counts` held as pairs in
+  insertion order; `_PROVENANCE_ROW_CAP` is public.
+- `HealthReport::new` with the five fields that have no default and every
+  other field at what its dataclass factory makes: empty lists and dicts,
+  `ActorSlices::default()` (its `undeclared` slice is
+  `ActorSlice(client=None)`, every count zero), zero orphans,
+  `VerificationDebt::new(30)`, `SilentMissStats::default()`,
+  `ColdEndorsementMemories::new(30)` and None for `commit_drift_debt`,
+  `cross_repo_drift`, `provenance`, `telemetry_coverage` and
+  `episode_volume`. Each default was read in the reference.
+- `HealthReport.to_dict` in the reference's key order, which is not the
+  field order: `cross_repo_drift` is written before `commit_drift_debt`.
+  An optional bucket is None or its `to_dict`, never `{}`.
+  `scope_distribution` keeps insertion order. The dict literal is
+  evaluated in key order, so the answer is the TypeError of the first
+  `MemoryStats` row that raises, in `dead_weight`, `cold_memories`,
+  `heavily_used`, `contradicted`, then `verification_debt`'s rows and
+  `cold_endorsement_memories`' rows; every one of these raises TypeError,
+  so which bucket raised first does not show in the answer.
+- `EpisodeVolume.to_dict` (`store_schema.py` 551-558) as
+  `episode_volume_dict`, in its key order; `store/journal.rs` is not
+  edited.
+
+A dict of the reference (`ProvenanceDebt.counts`,
+`HealthReport.scope_distribution`) has distinct keys; a repeated key is
+refused in debug builds and written as given in release builds, as unit 2
+does for its causes. Counts are `i64`, as the built types hold them. No
+pattern and nothing of the machine is read.
+
+Fixtures and tests: `gen_health_model.py`'s `generate_report` writes
+`health_model_report.jsonl` (not gated, 101 KB): the header holds the
+three caps and the kinds; 7 `Recommendation` rows (defaults, ids, a
+scope, None and empty values, surrogates, both ends of `i64`, 12 ids), 6
+`ProvenanceRow` rows (aware, naive, offsets of a microsecond, of seconds
+and of plus and minus 23:59 at both ends of the calendar), 5
+`ProvenanceDebt` rows (an empty census, insertion orders, both ends of
+`i64`, 6 rows) and 24 `HealthReport` rows: every default left in place,
+a naive and three aware `generated_at`, every list given empty, every
+field set, each optional bucket set alone, all three set to None, the
+defaulted buckets given their default values, counts at both ends of
+`i64`, and a raising `MemoryStats` row in each of the six buckets that
+hold one and in two at once. The sweep row is 2,000 reports drawn by
+`draw_report` from the pools of units 1 and 2 (each optional or
+defaulted bucket set by `pick(2)`, the `MemoryStats` rows by
+`draw_memory`, so some reports raise), by the SHA-256 of their
+`json.dumps(to_dict())` lines. `golden_health_model_report.rs` checks
+every row and the sweep, drawing the reports by the generator's rule;
+`health_model_report_kills.rs` holds the cases a plausible wrong port
+fails (`commit_drift_debt` before `cross_repo_drift`, a None bucket as
+`{}` or a set empty one as None, another default floor, a census sorted,
+`created` or `generated_at` written without `_iso`, `EpisodeVolume`'s
+keys reordered, `memory_ids` capped, a raising row skipped in any of
+the six buckets); `health_model_report_robustness.rs` takes counts at
+both ends of `i64` and datetimes at both ends of the calendar, a report
+with 100,000 rows in every list and dict (a raise at the last row of
+the last bucket still raises), and claims `to_dict` linear from 10,000
+to 100,000 rows per bucket through `tests/timing`.
+
+Unit 3's known costs: CPython 3.13.13 takes 105 ms for `to_dict` of a
+report of 10,000 rows per bucket and 1.66 s for 100,000, best of three on
+a loaded machine; the port's debug build passes the robustness file,
+growth claim included, in 31 s. The release time was not measured apart
+from the growth claim.
 
 ## The eval family's model (`eval_model.py`)
 

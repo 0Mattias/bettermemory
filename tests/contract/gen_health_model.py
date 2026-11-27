@@ -1,7 +1,8 @@
 """Fixtures: the report model of health, unit health_model-1
-(``health_model.jsonl``) and unit health_model-2
-(``health_model_debt.jsonl``, `generate_debt`, described where it begins
-below).
+(``health_model.jsonl``), unit health_model-2
+(``health_model_debt.jsonl``, `generate_debt`) and unit health_model-3
+(``health_model_report.jsonl``, `generate_report`), the last two described
+where they begin below.
 
 The native build reads them in
 ``native/crates/bettermemory-core/src/health_model.rs``. This pins it to
@@ -60,6 +61,7 @@ from typing import Any
 from bettermemory import health_model as hm
 from bettermemory.models import Category
 from bettermemory.origin_history import HistoryUnread
+from bettermemory.store import EpisodeVolume
 
 from ._common import jsonl, neutral, text_field
 
@@ -1823,3 +1825,588 @@ def generate_debt() -> dict[str, bytes]:
         },
     ]
     return {"health_model_debt.jsonl": jsonl([header, *rows, *sweeps])}
+
+
+# ---------------------------------------------------------------------------
+# Unit health_model-3: ``health_model_report.jsonl`` (`generate_report`).
+#
+# It pins `Recommendation`, `ProvenanceRow`, `ProvenanceDebt` and
+# `HealthReport`, each with its `to_dict` (and `EpisodeVolume.to_dict`
+# through the report), and in the header `_RECOMMENDATION_ROW_CAP`,
+# `_RECOMMENDATION_SIZE_FLOOR`, `RECOMMENDATION_KINDS` and
+# `_PROVENANCE_ROW_CAP`. One row per case, its kind under ``k``: ``rec``,
+# ``prow``, ``pdebt`` and ``report``, each with ``in``, the arguments
+# given (a report's fields that are set, each spelled as the rows of units
+# 1 and 2 spell its type; a field left out keeps its default), and ``d``,
+# `to_dict` (neutral) or ``{"x": class}``. The last line is the sweep:
+# ``count`` reports drawn with `_Draw` from ``seed`` by `draw_report`, the
+# SHA-256 of their ``json.dumps(to_dict())`` lines or the class raised.
+# Not gated, for the reasons the module text gives for unit 1's file.
+# ---------------------------------------------------------------------------
+
+REPORT_SEED = 20261127
+REPORT_COUNT = 2000
+_STATS_BUCKETS = ("dead_weight", "cold_memories", "heavily_used", "contradicted")
+
+
+def _rec_in(kw: dict[str, Any]) -> dict[str, Any]:
+    spelled: dict[str, Any] = {
+        **text_field("kind", kw["kind"]),
+        **text_field("summary", kw["summary"]),
+        **text_field("action", kw["action"]),
+        "count": kw["count"],
+    }
+    if "memory_ids" in kw:
+        spelled["memory_ids"] = _texts(kw["memory_ids"])
+    if "scope" in kw:
+        spelled.update(_opt_text("scope", kw["scope"]))
+    return spelled
+
+
+def _prow_in(kw: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **text_field("id", kw["id"]),
+        "scopes": _texts(kw["scopes"]),
+        **text_field("summary", kw["summary"]),
+        "created": _iso(kw["created"]),
+    }
+
+
+def _pdebt_in(kw: dict[str, Any]) -> dict[str, Any]:
+    spelled: dict[str, Any] = {
+        "counts": _pairs(kw["counts"]),
+        "unaccounted_total": kw["unaccounted_total"],
+    }
+    if "unaccounted" in kw:
+        spelled["unaccounted"] = [_prow_in(r) for r in kw["unaccounted"]]
+    return spelled
+
+
+def _pdebt(kw: dict[str, Any]) -> hm.ProvenanceDebt:
+    built = dict(kw)
+    if "unaccounted" in kw:
+        built["unaccounted"] = [hm.ProvenanceRow(**r) for r in kw["unaccounted"]]
+    return hm.ProvenanceDebt(**built)
+
+
+_REC0: dict[str, Any] = {
+    "kind": "remove_dead_weight",
+    "summary": "3 memories retrieved but never applied",
+    "action": "remove or narrow them",
+    "count": 3,
+}
+_RECS: list[dict[str, Any]] = [
+    _REC0,
+    {**_REC0, "memory_ids": ["m-1", "m-2"]},
+    {**_REC0, "kind": "fix_typo_scopes", "count": 1, "scope": "projets:x"},
+    {**_REC0, "memory_ids": [], "scope": None},
+    {**_REC0, "kind": "", "summary": "é\ud800", "action": "", "scope": ""},
+    {**_REC0, "kind": "not_a_kind", "count": I64_MIN, "memory_ids": ["\ud83d", "a"]},
+    {**_REC0, "count": I64_MAX, "memory_ids": [f"m-{j}" for j in range(12)]},
+]
+_PROW0: dict[str, Any] = {
+    "id": "m-7",
+    "scopes": ["global", "projects:a"],
+    "summary": "an unaccounted memory",
+    "created": D1,
+}
+_PROWS: list[dict[str, Any]] = [
+    _PROW0,
+    {**_PROW0, "scopes": [], "summary": "", "created": _N1},
+    {**_PROW0, "id": "m-é\ud800", "created": D1.astimezone(MICRO)},
+    {**_PROW0, "summary": 'q"\\\n', "created": D1.astimezone(SEC30)},
+    {**_PROW0, "created": datetime(1, 1, 1, tzinfo=P559)},
+    {**_PROW0, "created": datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=M559)},
+]
+_PDEBTS: list[dict[str, Any]] = [
+    {"counts": {}, "unaccounted_total": 0},
+    {
+        "counts": {"written": 40, "pulled": 3, "unaccounted": 2, "unclassified": 0},
+        "unaccounted_total": 2,
+        "unaccounted": [_PROW0, _PROWS[2]],
+    },
+    {
+        "counts": {"z": 1, "a": 2, "é\ud800": 3},
+        "unaccounted_total": 0,
+        "unaccounted": [],
+    },
+    {"counts": {"": I64_MIN}, "unaccounted_total": I64_MAX},
+    {"counts": {"unaccounted": 25}, "unaccounted_total": -1, "unaccounted": _PROWS},
+]
+
+
+def _rec_rows() -> list[dict[str, Any]]:
+    return [
+        {"k": "rec", "in": _rec_in(kw), "d": neutral(hm.Recommendation(**kw).to_dict())}
+        for kw in _RECS
+    ]
+
+
+def _prow_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "k": "prow",
+            "in": _prow_in(kw),
+            "d": neutral(hm.ProvenanceRow(**kw).to_dict()),
+        }
+        for kw in _PROWS
+    ]
+
+
+def _pdebt_rows() -> list[dict[str, Any]]:
+    return [
+        {"k": "pdebt", "in": _pdebt_in(kw), "d": neutral(_pdebt(kw).to_dict())}
+        for kw in _PDEBTS
+    ]
+
+
+def _marker_in(kw: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **text_field("marker", kw["marker"]),
+        **{k: v for k, v in kw.items() if k != "marker"},
+    }
+
+
+def _scope_in(kw: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **text_field("scope", kw["scope"]),
+        **{k: v for k, v in kw.items() if k != "scope"},
+    }
+
+
+def _actors_in(kw: dict[str, Any]) -> dict[str, Any]:
+    spelled: dict[str, Any] = {}
+    if "declared" in kw:
+        spelled["declared"] = [_actor_in(a) for a in kw["declared"]]
+    if "undeclared" in kw:
+        spelled["undeclared"] = _actor_in(kw["undeclared"])
+    return spelled
+
+
+def _actors(kw: dict[str, Any]) -> hm.ActorSlices:
+    built: dict[str, Any] = {}
+    if "declared" in kw:
+        built["declared"] = [hm.ActorSlice(**a) for a in kw["declared"]]
+    if "undeclared" in kw:
+        built["undeclared"] = hm.ActorSlice(**kw["undeclared"])
+    return hm.ActorSlices(**built)
+
+
+def _stats_in(kw: dict[str, Any], names: tuple[str, ...]) -> dict[str, Any]:
+    return {k: [_memory_in(m) for m in v] if k in names else v for k, v in kw.items()}
+
+
+def _stats_built(kw: dict[str, Any], names: tuple[str, ...]) -> dict[str, Any]:
+    return {k: [_memory(m) for m in v] if k in names else v for k, v in kw.items()}
+
+
+def _cross_in(kw: dict[str, Any]) -> dict[str, Any]:
+    spelled = dict(kw)
+    if "groups" in kw:
+        spelled["groups"] = [_debt_in(g) for g in kw["groups"]]
+    if "skipped" in kw:
+        spelled["skipped"] = neutral(kw["skipped"])
+    return spelled
+
+
+def _cross(kw: dict[str, Any]) -> hm.CrossRepoDrift:
+    built = dict(kw)
+    if "groups" in kw:
+        built["groups"] = [
+            hm.CrossRepoDriftGroup(**_with_rows(g)) for g in kw["groups"]
+        ]
+    return hm.CrossRepoDrift(**built)
+
+
+def _coverage_in(kw: dict[str, Any]) -> dict[str, Any]:
+    spelled = {k: v for k, v in kw.items() if k != "reason"}
+    if "reason" in kw:
+        spelled.update(_opt_text("reason", kw["reason"]))
+    return spelled
+
+
+def _recent_in(kw: dict[str, Any]) -> dict[str, Any]:
+    spelled: dict[str, Any] = {}
+    for k, v in kw.items():
+        spelled.update(_opt_text(k, v))
+    return spelled
+
+
+def _optional(value: Any, spell: Callable[[Any], Any]) -> Any:
+    return None if value is None else spell(value)
+
+
+def _report_in(c: dict[str, Any]) -> dict[str, Any]:
+    spellers: dict[str, Callable[[Any], Any]] = {
+        "generated_at": _iso,
+        "marker_stats": lambda v: [_marker_in(m) for m in v],
+        "scope_distribution": _pairs,
+        "scope_health": lambda v: [_scope_in(s) for s in v],
+        "rare_scopes": _texts,
+        "actor_slices": _actors_in,
+        "verification_debt": lambda v: _stats_in(v, ("never_verified", "stale")),
+        "commit_drift_debt": partial(_optional, spell=_debt_in),
+        "cross_repo_drift": partial(_optional, spell=_cross_in),
+        "provenance": partial(_optional, spell=_pdebt_in),
+        "recent_silent_misses": lambda v: [_recent_in(r) for r in v],
+        "cold_endorsement_memories": lambda v: _stats_in(v, ("rows",)),
+        "recommendations": lambda v: [_rec_in(r) for r in v],
+        "telemetry_coverage": partial(_optional, spell=_coverage_in),
+    }
+    spelled: dict[str, Any] = {}
+    for k, v in c.items():
+        if k in _STATS_BUCKETS:
+            spelled[k] = [_memory_in(m) for m in v]
+        elif k in spellers:
+            spelled[k] = spellers[k](v)
+        else:
+            spelled[k] = v
+    return spelled
+
+
+def _report(c: dict[str, Any]) -> hm.HealthReport:
+    builders: dict[str, Callable[[Any], Any]] = {
+        "marker_stats": lambda v: [hm.MarkerStats(**m) for m in v],
+        "scope_health": lambda v: [hm.ScopeHealth(**s) for s in v],
+        "actor_slices": _actors,
+        "verification_debt": lambda v: hm.VerificationDebt(
+            **_stats_built(v, ("never_verified", "stale"))
+        ),
+        "commit_drift_debt": partial(
+            _optional, spell=lambda v: hm.CommitDriftDebt(**_with_rows(v))
+        ),
+        "cross_repo_drift": partial(_optional, spell=_cross),
+        "provenance": partial(_optional, spell=_pdebt),
+        "silent_misses": lambda v: hm.SilentMissStats(**v),
+        "recent_silent_misses": lambda v: [hm.RecentSilentMiss(**r) for r in v],
+        "cold_endorsement_memories": lambda v: hm.ColdEndorsementMemories(
+            **_stats_built(v, ("rows",))
+        ),
+        "recommendations": lambda v: [hm.Recommendation(**r) for r in v],
+        "telemetry_coverage": partial(
+            _optional, spell=lambda v: hm.TelemetryCoverage(**v)
+        ),
+        "episode_volume": partial(_optional, spell=lambda v: EpisodeVolume(**v)),
+    }
+    built: dict[str, Any] = {}
+    for k, v in c.items():
+        if k in _STATS_BUCKETS:
+            built[k] = [_memory(m) for m in v]
+        elif k in builders:
+            built[k] = builders[k](v)
+        else:
+            built[k] = v
+    return hm.HealthReport(**built)
+
+
+_REPORT0: dict[str, Any] = {
+    "generated_at": D1,
+    "window_days": 30,
+    "total_active_memories": 120,
+    "total_events": 900,
+    "distinct_sessions": 14,
+}
+_EPISODES = {
+    "sessions": 4,
+    "episodes": 31,
+    "bytes": 20480,
+    "prunable_sessions": 1,
+    "ttl_days": 30,
+}
+_HOOKLESS = {
+    "hook_telemetry_events": 0,
+    "covered": False,
+    "dead_weight_suppressed": True,
+    "cold_endorsement_suppressed": True,
+    "reason": hm._HOOKLESS_REASON,
+}
+_CROSS = {
+    "groups": [
+        {"repo": "a", "worktree_root": "/w/a", "rows": [_R0], "total_drifted": 1},
+        {
+            "repo": "b",
+            "worktree_root": "/w/b",
+            "unread": 1,
+            "unread_causes": {"error": 1},
+        },
+    ],
+    "skipped": [{"repo": "c", "reason": "missing"}],
+    "total_drifted": 1,
+    "unanchorable": 4,
+}
+_DDEBT = {
+    "current_repo": "github.com/a/b",
+    "current_cwd": "/w/b",
+    "rows": [_R0, _DROWS[2]],
+    "total_drifted": 40,
+    "unconfirmed": 2,
+    "unread": 2,
+    "unread_causes": {"timeout": 1, "error": 1},
+    "unread_ids": ["b", "a"],
+}
+_REPORT_FULL: dict[str, Any] = {
+    **_REPORT0,
+    "dead_weight": [_M0, _UNICODE],
+    "cold_memories": [_FULL],
+    "heavily_used": [_M0],
+    "contradicted": [_FULL, _M0],
+    "marker_stats": [
+        {"marker": "m", "fire_count": 3, "override_count": 1},
+        {"marker": "é\ud800", "fire_count": 0, "override_count": 0},
+    ],
+    "scope_distribution": {"z": 3, "a": 1, "é\ud800": 2, "global": 0},
+    "scope_health": [
+        {
+            "scope": "z",
+            "active": 3,
+            "dead": 1,
+            "cold": 0,
+            "contradicted": 1,
+            "applied_total": 9,
+        },
+        {"scope": "a"},
+    ],
+    "rare_scopes": ["projets:x", "\ud800"],
+    "actor_slices": {
+        "declared": [
+            {"client": "claude-code", "memories": 3, "models": {"z": 2, "a": 1}}
+        ],
+        "undeclared": {"client": None, "memories": 117, "events": 900},
+    },
+    "orphan_use_events": 7,
+    "verification_debt": {
+        "stale_after_days": 90,
+        "never_verified": [_M0],
+        "never_verified_total": 80,
+        "stale": [_UNICODE],
+        "stale_total": 30,
+        "fresh_count": 10,
+        "never_verified_checkable": 60,
+        "stale_checkable": 2,
+    },
+    "commit_drift_debt": _DDEBT,
+    "cross_repo_drift": _CROSS,
+    "provenance": _PDEBTS[1],
+    "silent_misses": {
+        "audited_total": 40,
+        "miss_total": 9,
+        "unique_miss_memories": 1,
+        "no_signal_total": 3,
+    },
+    "recent_silent_misses": [
+        {"event_id": "01J0", "top_hit_id": "m-1", "query_preview": "how", "ts": "t"},
+        {"event_id": None, "top_hit_id": None, "query_preview": None, "ts": None},
+    ],
+    "cold_endorsement_memories": {"min_retrievals": 5, "rows": [_FULL], "total": 300},
+    "recommendations": [_RECS[1], _RECS[2]],
+    "telemetry_coverage": _HOOKLESS,
+    "episode_volume": _EPISODES,
+}
+_EMPTY_LISTS: dict[str, Any] = {
+    **_REPORT0,
+    **{k: [] for k in _STATS_BUCKETS},
+    "marker_stats": [],
+    "scope_distribution": {},
+    "scope_health": [],
+    "rare_scopes": [],
+    "recent_silent_misses": [],
+    "recommendations": [],
+}
+_REPORTS: list[dict[str, Any]] = [
+    _REPORT0,
+    {**_REPORT0, "generated_at": _N1},
+    {**_REPORT0, "generated_at": D1.astimezone(MICRO)},
+    {**_REPORT0, "generated_at": D1.astimezone(SEC30)},
+    {**_REPORT0, "generated_at": datetime(1, 1, 1, tzinfo=P559)},
+    _EMPTY_LISTS,
+    _REPORT_FULL,
+    {**_REPORT0, "commit_drift_debt": {"current_repo": None, "current_cwd": None}},
+    {**_REPORT0, "cross_repo_drift": {}},
+    {**_REPORT0, "provenance": _PDEBTS[0]},
+    {
+        **_REPORT0,
+        "telemetry_coverage": {
+            "hook_telemetry_events": 12,
+            "covered": True,
+            "dead_weight_suppressed": False,
+        },
+    },
+    {**_REPORT0, "episode_volume": dict.fromkeys(_EPISODES, 0)},
+    {
+        **_REPORT0,
+        "commit_drift_debt": None,
+        "cross_repo_drift": None,
+        "provenance": None,
+    },
+    {**_REPORT0, "actor_slices": {}, "silent_misses": {}},
+    {**_REPORT0, "verification_debt": {"stale_after_days": 30}},
+    {**_REPORT0, "cold_endorsement_memories": {"min_retrievals": 30}},
+    {
+        "generated_at": D1,
+        "window_days": I64_MIN,
+        "total_active_memories": I64_MAX,
+        "total_events": -1,
+        "distinct_sessions": 0,
+        "orphan_use_events": I64_MIN,
+        "scope_distribution": {"a": I64_MAX, "b": I64_MIN},
+        "episode_volume": {**_EPISODES, "bytes": I64_MAX, "ttl_days": I64_MIN},
+    },
+    *({**_REPORT0, k: [_M0, _RAISES]} for k in _STATS_BUCKETS),
+    {**_REPORT0, "verification_debt": {"stale_after_days": 30, "stale": [_RAISES]}},
+    {
+        **_REPORT0,
+        "cold_endorsement_memories": {"min_retrievals": 30, "rows": [_RAISES]},
+    },
+    {
+        **_REPORT_FULL,
+        "contradicted": [_RAISES],
+        "cold_endorsement_memories": {"min_retrievals": 1, "rows": [_RAISES]},
+    },
+]
+
+
+def _report_rows() -> list[dict[str, Any]]:
+    return [
+        {"k": "report", "in": _report_in(c), "d": _try(_report(c).to_dict, neutral)}
+        for c in _REPORTS
+    ]
+
+
+def _draw_prov_row(d: _Draw) -> hm.ProvenanceRow:
+    ident = _draw_text(d)
+    scopes = [_draw_text(d) for _ in range(d.pick(3))]
+    summary = _draw_text(d)
+    created = draw_dt(d, True)
+    return hm.ProvenanceRow(id=ident, scopes=scopes, summary=summary, created=created)
+
+
+def _draw_rec(d: _Draw) -> hm.Recommendation:
+    kind = hm.RECOMMENDATION_KINDS[d.pick(len(hm.RECOMMENDATION_KINDS))]
+    summary = _draw_text(d)
+    action = _draw_text(d)
+    count = draw_count(d)
+    ids = [_draw_text(d) for _ in range(d.pick(3))]
+    scope = _draw_opt_text(d)
+    return hm.Recommendation(kind, summary, action, count, ids, scope)
+
+
+def draw_report(d: _Draw, i: int) -> hm.HealthReport:
+    """A `HealthReport` drawn field by field in declaration order: the
+    five required fields (``generated_at`` may be naive), each list of
+    ``pick(3)`` entries (`MemoryStats` by unit 1's `draw_memory`), each
+    dict a `_draw_census` of `_TEXTS`, and each defaulted or optional
+    bucket left at its default (None) when ``pick(2)`` is 0, else drawn as
+    unit 2's `draw_rollup` draws that kind."""
+    r = hm.HealthReport(
+        generated_at=draw_dt(d, True),
+        window_days=draw_count(d),
+        total_active_memories=draw_count(d),
+        total_events=draw_count(d),
+        distinct_sessions=draw_count(d),
+    )
+    for name in _STATS_BUCKETS:
+        setattr(r, name, [draw_memory(d, i) for _ in range(d.pick(3))])
+    r.marker_stats = [draw_marker(d) for _ in range(d.pick(3))]
+    r.scope_distribution = _draw_census(d, _TEXTS)
+    for _ in range(d.pick(3)):
+        scope = _draw_text(d)
+        counts = [draw_count(d) for _ in range(5)]
+        r.scope_health.append(hm.ScopeHealth(scope, *counts))
+    r.rare_scopes = [_draw_text(d) for _ in range(d.pick(3))]
+    if d.pick(2):
+        declared = [_draw_actor(d, False) for _ in range(d.pick(3))]
+        r.actor_slices = hm.ActorSlices(
+            declared=declared, undeclared=_draw_actor(d, True)
+        )
+    r.orphan_use_events = draw_count(d)
+    if d.pick(2):
+        v = r.verification_debt = hm.VerificationDebt(stale_after_days=draw_count(d))
+        v.never_verified = [draw_memory(d, i) for _ in range(d.pick(3))]
+        v.never_verified_total = draw_count(d)
+        v.stale = [draw_memory(d, i) for _ in range(d.pick(3))]
+        v.stale_total = draw_count(d)
+        v.fresh_count = draw_count(d)
+        v.never_verified_checkable = draw_count(d)
+        v.stale_checkable = draw_count(d)
+    if d.pick(2):
+        c = hm.CommitDriftDebt(
+            current_repo=_draw_opt_text(d), current_cwd=_draw_opt_text(d)
+        )
+        c.rows = [_draw_drift_row(d) for _ in range(d.pick(3))]
+        c.total_drifted = draw_count(d)
+        c.unconfirmed = draw_count(d)
+        for k, val in _draw_unread(d).items():
+            setattr(c, k, val)
+        r.commit_drift_debt = c
+    if d.pick(2):
+        x = hm.CrossRepoDrift(groups=[_draw_group(d) for _ in range(d.pick(3))])
+        for _ in range(d.pick(3)):
+            repo = _draw_text(d)
+            reason = _draw_text(d)
+            x.skipped.append({"repo": repo, "reason": reason})
+        x.total_drifted = draw_count(d)
+        x.unanchorable = draw_count(d)
+        r.cross_repo_drift = x
+    if d.pick(2):
+        p = hm.ProvenanceDebt(
+            counts=_draw_census(d, _TEXTS), unaccounted_total=draw_count(d)
+        )
+        p.unaccounted = [_draw_prov_row(d) for _ in range(d.pick(3))]
+        r.provenance = p
+    if d.pick(2):
+        r.silent_misses = hm.SilentMissStats(*[draw_count(d) for _ in range(4)])
+    for _ in range(d.pick(3)):
+        r.recent_silent_misses.append(
+            hm.RecentSilentMiss(*[_draw_opt_text(d) for _ in range(4)])
+        )
+    if d.pick(2):
+        cold = r.cold_endorsement_memories = hm.ColdEndorsementMemories(
+            min_retrievals=draw_count(d)
+        )
+        cold.rows = [draw_memory(d, i) for _ in range(d.pick(3))]
+        cold.total = draw_count(d)
+    r.recommendations = [_draw_rec(d) for _ in range(d.pick(3))]
+    if d.pick(2):
+        events = draw_count(d)
+        covered = bool(d.pick(2))
+        dead = bool(d.pick(2))
+        cold_s = bool(d.pick(2))
+        r.telemetry_coverage = hm.TelemetryCoverage(
+            events, covered, dead, cold_s, _draw_opt_text(d)
+        )
+    if d.pick(2):
+        r.episode_volume = EpisodeVolume(*[draw_count(d) for _ in range(5)])
+    return r
+
+
+def report_digest() -> str:
+    d = _Draw(REPORT_SEED)
+    lines = []
+    for i in range(REPORT_COUNT):
+        report = draw_report(d, i)
+        try:
+            lines.append(json.dumps(report.to_dict()))
+        except TypeError:
+            lines.append("TypeError")
+    return hashlib.sha256("\n".join(lines).encode("ascii")).hexdigest()
+
+
+def generate_report() -> dict[str, bytes]:
+    rows = [*_rec_rows(), *_prow_rows(), *_pdebt_rows(), *_report_rows()]
+    header = {
+        "fixture": "health_model_report",
+        "count": len(rows),
+        "caps": {
+            "recommendation_row": hm._RECOMMENDATION_ROW_CAP,
+            "recommendation_size_floor": hm._RECOMMENDATION_SIZE_FLOOR,
+            "provenance_row": hm._PROVENANCE_ROW_CAP,
+        },
+        "kinds": list(hm.RECOMMENDATION_KINDS),
+    }
+    sweep = {
+        "k": "report",
+        "seed": REPORT_SEED,
+        "count": REPORT_COUNT,
+        "sha256": report_digest(),
+    }
+    return {"health_model_report.jsonl": jsonl([header, *rows, sweep])}

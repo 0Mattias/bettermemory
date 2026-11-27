@@ -29,6 +29,11 @@ pub use debt::{
     COLD_ENDORSEMENT_CAP, COLD_ENDORSEMENT_MIN_RETRIEVALS, COMMIT_DRIFT_DEBT_CAP,
     CROSS_REPO_MAX_ROOTS, RECENT_SILENT_MISSES_CAP, VERIFICATION_DEBT_CAP,
 };
+mod report;
+pub use report::{
+    episode_volume_dict, HealthReport, ProvenanceDebt, ProvenanceRow, Recommendation,
+    PROVENANCE_ROW_CAP, RECOMMENDATION_KINDS, RECOMMENDATION_ROW_CAP, RECOMMENDATION_SIZE_FLOOR,
+};
 
 /// `_ENDORSEMENT_GRACE_DAYS`: how old a memory's earliest timestamped
 /// retrieval must be before `applied == 0` counts against it.
