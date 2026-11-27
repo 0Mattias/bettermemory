@@ -48,6 +48,10 @@
 //! - [`eval_render`]: the eval family's renderers (`eval_render.py`), its
 //!   first unit: `render_text` for the rate trio with the review and
 //!   surfaces sections and the helpers it calls;
+//! - [`eval_rates`]: `eval_rates.py` whole, the steps of
+//!   `eval.compute_eval`: the one walk of the event log with its search
+//!   and use counts, the audit telemetry resolved against the
+//!   invalidation markers, and the cold-endorsement rows;
 //! - [`health_roots`]: `health_roots.py`'s estate progress cursor;
 //! - [`float_repr`]: Python's `float.__repr__`, and `format` with `'.Nf'`
 //!   and `'g'` (`format_fixed`, `format_general`);
@@ -526,6 +530,7 @@ pub mod durability;
 pub mod entry;
 pub mod eval;
 pub mod eval_model;
+pub mod eval_rates;
 pub mod eval_render;
 pub mod event_hook;
 pub mod event_recorder;

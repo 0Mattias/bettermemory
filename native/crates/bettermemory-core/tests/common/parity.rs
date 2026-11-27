@@ -264,6 +264,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `history.printable` and code-point padding past ASCII
         // (`gen_eval_render`).
         "eval_render_unicode.jsonl" => &[Unicode],
+        // `str.strip` of excerpts and the summary line of bodies past ASCII
+        // (`gen_eval_rates`).
+        "eval_rates_unicode.jsonl" => &[Unicode],
         // `str.isspace` and `str.isalnum` past ASCII (`gen_control_tokens`).
         "control_tokens_unicode.jsonl" => &[Unicode],
         // `str.isalnum`, `str.isspace` and `str.casefold` past the stable

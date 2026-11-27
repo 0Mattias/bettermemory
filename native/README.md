@@ -28,6 +28,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `eval_model` | unit eval_model-1 of `eval_model.py`: `DEFAULT_SINCE_SPEC`, `DEFAULT_ENDORSEMENT_MIN_RETRIEVALS`, `DEFAULT_SILENT_MISS_LIMIT`, `_WILSON_Z`, `_SINCE_PATTERN` (on the engine), `_SINCE_UNIT_TO_SECONDS`, `_EARLIEST_START`, `EARLIER_RULES`, `RateCI` (`from_counts`, `to_dict`), `_wilson_interval`, `ColdEndorsementMemoriesRow` (`endorsement_ratio`, `to_dict`), `SilentMissCandidate`, `parse_since`, `parse_timestamp_utc`, `parse_window_bound` (`now` an argument), `resolve_window`, `_show_in_window`, `_canonical_top_hit_id`, `_silent_miss_from_event`; unit 2 (`eval_model::rules`): `ThresholdRule`, the rules v1 to v4 and w1, w2, `THRESHOLD_RULES`, `WIDENING_RULES`, `ThresholdSweepRow`, `_ReplayableAudits`, `_collect_replayable_audits`, `_probe_query_display`, `WideningFlaggedTurn`, `WideningMemoryRollup`, `WideningRuleDetail` (each `to_dict`); `_package_version` is the caller's argument; unit 1b (`eval_model::split`): `_with_rule_split` (`with_rule_split`), `surface_rule_split` with its `group_of` and `membership_delta` (`MembershipDelta`); unit 3 (`eval_model::tools`): `_TOOL_EVENT_KIND_TO_TOOL` (with `tool_of_kind`), `TOOLS_WITHOUT_TELEMETRY`, `_KNOWN_SIDE_EFFECT_KINDS`, `_IN_SESSION_SIDE_EFFECT_KINDS` (each with its membership test), `ToolUsageRow` (`to_dict`) | `eval_model.jsonl`, `eval_model_python.jsonl`, `eval_model_rules.jsonl`, `eval_model_split.jsonl`, `eval_model_tools.jsonl` |
 | `eval` | unit 1 of `eval.py`: `EvalReport` (the reference's fields and defaults, `NO_RATE`) and its `to_dict` | `eval_render.jsonl`, `eval_render_unicode.jsonl` |
 | `eval_render` | unit eval_render-1 of `eval_render.py` (lines 49-384): `render_text`, `_text`, `_review_text_lines`, `_rate_from_dict`, `_SURFACE_RATES`, `_surface_text_lines`, `_rule_split_text_lines`, `_format_rate`, `_bar`, `_truncate`, `_humanize_seconds`, `_short_ts` | `eval_render.jsonl`, `eval_render_unicode.jsonl` |
+| `eval_rates` | `eval_rates.py` whole (unit eval_rates-1): `_EvalWalk` (`EvalWalk`, with `Counts`), `_AuditTally` (`AuditTally`, with `ModelCounts`), `_count_search`, `_count_use`, `_walk_eval_events`, `_resolve_audit_telemetry`, `_cold_endorsement_rows` (`ColdRows`); the scope test is the caller's callback | `eval_rates.jsonl`, `eval_rates_unicode.jsonl` |
 | `health_roots` | `health_roots.py` 21-73: `EstateProgress` (`ordered`, `attempt`), `_LAST_CHECKED_CAP`; `progress_for_store` is the open Store's own `EstateProgress` | `health_roots.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules); `format(x, '.Nf')` and `format(x, 'g')` (`format_fixed`, `format_general`: the exact binary value rounded half to even, as Rust's `{:.N}` and `{:.Ne}` write it; a precision past `INT_MAX` refused) | `canonical_json.jsonl`, `eval_render.jsonl` |
 | `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
@@ -4967,6 +4968,130 @@ the bucket's header with that total and no rows.
 Left for later: units eval_render-1b, eval_render-2 and eval_render-3
 as mapped above, and unit eval-1 (`compute_eval`, `_eval_report`).
 
+## The eval walk and its counts (`eval_rates.py`)
+
+`eval_rates.py` (483 lines) holds the steps of `eval.compute_eval`: one
+walk of the event log with its search and use counts, the audit telemetry
+resolved against the invalidation markers, and the cold-endorsement rows.
+Nothing here asks the machine: the events, the window bounds, the scope
+test, the tombstoned ids, the silent-miss limit, the memories by id, the
+floor and the ratio threshold are arguments. The module fits one unit,
+eval_rates-1, built whole in `src/eval_rates.rs` (585 lines with
+comments).
+
+| function | reference lines | needs | unit, status |
+| --- | --- | --- | --- |
+| `_EvalWalk`, `_AuditTally` | 33-116 | `SilentMissCandidate` | eval_rates-1, built |
+| `_count_search` | 119-150 | `passes_scope` (the caller's callback) | eval_rates-1, built |
+| `_count_use` | 153-234 | `endorsement_tier`, `is_settlement`, `py_strip` | eval_rates-1, built |
+| `_walk_eval_events` | 237-331 | `parse_event_ts`, `is_review_row`, `is_surface_row`, `is_hook_telemetry_event` | eval_rates-1, built |
+| `_resolve_audit_telemetry` | 334-420 | `canonical_top_hit_id`, `silent_miss_from_event` | eval_rates-1, built |
+| `_cold_endorsement_rows` | 423-483 | `weakly_endorsed`, `first_summary_line`, `records::Memory` | eval_rates-1, built |
+
+**Unit eval_rates-1, built.** `walk_eval_events` takes the log as a
+slice of `PyValue`s, the bounds as `Option<&DateTime>` and
+`passes_scope` as `&mut dyn FnMut(Option<&PyStr>) -> bool` (the
+reference's callable takes `str | None`; every call passes a `str`), and
+answers `EvalWalk`, whose review rows, surface rows and buffered audit
+events borrow the events themselves, as the reference keeps them by
+reference. Per event it follows the reference's order of effects, so the
+first raise is the reference's: a value that is not a dict is skipped
+uncounted; the scan count; the window test, asked only when a bound is
+set (an unreadable or non-`str` `ts` is out, `ts >= cutoff` and then `ts
+< window_end` by instant, the second only when the first holds, so a
+naive end behind an excluding cutoff raises nothing and a naive bound met
+by a readable stamp is TypeError); the review rows, then the surface rows
+(`is_surface_row` raises TypeError for an unhashable kind), both before
+the window filter; the hook-telemetry tally over the whole log; the two
+markers ahead of the window skip (`silent_miss_cutoff`: a readable
+`cutoff_ts` replaces the latest only when strictly later, so the same
+instant at another offset keeps the first; `miss_ack`: a non-empty `str`
+`event_id`); then the in-window rows by kind, each kind compared by `==`,
+so a kind of any hashable type that is not one of the texts matches
+nothing.
+
+`count_search` reads `returned or memory_ids or hit_ids` by truthiness
+(an empty or zero `returned` falls through), counts nothing for a value
+that is not a list, and asks the scope of each `str` id in order; a
+`search` also bumps the floor's delivery count, a `list` only the
+retrieval occurrences. A `show` with a `str` `id` the scope passes is an
+occurrence and not a floor delivery. `count_use` takes the tier first (no
+tier ends), then `is_settlement` before the ids are read, so an
+unhashable surface raises even when the ids are not a list; `ids or
+memory_ids`; the ids deduplicated in first-seen order with an
+enumerate index over every entry (non-`str` ones included), each keeping
+whether its excerpt is a non-empty `str` after `str.strip`, upgraded by a
+later one that is (an excerpt list shorter than the ids, or no list,
+gives no excerpt); per unique id the scope, the auto or explicit
+per-memory count, and for a non-settlement the trio. `auto` is the bool
+True only (`endorsement_tier`).
+
+The per-memory counts are `Counts`, a `dict[str, int]` with its
+insertion order and a hash index; `by_model` is a list of `(model,
+ModelCounts)` in first-seen order (`ModelCounts::pairs` gives the dict
+`EvalReport::by_model` carries). `resolve_audit_telemetry` drops, under a
+cutoff, an event whose `ts` is unreadable or strictly before it from
+everything; counts a truthy `repeat` as a repeat only; splits
+`no_signal` from audited turns; asks the tombstones only when the set is
+non-empty, then the acknowledged ids; buckets by a non-empty `str`
+`client_model`; keeps the last non-empty `str` `threshold_rule`; and
+appends each candidate to a buffer that a limit of 0 or below empties on
+every append and any other limit trims to its last `limit` (a deque
+popped at the front, the reference's slice of the tail). Counts are
+`i64`. `cold_endorsement_rows` answers `ColdRows` (rows, total,
+suppressed): suppressed with no rows and a total of 0 when the log holds
+no hook telemetry; else per floor delivery in insertion order, at the
+floor or above, `weakly_endorsed(auto + explicit, explicit, ratio)`, a
+memory of `by_id` whose category is not `Category::Ambient`, the row's id
+the memory's own (not the key), `first_summary_line(body, 80)`; sorted
+by retrieval count descending and id in code point order, a stable sort.
+
+Errors: `EvalRatesError` wraps the error of the module that raised
+(`PyError`, `HealthModelError`, `CountersError`, `EvalModelError`), each
+converted by a `From` impl here and named by its class. Over a list of
+dicts only TypeError is reachable (an unhashable kind or surface, a naive
+bound).
+
+Fixtures: `tests/contract/gen_eval_rates.py` writes `eval_rates.jsonl`
+(not gated: ASCII but for three ids whose code point order no release
+changes, and stamps every release from 3.11 reads alike) and
+`eval_rates_unicode.jsonl` (`UNICODE_GATED`, mirrored in `gates_of`:
+excerpts whose `str.strip` meets whitespace past ASCII, U+180E among the
+characters that are not, and bodies whose summary line strips and ends
+past ASCII). Each row is a log (dicts and values that are not), its
+bounds and the ids the scope rejects, with the `passes_scope` calls in
+order, the walk or the exception's class, and resolves (tombstones and
+limits -1, 0, 1, 2, 20) and cold lists (floors from -5 to 4, ratios 0,
+0.2, 0.25, 0.5, -1, NaN, infinity) over the header's memories (ambient,
+missing, one whose id differs from its key). The last row is a sweep of
+3,000 logs drawn from a seed, pinned by count and the SHA-256 of each
+answer's compact JSON line.
+
+Tests: `golden_eval_rates` (every row of both files, the sweep redrawn
+by the generator's rule); `eval_rates_kills` (a marker after the window
+skip, `>=` for the cutoff, an unreadable stamp kept under a cutoff, `is
+not None` for an `or`, a duplicate counted twice, the first excerpt kept
+over an upgrade, a settlement in the trio, `auto` by truthiness, the ids
+before the settlement, `by_model` sorted, the buffer kept at a limit of
+0, the cold sort by id descending, an ambient memory kept, the window by
+wall clock). Asking `_canonical_top_hit_id` with an empty tombstone set
+cannot be killed: it answers for every dict and membership in an empty
+set is false. `eval_rates_robustness` (1,000,000 events within `TENFOLD`
+of 100,000; a use row of 100,000 duplicate ids; an excerpt of 1,000,000
+code points; 100,000 cold rows and models; floors, limits and ratios at
+their extremes; an `int` of 5,000 digits; values nested 100,000 deep).
+
+Patterns: none. The unit matches no regular expression.
+
+Reference observations, reproduced: `_count_use` asks `is_settlement`
+before it reads the ids, so an applied `use` with an unhashable surface
+raises TypeError whatever its ids; a naive window bound raises only once
+an event's stamp parses and the earlier comparison holds;
+`events_in_window` counts markers and rows the walk never reads.
+
+Left for later: unit eval-1 (`compute_eval` and `_eval_report`, which
+call these and build the `EvalReport`).
+
 ## The recall surface's counters (`recall_counters.py`)
 
 `recall_counters` reproduces `src/bettermemory/recall_counters.py`: the
@@ -5135,11 +5260,12 @@ reported; a truthy `suppressed_ids` that does not iterate raises
 `TypeError` and ends the whole section; `_latest_grades` tests the
 window a second time over rows already in it.
 
-Left for later: nothing of this module. Its callers are
-`eval_model::split` (eval_model-1b, built: `_with_rule_split`,
-`surface_rule_split`, the pick's maker) and later units: eval-1 (`_eval_report`, which passes the surface rows),
-eval_rates-1 (its use of `is_surface_row`) and recall_review-1 (its
-sampling over the same rows).
+Left for later: nothing of this module. Its built callers are
+`eval_model::split` (eval_model-1b: `_with_rule_split`,
+`surface_rule_split`, the pick's maker) and `eval_rates` (eval_rates-1:
+its use of `is_surface_row`); the later ones are eval-1
+(`_eval_report`, which passes the surface rows) and recall_review-1
+(its sampling over the same rows).
 
 ## The ranker
 
