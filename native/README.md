@@ -142,7 +142,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `membership_shared` | unit 1 of `membership_shared.py`: its constants, `_shared_remint` and `_view_made` over carriers given as a closure, `_continues`, `_in_ticks`, `_carried_in_ticks`, `_ticked`, `_read_here`, `_moved_under`, `_read_as_now`, `_loose`, `_exact`, `_made_by`, `_same_files`, `_same_file`, `_asked_where`, `_decides`, `_declared_answer`, `_joined_silently_by_token`, `_by_declaration`, `_asks`; unit 2a in `membership::shared_heal`: `_carriers`, `_restamped`, `_healed`, `_chosen`, `retired_into`, `_folded`, and the `MembershipLog` trait; unit 2b in `membership::shared_ask`: `_ask_which`, `_retire_into`, `_asked_at`, `_asked_here`, `_unseen`, `_asked_plan` | `membership_shared.jsonl`, `membership_shared_python.jsonl`, `membership_shared_heal.jsonl`, `membership_shared_ask.jsonl` |
 | `membership_rows` | `membership_rows.py` whole: `_key_columns`, `_key_from`, `TICKS_KEY`, `_stamps_from`, `_ticks_from`, `_stamps_json`, `_view_from`, `_checkout_from`, `_checkout_row`, `_project_from`, `_project_row`, `_proposal_from`, `_proposal_row`, `_jsonable`, `_signature` (with `Location.root_file`), `_unwritten`, `_Tally`; `dict()` of a value in `membership_lines` (`dict_of`) | `membership_rows.jsonl`, `membership_rows_python.jsonl` |
 | `membership_resolve::tally` | `_tally`, `_at_the_path`, `_strength`, `_unordered`; ordered and fallible reads on the membership model | `membership_tally.jsonl` |
-| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal`; unit mqueries of `membership_queries.py` in `queries`: `home`, `homes`, `_home_from`, `admit_recall`, `restated`, `_written_afresh`, `_restatement`, `filed_elsewhere`, the trait `ScopeReader`; unit membership-4a: `_touch_view`, `_checkout_name`, `_give_token`, `token_written`, `_foreign`; unit mlegacy in `legacy`: `pending`, `settle_legacy_questions`, `below_root`, `_declared_below`, `_record_counts`, `_records_by_project`, and `first_output` of `membership_queries.py`; rung 2 of `membership_resolve.py` in `rung`: `_token_now`, `_token_read`, `_by_object`, `_rung_two` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl`, `membership_queries.jsonl`, `membership_touch.jsonl`, `membership_legacy.jsonl`, `membership_rung.jsonl` |
+| `membership` | unit membership-1 of `membership.py`: `_PATH_LIVENESS`, `__init__`, `reads_here`, `open`, `_call`, `_stamp`, `_put`, `_delete`, `_event`, `_all_projects`, `project`, `projects`, `canonical`, `_canon`, `named`, `chain_of`, `_members`, `_members_index`, `_witnessed`, `_checkouts_by_project`, `_name`, `_put_project`, `_mint_project`, `_witness_query`, `_witness_rows`, `witness_commits`, `_has_witness`, `_has_witnesses`, `file_binding`, `_file_binding`, `_checkouts`, `checkout`, `checkouts`, `_checkouts_of`, `_put_checkout`; the store trait `MembershipStore`; unit membership-2: `add_witness`, `_add_witness`, `_remotes_of`, `_add_remotes`, `_bind_file`, `_file_flag`, `_lift_boundary`, `_make_boundary`, `_refresh_object`, `_put_view`, `_register`; unit membership-3: `view_state`, `live_view`, `_live_state`, `liveness_held`, `_continuity`, `_confirms`, `_by_common`, `_by_pointer`, `_holds`, `_held`, `_rewritten`, `_most_specific`, `_specific`, `_independent`; unit membership-2b: `record_machine`, `machines`, `_open_proposals`, `proposal`, `_put_proposal`, `_open_proposal`, `_close`, `open_proposal`, `restate_proposal`; unit mqueries of `membership_queries.py` in `queries`: `home`, `homes`, `_home_from`, `admit_recall`, `restated`, `_written_afresh`, `_restatement`, `filed_elsewhere`, the trait `ScopeReader`; unit membership-4a: `_touch_view`, `_checkout_name`, `_give_token`, `token_written`, `_foreign`; unit mlegacy in `legacy`: `pending`, `settle_legacy_questions`, `below_root`, `_declared_below`, `_record_counts`, `_records_by_project`, and `first_output` of `membership_queries.py`; rung 2 of `membership_resolve.py` in `rung`: `_token_now`, `_token_read`, `_by_object`, `_rung_two`; unit membership-4 in `why`: `why`, `_decides` | `membership_core.jsonl`, `membership_core_unicode.jsonl`, `membership_writes.jsonl`, `membership_views.jsonl`, `membership_proposals.jsonl`, `membership_queries.jsonl`, `membership_touch.jsonl`, `membership_legacy.jsonl`, `membership_rung.jsonl`, `membership_why.jsonl` |
 | `declare` | `declare.py` whole: `declaring_model` and its inner `write_token`, with the re-mint, the machine row's write, the liveness and the clock as arguments | `declare.jsonl` |
 | `location_continuity` | `location.continuity` (`location.py` 1040-1094) | `location_continuity.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved`, `line_restated` with `REASON_SAID`, and the lines without a number (the whole module); a question's row as `_proposal_from` and `_restatement` read it for the restated line | `membership_lines.jsonl`, `membership_lines_python.jsonl`, `membership_lines_unicode.jsonl` |
@@ -8543,18 +8543,22 @@ further `impl<S: MembershipStore> Membership<S>` blocks over the
 | `below_root`, `_declared_below` | 1559-1597 | `location.view_path` (a closure) | built (mlegacy) |
 | `_checkout_name`, `_give_token`, `token_written` | 1598-1674 | the token writer | built (membership-4a, mtoken) |
 | `_record_counts`, `_records_by_project` | 1675-1697 | the store | built (mlegacy) |
-| `why` | 1730-1826 | `Store.membership_log` | membership-4 (deferred) |
+| `why` | 1743-1814 | `Store.membership_log` (`MembershipLog`), `declared_scopes` (`ScopeReader`) | built (membership-4, membershipwhy) |
 | `_home_from` | 1700-1729 | nothing beyond the above | built (mqueries) |
-| `portable_export`, `_decides`, `__all__` | 1827-1834, 1845-1996 | nothing beyond the above | membership-4 (deferred) |
+| `portable_export` | 1827-1834 | `membership_portable.export_document` | membership_portable's unit |
+| `_decides` | 1846-1889 | nothing | built (membership-4, membershipwhy) |
+| `__all__` | 1892-1996 | nothing: the module's export list | nothing to port |
 | `_foreign` | 1835-1844 | nothing (`checkout_token.succeeds`) | built (membership-4a, mtoken) |
 
 The cut, leaves first: membership-1 (this unit) is the state and the reads
 every other group calls; membership-2 (membwrite) the evidence and
 checkout writes and `merge`; membership-2b (membprop) the machine rows and
 the proposals; membership-3 (membview) the views, liveness, history and
-tokens; membership-4 waits for `membership_log` in the store trait,
-which membership-4 adds and the store's membership unit (store_membership-1)
-implements.
+tokens; membership-4 (membershipwhy) `why` and `_decides`, over
+`MembershipLog`, the trait unit 2a of `membership_shared.py` put beside
+the store trait for `Store.membership_log`. `merge` and the
+`membership_declare` bindings wait for that module's units, and
+`portable_export` for `membership_portable`'s.
 
 ### Unit membership-1
 
@@ -9031,6 +9035,161 @@ project. Tests: `golden_membership_legacy`, `membership_legacy_kills`,
 `membership_legacy_robustness`. Left for later units: `why` (1730-1826),
 `portable_export` and `_decides`, the `membership_declare` bindings, and
 the callers that give `below_root` the location's `view_path`.
+
+### Unit membership-4 (`membership::why`)
+
+`src/membership/why.rs`, one more `impl Membership<S>` block, bound on
+`ScopeReader` (for `home`) and `MembershipLog` (for `_folded` and the log
+itself), and the free function `decides`. The line ranges were confirmed
+against `membership.py` as it is now: `why` 1743-1814 (1730-1742 bind
+`membership_queries`, 1816-1825 bind `membership_portable`) and
+`_decides` 1846-1889.
+
+The unit's outputs and their tiers. The `Why` (its record, project,
+checkout and rule, the log rows that decided the home in the order the
+log answers them, and its text) is T3: its one caller in the reference is
+the `project why` command (`cli/project_cmd.py` 562), whose output is
+outside the contract, and no tool answer carries it. The store's calls in
+order are T3. Nothing is written, so no T1 value is made, and no text
+reaches the model (a later handler that puts a `Why` into a tool answer
+raises its text to T2).
+
+- `why` forgets the projects, then reads the home (`home`, which forgets
+  them again and reads the homes and the global records' scopes). With no
+  home it answers `<id>: no home recorded` and nothing more. Otherwise the
+  projects are the home's chain, its recorded project and its project,
+  and every project whose canonical project is among them, each asked in
+  the model's order of the projects. A merged member is found though
+  its canonical project is the head of the chain, and a project merged
+  into `global` stands for a global home.
+- The folded checkouts (`_folded`, unit 2a of `membership_shared.py`) are
+  read only for a home with a checkout; the checkouts are the folded ones
+  and the home's own, sorted in code point order. The questions are those
+  asked at the checkouts (`column_in`, asked even when the list is empty)
+  and the import questions whose `evidence_json` is a mapping naming one
+  of the projects as `imported_project`, read in that order; a question
+  row without `id` or `evidence_json` raises KeyError where the reference
+  reads it.
+- The log is read once, every kind. A payload `json.loads` refuses with
+  ValueError is passed over, RecursionError propagates, and a payload that
+  is no dict is passed over. The kept rows keep the order the log answers
+  them in, which the store's log gives by sequence number; a double that
+  answers them out of that order is listed as answered. The log is read
+  whole (the second gap below).
+- `decides` (`_decides`) reads the body under the kind less `_put` only
+  for a kind ending in `_put` (`_put` alone reads the key `""`). A
+  mapping body decides by kind (`home_put` by `record_id`,
+  `checkout_put` and `proposal_put` by `id` among the checkouts, then the
+  questions, `checkout_view_put` by `checkout`, `project_put` by `id`,
+  `project_file_put` by `project`) and any other `_put` kind is never
+  kept; a body that is no mapping falls through to the rest.
+  `recall_suppressed`, `witness_put` and `witness_released` are never
+  kept, `import_homed` is kept by `record`, the six project kinds by
+  `project`, then `into`, then (for `project_unmerged` only) `was_into`,
+  and never by a checkout; any other row by `checkout` among the
+  checkouts, then `proposal` among the questions. The `or`s stop at the
+  first true, as the reference's do.
+- `in` over the questions or the projects (sets of str) hashes first: a
+  list or a dict there raises TypeError (`response_trust::hashable`), and
+  any other value that is not a str is never in. `in` over the checkouts
+  (a sorted list, searched by bisection) compares and never raises. A
+  repeated key reads as its last value, as `json.loads` keeps it.
+- The public `decides` requires its checkouts sorted in code point order,
+  as `why` builds them (`sorted(folded | {cid})`), a precondition the
+  reference's `in` does not have: an unsorted list may answer false for a
+  checkout it holds. A debug build asserts the order on each call; `why`
+  calls the same test without the assertion, its list sorted by
+  construction, so a debug build stays linear in the folded checkouts.
+- The text of a global home is the reference's sentence with the rule. For
+  a home in a project, the registration is the rule of the first kept
+  `checkout_registered` row whose `checkout` equals the home's checkout
+  (None for a home without one), even when that rule is false; the first
+  home is the `checkout` of the first kept `home_put` row's `home`, after
+  every kept `home_put` is read. When it is false the home's checkout
+  stands; when it differs from the home's checkout it is said `retired
+  into` the home's checkout when it is among the folded ones and `homed
+  now at` it otherwise, an unhashable first home raising TypeError there
+  (for a home without a checkout too: the folded checkouts are then the
+  empty set, which still hashes). The project looked up is the home's,
+  its merges followed (the canonical project, not the recorded one:
+  KeyError with the id's repr for a project not in the store), and it is
+  named through
+  `membership_lines::named`. `str()` of the first home and of the
+  registration is `pyvalue::py_str` (a float's repr, a list's or dict's
+  repr, `True`).
+- No regular expression is used.
+
+Reference findings, reproduced. A `home_put` row is kept by the checkout
+or the question its payload names when its `home` is missing or no
+mapping (the body falls through `_decides`), and the text then raises
+KeyError (`'home'`) or AttributeError from `p["home"].get`, so such a row
+in the log makes `why` raise for every record homed at that checkout
+(`membership_why.jsonl`, sequences `home_put0` to `home_put4`); the
+store's writer always puts a mapping there. For a home without a
+checkout, a kept `checkout_registered` row that names no checkout (kept
+by the question it names) is read as the checkout's registration
+(`base`, record R4). The text prints the record id, the rule, the
+checkouts and the registration's rule as they are, unescaped. Every text
+of a home in a project names the project through
+`membership_lines::named` and so carries ENG-335 (a crafted name can
+imitate a closing quote); the global and no-home texts name no project.
+
+Declines and gaps. No reference defect is corrected here. The port
+answers as the reference on every input but these two, each pinned by a
+test:
+
+- A decline. A home whose checkout is neither a str nor None answers
+  NotPorted, where the reference goes on with the value as the checkout
+  (checkout 5 and a row `checkout_moved {"checkout": 5}`: `Why` with
+  checkout 5, the row and the text `written in checkout 5`). `Why.checkout`
+  holds a str (`membership_records::outcomes`). The homes table's
+  `checkout` is a TEXT column, which stores an integer or a real as
+  text, so through the SQLite store only a BLOB could reach it, and no
+  writer puts one. Test:
+  `membership_why_kills::a_home_checkout_that_is_no_str_declines`.
+- A gap of `MembershipLog`. The trait answers the log whole, where the
+  reference's store reads it through a generator over a cursor
+  (`store_membership.membership_log`). Only which error surfaces first
+  differs, when one row raises in `_decides` and a later row cannot be
+  read (a payload that is not valid UTF-8, a corrupt store): the store's
+  error here, TypeError in the reference. It closes when the store's
+  `MembershipLog` lands (unit store_membership-3) and yields its rows
+  lazily. Test:
+  `membership_why_kills::a_failed_log_read_comes_before_a_row_that_raises`.
+
+Fixtures: `tests/contract/gen_membership_why.py` runs the reference over
+the recording store of `gen_membership_queries` (`_Scoped`) with a
+scripted membership log (`_WhyStub`: rows `[seq, kind, payload]`
+answered as `LogRow`s, filtered by the kinds asked), and writes
+`membership_why.jsonl` (not gated, ASCII names and ids): a header with the
+tables by variant and the logs, then sequences of `why` steps, each with
+its answer (the rows by sequence number) and the store calls; no home, a
+global home and one merged into `global`, homes in projects through
+merges, chains and a cycle, folded checkouts two deep, the first home
+retired into, homed elsewhere, false and not a str, the import questions
+with and without `imported_project`, every branch of `_decides` with
+keys missing and of other types, payloads that are invalid JSON, a list,
+a str, a number and NaN, an unhashable question, project or first home
+(of a home with a checkout and of one without), question rows without
+their columns, the store failing at each read, the tables changed
+between two calls, and a log answered out of sequence order. The last
+line is the digest of
+1,000 seeded stores (`_store`, its pools written in the row), four
+records asked of each: 4,000 answers and their store calls by count and
+SHA-256. The Rust test double is `tests/common/membership_why.rs`
+(`MembershipLog` for `membership_core`'s `Fake`, its rows in the table
+`log_rows`). Tests: `golden_membership_why`, `membership_why_kills`,
+`membership_why_robustness` (a log of 100,000 rows against 10,000 by
+`timing::grows_within`, merge and parent chains of 1,000 projects, 10,000
+retired checkouts in a chain, a payload nested past `json::MAX_DEPTH`
+raising RecursionError in the log and in the folded checkouts' read,
+100,000 keys in one payload, integers past i64 and sequence numbers at
+i64's bounds). A payload nested to the decoder's limit is left out of the
+fixtures: where `json.loads` stops recursing follows the release and the
+system. Left for later units: `portable_export` (`membership_portable`'s
+unit), the `membership_declare` bindings and `merge` (that module's
+units), the `project why` command (a CLI unit), and a store that
+implements `MembershipLog`.
 
 ## The resolution ladder (`membership_resolve.py`)
 
@@ -31333,6 +31492,11 @@ What the reference has and this build does not, by area:
   `_repository_name`, `_shas`, `_json_list`), which are built in
   `membership_migrate`: `_Record` through `_held_anywhere`, `unhomed`,
   `migrate` and `_Run`.
+- The store's own `MembershipLog`, which yields the membership log row by
+  row (store_membership-3). Until it lands `Membership.why` reads the log
+  whole, so when one row raises and a later row cannot be read, the error
+  that surfaces first is not the reference's (the gap is stated in the
+  membership why section).
 - Each hit's signals and drift report: `claims.py` past its leaves,
   its literal reader, its drift index, its module tokenizer (unit
   5a) and that tokenizer's f-string modes (unit 5b, first part) (the

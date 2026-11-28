@@ -273,7 +273,9 @@
 //!   questions shown, a directory against a checkout's root, the record
 //!   counts by project), and rung 2 of the resolution ladder in
 //!   `membership::rung` (`_token_now`, `_token_read`, `_by_object`,
-//!   `_rung_two` of `membership_resolve.py`);
+//!   `_rung_two` of `membership_resolve.py`), and unit membership-4 in
+//!   `membership::why` (a record's home and the membership log rows that
+//!   decided it: `why`, `_decides`);
 //! - [`declare`]: `declare.py`'s `declaring_model`, the model a
 //!   declaration opens, with its token writer (`write_token`);
 //! - [`location_continuity`]: `location.continuity`, witness O where birth

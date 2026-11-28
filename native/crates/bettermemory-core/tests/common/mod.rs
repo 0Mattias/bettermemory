@@ -36,6 +36,7 @@ pub mod membership_queries;
 pub mod membership_rows;
 pub mod membership_touch;
 pub mod membership_views;
+pub mod membership_why;
 pub mod membership_writes;
 pub mod opened;
 pub mod origin_dates;

@@ -3,7 +3,8 @@
 //! store plumbing, its projects with their merges followed, the members
 //! index, the witness and file-binding reads, the checkout reads, and
 //! (`writes`) the evidence, boundary and checkout writes; (`touch`) the
-//! sightings of a known checkout and its token re-mints.
+//! sightings of a known checkout and its token re-mints; (`why`) a
+//! record's home and the membership log rows that decided it.
 //!
 //! The model reaches the store only through [`MembershipStore`] and the
 //! files a view names only through a [`Liveness`] it is given, so every
@@ -24,7 +25,10 @@ pub mod shared_heal;
 pub mod touch;
 pub mod views;
 pub mod vocab;
+pub mod why;
 pub mod writes;
+
+pub use why::decides;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
