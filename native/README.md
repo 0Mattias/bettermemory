@@ -159,7 +159,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `builder` | `builder.py`'s two pure schema scrubs: `_strip_titles`, `_fold_nullable` | `builder_schema.jsonl` |
 | `claims`, `claim_drift` | units 1 to 3 of `claims.py`: `Claim.render`, `control_character`, `lone_surrogate`, `_IDENT_RE`, `claim_reason_is_indeterminate`, `path_key`, `_component_forms`, `spellings_capped`, `stored_spellings`, `claim_paths`, `_binding_token` (`_DEF_RE`, `_ASSIGN_RE`), `hunk_lines` (`_HUNK_RE`), `_MARK_HASH_RE`, `_header_path`, `_patch_header_path`; `parse_claim`, `parse_claims`, `load_claims`, `claim_is_addressable`, `governed_claim_paths`, `_rhs_repr`, `string_fragment`, `anchors_from_value` (`claims::literal`); `claim_drift`: `_Headers`, `build_binding_index`, `claim_level_drift`, the trait `LiteralLines` for the literal helpers | `claims.jsonl`, `claims_unicode.jsonl`, `claims_python.jsonl`, `claims_literal.jsonl`, `claim_drift.jsonl`, `claim_drift_unicode.jsonl`, `claim_drift_python.jsonl` |
 | `symbols` | unit symcheck of `symbols.py`: the bounds (`_MAX_*`, `_FILE_SUFFIXES`), `SymbolCitation`, `SymbolDriftReport` (`missing`, `__bool__`, `to_dict`), `check_symbol_citations` over citations already parsed, `_tier`, `_live_root`, `_resolve_module`, `_module_bindings`; `ast.parse` and the name walks are a trait (`ModuleNames`) | `symbols.jsonl`, `symbols_platform.jsonl` |
-| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII read since unit claims-6 (`verify_identifier` over the raw run, the parser's NFKC in `literal`). Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts. Unit pyexpr (claims-5b2): the expression grammar `ast.parse` reads over those tokens (`module_expr::parse_expression_module`, `Parser`): acceptance with the first pass's actions, the parser's stack limit and `ast2obj`'s depth, the node arena with the names `symbols._all_names` reads; statements declined. Unit pystmt (claims-5c1): the simple statements (`module_expr::parse_module`, `module_expr::stmt`): assignments, annotations and augmented assignments with their targets in Store context, `del` in Del, `return`, `raise`, `assert`, `yield`, `pass`, `break`, `continue`, `global`, `nonlocal`, `import` and `from` (`_PyPegen_checked_future_import`'s flag), each slot's stack offset, an annotated target read as `assignment`'s group commits, what the second pass reads past a refused target read for its ValueError, a `match` line's subject read first; compound statements and `type` declined. Unit pyblock (claims-5c2a): blocks and the compound statements (`module_expr::parse_module_blocks`, `module_expr::compound`): `if`, `elif`, `else`, `while`, `for`, `with`, `async for` and `async with`, INDENT and DEDENT to 99 levels with each level's and slot's stack offset, the IndentationError of a missing block, the forced `:` of `else`, the second pass counted from the deepest block, the parenthesised `with` tried first; `def`, `class`, `try`, decorators and `match` declined through `definition` and `matching` | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl`, `pysyntax_expr.jsonl`, `pysyntax_expr_posix.jsonl`, `pysyntax_stmt.jsonl`, `pysyntax_stmt_posix.jsonl`, `pysyntax_compound.jsonl`, `pysyntax_compound_posix.jsonl` |
+| `pysyntax` | unit pylex: the eval-mode tokenizer `ast.literal_eval` meets (`lex::literal_tokens`, `lex::lex`): CPython 3.13.13's lines, names, numbers (with `int`'s 4,300-digit limit), string prefixes and escapes, brackets to 200; `\N{...}` and names past ASCII read since unit claims-6 (`verify_identifier` over the raw run, the parser's NFKC in `literal`). Unit pylit: `ast.literal_eval` over those tokens into a `Literal` and `claims._canonical_repr` (`literal::literal_eval`, `literal::canonical_repr`). Unit pymodlex: the module-mode tokenizer `ast.parse` meets (`module_lex::module_tokens`): logical lines, INDENT and DEDENT, the tab consistency check, the 100-level limit, NUL. Unit pyfstring (claims-5b, first part): its f-string modes (`fstring_lex`): FSTRING_START, FSTRING_MIDDLE and FSTRING_END, the tokens of each field, format specifications, nested f-strings to 149, the decode of literal parts. Unit pyexpr (claims-5b2): the expression grammar `ast.parse` reads over those tokens (`module_expr::parse_expression_module`, `Parser`): acceptance with the first pass's actions, the parser's stack limit and `ast2obj`'s depth, the node arena with the names `symbols._all_names` reads; statements declined. Unit pystmt (claims-5c1): the simple statements (`module_expr::parse_module`, `module_expr::stmt`): assignments, annotations and augmented assignments with their targets in Store context, `del` in Del, `return`, `raise`, `assert`, `yield`, `pass`, `break`, `continue`, `global`, `nonlocal`, `import` and `from` (`_PyPegen_checked_future_import`'s flag), each slot's stack offset, an annotated target read as `assignment`'s group commits, what the second pass reads past a refused target read for its ValueError, a `match` line's subject read first; compound statements and `type` declined. Unit pyblock (claims-5c2a): blocks and the compound statements (`module_expr::parse_module_blocks`, `module_expr::compound`): `if`, `elif`, `else`, `while`, `for`, `with`, `async for` and `async with`, INDENT and DEDENT to 99 levels with each level's and slot's stack offset, the IndentationError of a missing block, the forced `:` of `else`, the second pass counted from the deepest block, the parenthesised `with` tried first; `match` declined through `matching`. Unit claimsdefs (claims-5c2b): the definitions and `try` (`module_expr::definition`): `def` and `async def` with their parameters in `ast.arguments`' order, annotations, defaults and return annotation, `class` with its arguments read as a call's, decorators, and `try` with `except`, `except*`, `else` and `finally`, each slot's stack offset, the forced `:` of `try` and `finally`, each compound statement ending at its block's last token; type parameters declined | `pysyntax.jsonl`, `pysyntax_python.jsonl`, `pysyntax_literal.jsonl`, `pysyntax_literal_python.jsonl`, `pysyntax_module.jsonl`, `pysyntax_fstring.jsonl`, `pysyntax_expr.jsonl`, `pysyntax_expr_posix.jsonl`, `pysyntax_stmt.jsonl`, `pysyntax_stmt_posix.jsonl`, `pysyntax_compound.jsonl`, `pysyntax_compound_posix.jsonl`, `pysyntax_definition.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 | `store::restore_lock` | the reader's side (`reading`) and the writing open's admission: `_take`, `_file_key`, `_Target`, `_read_marker`, `read_marker`, `describe`, `RestoreLockedError` (running, unfinished and replaced wordings), `restore_state`, `_identity`, `_refuse_restored`, `_RecordCheck`, `_record_admission`, `admit`; on Windows `_open_store_handle`, `_behind_handle` (compiled there, untested); a restore's hold: `_HELD`, `_this_thread_holds`, `RestoreLock` (`mark`, `release`), `held_here`, `acquire`, `probe`, `_holder`, `unlock`, `state_finding` | `store_restore_lock.json`, `store_restore_lock_hold.json`, `store_restore_lock_hold_python.json`, `store_restore_lock_python.json` (POSIX only) |
 | `store::returned` | `store_returned.py`'s backfill half on the writable store: `missing_links`, `returned_rows`, `backfill`, `ensure_backfilled` (`has_key` given, its log lines returned); `Store._put_relinked` as `store::writers::put_relinked`; the `returned_put` row a backfill appends (`Transaction::mutate_returned_put`) | `store_returned.jsonl`, `store_returned_posix.jsonl` (POSIX only) |
@@ -28309,8 +28309,8 @@ none edits another's.
 | --- | --- | --- | --- |
 | `lex` | the eval-mode tokenizer (`Parser/lexer/lexer.c`'s `tok_get_normal_mode`), the newline translation of `_PyTokenizer_FromString`, the string decoders (`_PyUnicode_DecodeUnicodeEscapeInternal`, `_PyBytes_DecodeEscape`) and the number readers (`parsenumber`, `int`'s 4,300-digit limit) | nothing | built (unit pylex) |
 | `literal` | the eval-mode parser over `lex`'s tokens, `literal_eval`'s evaluation and `claims._canonical_repr` | nothing | built (unit pylit) |
-| `module_lex`, `fstring_lex` | the module-mode tokenizer for `ast.parse` at 672 (unit 5a) and its f-string modes (5b, first part); the definitions, `try` and `match` (5c2b, 5c2c), type parameters (5c2d) and the top-level binding read (5d) follow | nothing | 5a built (unit pymodlex), 5b first part built (unit pyfstring) |
-| `module_expr` | the expression grammar of `ast.parse` over those tokens (5b2): acceptance, the first pass's actions, the parser's stack limit, `ast2obj`'s depth, and the tree with the names `symbols._all_names` reads; its child `stmt`, the simple statements (5c1): assignments, the keyword statements and imports, with Store and Del targets; its child `compound`, blocks and `if`, `while`, `for` and `with` with their async forms (5c2a) | the C recursion limit of the host's CPython build (a `cfg` constant) | built (units pyexpr, pystmt and pyblock); definitions, `try`, `match` and `type` declined |
+| `module_lex`, `fstring_lex` | the module-mode tokenizer for `ast.parse` at 672 (unit 5a) and its f-string modes (5b, first part); `match` (5c2c), type parameters (5c2d) and the top-level binding read (5d) follow | nothing | 5a built (unit pymodlex), 5b first part built (unit pyfstring) |
+| `module_expr` | the expression grammar of `ast.parse` over those tokens (5b2): acceptance, the first pass's actions, the parser's stack limit, `ast2obj`'s depth, and the tree with the names `symbols._all_names` reads; its child `stmt`, the simple statements (5c1): assignments, the keyword statements and imports, with Store and Del targets; its child `compound`, blocks and `if`, `while`, `for` and `with` with their async forms (5c2a); its child `definition`, `def`, `async def`, `class`, decorators and `try` (5c2b) | the C recursion limit of the host's CPython build (a `cfg` constant) | built (units pyexpr, pystmt, pyblock and claimsdefs); `match` and `type` declined |
 | the XID tables | whether a name past ASCII is an identifier (`verify_identifier`) | Unicode tables (`unicode::xid`) | built (unit claims-6) |
 | `\N{...}` | the Unicode name table (`getcode`) | Unicode tables (`unicode::names`) | built (unit claims-6) |
 
@@ -29294,9 +29294,9 @@ every rule was read from the interpreter and is held by
 - The statements, in `compound_stmt`'s order: `if`, `while`, `for` and
   `with`, `async for` and `async with` (the parser accepts both at a
   module's level; the compiler alone refuses them), then a definition,
-  `try` or decorator (`definition.rs`) and a `match` line ending in `:`
-  (`matching.rs`), both declined (`statement`) through one call each,
-  so that units 5c2b and 5c2c each edit only their own file; any other
+  `try` or decorator, read by `definition.rs` since unit 5c2b (below),
+  and a `match` line ending in `:` (`matching.rs`), declined
+  (`statement`) through one call; any other
   `async` and a compound keyword after `;` or on a head's line are
   `simple_stmts`' SyntaxError, and `type` keeps `stmt`'s decline (5c2d).
 - `block` is `NEWLINE INDENT statements DEDENT` or `simple_stmts` on the
@@ -29475,18 +29475,189 @@ line loop shared by both entries, visibility, `second_pass_first`) and
 `forced`), 489 in all: within
 the 600 planned, so `with` and `async with` stay in this unit.
 
+### The definitions and `try` (`module_expr::definition`)
+
+`parse_module_blocks` reads `def`, `async def`, `class`, decorators and
+`try` with `except`, `except*`, `else` and `finally` as `ast.parse(source)`
+of CPython 3.13.13 reads them (unit claims-5c2b), the rules
+`function_def`, `class_def`, `decorators`, `params` (`slash_no_default`,
+`slash_with_default`, `star_etc`, `kwds`, `param_no_default`,
+`param_with_default`, `param_maybe_default`, `param_star_annotation`,
+`annotation`, `star_annotation`, `default`), `try_stmt`, `except_block`,
+`except_star_block`, `else_block` and `finally_block`. `definition.rs`
+reads a head up to its `:` and hands it to `compound`'s stack (`Open`),
+whose `proceed` reads its block and then `try`'s clauses as it reads
+`elif` and `else`. Outputs, at tier T3 here and T2 through unit 5d:
+whether a module parses or is refused, and the class; the names
+`symbols._all_names` and `_top_level_names` read (a definition's name,
+each parameter, a class keyword's name and a handler's alias join the
+first; a top-level definition's name the second, which reads no deeper
+into it); and each statement's, handler's, `arg`'s and `keyword`'s line
+and column. Owed under pysyntax's narrowed scope (METHOD 1e): parse or
+not, the top-level names, the first literal assignment (the tree's
+shape and ids), the bound names and the spans; not owed: the
+refusal's message, which error a refused source raises, the depth
+limits past the pinned boundaries. A source the reference refuses is
+refused in each slot, but not always with its class: where only the
+second pass reads a slot, a constant's identifier (`Ｎｏｎｅ`) as the
+alias of a handler of the other kind, among a handler's later types
+after a comma or as their alias, or in a parameter's annotation after
+`**kwargs,` is the reference's ValueError and the port's SyntaxError,
+and in a class's bare generator after a `match` line the second pass
+refuses it is the reference's SyntaxError and the port's ValueError.
+As before, every rule was read from the interpreter and is held by
+`pysyntax_definition.jsonl`.
+
+- A definition is its decorators (`'@' named_expression NEWLINE` each),
+  then `def` or `async def` NAME `(` `params`? `)` (`->` `expression`)?
+  `:`, or `class` NAME (`(` arguments `)`)? `:`; it starts at its
+  keyword (`async` for `async def`), not at its first decorator, and the
+  decorators are its `decorator_list`. A decorator line followed by an
+  INDENT or a DEDENT is IndentationError (`unexpected indent`,
+  `unexpected unindent`) once the second pass raises nothing, as
+  `compound`'s unexpected indent; any other statement after decorators,
+  `try` included, is SyntaxError.
+- `params`: positional parameters, then `/` (not first, not twice, not
+  after `*`), then `*` or `*args` (a bare `*` needs a keyword-only
+  parameter after it, which `**kwargs` is not), keyword-only parameters,
+  and `**kwargs` last. A positional parameter without a default after
+  one with one is refused, as is a default on `*args` or `**kwargs`;
+  `*args` alone takes a starred annotation (`*a: *Ts`, `'*' bitwise_or`
+  wrapped in Starred). The lists keep `ast.arguments`' field order
+  (`posonlyargs`, `args`, `vararg`, `kwonlyargs`, `kw_defaults`, `kwarg`,
+  `defaults`), so the shape and the names read in preorder agree with
+  the reference's.
+- A class's arguments are read by the call's machinery (`Fr::Call`):
+  positional and starred arguments, then keywords and `**`, a keyword
+  before a positional one refused (a ValueError the second pass would
+  read there is answered as a call's, `first_value`), and a generator
+  without its own parentheses (`class C(x for x in y)`) refused, since
+  `class_def_raw` takes `'(' [arguments] ')'` and not `genexp`. The
+  call's `Call` node and its callee, a `Name` with no identifier, stay
+  in `Tree.nodes` though no tree holds them: a reader of the parsed
+  module (unit 5d's included) walks the tree from `Tree.body`, not the
+  arena.
+- `try`: `try` `:` block, then handlers (`except` with an optional
+  `expression` and `as NAME`, or `except*` with an `expression` and
+  the same alias), `else` only after a handler, and `finally`; a `try`
+  with neither a handler nor `finally` is SyntaxError, and so is the
+  first `except*` after an `except` or the reverse, once
+  `invalid_try_stmt` has read the clause's type. The first handler sets
+  Try or TryStar. `else` and `finally` follow no definition and no `with`.
+- Forced tokens. `try`'s `:`, `finally`'s `:` and (as before) `else`'s
+  are `&&':'`: the first pass raises at once and no second pass follows
+  (`Parser::forced`). The `(` and `:` of a definition, a class's `:` and
+  a handler's `:` are not forced, so their second pass may overflow
+  first.
+- A compound statement now ends at the last token of its last block
+  that is not NEWLINE, INDENT or DEDENT
+  (`_PyPegen_get_last_nonnwhitespace_token`), a `;` closing a block
+  included (`try: a;` then `except: b;` ends after the second `;`); a
+  handler, a definition and every compound statement of unit 5c2a
+  alike. The compound files compare no spans, so none of their rows
+  changes for it.
+- The stack. Each slot's place past its statement's, bisected on a `-`
+  chain at the interpreter, exact and pinned by its first refused
+  source: a decorator 2, each alike; a positional parameter's default 5
+  and annotation 6, one nearer after `/` (4 and 5); a keyword-only
+  parameter's default 5 and annotation 6; `*args`' annotation 5, the
+  operand of its starred one 1; `**kwargs`' annotation 6; the return
+  annotation 0; a handler's type 0, `except*`'s too. A block on its
+  head's line lies 4 past the statement's place for a definition, 3 for
+  `try`, 5 for a handler and 4 for `else` and `finally` after any number
+  of handlers, an indented block 3 past that, and nesting adds up (a
+  definition inside a definition 7 a level). A class's arguments lie
+  where the interpreter's `args` and `kwargs` alternatives put them,
+  from 5 to 8 past the place for later ones (6 for a first walrus): the
+  port reads them with the call's band (6, 2), and a source within it of
+  the stack is declined (`stack bound`).
+- The second pass and `ast2obj`'s depth are `compound`'s: `placed`
+  takes each slot's place, `reach` bounds a refusal, and a definition,
+  a class, a `try` and a handler are each a level above what they hold.
+  `reach` counts a definition's or a class's parentheses as a bracket's
+  (`OPEN`, 38 calls) where a parameter's default lies 5 past the place,
+  so in those slots the port declines a refusal from about 70 pieces
+  below the reference's boundary (`def f(a=` + `-` * k + `x) pass` is
+  SyntaxError to 5,958 and MemoryError from 5,959; the port declines
+  from 5,888, which
+  `pysyntax_definition_kills::a_definitions_parentheses_are_a_bracket_to_the_bound`
+  pins). A handler of the other kind (`except*` after `except` or the
+  reverse) is read by `invalid_try_stmt` alone, so its type's
+  MemoryError is the second pass's: `read_on` drops the stack refusal
+  and the bound declines first.
+
+Which forms are exact: every slot above on a `-` chain at its boundary,
+nested and in methods included, the forced `:` of `try`, `finally` and
+`else`, and a refusal 60 pieces below its second pass's boundary (100
+inside a definition's or a class's parentheses). Declined within the
+margin: a class argument near the stack, a refusal near the second
+pass's bound, and a handler of the other kind near the stack (`band`
+rows).
+
+Fixtures: `tests/contract/gen_pysyntax_definition.py` writes
+`pysyntax_definition.jsonl`, gated on the Python release (the header
+alone under another interpreter), with no tree a host converts
+differently, so it is not split by platform. A row holds what a
+`pysyntax_compound.jsonl` row holds and, for an accepted source,
+`marks`: each statement, handler, `arg` and `keyword` in preorder with
+its class, its identifier and its span, columns in code points. The
+cases: every parameter form and each refused one, class arguments and
+their near misses, decorators before each statement kind and each
+misplaced one, `try` in each accepted and refused order, names past
+ASCII and a constant's identifier in each slot, refused in each (where
+only the second pass reads it, and after a `match` line it refuses),
+lines and columns
+(CRLF and CR, tabs, continuations, a form feed, code points past ASCII,
+a `;` closing a block), type parameters and `match` and `type` inside
+definitions and `try` blocks (declined), five lines opening with `match` (three whose
+subject the second pass refuses) before eight missing blocks, unexpected
+indents and refused `try` clauses, each slot's first refused source
+(38), each class argument's first refused source (`band`, six), twelve
+modules the first pass refuses at the second pass's boundary pair
+(`band`) and 60 or 100 pieces below it, sums past every host's `ast2obj`
+in six slots, and a sweep row pinning by count and SHA-256 the answers to
+10,000 modules drawn from definition, class, `try` and simple statement
+templates three levels deep, one in three with a token inserted, a
+character deleted or a line's indentation deepened or shallowed.
+`gen_pysyntax_compound.py` no longer declines definitions, decorators
+and `try` (seven of its rows answered), and before it reads the module
+up to a declined statement it closes each `try` whose block holds the
+statement and which has no clause yet by `finally: pass`, so a statement
+declined inside a `try` block is declined there, as the port reads it;
+`pysyntax_compound_posix.jsonl` is unchanged. `golden_pysyntax_definition` checks every row;
+`pysyntax_definition_kills` (`else` after a definition or a `with`, a
+`try` with no clause, mixed handlers, a default's order, the field
+order, a decorated definition's start, an alias and a keyword bound, type
+parameters declined, each slot's offset by one, a class argument near
+the stack and the top of its band, the bound inside a definition's parentheses, the forced
+colons, a bare generator in a class, a statement's end at a `;`) and
+`pysyntax_definition_robustness` (99 levels of nested definitions and
+`try` at the boundary on a 64 KiB thread, a million operators in six
+slots, 100,000 handlers, decorators, parameters and class arguments and
+10,000 sibling classes of seven lines, each within `timing::TENFOLD`
+(sixty) times the time of a tenth of it, token soups and every truncation of a 30-level module without a
+panic) hold the rest.
+
+This unit states no difference.
+
+No regular expression is involved.
+
+Size: `definition.rs` is 322 lines of Rust source after `cargo fmt` (306
+more than its decline) and `compound.rs` grew by 96 (the clauses,
+`Open`'s and `Branch`'s fields, the end rule), 402 in all, within the
+600 planned.
+
 ### Left for later units
 
 Unit 5d removes `LexError::NeedsIdentTable` and `NeedsNameTable`,
 `LiteralError`'s and `ModuleError`'s variants passing them on, and the
 branches of `module_lex` and `fstring_lex` that answer them: since unit
 claims-6 nothing produces them. For `module_lex`: the rest of the compound
-statements (unit 5c2a reads blocks, `if`, `while`, `for` and `with`):
-5c2b `def`, `async def`, `class`, decorators and `try` in
-`module_expr/definition.rs`, whose `definition` returns the head of a
-statement `compound`'s `proceed` reads the block of (an `Open`; `try`'s
-clauses join `elif`'s and `else`'s there); 5c2c `match` and its patterns
-in `module_expr/matching.rs` (`match_stmt`, likewise); 5c2d type
+statements (units 5c2a and 5c2b read blocks, `if`, `while`, `for`,
+`with`, the definitions and `try`): 5c2c `match` and its patterns
+in `module_expr/matching.rs` (`match_stmt`, returning the head of a
+statement `compound`'s `proceed` reads the block of, an `Open`, as
+`definition` does); 5c2d type
 parameters and the `type` statement, which `stmt`'s `simple` declines;
 and the reads of the parsed module (`parse_module_blocks`) by
 `check_claim` and `symbols` (5d, which also decides what
@@ -32389,9 +32560,9 @@ What the reference has and this build does not, by area:
 - Each hit's signals and drift report: `claims.py` past its leaves,
   its literal reader, its drift index, its module tokenizer (unit
   5a) and that tokenizer's f-string modes (unit 5b, first part) (the
-  declare-time oracle: the statement grammar's definitions and
-  `try` (5c2b) and `match` (5c2c), 5c1 and the blocks 5c2a being
-  built in `pysyntax::module_expr`, and the binding read 5d),
+  declare-time oracle: the statement grammar's `match` (5c2c), 5c1,
+  the blocks 5c2a and the definitions and `try` 5c2b being built in
+  `pysyntax::module_expr`, and the binding read 5d),
   `verify_candidates.py` past the validation of one candidate, its
   three extraction patterns (`_BACKTICK_RE`, `_BARE_RE`,
   `_DOMAIN_ROUTE_RE`) and the candidate scan (`_normalize_for_compare`

@@ -200,7 +200,9 @@ fn bound(t: &Tree, n: u32) -> String {
 }
 
 /// `symbols._all_names` and `symbols._top_level_names`, each sorted: the
-/// second walks no Lambda and takes an import's aliases.
+/// first takes a definition's and a handler's name too; the second takes
+/// a definition's name and walks no further into it, walks no Lambda and
+/// takes an import's aliases.
 pub fn names(t: &Tree) -> [Vec<String>; 2] {
     let (mut all, mut top) = (BTreeSet::new(), BTreeSet::new());
     let mut stack: Vec<(u32, bool)> = t.body.iter().map(|&b| (b, true)).collect();
@@ -214,9 +216,15 @@ pub fn names(t: &Tree) -> [Vec<String>; 2] {
                     top.insert(name.unwrap());
                 }
             }
-            ("arg" | "Attribute" | "keyword", _) => {
+            ("arg" | "Attribute" | "keyword" | "ExceptHandler", _) => {
                 if let Some(name) = name {
                     all.insert(name);
+                }
+            }
+            ("FunctionDef" | "AsyncFunctionDef" | "ClassDef", _) => {
+                all.insert(name.clone().unwrap());
+                if scope {
+                    top.insert(name.unwrap());
                 }
             }
             ("alias", _) => {
@@ -227,7 +235,16 @@ pub fn names(t: &Tree) -> [Vec<String>; 2] {
             }
             _ => {}
         }
-        let inner = scope && !matches!(node.kind, "Lambda" | "Import" | "ImportFrom");
+        let inner = scope
+            && !matches!(
+                node.kind,
+                "Lambda"
+                    | "Import"
+                    | "ImportFrom"
+                    | "FunctionDef"
+                    | "AsyncFunctionDef"
+                    | "ClassDef"
+            );
         stack.extend(t.kids(n).iter().map(|&k| (k, inner)));
     }
     [all.into_iter().collect(), top.into_iter().collect()]

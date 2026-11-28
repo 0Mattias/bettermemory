@@ -181,6 +181,7 @@ from . import (
     gen_pysyntax_expr,
     gen_pysyntax_stmt,
     gen_pysyntax_compound,
+    gen_pysyntax_definition,
     gen_models,
     gen_origin_history,
     gen_origin_cache,
@@ -788,6 +789,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "pysyntax_stmt_posix": gen_pysyntax_stmt.generate_posix,
     "pysyntax_compound": gen_pysyntax_compound.generate,
     "pysyntax_compound_posix": gen_pysyntax_compound.generate_posix,
+    "pysyntax_definition": gen_pysyntax_definition.generate,
     "gitfile_leaves": gen_gitfile_leaves.generate,
     "gitfile_leaves_posix": gen_gitfile_leaves.generate_posix,
     "store_provenance": gen_store_provenance.generate,
@@ -1049,7 +1051,8 @@ PYTHON_VERSION = "3.13.13"
 #: ``pysyntax_stmt_posix`` its rows whose answer follows the C recursion
 #: limit (`gen_pysyntax_stmt`); ``pysyntax_compound`` and
 #: ``pysyntax_compound_posix`` the same of modules of statements in blocks
-#: (`gen_pysyntax_compound`).
+#: (`gen_pysyntax_compound`), and ``pysyntax_definition`` of their
+#: definitions, decorators and `try` (`gen_pysyntax_definition`).
 #: ``location_stamps_platform`` holds `os.major` and `os.minor` of NODEV
 #: (-1) and of numbers past ``dev_t``. 3.11 truncates a number macOS's
 #: 32-bit ``dev_t`` cannot hold, where 3.12.13 and 3.13 raise; 3.11 and
@@ -1184,6 +1187,7 @@ PYTHON_GATED = frozenset(
         "pysyntax_expr_posix",
         "pysyntax_stmt_posix",
         "pysyntax_compound_posix",
+        "pysyntax_definition",
         "capture_vocabulary_python",
         "fs_realpath_python",
         "fs_realpath_strict_python",

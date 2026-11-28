@@ -251,6 +251,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // Its statements in blocks (`gen_pysyntax_compound`), likewise split.
         | "pysyntax_compound.jsonl"
         | "pysyntax_compound_posix.jsonl"
+        // Its definitions, decorators and `try` (`gen_pysyntax_definition`).
+        | "pysyntax_definition.jsonl"
         | "machine_identity_python.jsonl"
         | "store_rotation_python.jsonl"
         // A reader's origin anchor or rekey payload nested past where

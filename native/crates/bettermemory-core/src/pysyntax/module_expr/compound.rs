@@ -2,10 +2,12 @@
 //! (and `async for` and `async with`) of CPython 3.13.13's grammar
 //! (`compound_stmt`, `block`), as `ast.parse(source)` in
 //! `claims.check_claim` (`claims.py` 672) reads them over [`super`]'s
-//! expressions and [`super::stmt`]'s simple statements. Nothing recurses:
+//! expressions and [`super::stmt`]'s simple statements, and the clauses
+//! of `try` (`except`, `except*`, `else`, `finally`). Nothing recurses:
 //! the compound statements whose indented block is being read wait on a
-//! stack, and an `elif` chain is read in a loop. Definitions, `try` and
-//! decorators go to [`super::definition`], `match` to [`super::matching`].
+//! stack, and an `elif` chain or a `try`'s clauses are read in a loop. The
+//! heads of definitions, `try`, decorators and handlers are
+//! [`super::definition`]'s, `match` goes to [`super::matching`].
 
 use super::stmt::STATEMENT_PASS;
 use super::*;
@@ -30,6 +32,9 @@ const LATER_TARGET: i32 = 2;
 /// A `with` item after the first, and an item's target past its item.
 const LATER_ITEM: i32 = 1;
 const AS_TARGET: i32 = 1;
+/// An `else` or `finally` block on its line after a `try`'s clauses,
+/// however many handlers there are (`except_block+` is a loop).
+const TRY_ELSE: i32 = 4;
 /// The second pass's `invalid_for_target`, which reads `star_expressions`
 /// after `for` (`for ` + `-` * 5964 + `x in y: pass` raises SyntaxError,
 /// one more MemoryError). It changes no answer: `read_on` drops a stack
@@ -37,29 +42,70 @@ const AS_TARGET: i32 = 1;
 const FOR_PASS: i32 = 5;
 
 /// One branch of a compound statement: where it starts, its head's nodes
-/// (a test, a target and iterable, the items; none for `else`) and its
-/// block's statements so far.
+/// (a test, a target and iterable, the items, a definition's `arguments`
+/// or a class's bases and keywords, a handler's type; none for `else`),
+/// its block's statements so far, the nodes `ast` holds after the block
+/// (a definition's decorators and return annotation), the identifier of
+/// a definition or a handler's alias, and where its block ends.
 pub(super) struct Branch {
-    start: u32,
-    head: Vec<u32>,
-    body: Vec<u32>,
+    pub(super) start: u32,
+    pub(super) head: Vec<u32>,
+    pub(super) body: Vec<u32>,
+    pub(super) tail: Vec<u32>,
+    pub(super) name: Option<Box<[u32]>>,
+    pub(super) end: u32,
+}
+
+impl Branch {
+    pub(super) fn new(start: u32, head: Vec<u32>) -> Self {
+        Branch {
+            start,
+            head,
+            body: Vec::new(),
+            tail: Vec::new(),
+            name: None,
+            end: 0,
+        }
+    }
 }
 
 /// A compound statement being read: its class, its place, its branches
-/// (`if` and each `elif`, then `else` when `els`) and the place of the
-/// block being read on its head's line.
+/// (`if` and each `elif`, then `else` when `els`; a `try`'s block, its
+/// handlers, then `else` when `els` and `finally` when `fin`) and the
+/// place of the block being read on its head's line.
 pub(super) struct Open {
-    kind: &'static str,
-    place: i32,
-    line: i32,
-    els: bool,
-    branches: Vec<Branch>,
+    pub(super) kind: &'static str,
+    pub(super) place: i32,
+    pub(super) line: i32,
+    pub(super) els: bool,
+    pub(super) fin: bool,
+    pub(super) branches: Vec<Branch>,
+}
+
+impl Open {
+    /// A statement at `place` whose block on its head's line lies `line`
+    /// calls past it, with its first branch.
+    pub(super) fn new(kind: &'static str, place: i32, line: i32, first: Branch) -> Self {
+        Open {
+            kind,
+            place,
+            line: place + line,
+            els: false,
+            fin: false,
+            branches: vec![first],
+        }
+    }
+
+    /// A `try`'s handlers so far.
+    pub(super) fn handlers(&self) -> usize {
+        self.branches.len() - 1 - usize::from(self.els) - usize::from(self.fin)
+    }
 }
 
 /// `ast.parse(source)` of a module of statements in blocks: the tree (its
-/// `body` the module's statements), or why it is not read. `def`,
-/// `class`, `try`, decorators, `match` and `type` statements are declined
-/// (`statement`) where every statement before them parses. The 5c1 entry
+/// `body` the module's statements), or why it is not read. Type
+/// parameters, `match` and `type` statements are declined (`statement`)
+/// where every statement before them parses. The 5c1 entry
 /// [`super::parse_module`] declines every compound statement.
 pub fn parse_module_blocks(text: &[u32]) -> Res<Tree> {
     parse_with(text, |p| p.blocks(), STATEMENT_PASS)
@@ -135,12 +181,26 @@ impl Parser<'_> {
     }
 
     /// The owner `k` reads a slot `at` calls past the statement's place.
-    fn slot(&mut self, k: Seq, at: i32) -> Res<u32> {
+    pub(super) fn slot(&mut self, k: Seq, at: i32) -> Res<u32> {
         self.placed = self.placed.max(self.place + at);
         self.run(k, at)
     }
 
-    fn colon(&mut self) -> Res<()> {
+    /// Where the last token read that is no NEWLINE, INDENT or DEDENT
+    /// ends: a compound statement and each of its clauses end there
+    /// (`_PyPegen_get_last_nonnwhitespace_token`), a `;` closing its
+    /// block's line included.
+    fn last_end(&self) -> u32 {
+        let toks = &self.toks[..self.pos];
+        let t = toks
+            .iter()
+            .rev()
+            .map(|&i| &self.m.tokens[i as usize])
+            .find(|t| !matches!(t.kind, Kind::Newline | Kind::Indent | Kind::Dedent));
+        t.map_or(0, |t| t.end as u32)
+    }
+
+    pub(super) fn colon(&mut self) -> Res<()> {
         if !self.is(0, ":") {
             return syntax();
         }
@@ -165,24 +225,16 @@ impl Parser<'_> {
             (_, a) => (self.with_head()?, if a { "AsyncWith" } else { "With" }),
         };
         self.colon()?;
-        let place = self.place;
-        Ok(Open {
-            kind,
-            place,
-            line: place + LINE,
-            els: false,
-            branches: vec![Branch {
-                start,
-                head,
-                body: Vec::new(),
-            }],
-        })
+        Ok(Open::new(kind, self.place, LINE, Branch::new(start, head)))
     }
 
-    /// `block` after a head's `:`, then each `elif` and `else` that
-    /// follows it, until the statement ends and joins its block's
-    /// statements. An indented block puts the statement on `opens`, where
-    /// its DEDENT resumes it (`ended`).
+    /// `block` after a head's `:`, then each `elif`, `except`, `else` and
+    /// `finally` that follows it where its statement takes one, until the
+    /// statement ends and joins its block's statements. An indented block
+    /// puts the statement on `opens`, where its DEDENT resumes it
+    /// (`ended`). A definition takes no clause; a `try` takes handlers of
+    /// one kind, `else` after one and `finally` last, and is refused where
+    /// it ends with neither a handler nor `finally`.
     fn proceed(&mut self, mut open: Open, opens: &mut Vec<Open>, mut ended: bool) -> Res<()> {
         loop {
             if !ended {
@@ -207,38 +259,37 @@ impl Parser<'_> {
                 open.branches.last_mut().expect("a branch").body.extend(out);
             }
             ended = false;
+            open.branches.last_mut().expect("a branch").end = self.last_end();
             self.place = open.place;
             // The branches before the next: `if` and its `elif`s.
             let k = open.branches.len() as i32;
             let start = self.t(0).start as u32;
+            let tries = open.kind.starts_with("Try");
+            let loops = matches!(open.kind, "If" | "While" | "For" | "AsyncFor");
             match self.kw(0) {
                 Some("elif") if open.kind == "If" && !open.els => {
                     self.bump();
                     let test = self.slot(Seq::One(NAMED), TEST + k)?;
                     self.colon()?;
-                    open.branches.push(Branch {
-                        start,
-                        head: vec![test],
-                        body: Vec::new(),
-                    });
+                    open.branches.push(Branch::new(start, vec![test]));
                     open.line = open.place + LINE + k;
                 }
-                Some("else") if !open.kind.ends_with("With") && !open.els => {
-                    self.bump();
-                    // `'else' &&':'`: the first pass raises, and no second
-                    // pass follows.
-                    if !self.is(0, ":") {
-                        self.forced = true;
-                        return syntax();
-                    }
-                    self.bump();
-                    open.branches.push(Branch {
-                        start,
-                        head: Vec::new(),
-                        body: Vec::new(),
-                    });
-                    (open.els, open.line) = (true, open.place + ELSE + k - 1);
+                Some("else")
+                    if !open.els && !open.fin && (loops || (tries && open.handlers() > 0)) =>
+                {
+                    self.forced_colon()?;
+                    open.branches.push(Branch::new(start, Vec::new()));
+                    open.els = true;
+                    open.line = open.place + if tries { TRY_ELSE } else { ELSE + k - 1 };
                 }
+                Some("except") if tries && !open.els && !open.fin => self.handler(&mut open)?,
+                Some("finally") if tries && !open.fin => {
+                    self.forced_colon()?;
+                    open.branches.push(Branch::new(start, Vec::new()));
+                    (open.fin, open.line) = (true, open.place + TRY_ELSE);
+                }
+                // `invalid_try_stmt`: "expected 'except' or 'finally' block".
+                _ if tries && open.handlers() == 0 && !open.fin => return syntax(),
                 _ => {
                     let n = self.finish(open);
                     self.emit(opens, vec![n]);
@@ -248,28 +299,73 @@ impl Parser<'_> {
         }
     }
 
-    /// The statement's node: an `elif` is an If alone in its parent's
-    /// `orelse`, built from the last.
+    /// `'else' &&':'` and `'finally' &&':'`: past its keyword, a missing
+    /// `:` is raised by the first pass, and no second pass follows.
+    fn forced_colon(&mut self) -> Res<()> {
+        self.bump();
+        if !self.is(0, ":") {
+            self.forced = true;
+            return syntax();
+        }
+        self.bump();
+        Ok(())
+    }
+
+    /// The statement's node, which ends where its last clause does: an
+    /// `elif` is an If alone in its parent's `orelse`, built from the
+    /// last; a `try`'s fields are its block, its handlers, `orelse` and
+    /// `finalbody`.
     fn finish(&mut self, open: Open) -> u32 {
         let Open {
             kind,
             els,
+            fin,
             mut branches,
             ..
         } = open;
-        let mut orelse = if els {
-            branches.pop().expect("an else").body
-        } else {
-            Vec::new()
+        let end = branches.last().expect("a branch").end;
+        let mut pop = |on: bool| {
+            if on {
+                branches.pop().expect("a clause").body
+            } else {
+                Vec::new()
+            }
         };
-        while let Some(b) = branches.pop() {
-            let kids = [b.head, b.body, orelse].concat();
-            let n = self.mk(kind, b.start, &kids);
-            // It ends with its last statement, which no block leaves empty.
-            self.tree.nodes[n as usize].end = self.tree.nodes[kids[kids.len() - 1] as usize].end;
-            orelse = vec![n];
-        }
-        orelse[0]
+        let (last, orelse) = (pop(fin), pop(els));
+        let n = match kind {
+            "Try" | "TryStar" => {
+                let handlers: Vec<Branch> = branches.drain(1..).collect();
+                let handlers: Vec<u32> = handlers
+                    .into_iter()
+                    .map(|b| self.part("ExceptHandler", b))
+                    .collect();
+                let b = branches.pop().expect("a block");
+                self.mk(kind, b.start, &[b.body, handlers, orelse, last].concat())
+            }
+            "FunctionDef" | "AsyncFunctionDef" | "ClassDef" => {
+                self.part(kind, branches.pop().expect("a definition"))
+            }
+            _ => {
+                let mut orelse = orelse;
+                while let Some(b) = branches.pop() {
+                    let n = self.mk(kind, b.start, &[b.head, b.body, orelse].concat());
+                    self.tree.nodes[n as usize].end = end;
+                    orelse = vec![n];
+                }
+                orelse[0]
+            }
+        };
+        self.tree.nodes[n as usize].end = end;
+        n
+    }
+
+    /// The node of one branch with its own fields: its head, its block
+    /// and its tail, its identifier and its end.
+    fn part(&mut self, kind: &'static str, b: Branch) -> u32 {
+        let n = self.mk(kind, b.start, &[b.head, b.body, b.tail].concat());
+        let node = &mut self.tree.nodes[n as usize];
+        (node.name, node.end) = (b.name, b.end);
+        n
     }
 
     /// `star_targets 'in' ~ star_expressions` after `for`. A target that

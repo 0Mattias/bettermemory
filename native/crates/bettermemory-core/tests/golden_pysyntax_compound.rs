@@ -226,7 +226,7 @@ fn pysyntax_compound_every_case() {
             accepted > 150 && refused > 200,
             "accepted {accepted}, refused {refused}"
         );
-        assert!(statements >= 10, "declined {statements}");
+        assert!(statements >= 4, "declined {statements}");
         assert!(
             banded >= 60 && band_declined <= banded,
             "band {banded}, declined {band_declined}"

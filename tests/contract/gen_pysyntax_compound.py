@@ -17,9 +17,10 @@ is POSIX only, and its generator declines on a host whose limit is not
 A case row holds ``t``, the source, spelled as `gen_pysyntax` spells
 texts; ``parse``, ``ok`` or the class ``ast.parse`` raises; and for an
 accepted source ``all``, ``top``, ``ids`` and ``shape`` as
-`gen_pysyntax_stmt` writes them. The port declines a `def`, `class`,
-`try`, decorated, `match` or `type` statement (`_declined`): ``want`` is
-``D`` on such a row, where every statement before it parses. A row with
+`gen_pysyntax_stmt` writes them. The port declines a `match` or `type`
+statement and type parameters after a definition's name (`_declined`):
+``want`` is ``D`` on such a row, where everything the port reads before
+it parses. A row with
 ``band`` true lies where the port's estimate of the parser's depth does
 not decide: the port answers as the reference or declines.
 
@@ -73,19 +74,31 @@ REPRODUCES = "3.13.13"
 
 _OPS = set(tokenize.EXACT_TOKEN_TYPES.values())
 #: The keywords whose line holds a head's `:` before a block on its line.
-_HEADS = {"if", "elif", "else", "while", "for", "with", "async"}
+_HEADS = {
+    "if", "elif", "else", "while", "for", "with", "async", "def", "class", "try",
+    "except", "finally",
+}  # fmt: skip
 _NONE = "\uff2e\uff4f\uff4e\uff45"
 
 
-def _definition(toks: list[tuple[str, str]]) -> bool:
-    """Whether a logical line opens a statement the port declines: a
-    definition, `try`, a decorator, or `match` with its `:` last."""
+def _definition(toks: list[tuple[str, str]]) -> tuple[int, str] | None:
+    """Where the port declines a logical line's statement, and the text
+    that completes what lies before it to a statement it reads: `match`
+    with its `:` last at the line's start (``pass``), type parameters at
+    the `[` after a definition's name (an empty parameter list and
+    block)."""
     head = toks[0]
-    if head in (("NAME", "def"), ("NAME", "class"), ("NAME", "try"), ("OP", "@")):
-        return True
-    if head == ("NAME", "async") and len(toks) > 1 and toks[1] == ("NAME", "def"):
-        return True
-    return head == ("NAME", "match") and toks[-1] == ("OP", ":")
+    if head == ("NAME", "match") and toks[-1] == ("OP", ":"):
+        return 0, "pass\n"
+    i = 1 if head == ("NAME", "async") else 0
+    if (
+        len(toks) > i + 2
+        and toks[i] in (("NAME", "def"), ("NAME", "class"))
+        and toks[i + 1][0] == "NAME"
+        and toks[i + 2] == ("OP", "[")
+    ):
+        return i + 2, "(): pass\n" if toks[i][1] == "def" else ": pass\n"
+    return None
 
 
 def _starts(toks: list[tuple[str, str]]) -> list[int]:
@@ -114,11 +127,14 @@ def _starts(toks: list[tuple[str, str]]) -> list[int]:
 
 
 def _declined(translated: str) -> bool | None:
-    """True when the port declines a statement (`_definition` at a line's
-    start, a type alias at any statement's) before any statement it
-    refuses, False when it refuses first, None when no statement is one.
-    Where the declined statement starts, the module up to it with `pass`
-    in its place must parse."""
+    """True when the port declines a statement (`_definition`, a type
+    alias at any statement's start) before any statement it refuses,
+    False when it refuses first, None when no statement is one. Where it
+    declines, the module up to there, completed as `_definition` says (a
+    type alias by ``pass``), must parse once each `try` whose block holds
+    the statement and which has no clause yet is closed by ``finally:
+    pass`` at its own indentation: the port reads in order and declines
+    before it looks for a `try`'s clauses."""
     try:
         toks = _c_tokens(translated)
     except _Unjudged:
@@ -128,21 +144,37 @@ def _declined(translated: str) -> bool | None:
     lines = translated.split("\n")
     cur: list[tuple[str, str]] = []
     where: list[tuple[int, int]] = []
+    # The block level, the level of the logical line read, and each `try`
+    # still in its block with no clause: its level and indentation.
+    level, at = 0, 0
+    tries: list[tuple[int, str]] = []
     for t in toks:
         name = "OP" if t.type in _OPS else tokenize.tok_name[t.type]
         if name in ("NEWLINE", "ENDMARKER"):
             if cur:
-                found = 0 if _definition(cur) else None
+                # A line at a `try`'s level or shallower ends its block:
+                # with a clause, or refused before anything is declined.
+                tries = [x for x in tries if x[0] < at]
+                if cur[0] == ("NAME", "try"):
+                    row, col = where[0]
+                    tries.append((at, lines[row - 1][:col]))
+                found = _definition(cur)
                 if found is None:
-                    found = next(
-                        (s for s in _starts(cur) if _type_alias(cur[s:])), None
-                    )
+                    alias = (s for s in _starts(cur) if _type_alias(cur[s:]))
+                    found = next(((s, "pass\n") for s in alias), None)
                 if found is not None:
-                    row, col = where[found]
+                    row, col = where[found[0]]
                     prefix = "\n".join(lines[: row - 1] + [lines[row - 1][:col]])
-                    return _parse(prefix + "pass\n")[0] == "ok"
+                    close = "".join(i + "finally: pass\n" for _, i in reversed(tries))
+                    return _parse(prefix + found[1] + close)[0] == "ok"
             cur, where = [], []
-        elif name not in ("INDENT", "DEDENT", "NL", "COMMENT"):
+        elif name == "INDENT":
+            level += 1
+        elif name == "DEDENT":
+            level -= 1
+        elif name not in ("NL", "COMMENT"):
+            if not cur:
+                at = level
             cur.append((name, t.string))
             where.append(t.start)
     return None

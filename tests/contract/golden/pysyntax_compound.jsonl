@@ -266,11 +266,11 @@
 {"all":["u","z"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),While(Name(Load),For(Name(Store),Name(Load),With(withitem(Name(Load),Name(Store)),Pass)))))","t":"if x:\n    while y:\n        for z in w:\n            with v as u:\n                pass\n","top":["u","z"]}
 {"all":["x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Name(Load),If(Name(Load),Break,Continue),Pass))","t":"for x in y:\n    if x: break\n    else: continue\nelse:\n    pass\n","top":["x"]}
 {"all":["b"],"ids":"","parse":"ok","shape":"Module(While(Name(Load),With(withitem(Name(Load),Name(Store)),withitem(Name(Load)),Expr(Name(Load))),Expr(Name(Load))))","t":"while x:\n    with a as b, c:\n        d\n    e\n","top":["b"]}
-{"parse":"ok","t":"if x:\n    def f(): pass\n","want":"D"}
-{"parse":"ok","t":"if x:\n    class C: pass\n","want":"D"}
-{"parse":"ok","t":"if x:\n    try:\n        pass\n    finally:\n        pass\n","want":"D"}
-{"parse":"ok","t":"if x:\n    @d\n    def f(): pass\n","want":"D"}
-{"parse":"ok","t":"if x:\n    async def f(): pass\n","want":"D"}
+{"all":["f"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),FunctionDef(arguments,Pass)))","t":"if x:\n    def f(): pass\n","top":["f"]}
+{"all":["C"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),ClassDef(Pass)))","t":"if x:\n    class C: pass\n","top":["C"]}
+{"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Try(Pass,Pass)))","t":"if x:\n    try:\n        pass\n    finally:\n        pass\n","top":[]}
+{"all":["f"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),FunctionDef(arguments,Pass,Name(Load))))","t":"if x:\n    @d\n    def f(): pass\n","top":["f"]}
+{"all":["f"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),AsyncFunctionDef(arguments,Pass)))","t":"if x:\n    async def f(): pass\n","top":["f"]}
 {"parse":"ok","t":"if x:\n    match y:\n        case 1: pass\n","want":"D"}
 {"parse":"ok","t":"if x:\n    type X = int\n","want":"D"}
 {"parse":"ok","t":"if x: type X = int","want":"D"}
@@ -279,12 +279,12 @@
 {"parse":"SyntaxError","t":"if x: class C: pass"}
 {"parse":"SyntaxError","t":"if x: match y:"}
 {"parse":"SyntaxError","t":"if x: try: pass"}
-{"parse":"ok","t":"for x in y:\n    pass\ndef f(): pass\n","want":"D"}
+{"all":["f","x"],"ids":"","parse":"ok","shape":"Module(For(Name(Store),Name(Load),Pass),FunctionDef(arguments,Pass))","t":"for x in y:\n    pass\ndef f(): pass\n","top":["f","x"]}
 {"parse":"SyntaxError","t":"if x $:\n    def f(): pass\n"}
 {"parse":"SyntaxError","t":"if x:\n    y $\n    def f(): pass\n"}
 {"parse":"IndentationError","t":"if x:\ndef f(): pass\n"}
 {"parse":"IndentationError","t":"if x:\n    def f(): pass\n  y\n"}
-{"parse":"ok","t":"if x: pass\nelse:\n    @d\n    class C: pass\n","want":"D"}
+{"all":["C"],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Pass,ClassDef(Pass,Name(Load))))","t":"if x: pass\nelse:\n    @d\n    class C: pass\n","top":["C"]}
 {"parse":"SyntaxError","t":"with a:\n    match(x)\n    f() = 1\n"}
 {"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Call(Name(Load),Starred(Name(Load),Load)))))","t":"if x: match(*a)","top":[]}
 {"all":[],"ids":"","parse":"ok","shape":"Module(If(Name(Load),Expr(Call(Name(Load),Starred(Name(Load),Load)))))","t":"if x:\n    match(*a)\n","top":[]}
@@ -880,4 +880,4 @@
 {"parse":"RecursionError","t":{"r":[["for x in x",1],["+x",10500],[": pass\n",1]]}}
 {"parse":"RecursionError","t":{"r":[["with x",1],["+x",10500],[": pass\n",1]]}}
 {"parse":"RecursionError","t":{"r":[["with a as b[x",1],["+x",10500],["]: pass\n",1]]}}
-{"count":20000,"sha256":"de5615454cf23f6202b39552e9f2b99d750917d3f08ca8761dd9ab0fd29a8381","sweep":"block_templates"}
+{"count":20000,"sha256":"dc9a2fdf0b4aaf16aee5ec44d632a83ac89adf3c0d893a9bc3ffa29333cc2580","sweep":"block_templates"}

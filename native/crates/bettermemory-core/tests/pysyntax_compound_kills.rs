@@ -5,8 +5,8 @@
 //! without its lookahead, the parenthesised `with` misread, `async for`
 //! refused, each slot's stack offset by one, the second pass's bound
 //! counted from the module's level, the forced `:` of `else` given a
-//! second pass, an `elif` chain read past the place bound, and the two
-//! decline-only files answering anything else. Each answer is CPython
+//! second pass, an `elif` chain read past the place bound, and the
+//! decline-only file answering anything else. Each answer is CPython
 //! 3.13.13's unless a test says it is a stated difference.
 
 mod common;
@@ -375,24 +375,31 @@ fn a_long_elif_chain_is_declined_near_the_stack() {
 }
 
 #[test]
-fn definitions_try_and_match_are_declined() {
+fn match_type_and_type_parameters_are_declined() {
     let statement = Some(ExprError::Declined("statement"));
+    for s in [
+        "match x:\n    case 1: pass\n",
+        "type X = int",
+        "with a:\n    match y:\n        case 1: pass\n",
+        "if x: type X = int",
+        "def f[T](): pass",
+        "if x: pass\nelse:\n    class C[T]: pass\n",
+    ] {
+        assert_eq!(read(s).err(), statement, "{s:?}");
+    }
+    // Definitions, decorators and `try` are read (unit claims-5c2b).
     for s in [
         "def f(): pass",
         "async def f(): pass",
         "class C: pass",
         "try:\n    pass\nfinally:\n    pass\n",
         "@d\ndef f(): pass",
-        "match x:\n    case 1: pass\n",
-        "type X = int",
         "if x:\n    def f(): pass\n",
         "while x:\n    class C: pass\n",
         "for x in y:\n    @d\n    def f(): pass\n",
-        "with a:\n    match y:\n        case 1: pass\n",
-        "if x: type X = int",
         "if x: pass\nelse:\n    async def f(): pass\n",
     ] {
-        assert_eq!(read(s).err(), statement, "{s:?}");
+        assert!(read(s).is_ok(), "{s:?}");
     }
     // A statement before that the port refuses comes first.
     assert_eq!(
