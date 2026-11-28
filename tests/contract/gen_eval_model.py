@@ -57,13 +57,16 @@ timestamps at `fromisoformat`'s edges (offsets of seconds and
 microseconds, a lowercase ``z`` inside `parse_event_ts`, reduced and
 compact forms, an hour of 24) and the text of `int()`'s digit limit,
 CPython's own message. 3.11.15 and 3.12.13 write it byte for byte as
-3.13.13 does. 3.14.10 does not: its `fromisoformat` keeps an offset's
-microseconds, which 3.13.13 drops (``2026-10-01T00:00:00-00:00:00.000001``
-is 00:00 UTC under 3.13.13 and 00:00:00.000001 under 3.14, and
-``0001-01-01T00:00:00+00:00:00.000001`` leaves the calendar only under
-3.14), and it reads an hour of 24 (``2026-10-01T24:00:00Z``, refused by
-3.13.13, is the next midnight). CI's 3.13.18 reads `fromisoformat`
-otherwise than 3.13.13 too (``PYTHON_VERSION`` in `generate.py`).
+3.13.13 does. 3.14.10 does not: it reads an hour of 24
+(``2026-10-01T24:00:00Z``, refused by 3.13.13, is the next midnight).
+CI's 3.13.18 reads `fromisoformat` otherwise than 3.13.13 too
+(``PYTHON_VERSION`` in `generate.py`). The bounds whose answer follows a
+kept offset of zero whole seconds with a fraction
+(``2026-10-01T00:00:00-00:00:00.000001`` is 00:00 UTC under 3.13.13 and
+00:00:00.000001 under 3.13.18 and 3.14) are not here: they are stated
+difference D1, in ``datetime_offsets.jsonl`` (`gen_time.generate_offsets`).
+The window rows of such shows stay: their answers are the same under
+every release.
 """
 
 from __future__ import annotations
@@ -893,12 +896,6 @@ _SINCE_PY = [
 _BOUNDS_PY: list[tuple[str | None, str, datetime]] = [
     ("1" * 4301 + "d", "--until", NOW),
     ("2026-10-01T00:00:00+00:00:30", "--since", NOW),
-    ("2026-10-01T00:00:00-00:00:00.000001", "--since", NOW),
-    ("0001-01-01T00:00:00+00:00:00.000001", "--since", NOW),
-    ("0001-01-01T00:00:00.000001+00:00:00.000001", "--since", NOW),
-    ("9999-12-31T23:59:59.999999-00:00:00.000001", "--until", NOW),
-    ("2026-11-25T12:00:00-00:00:00.000001", "--since", NOW),
-    ("2026-11-25T12:00:00+00:00:00.000001", "--since", NOW),
     ("2026-10-01 00:00:00Z", "--since", NOW),
     ("2026-10-01T00:00Z", "--since", NOW),
     ("2026-10-01T00Z", "--since", NOW),

@@ -2,7 +2,13 @@
 //! formatter over datetimes whose offsets fall below a minute or a
 //! second, each parser over the spellings `fromisoformat` reads in ways a
 //! port would not guess (ULIDs among them), and `datetime.fromtimestamp`
-//! over doubles on and next to half a microsecond.
+//! over doubles on and next to half a microsecond. A text whose offset is
+//! zero hours, minutes and seconds with a fraction after the seconds is
+//! not here: its answer follows the release, and the port's (stated
+//! difference D1) is `golden_datetime_offsets`'. One whose fraction
+//! follows the offset's hour or minute or a fourth `:`, or whose time
+//! holds a fraction after its hour or minute or a fourth `:`, is: the
+//! port answers it as 3.13.13 does.
 //!
 //! Marks as in `datetime.jsonl`: a cell recording a result per platform
 //! (`fromtimestamp`, and `ulid_time` through it, outside 1970..3000, which
@@ -166,9 +172,14 @@ fn datetime_edges_every_case() {
         lines.len() - 1,
         "datetime_edges.jsonl cases"
     );
-    // 32 datetimes x 7 formatters + 189 texts x 6 parsers + 105 timestamps.
-    assert_eq!((formats, texts, stamps), (32, 189, 105));
-    assert_eq!(cells + marked, 32 * 7 + 189 * 6 + 105);
+    // 32 datetimes x 7 formatters + 199 texts x 6 parsers + 105 timestamps.
+    // The three texts whose offset is zero whole seconds with a fraction
+    // after the seconds are `datetime_offsets.jsonl`'s (stated difference
+    // D1); the seven with the offset's fraction after its hour, its minute
+    // or a fourth `:`, and the six with such an offset after a time whose
+    // fraction follows its hour or minute or a fourth `:`, are here.
+    assert_eq!((formats, texts, stamps), (32, 199, 105));
+    assert_eq!(cells + marked, 32 * 7 + 199 * 6 + 105);
     // 46 ULIDs past 3000 through ulid_time, 31 timestamps outside 1970..3000.
     assert_eq!(per_platform, 77, "cells recorded per platform");
     assert_eq!(marked, 0, "bare marks");

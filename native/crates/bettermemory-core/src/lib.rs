@@ -57,7 +57,10 @@
 //! - [`health_roots`]: `health_roots.py`'s estate progress cursor;
 //! - [`float_repr`]: Python's `float.__repr__`, and `format` with `'.Nf'`
 //!   and `'g'` (`format_fixed`, `format_general`);
-//! - [`datetime`]: the datetime spellings and readings;
+//! - [`datetime`]: the datetime spellings and readings (`fromisoformat`
+//!   with stated difference D1: a sub-second offset of zero whole seconds
+//!   whose fraction follows the seconds kept in a text CPython 3.14 reads,
+//!   as 3.13.18 and 3.14 keep it);
 //! - [`argparse`]: the flat-parser subset of `argparse` the hook mains
 //!   parse through, its first two units (optionals and positionals of one
 //!   argument, the error exits and the usage line; subparsers and the

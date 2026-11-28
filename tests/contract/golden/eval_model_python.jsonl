@@ -1,16 +1,10 @@
-{"count":53,"fixture":"eval_model_python"}
+{"count":47,"fixture":"eval_model_python"}
 {"k":"since","msg":"Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit","spec_runs":[["1",4301],["d",1]],"x":"ValueError"}
 {"k":"since","msg":"Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit","spec_runs":[["0",4301],["d",1]],"x":"ValueError"}
 {"k":"since","msg":"Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit","spec_runs":[["\u0661",4301],["s",1]],"x":"ValueError"}
 {"k":"since","msg":"Exceeds the limit (4300 digits) for integer string conversion: value has 100000 digits; use sys.set_int_max_str_digits() to increase the limit","spec_runs":[["9",100000],["h",1]],"x":"ValueError"}
 {"flag":"--until","k":"bound","msg":"Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit","now":[2026,11,25,12,0,0,0,0],"spec_runs":[["1",4301],["d",1]],"x":"ValueError"}
 {"flag":"--since","k":"bound","now":[2026,11,25,12,0,0,0,0],"r":{"at":[2026,9,30,23,59,30,0,0]},"spec":"2026-10-01T00:00:00+00:00:30"}
-{"flag":"--since","k":"bound","now":[2026,11,25,12,0,0,0,0],"r":{"at":[2026,10,1,0,0,0,0,0]},"spec":"2026-10-01T00:00:00-00:00:00.000001"}
-{"flag":"--since","k":"bound","now":[2026,11,25,12,0,0,0,0],"r":{"at":[1,1,1,0,0,0,0,0]},"spec":"0001-01-01T00:00:00+00:00:00.000001"}
-{"flag":"--since","k":"bound","now":[2026,11,25,12,0,0,0,0],"r":{"at":[1,1,1,0,0,0,1,0]},"spec":"0001-01-01T00:00:00.000001+00:00:00.000001"}
-{"flag":"--until","k":"bound","now":[2026,11,25,12,0,0,0,0],"r":{"at":[9999,12,31,23,59,59,999999,0]},"spec":"9999-12-31T23:59:59.999999-00:00:00.000001"}
-{"flag":"--since","k":"bound","now":[2026,11,25,12,0,0,0,0],"r":{"at":[2026,11,25,12,0,0,0,0]},"spec":"2026-11-25T12:00:00-00:00:00.000001"}
-{"flag":"--since","k":"bound","now":[2026,11,25,12,0,0,0,0],"r":{"at":[2026,11,25,12,0,0,0,0]},"spec":"2026-11-25T12:00:00+00:00:00.000001"}
 {"flag":"--since","k":"bound","now":[2026,11,25,12,0,0,0,0],"r":{"at":[2026,10,1,0,0,0,0,0]},"spec":"2026-10-01 00:00:00Z"}
 {"flag":"--since","k":"bound","now":[2026,11,25,12,0,0,0,0],"r":{"at":[2026,10,1,0,0,0,0,0]},"spec":"2026-10-01T00:00Z"}
 {"flag":"--since","k":"bound","now":[2026,11,25,12,0,0,0,0],"r":{"at":[2026,10,1,0,0,0,0,0]},"spec":"2026-10-01T00Z"}

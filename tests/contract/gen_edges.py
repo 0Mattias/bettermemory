@@ -114,6 +114,17 @@ def _times() -> list[str]:
         f"{_D}T24:00:00.000001",
         f"{_D}T23:59:60",
         "2026-11-15T08:09:10.5+01:00:00.5",
+        # A time with a fraction after its hour or minute or a fourth ':'
+        # before an offset of zero hours, minutes and seconds with a
+        # fraction after the seconds: 3.13.13 reads UTC, 3.14 refuses the
+        # text, and the port answers as 3.13.13 (D1 holds only in a text
+        # 3.14 reads).
+        f"{_D}T08,5+00:00:00.5",
+        f"{_D}T08.5-00:00:00.000001",
+        f"{_D}T08:09.5-000000.5",
+        f"{_D}T0809.5+000000,25",
+        f"{_D}T08:09,5-00000085",
+        f"{_D}T08:09:10:5+00:00:00.5",
         "20261115",
         "20261115T080910",
         "2026-1115",
@@ -153,6 +164,16 @@ def _offsets() -> list[str]:
         "-00:00",
         "+00:00:00.0",
         "+00:00:00.0000001",
+        # Zero hours and minutes with the fraction after the hour, the
+        # minute or a fourth ':': 3.13.13 reads UTC, 3.14 refuses them, and
+        # the port answers as 3.13.13 (D1 is a fraction after the seconds).
+        "-00.5",
+        "+00,5",
+        "+00:00.5",
+        "-00:00,25",
+        "+0000.5",
+        "-0000,5",
+        "+00:00:00:5",
         "+23:59:59.999999",
         "-23:59:59.999999",
         "+24:00",
@@ -447,9 +468,17 @@ def _datetime_edges() -> bytes:
                 "a trailing Z (time_utils.py:45)",
                 "fromisoformat takes any one character, non-ASCII included, as "
                 "the date/time separator, and every reader above inherits it",
-                "fromisoformat (CPython's C parser) reads an offset of zero hours, "
-                "minutes and seconds with a fraction, +00:00:00.5, as UTC, the "
-                "fraction dropped, while +02:00:00.5 keeps it; reads offset "
+                "fromisoformat (CPython's C parser) keeps an offset's fraction "
+                "(+02:00:00.5), and of an offset of zero hours, minutes and "
+                "seconds with a fraction after the seconds, +00:00:00.5, "
+                "3.13.13 reads UTC and 3.13.18 keeps it: those texts are "
+                "datetime_offsets.jsonl's (stated difference D1); of zero "
+                "hours and minutes with the fraction after the offset's hour "
+                "or minute or a fourth ':' (-00.5, +00:00.5, +00:00:00:5), "
+                "and of such an offset after a time with a fraction after its "
+                "hour or minute or a fourth ':' (08,5+00:00:00.5, "
+                "08:09:10:5+00:00:00.5), 3.13.13 reads UTC and 3.14 refuses "
+                "the text; it reads offset "
                 "minutes or seconds of 60 as carrying (+12:60 is +13:00); reads "
                 "what follows a fourth ':' of the time as its fraction "
                 "(08:09:10:5 is 08:09:10.5); takes a fraction after the hour or "
@@ -466,6 +495,9 @@ def _datetime_edges() -> bytes:
     ]
     records += _format_records()
     for text in datetime_texts():
+        if text in gen_time.D1_TEXTS:
+            # Its answer follows the release: datetime_offsets.jsonl.
+            continue
         records.append(
             {
                 **text_field("text", text),

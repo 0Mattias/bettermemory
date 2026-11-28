@@ -480,6 +480,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "pyre_inventory": gen_pyre_inventory.generate,
     "pyre_memo": gen_pyre_memo.generate,
     "python_edges": gen_edges.generate,
+    "datetime_offsets": gen_time.generate_offsets,
     "mcp_surface": gen_mcp.surface,
     "mcp_plain": gen_mcp.plain,
     "mcp": gen_mcp.responses,
@@ -1116,9 +1117,9 @@ PYTHON_GATED = frozenset(
         "argparse_python",
         "argparse_subparsers_python",
         "argparse_help_python",
-        # `fromisoformat` at its edges: 3.14 and later 3.13 releases keep an
-        # offset's microseconds and read an hour of 24, which 3.13.13 drops
-        # and refuses; and `int()`'s digit-limit text (`gen_eval_model`).
+        # `fromisoformat` at its edges: 3.14 and later 3.13 releases read an
+        # hour of 24, which 3.13.13 refuses; and `int()`'s digit-limit text
+        # (`gen_eval_model`).
         "eval_model_python",
         "cli_common_python",
         "cli_root_python",

@@ -31,7 +31,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `eval_rates` | `eval_rates.py` whole (unit eval_rates-1): `_EvalWalk` (`EvalWalk`, with `Counts`), `_AuditTally` (`AuditTally`, with `ModelCounts`), `_count_search`, `_count_use`, `_walk_eval_events`, `_resolve_audit_telemetry`, `_cold_endorsement_rows` (`ColdRows`); the scope test is the caller's callback | `eval_rates.jsonl`, `eval_rates_unicode.jsonl` |
 | `health_roots` | `health_roots.py` 21-73: `EstateProgress` (`ordered`, `attempt`), `_LAST_CHECKED_CAP`; `progress_for_store` is the open Store's own `EstateProgress` | `health_roots.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules); `format(x, '.Nf')` and `format(x, 'g')` (`format_fixed`, `format_general`: the exact binary value rounded half to even, as Rust's `{:.N}` and `{:.Ne}` write it; a precision past `INT_MAX` refused) | `canonical_json.jsonl`, `eval_render.jsonl` |
-| `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
+| `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser, with stated difference D1: an offset of zero hours, minutes and seconds with a non-zero fraction after the seconds kept in a text 3.14 reads, as 3.13.18 and 3.14 keep it), `isoformat`, `str`, the `strftime` patterns (`%Y` of a year before 1000 as the host's C library writes it: unpadded with glibc, padded elsewhere; `datetime.jsonl` marks those cells, not pins them), pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl`, `datetime_offsets.jsonl` |
 | `argparse` | unit argparse-1a: the flat-parser subset of CPython 3.13.13's `argparse` the hook mains use: `ArgumentParser(prog, description, add_help)`, `add_argument` (`store`, `store_true`, `help`, `version`; positionals of one argument with `choices`), `parse_args` (`_parse_known_args` with `_parse_optional`, `_get_option_tuples`, `consume_optional`, `consume_positionals`, `_match_argument`, `_match_arguments_partial`, the negative-number matcher), `error` and `_format_usage` with its wrapping, as an `Outcome` without a process exit; unit argparse-1b: `add_subparsers(dest)` with its `prog` derived from the parent's positionals, `add_parser`, the PARSER `nargs` and `_SubParsersAction.__call__` with the child's namespace merged in the reference's order and its leftovers after the parent's. Unit argparse-1c adds the one-value `append` action used by `log verify --anchor FILE`. Unit argparse-2a formats default help and wraps version text | `argparse.jsonl`, `argparse_python.jsonl`, `argparse_subparsers.jsonl`, `argparse_subparsers_python.jsonl`, `cli_log_args.jsonl`, `argparse_help.jsonl`, `argparse_help_python.jsonl` |
 | `native_text`, `caches`, `daemon_client`, `install_hints` | `native_text.py` 15-40 (`has_surrogates`, `utf8_text`, `encoded_json`, `origin_projection`), `_caches.py` whole (`register` under a key, `clear_all`), `_daemon_client.py` 149-172 (`STORE_FILENAME` re-exported, `START_TIMEOUT_SECONDS`, `HOOK_TIMEOUT_SECONDS`, `HOOK_HARNESS_TIMEOUT_SECONDS`, `HOOK_MARGIN_SECONDS`, `hook_budget_seconds`), `_install_hints.py` 41-130 (every spelling) | `native_text.jsonl`, `daemon_client.jsonl`, `install_hints.jsonl` |
 | `transcript` | `transcript.py` whole: `CHUNK_BYTES`, `WALK_BYTES`, `ReverseLines`, `_row`, `_prompt_id`, `StopTurn`, `_Pending`, `stop_turn`, `InterruptedTurn`, `interrupted_turns`, `owner_words`, `CompactMarker`, `compact_marker`; the file (`Opener`) and `owner_prompt.py` (`OwnerPrompt`) are traits | `transcript.jsonl`, `transcript_python.jsonl`, `transcript_turns.jsonl` |
@@ -4572,17 +4572,18 @@ flag, and a spec padded with spaces for each message that spells the
 stripped spec), 12 resolutions, 100 `_show_in_window` cases over stamp shapes at
 each bound, and 69 events through both readers. The sweep is 20,000
 drawn `(k, n)` pairs through `RateCI.from_counts` by the SHA-256 of their
-bits. `eval_model_python.jsonl` (`PYTHON_GATED`, 53 rows, 9 KB) holds
+bits. `eval_model_python.jsonl` (`PYTHON_GATED`, 47 rows, 8 KB) holds
 timestamps at `fromisoformat`'s edges (offsets of seconds and
 microseconds, reduced and compact forms, an hour of 24, a lowercase `z`
 inside `parse_event_ts`) and the text of `int()`'s digit limit,
 CPython's own message. 3.11.15 and 3.12.13 write it byte for byte as
-3.13.13 does; 3.14.10 differs on 7 rows: its `fromisoformat` keeps an
-offset's microseconds, which 3.13.13 drops
-(`2026-10-01T00:00:00-00:00:00.000001` is 00:00 UTC under 3.13.13 and
-00:00:00.000001 under 3.14; `0001-01-01T00:00:00+00:00:00.000001` leaves
-the calendar only under 3.14), and it reads an hour of 24
-(`2026-10-01T24:00:00Z`, refused by 3.13.13, is the next midnight).
+3.13.13 does. 3.14.10 differed on 7 rows: six bounds whose offset is
+zero whole seconds with a fraction, which 3.14 and 3.13.18 keep and
+3.13.13 drops (`2026-10-01T00:00:00-00:00:00.000001` is 00:00 UTC under
+3.13.13 and 00:00:00.000001 under 3.14), now
+`datetime_offsets.jsonl`'s as stated difference D1 ("The datetime
+reader"); and an hour of 24 (`2026-10-01T24:00:00Z`, refused by
+3.13.13, is the next midnight under 3.14), which stays.
 CI's 3.13.18 reads `fromisoformat` otherwise than 3.13.13 too
 (`PYTHON_VERSION` in `generate.py`). `golden_eval_model.rs` checks every row of both, the
 header's constants and the sweep; `eval_model_kills.rs` holds the cases
@@ -12936,6 +12937,218 @@ of `utf8_text` over every code point. Tests: `golden_native_text`,
 `native_text_robustness`, and the unit test of the registry in
 `caches.rs`.
 
+## The datetime reader (`datetime`)
+
+`DateTime::from_isoformat` is CPython 3.13's C `datetime.fromisoformat`
+(`Modules/_datetimemodule.c`: `_sanitize_isoformat_str`,
+`_find_isoformat_datetime_separator`, `parse_isoformat_date`,
+`parse_hh_mm_ss_ff`, `parse_isoformat_time` and
+`tzinfo_from_isoformat_results`) over the text's UTF-8 bytes, with one
+stated difference, D1, in its last step. The reference reads every
+timestamp it takes through it: `time_utils.parse_event_ts` (27-52,
+`datetime::parse_event_ts`: event stamps of the eval and health
+windows, use tokens, transcript turns, response trust, restore rows,
+membership's `last_seen`), `store_rows._dt` (70-72,
+`datetime::parse_record_dt`: a record's columns read into the model),
+`v8._as_dt` (127-149, `datetime::parse_record_dt` for a quoted value: a
+v8 file's frontmatter, the `created`, `updated`, `last_verified_at`,
+`last_corroborated` and a tombstone's `removed` the v8 migration reads;
+the migration is not ported), `origin_history.instant` (394-400,
+`datetime::git_instant`: the author dates a drift count is read off),
+`eval_model.parse_timestamp_utc` (283-313: `--since` and `--until`, and
+through `parse_event_ts` the window test `_show_in_window`),
+`cli/_common.parse_iso_cutoff` (376-477: `rollback --since`),
+`cli/daemon_cmd.uptime_seconds` (284-296: the daemon state file's
+`started`, every `Z` replaced; not ported) and
+`handlers/acknowledge_miss.canonical_cutoff` (185-225: `before`; not
+ported). No caller has a reader of its own, so the difference reaches
+each through `from_isoformat` alone. The formatters (`isoformat`, `str`,
+`isoformat_utc`, the `strftime` patterns, pydantic's JSON spelling) and
+`origin_history.seconds` and `review.ulid_time` read no ISO text and are
+unchanged; `datetime.jsonl` and `datetime_edges.jsonl` pin them. The
+reader is written by hand over bytes, as the C parser is: no regular
+expression.
+
+| function | reference | needs | status |
+| --- | --- | --- | --- |
+| `DateTime::from_isoformat` (`iso::parse`, `time`, `hh_mm_ss_ff`, `date`, `separator_location`) | `_datetimemodule.c` (3.13) `datetime_fromisoformat` | nothing | built; the offset step corrected (D1) |
+| `parse_event_ts` | `time_utils.py` 27-52 | nothing | built |
+| `parse_record_dt` | `store_rows.py` 70-72, `v8.py` 127-149 (a `str`) | nothing | built |
+| `git_instant`, `git_seconds` | `origin_history.py` 378-400 | nothing | built |
+| `ulid_time` | `review.py` 1184-1191 | nothing | built |
+
+The rule. An offset's whole seconds are `sign * (hh * 3600 + mm * 60 +
+ss)` and its microseconds the fraction's first six digits with the same
+sign (a seventh digit and later are read and dropped); a whole day or
+more is a `ValueError`. In a text CPython 3.14.10 and 3.15.2 read, one
+where neither the time nor the offset holds a fraction after its hour,
+after its minute or after a fourth `:`, the offset is their sum, UTC
+only when the sum is zero: `+00:00:00.5`, `-00:00:00.000001`,
+`-00:00:00,25`, `-000000.5` and `-00000085` (a fraction after the
+seconds, a `.` or `,` after them, extended or compact, or two or more
+digits straight after the compact seconds) keep their offsets after
+`08:09:10`, `08:09:10.5`, `080910`, `080910123`, `08:09` or `08`, as
+3.14.10 and 3.15.2 keep them, where 3.11.15, 3.12.13 and 3.13.13 return
+UTC whenever the whole seconds are zero and drop the microseconds (D1).
+Where the offset's fraction follows its hour or minute or a fourth `:`
+(`-00.5`, `+00,5`, `+00:00.5`, `-00:00,25`, `+0000.5`, `-0000,5`,
+`+00:00:00:5`), or the time's fraction follows its hour or minute or a
+fourth `:` (`08,5`, `08.5`, `08:09.5`, `08:09,5`, `0809.5`,
+`08:09:10:5`), or the time ends on a bare `.` or `,` (`08:09:10.`,
+`08,`, `0809,`), spellings 3.14.10 and 3.15.2 refuse, the whole text is
+read as 3.13.13 reads it: the time by 3.13.13's grammar (`08:09:10:5`
+is 08:09:10.5) and the offset UTC when its whole seconds are zero, else
+their sum (`+02.5` is two hours and half a second, and
+`08,5+00:00:01.5` keeps its offset). So wherever this build keeps an
+offset that 3.13.13 reads as UTC, 3.14.10 and 3.15.2 keep it with the
+same value: over the 38,138 texts the readers gave `fromisoformat` in a
+differential of 32,000 drawn and grid texts, this build differs from
+3.13.13 on 3,846, each such an offset, and 3.14.10 and 3.15.2 answer
+each of them as this build does. `hh_mm_ss_ff` says, for the time and
+for the offset, whether it read a fraction after the hour, the minute
+or a fourth `:` or ended on a bare mark, and `time` applies the rule. `+00:00:00.000000`,
+`+00:00:00.0` and `+00:00:00.0000001` are UTC in every release and here.
+The sign is applied once: `-00:00:00.000001` is minus one microsecond.
+
+The outputs and their tiers:
+
+- T3: the datetime each reader answers, and what is decided on it: an
+  event's window (eval, health, recall, use tokens, transcript turns,
+  response trust, restore rows), the drift count's author dates, eval's
+  `--since` and `--until` bounds and window test, `rollback --since`'s
+  cutoff, the daemon status uptime once ported (by under a second, for a
+  hand-made state file). `datetime_offsets.jsonl` compares the decision
+  and the data whole.
+- T3 that can reach T1. Only a value with such an offset moves a byte,
+  and the product never writes one: it comes from a hand-made row or
+  file, or from a model-supplied argument. Four paths:
+  - The store's rewrites. `parse_record_dt` feeds `records::rows`,
+    which every writer that reads a stored record and writes it back
+    goes through (`tombstone_hooked`, `active_or_raise`, `restored`,
+    `put_relinked` in `store/writers.rs`; `rename_scope_hooked`,
+    `prune_tombstones_hooked` and `rename_active` in `store/bulk.rs`;
+    `home::get_memory`). Such a write re-dumps `created`, `updated`,
+    `last_verified_at`, `last_corroborated` and a tombstone's `removed`:
+    the column through `isoformat` and the signed `memory_put` or
+    `tombstone_put` payload through pydantic's JSON spelling
+    (`record_payload`). A stored `2026-03-01T12:00:00+00:00:00.5` is
+    then written as the column `2026-03-01T12:00:00+00:00:00.500000`
+    here, as 3.13.18 writes it, where 3.13.13 writes `+00:00`; the
+    payload differs only where the fraction rounds to a whole second
+    (pydantic writes `+00:00` or `-00:00` for half a second, `Z` below
+    it, as 3.13.13's `Z` for UTC). Both read back under 3.13.13:
+    `store_rows._dt` reads the column as UTC and pydantic reads
+    `+00:00`, so the rollback rule holds.
+    `datetime_offsets_kills::what_a_rewrite_of_a_kept_offset_stores`
+    pins both spellings; no golden file pins a store row of it.
+  - The v8 migration, once ported: `v8._as_dt` reads a v8 file's
+    frontmatter (`v8._record_fields` 229-251, `parse_memory_file` 298
+    for `last_corroborated`, `parse_tombstone_file` 304-318), and
+    `migrate_v8` inserts every migrated memory and
+    tombstone as a row and a signed import payload. A quoted
+    `created: '2026-03-01T12:00:00+00:00:00.5'` is then written as the
+    column `2026-03-01T12:00:00+00:00:00.500000` and the payload
+    `2026-03-01T12:00:00+00:00`, where 3.13.13 writes `+00:00` and `Z`.
+    The migration's input needs only the same meaning; what it writes
+    is T1.
+  - The mirror files, once their writer is ported:
+    `mirror_format::memory_metadata` puts a record's `created`,
+    `updated`, `last_verified_at` and `last_corroborated`, read through
+    `parse_record_dt`, into a file's frontmatter, which then spells the
+    kept offset.
+  - `acknowledge_miss`'s `before` (contract ledger #19), once its
+    handler is ported: `canonical_cutoff` reads it through this reader
+    and writes its UTC cutoff into a `silent_miss_cutoff` event, a
+    signed log row (`2026-11-15T08:09:10+00:00:00.5` is
+    `2026-11-15T08:09:09.500000Z`, where 3.13.13 writes
+    `2026-11-15T08:09:10Z`). A model-supplied `before` needs no
+    hand-made row.
+- T2: none at any fixture's input. Two paths reach a tool's answer. A
+  hand-made stored datetime with such an offset, read through
+  `parse_record_dt`, is spelled into tool answers by the ported
+  renderers `response_rows`, `response_write`, `verify_status` and
+  `health_model` (through `isoformat_utc`: a `last_verified_at` of
+  `2026-03-01T12:00:00+00:00:00.5` is answered
+  `2026-03-01T12:00:00Z:00.500000` here and by 3.13.18,
+  `2026-03-01T12:00:00Z` by 3.13.13), and `verify_status`'s `age_days`
+  and status can turn at a day bound by the kept fraction; the
+  reference's `_response.py`, `handlers/show.py` and `handlers/verify.py`
+  spell the same fields. And `acknowledge_miss`, once ported, echoes the
+  cutoff above as `cutoff_ts` in its answer.
+
+Fixtures: `datetime_offsets.jsonl` (`gen_time.generate_offsets`, not
+gated, 23 rows, 7 KB) holds every row whose answer follows D1: the three
+texts that left `datetime_edges.jsonl`, four more and the comma and
+compact spellings `-00:00:00,25`, `-000000.5`, `+000000,5` and
+`-00000085` through each reader of `gen_time.PARSERS`, the six `--since`
+and `--until` bounds that left `eval_model_python.jsonl` and the first
+three texts as `--until`, and three window tests a kept offset moves
+across a bound. Its generator answers every row with the reference's
+own readers, the name `datetime` of each reader's module patched to a
+class whose `fromisoformat` is `d1_kept_offset`, which builds the value
+from the text's fields and never calls the interpreter's parser; so the
+file is the same under every Python. Each row carries
+`"difference": "D1"` and none carries `"reference"`, whose value follows
+the release here. `datetime_edges.jsonl` (gated) holds the seven texts
+whose fraction follows the offset's hour or minute or a fourth `:`, and
+six whose time holds a fraction after its hour or minute or a fourth `:`
+before an offset of zero whole seconds with a fraction after the seconds
+(`2026-11-15T08,5+00:00:00.5`, `2026-11-15T08:09:10:5+00:00:00.5`),
+answered by 3.13.13 as this build answers them. The window rows of
+`eval_model_python.jsonl` whose shows hold such an offset stay there:
+their answers are the same under every release. Every other golden file
+was searched: `health_model`, `health_model_debt`,
+`health_model_report` and `verify_status` hold such texts as formatter
+outputs only, and a regeneration of the whole set with
+`datetime.fromisoformat` reading by this build's rule left every
+committed file as it is. Tests: `golden_datetime_offsets` (every row,
+the count of rows carrying `difference`, every id in the header, no
+`reference`), `datetime_offsets_kills` (11: the three texts through
+`parse_event_ts`, `parse_record_dt`, `git_instant`, eval's bound reader
+and window test and the CLI's cutoff; the zero fractions UTC; the sign
+once over every spelling of a fraction after the seconds; a fraction
+before the seconds read as 3.13.13 reads it; a time 3.14 refuses read
+as 3.13.13 reads it through every reader; the stored spellings;
+`DateTime::new` refusing an offset of a whole day) and
+`datetime_offsets_robustness` (5: every offset of hours, minutes and
+seconds at their bounds with fractions of one to nine digits, both
+signs and both marks, extended, compact and short, and after a fourth
+`:`; such offsets after fifteen spellings of the time, eight 3.14 reads
+and seven it refuses; a seeded sweep of 50,000 over those spellings;
+fractions of 100,000 digits through every reader; a long fraction read
+in linear time). `golden_datetime_edges` now counts 32 datetimes, 199
+texts and 105 timestamps.
+
+### Stated differences
+
+**D1** (contract ledger #11, no Linear issue). Input: an ISO text that
+CPython 3.14.10 and 3.15.2 read, whose offset is zero hours, minutes and
+seconds with a non-zero fraction after the seconds (`+00:00:00.5`,
+`+00:00:00.000001`, `-00:00:00.000001`, the comma `-00:00:00,25`, the
+compact `-000000.5` and `+000000,5`, and digits straight after the
+compact seconds, `-00000085`) and whose time holds no fraction after its
+hour or minute and no fourth `:` and does not end on a bare `.` or `,`.
+Reference: CPython 3.11.15, 3.12.13
+and 3.13.13 read UTC with the fraction dropped; 3.14.10 and 3.15.2 keep
+the offset; 3.13.18 (CI's 3.13) kept it on the three extended texts CI's
+`datetime_edges.jsonl` held (`PYTHON_VERSION` in `generate.py`) and was
+not read on this machine. This build: keeps it, UTC only when the
+fraction's first six digits are zero; wherever it keeps an offset that
+3.13.13 reads as UTC, 3.14.10 and 3.15.2 keep it with the same value.
+A text 3.14.10 and 3.15.2 refuse is not D1: an offset's fraction after
+its hour or minute or a fourth `:` (`-00.5`, `+00:00.5`,
+`+00:00:00:5`), or such an offset after a time whose fraction follows
+its hour or minute or a fourth `:` (`2026-11-15T08,5+00:00:00.5`,
+`2026-11-15T08:09.5-000000.5`, `2026-11-15T08:09:10:5+00:00:00.5`), or
+after a time ending on a bare mark (`2026-11-15T08:09:10.+00:00:00.5`).
+There 3.11.15, 3.12.13 and 3.13.13 read the time by their grammar and
+the offset as UTC, and this build answers as 3.13.13. Reason: the
+ledger reads these texts as the newer releases do, and the newer
+releases read here agree only on the texts they read; the product never
+writes such an offset. Rows:
+`datetime_offsets.jsonl`, difference D1 (23 rows). Test:
+`datetime_offsets_kills::d1_texts_keep_their_offsets_through_every_reader`.
+
 ## Running the tests (offline)
 
 ```sh
@@ -13017,10 +13230,16 @@ pins). Three things tie some of their values to that machine. Ranking
 score bits go through the platform's `log`, `exp` and `log1p` and its
 double arithmetic, in Python and in SQLite's `bm25()` (10 of
 `search_ranker.jsonl`'s 208 queries score other bits on Linux x86-64); a
-CPython patch release can change what `python_edges` pins (3.13.18 reads
-three sub-second-offset texts otherwise than 3.13.13); and the port itself
-carries Unicode 15.1's tables and CPython 3.13.13's datetime parser, sort
-and nesting budget. So the native build is held to the reference on the
+CPython release, a patch release among them, can change what
+`python_edges` pins (`datetime_edges.jsonl`'s hour of 24,
+`2026-11-15T24:00:00`, which 3.13.18 and 3.14 read and 3.13.13 refuses,
+while 3.14.10 and 3.15.2 refuse `2026-11-15T24:00:00.000001` as 3.13.13
+does, and its texts whose offset or time holds a fraction after the hour
+or the minute or a fourth `:`, which 3.14 refuses and 3.13.13 reads; the
+sub-second offsets 3.13.18 reads otherwise than 3.13.13 are
+`datetime_offsets.jsonl`'s, not gated, as stated difference D1); and the
+port itself carries Unicode 15.1's tables and CPython 3.13.13's datetime
+parser (with D1), sort and nesting budget. So the native build is held to the reference on the
 platform it runs on, against fixtures made there.
 
 **`BM_GOLDEN_DIR`.** Every test reads its golden files through
@@ -13257,6 +13476,7 @@ that Unicode too.
 | `difflib_kills` (7), `difflib_robustness` (8) | none | i |
 | `robustness` (5), `search_robustness` (8), `store_robustness` (3), `store_read_only` (11), the library's unit tests | none, or `store_bases.json` / `store_files.jsonl` as input only | i |
 | `golden_datetime_edges`: `datetime_edges_every_case` | `datetime_edges.jsonl` | ii (Python) |
+| `golden_datetime_offsets`: `datetime_offsets_every_row`; `datetime_offsets_kills` (11), `datetime_offsets_robustness` (5) | `datetime_offsets.jsonl` (the last two none) | i |
 | `golden_json_edges`: `json_edges_every_case` | `json_edges.jsonl` | ii (Python) |
 | `golden_lexicon`: `lexicon_every_case`, `lexicon_fingerprint` | `lexicon.jsonl` | ii (Unicode) |
 | `golden_verify_candidates`: `verify_candidates_every_case`, `verify_candidates_constants` | `verify_candidates.jsonl` | i |
@@ -13356,7 +13576,7 @@ module), `membership_records_robustness` (5) | none | i |
 | `golden_store_files`: `the_crates_schema_texts_are_the_references` | `store_admission.json` (compiled-in copy pinned to the committed file) | iii (by its generator; its text is platform-independent) |
 | `bench_search`, `bench_tokenize`, `search_differential_files`, `cases_from_env`, `answers_of_env_store`, `time_reads_of_env_store` | files an environment variable names | tools, `#[ignore]`d, not part of parity |
 
-The pinned literal counts (`CASES`, `RANKER_*`, `datetime_edges`' 32/189/105
+The pinned literal counts (`CASES`, `RANKER_*`, `datetime_edges`' 32/199/105
 and 77 per-platform cells, the 4 FTS shadow rows, 32 FTS rows) count cases
 the generators enumerate from fixed inputs, so a set regenerated anywhere
 has the same counts. Under a Python minor other than 3.13 the version-gated
@@ -32091,6 +32311,18 @@ exit status is 0 for an `ok` report and 1 for either other verdict.
 The committed cases include the complete text and JSON digests of an
 intact, rekeyed, restored and accepted signed store. The command parser,
 read-only opening and anchor-file loading are separate units.
+
+## Stated differences from the reference
+
+Where this build answers differently from the Python reference on
+purpose. Each row is a stated difference in its unit's section, with
+golden rows that carry "difference" and a kills test; everywhere else
+the build agrees with the reference, and a difference no row covers is
+a defect.
+
+| unit | id | input | reference | this build | issue | commit |
+| --- | --- | --- | --- | --- | --- | --- |
+| datetime reader (`datetime`, `datetime::iso`) | D1 | an ISO text 3.14.10 and 3.15.2 read whose offset is zero with a non-zero fraction after its seconds (`+00:00:00.5`) | 3.11.15, 3.12.13, 3.13.13: UTC, the fraction dropped; 3.14.10, 3.15.2: the offset kept | the offset kept, as 3.14.10 and 3.15.2 keep it | contract ledger #11 | feat(native): keep a sub-second offset of zero whole seconds |
 
 ## Not built yet
 

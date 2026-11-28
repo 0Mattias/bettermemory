@@ -4,22 +4,39 @@ Formatters take a neutral datetime (fields plus an offset in seconds, or
 null for a naive value); parsers take text. Each result is the exact
 output text, null, or the exception type raised. A cell whose result
 differs by platform or Python version is marked and records each result.
+
+``datetime_offsets.jsonl`` (`generate_offsets`) holds stated difference
+D1: texts whose offset is zero hours, minutes and seconds with a non-zero
+fraction after the seconds, read with the offset kept, as CPython 3.13.18
+and later read them (3.11.15, 3.12.13 and 3.13.13 read UTC and drop the
+fraction). A fraction after the offset's hour or minute or a fourth ``:``
+is not D1: 3.14 refuses those texts, the port reads them as 3.13.13
+does, and ``datetime_edges.jsonl`` holds them. The
+readers are the reference's own (`PARSERS`, `eval_model`'s bound reader
+and window test) with `d1_kept_offset` in place of
+``datetime.fromisoformat``, so no answer asks the interpreter's parser,
+whose answer here follows the release, and the file is the same under
+every Python.
 """
 
 from __future__ import annotations
 
+import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Self
+from unittest.mock import patch
 
 from pydantic import TypeAdapter
 
-from bettermemory import origin_history, store_rows, v8
+from bettermemory import eval_model, origin_history, store_rows, time_utils, v8
 from bettermemory.review import ulid_time
 from bettermemory.time_utils import isoformat_utc, parse_event_ts
 
-from ._common import jsonl
+from . import gen_eval_model
+from ._common import jsonl, neutral
 
 _ADAPTER: TypeAdapter[datetime] = TypeAdapter(datetime)
 
@@ -254,3 +271,177 @@ def generate() -> dict[str, bytes]:
             }
         )
     return {"datetime.jsonl": jsonl(records)}
+
+
+# ---------------------------------------------------------------------------
+# datetime_offsets.jsonl: stated difference D1
+# ---------------------------------------------------------------------------
+
+D1 = (
+    "an offset of zero hours, minutes and seconds with a non-zero fraction "
+    "after the seconds is kept, as CPython 3.13.18 and later keep it"
+)
+
+#: The one shape `d1_kept_offset` reads: a date, a time with an optional
+#: fraction, then an offset of zero hours, minutes and seconds with a
+#: fraction after the seconds: ``.`` or ``,`` after ``00:00:00`` or after
+#: the compact ``000000``, or two or more digits straight after the
+#: compact seconds (the C parser refuses one).
+_D1_SHAPE = re.compile(
+    r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?"
+    r"([+-])(?:00:00:00[.,]|000000[.,]|000000(?=\d\d))(\d+)"
+)
+
+
+def _micro(digits: str) -> int:
+    """A fraction's first six digits as microseconds, as the C parser
+    reads them: fewer are scaled up, a seventh and later are dropped."""
+    return int(digits[:6].ljust(6, "0"))
+
+
+def d1_kept_offset(text: str) -> datetime:
+    """`datetime.fromisoformat(text)` by D1's rule, for the one shape this
+    file holds: the offset is the fraction's microseconds with its sign,
+    and UTC only when they are zero (3.13.13 reads UTC whatever the
+    fraction). Built from the text's fields, never by the interpreter's
+    parser. Any other text is a fault of this generator."""
+    m = _D1_SHAPE.fullmatch(text)
+    assert m is not None, f"not a D1 text: {text!r}"
+    year, month, day, hour, minute, second = (int(g) for g in m.groups()[:6])
+    fraction = 0 if m.group(7) is None else _micro(m.group(7))
+    sign = -1 if m.group(8) == "-" else 1
+    offset = sign * _micro(m.group(9))
+    tz = timezone.utc if offset == 0 else timezone(timedelta(microseconds=offset))
+    return datetime(year, month, day, hour, minute, second, fraction, tzinfo=tz)
+
+
+class _D1DateTime(datetime):
+    """`datetime` whose `fromisoformat` is `d1_kept_offset`: the name
+    ``datetime`` of each reader's module while a D1 row is answered."""
+
+    @classmethod
+    def fromisoformat(cls, date_string: str) -> Self:
+        d = d1_kept_offset(date_string)
+        return cls(*_fields_of(d), tzinfo=d.tzinfo)
+
+
+def _fields_of(d: datetime) -> tuple[int, int, int, int, int, int, int]:
+    return (d.year, d.month, d.day, d.hour, d.minute, d.second, d.microsecond)
+
+
+#: The reference modules whose readers call ``datetime.fromisoformat``
+#: through their module name ``datetime``.
+_D1_READERS = (time_utils, store_rows, v8, origin_history, eval_model)
+
+
+@contextmanager
+def d1_readers() -> Iterator[None]:
+    """The reference's readers reading by D1's rule."""
+    with ExitStack() as stack:
+        for module in _D1_READERS:
+            stack.enter_context(patch.object(module, "datetime", _D1DateTime))
+        yield
+
+
+#: Texts through every reader of `PARSERS`: the three that left
+#: ``datetime_edges.jsonl`` (its accidents), four more, and the comma and
+#: compact spellings of a fraction after the seconds.
+D1_TEXTS = [
+    "2026-11-15T08:09:10+00:00:00.5",
+    "2026-11-15T08:09:10+00:00:00.000001",
+    "2026-11-15T08:09:10-00:00:00.000001",
+    "2026-11-15T08:09:10-00:00:00.5",
+    "2026-11-15T08:09:10+00:00:00.999999",
+    "2026-11-15T08:09:10+00:00:00.1234567",
+    "2026-11-15 08:09:10.123456-00:00:00.000001",
+    "2026-11-15T08:09:10-00:00:00,25",
+    "2026-11-15T08:09:10-000000.5",
+    "2026-11-15T08:09:10+000000,5",
+    "2026-11-15T08:09:10-00000085",
+]
+
+_NOW = gen_eval_model.NOW
+#: `--since` and `--until` through `parse_window_bound`: the six that left
+#: ``eval_model_python.jsonl`` (a bound moved by a microsecond, out of the
+#: calendar, later than now), and the first three texts as ``--until``.
+D1_BOUNDS: list[tuple[str | None, str, datetime]] = [
+    ("2026-10-01T00:00:00-00:00:00.000001", "--since", _NOW),
+    ("0001-01-01T00:00:00+00:00:00.000001", "--since", _NOW),
+    ("0001-01-01T00:00:00.000001+00:00:00.000001", "--since", _NOW),
+    ("9999-12-31T23:59:59.999999-00:00:00.000001", "--until", _NOW),
+    ("2026-11-25T12:00:00-00:00:00.000001", "--since", _NOW),
+    ("2026-11-25T12:00:00+00:00:00.000001", "--since", _NOW),
+    *((text, "--until", _NOW) for text in D1_TEXTS[:3]),
+]
+
+_UTC = timezone.utc
+#: `_show_in_window` where the kept offset moves a show across a bound.
+D1_WINDOWS: list[tuple[dict[str, Any], datetime | None, datetime | None]] = [
+    (
+        {"ts": "2026-01-01T00:00:00+00:00:00.000001"},
+        datetime(2026, 1, 1, tzinfo=_UTC),
+        None,
+    ),
+    (
+        {"ts": "2026-01-31T23:59:59.999999-00:00:00.000001"},
+        None,
+        datetime(2026, 2, 1, tzinfo=_UTC),
+    ),
+    (
+        {"ts": "2025-12-31T23:59:59.5-00:00:00.5"},
+        datetime(2026, 1, 1, tzinfo=_UTC),
+        None,
+    ),
+]
+
+
+def d1_rows() -> list[dict[str, Any]]:
+    """Every D1 row, each answered by the reference's readers under
+    `d1_readers`, in the keys of the file it came from or belongs with:
+    ``datetime_edges.jsonl``'s ``{text, out}`` and
+    ``eval_model_python.jsonl``'s bound and window rows."""
+    for text in D1_TEXTS:
+        assert _D1_SHAPE.fullmatch(text), text
+    rows: list[dict[str, Any]] = []
+    with d1_readers():
+        for text in D1_TEXTS:
+            rows.append(
+                {
+                    "text": text,
+                    "out": {k: _run(fn, text) for k, (fn, _) in PARSERS.items()},
+                }
+            )
+        rows += gen_eval_model._bound_rows(D1_BOUNDS)
+        for show, start, end in D1_WINDOWS:
+            rows.append(
+                {
+                    "k": "window",
+                    "show": neutral(show),
+                    "start": gen_eval_model._fields(start),
+                    "end": gen_eval_model._fields(end),
+                    **gen_eval_model._try(
+                        lambda: eval_model._show_in_window(show, start, end),
+                        lambda r: r,
+                    ),
+                }
+            )
+    for row in rows:
+        assert "AssertionError" not in str(row), row
+        row["difference"] = "D1"
+    return rows
+
+
+def generate_offsets() -> dict[str, bytes]:
+    rows = d1_rows()
+    header = {
+        "fixture": "datetime_offsets",
+        "cases": len(rows),
+        "parsers": {k: v[1] for k, v in PARSERS.items()},
+        "records": (
+            "text: through each parser, as datetime_edges.jsonl; k bound and "
+            "k window: eval_model's parse_window_bound and _show_in_window, "
+            "as eval_model_python.jsonl"
+        ),
+        "stated_differences": {"D1": D1},
+    }
+    return {"datetime_offsets.jsonl": jsonl([header, *rows])}

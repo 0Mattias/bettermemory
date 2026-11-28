@@ -3,8 +3,11 @@
 //! [`DateTime`] is a Python `datetime.datetime` with a fixed offset or none
 //! (the reference only ever builds `timezone`-offset or naive values).
 //! [`DateTime::from_isoformat`] is CPython 3.13's C `datetime.fromisoformat`,
-//! which reads the UTF-8 bytes of the text, not the code points; the
-//! formatters are `isoformat`, `str` and the `strftime` patterns the
+//! which reads the UTF-8 bytes of the text, not the code points, with one
+//! stated difference (D1): in a text CPython 3.14 reads, an offset of
+//! zero hours, minutes and seconds whose non-zero fraction follows the
+//! seconds is kept, as 3.13.18 and 3.14 keep it, where 3.13.13 reads UTC.
+//! The formatters are `isoformat`, `str` and the `strftime` patterns the
 //! reference uses; the parsers are the reference's functions over them.
 
 use crate::unicode;
@@ -583,8 +586,20 @@ mod iso {
 
     /// `parse_hh_mm_ss_ff` over `b[start..end]`: Err for a negative
     /// return, Ok(true) for "not at the end of the string".
-    fn hh_mm_ss_ff(b: &Bytes, start: usize, end: usize, out: &mut [i64; 4]) -> Result<bool, ()> {
+    /// `misplaced_fraction` says whether it read a fraction after the
+    /// hour, the minute or a fourth `:`, or ended the time on a bare `.` or
+    /// `,`, the spellings 3.14 refuses, rather than after the seconds (a `.`
+    /// or `,` and digits after them, or the digits after compact seconds) or
+    /// none.
+    fn hh_mm_ss_ff(
+        b: &Bytes,
+        start: usize,
+        end: usize,
+        out: &mut [i64; 4],
+        misplaced_fraction: &mut bool,
+    ) -> Result<bool, ()> {
         *out = [0; 4];
+        *misplaced_fraction = false;
         let mut p = start;
         let mut has_separator = true;
         for (i, slot) in out.iter_mut().take(3).enumerate() {
@@ -599,14 +614,19 @@ mod iso {
                 has_separator = c == b':';
             }
             if p >= end {
+                // A bare `.` or `,` ends the time: 3.13.13 reads no
+                // fraction, 3.14 refuses the text.
+                *misplaced_fraction = c == b'.' || c == b',';
                 return Ok(c != 0);
             } else if has_separator && c == b':' {
                 // After the seconds too: what follows reads as the
                 // fraction (`08:09:10:5` is 08:09:10.5).
+                *misplaced_fraction = i == 2;
                 continue;
             } else if c == b'.' || c == b',' {
                 // On any component: the digits after it are microseconds
                 // (`08,5` is 08:00:00.5).
+                *misplaced_fraction = i < 2;
                 break;
             } else if !has_separator {
                 p -= 1;
@@ -652,7 +672,8 @@ mod iso {
             }
         }
         let mut fields = [0; 4];
-        let rv = hh_mm_ss_ff(b, start, tz, &mut fields)?;
+        let mut time_misplaced = false;
+        let rv = hh_mm_ss_ff(b, start, tz, &mut fields, &mut time_misplaced)?;
         if tz >= end {
             return if rv {
                 Err(())
@@ -675,15 +696,24 @@ mod iso {
         }
         let sign = if b.at(tz) == b'-' { -1 } else { 1 };
         let mut tzf = [0; 4];
-        let rv = hh_mm_ss_ff(b, tz + 1, end, &mut tzf)?;
+        let mut offset_misplaced = false;
+        let rv = hh_mm_ss_ff(b, tz + 1, end, &mut tzf, &mut offset_misplaced)?;
         if rv {
             return Err(());
         }
         let seconds = sign * (tzf[0] * 3600 + tzf[1] * 60 + tzf[2]);
         let micro = sign * tzf[3];
-        // `tzinfo_from_isoformat_results`: an offset of zero whole seconds
-        // is UTC, its microseconds dropped (`-00:00:00.5` reads as UTC).
-        let offset_us = if seconds == 0 {
+        // `tzinfo_from_isoformat_results`: 3.13.13 returns UTC for zero
+        // whole seconds, its microseconds dropped; 3.13.18 and 3.14 only
+        // when the microseconds are zero too. 3.14 reads a fraction, of the
+        // time or of the offset, only after the seconds. So in a text 3.14
+        // reads, a fraction after the offset's seconds keeps its offset
+        // (`-00:00:00.5`, `-000000,5`: stated difference D1,
+        // native/README.md, "The datetime reader"); where the time or the
+        // offset holds a fraction after its hour, its minute or a fourth
+        // `:` (`08,5`, `08:09:10:5`, `-00.5`, `+00:00.5`, `+00:00:00:5`),
+        // which 3.14 refuses, the whole text reads as 3.13.13 reads it.
+        let offset_us = if seconds == 0 && (time_misplaced || offset_misplaced) {
             0
         } else {
             seconds * 1_000_000 + micro
