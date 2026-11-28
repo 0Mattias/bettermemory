@@ -78,7 +78,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms; `_query_biased_snippet` with its memos (`snippet`), `_memory_tokens`, `seed_memory_tokens` and their LRU (`token_cache`), `top_hit_leads_runner_up`; unit search-1b (`hit`): `_build_hit`, `_claim_anchors` | `search.jsonl`, `search_ranker.jsonl`, `search_snippet.jsonl`, `search_snippet_unicode.jsonl`, `search_hit.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `supersession` | units supersession-1a and 1b of `supersession.py`: `CHANGE_CUES`, `_CUE_RE` (`cue_pattern`), the other patterns, `_VALUE_PREPS`, `_CUE_TOKENS`, the claim and floor constants, `SupersessionMatch` (`note`, `detector`), `SupersessionReport`, `change_cues`, `_word_tokens` and its cache, `anchored_values`, `_proper_nouns`, `value_tokens`, `anchor_tokens`, `_numeric_token_set`, `_numeric_shape`, `values_are_kin`, `_content_stream`, `_context`, `_surface_forms`, `_surface_form`; `claim_sized` and `_strip_provenance` re-exported from `store::digest`; the detector: `_one_claim_replaced`, `_floor`, `_SCORE_BATCH`, `detect_supersession` (with `_claims_among` and `_detect`), `detect_supersession_in` (with `_best_first` and its heap) over the `SupersessionStore` trait, `_rule` | `supersession_features.jsonl`, `supersession_features_unicode.jsonl`, `supersession_detect.jsonl`, `supersession_detect_unicode.jsonl` |
-| `conflicts` | unit conflicts-1 of `conflicts.py`: `_VALID_STATUSES`, `_body_hash`, `_pair_id`, `ConflictCandidate` (`to_dict`, `from_dict`), `DedupCandidate`, `PolaritySkippedPair`, `ConflictingPair`, `_pick_keeper`, `_find_dedup_with_skips`, `_NEGATION_MARKERS`, `_has_negation`, `_numeric_divergence`, `_clause_polarity`, `_body_signals`, `_polarity_flip`, `_conflict_signal`, `_polarity_skip`, `_find_dedup_jaccard`, `skip_to_candidate`, `find_conflict_candidates` (the clock an argument) | `conflicts.jsonl`, `conflicts_unicode.jsonl` |
+| `conflicts` | unit conflicts-1 of `conflicts.py`: `_VALID_STATUSES`, `_body_hash`, `_pair_id`, `ConflictCandidate` (`to_dict`, `from_dict`), `DedupCandidate`, `PolaritySkippedPair`, `ConflictingPair`, `_pick_keeper`, `_find_dedup_with_skips`, `_NEGATION_MARKERS`, `_has_negation`, `_numeric_divergence`, `_clause_polarity`, `_body_signals`, `_polarity_flip`, `_conflict_signal`, `_polarity_skip`, `_find_dedup_jaccard`, `skip_to_candidate`, `find_conflict_candidates` (the clock an argument); unit conflicts-2 (`conflicts::queue`): `CONFLICTS_FILENAME`, `ConflictQueue` (`load`, `pending`, `file_pair`, `upsert_scan`, `_judged_content_changed`, `resolve`, `_replace_all`) over the store's traits (`ConflictRows`, `ConflictWrites`, `QueueStore`; the writable store, its transaction and `Batched`), `scan_conflicts`, `split_judgeable`, `conflicts_pending_count` (the clock, the warning sink and `before_stamp` arguments) | `conflicts.jsonl`, `conflicts_unicode.jsonl`, `conflicts_queue.jsonl`, `conflicts_queue_store.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `history` | `history.py`'s first two units: `read_snapshot`, `_rows_naming`, `_with_linking_versions`, `_with_restores`, `_replaced_rows`, `_payload`, `_mapping`, `_subject`, `_names_as_event`, `_link_types` over a store's connection; `_RowVerifier` and `_set` | `history_rows.jsonl`, `history_rows_python.jsonl`, `history_rows_mac.jsonl` |
 | `history_rows` | `history.py`'s third unit: `HistoryRow` with `to_dict`, `_changed` (with `py_ne`, Python's `!=` over payload values), `_body_diff` (through `difflib::body_diff`), `_set`, `_event_detail`, `_RecordWalk`, `_record_row`, `_link_change_rows` | `history_detail.jsonl` |
@@ -5957,7 +5957,7 @@ handler that lists and judges pairs is h_conflicts-1; the write path's
 
 | function | reference lines | needs from the machine | status |
 | --- | --- | --- | --- |
-| `CONFLICTS_FILENAME` | 113 | nothing | conflicts-2 |
+| `CONFLICTS_FILENAME` | 113 | nothing | built (conflicts-2, `queue::CONFLICTS_FILENAME`) |
 | `_VALID_STATUSES`, `_DEFAULT_JACCARD_THRESHOLD`, `_NEGATION_MARKERS` | 115, 248, 444-468 | nothing | built (`VALID_STATUSES`, `DEFAULT_JACCARD_THRESHOLD`, `NEGATION_MARKERS`) |
 | `_body_hash`, `_pair_id` | 118-141 | nothing | built (`body_hash`, `pair_id`) |
 | `ConflictCandidate` with `to_dict`, `from_dict` | 143-240 | nothing | built |
@@ -5972,7 +5972,7 @@ handler that lists and judges pairs is h_conflicts-1; the write path's
 | `_polarity_flip`, `_conflict_signal` | 569-609 | nothing | built |
 | `_polarity_skip`, `_find_dedup_jaccard` | 612-689 | the tokenizer | built (`find_dedup_jaccard`; `_polarity_skip` private) |
 | `skip_to_candidate`, `find_conflict_candidates` | 692-729 | the clock | built (`now` an argument) |
-| `ConflictQueue`, `scan_conflicts`, `split_judgeable`, `conflicts_pending_count` | 732-986 | the store | conflicts-2 |
+| `ConflictQueue`, `scan_conflicts`, `split_judgeable`, `conflicts_pending_count` | 732-986 | the store (a trait), the clock, the warning sink | built (conflicts-2, `conflicts::queue`) |
 
 ### What each part reproduces, and the decisions
 
@@ -6107,6 +6107,265 @@ bound and `from_dict` at the depth, digit and float bounds. The
 reference takes 0.14 s over 200 memories and 8.85 s over 2,000, and
 0.02 to 0.42 s on `_body_signals` of a million code points by shape
 (Apple M-series).
+
+### Unit conflicts-2, built (`conflicts::queue`)
+
+Unit conflicts-2 is `src/conflicts/queue.rs`, a child module of
+`conflicts` whose public names are re-exported from it, with
+`list_conflicts` and the two joined writers in `src/store/tables.rs`. It
+reproduces reference lines 113 and 732-986, read at v9 59ab7955:
+`CONFLICTS_FILENAME`, `ConflictQueue` (`load`, `pending`, `file_pair`,
+`upsert_scan`, `_judged_content_changed`, `resolve`, `_replace_all`),
+`scan_conflicts`, `split_judgeable` and `conflicts_pending_count`.
+
+**Outputs and their tiers.**
+
+- T1: every row the queue puts in the store's `conflicts` table and every
+  log row the puts and deletes append (`conflict_put`, `conflict_delete`,
+  through the batch), and the values those rows hold as `upsert_scan`,
+  `resolve` and `_replace_all` compute them (ids, summaries, similarity,
+  status, the verdict time, the note, the body hashes). Whole answers in
+  `conflicts_queue_store.jsonl`.
+- T1: `CONFLICTS_FILENAME` (`.conflicts.jsonl`) as a name; nothing here
+  writes the file.
+- T3: `load`, `pending`, `file_pair`'s status, `upsert_scan`'s counters,
+  `split_judgeable` and `conflicts_pending_count` (the same data and
+  decisions; the count is compared whole, as the handler and health units
+  still to come show it), the warning sink's two texts (the reference's
+  own wording, compared whole) and the classes raised.
+
+**The store, as the queue duck-types it.** Three traits:
+`ConflictRows` (`list_conflicts`, each row a dict's items, and
+`count_memories`), `ConflictWrites` (`put_conflict`, `delete_conflict`)
+and `QueueStore` (`batch`, whose body runs on its `Batch`, a
+`ConflictWrites`, and whose error rolls everything in it back). The real
+store implements them on `WritableStore` (reads outside a batch), on
+`Transaction` (a batch inside an open transaction joins it under a
+savepoint, as `_joined` does) and on `Batched` (a writable store with its
+provider: each batch is a transaction of its own, its `Committed` kept).
+The fixture drives both a recording stub and real stores through them.
+A listed row is a dict: the stub cannot list anything else, where the
+reference would raise AttributeError reading one.
+
+**What each part reproduces, and the decisions.**
+
+- **load.** Every listed row through `ConflictCandidate::from_dict`, in
+  the listed order. KeyError, TypeError and ValueError (with
+  UnicodeEncodeError and UnicodeDecodeError, its subclasses) skip the
+  row; anything else (OverflowError, RecursionError) goes on, and so does
+  whatever the listing itself raised, even a KeyError. `pending` keeps
+  the rows whose status is `pending`, in load order.
+- **The real store's cells.** `tables::list_conflicts` answers each cell
+  as `sqlite3` hands it (`SqlValue`). A BLOB reaches `from_dict` as
+  `bytes` would: in a text field `str()` is its `repr` (`b'cf-b'`), and
+  as the similarity `float()` reads ASCII bytes as it reads the same
+  text and refuses a byte past ASCII (the port hands it a NUL, which
+  `float()` also refuses). A TEXT cell that is not UTF-8 fails the
+  listing (OperationalError).
+- **file_pair.** One batch: the whole table loaded, then the first row of
+  the pair's id answers its own status; else `cand.to_dict()` is put and
+  `cand`'s status answers.
+- **upsert_scan.** One batch. `before` and the rows by id are built from
+  the loaded rows, a repeated id keeping its first place and its last
+  row (a dict's assignment); the fresh pairs follow in their order. A
+  pending row takes the fresh summaries and similarity and keeps its
+  detector unless it is empty (`or`); a dismissed row resurrects when
+  `_judged_content_changed` says so (status pending, the verdict fields
+  cleared, summaries, similarity and `created` from the fresh pair, the
+  detector kept); a confirmed row and any other status stand. A fresh
+  pair whose id an earlier fresh pair brought in meets that earlier pair
+  as it would a loaded row of the earlier pair's status: a pending one is
+  refreshed, a dismissed one resurrects only when
+  `_judged_content_changed` says so, and any other status stands.
+  `memories_by_id` is `{m.id: m for m in memories}`: a repeated id keeps
+  its last memory, which is the one `_judged_content_changed` reads, and
+  counts once. `collectable` is the snapshot's
+  length against `count_memories()`; when it holds fewer, the warning
+  `conflict-queue GC deferred: the caller's snapshot has %d memories but
+  the store holds %d` reads the count a second time, as the reference's
+  argument list does, and nothing is dropped. `_replace_all` deletes, in
+  `before`'s order, the ids not kept, then puts, in the kept order, each
+  row whose `to_dict` is not `==` its `before` (Python's dict equality,
+  `location_witness::py_eq`: key order ignored, -0.0 equal to 0.0, a NaN
+  equal to nothing, so a NaN similarity is put again on every scan). Both
+  sides of that comparison are `to_dict`, whose keys come in one order,
+  so a comparison that minded the order would answer the same; the
+  listed dict's own order never enters it. The counters come in the
+  reference's key order (`Upserted::items`).
+- **_judged_content_changed** (`judged_content_changed`). The verdict
+  time is `parse_event_ts(verdict_ts)` (a trailing `Z` read as UTC, a
+  naive time read as UTC, unparseable text None). Per side, `a` first: a
+  memory outside the snapshot is passed over; a stored hash decides by
+  `body_hash(body)` (a lone surrogate's UnicodeEncodeError goes on, and
+  the batch rolls back); without one, no verdict time or `updated` after
+  it says changed, compared as instants; a naive `updated` against the
+  aware verdict time is TypeError (`ConflictError::NaiveAware`).
+- **resolve.** A status other than `confirmed` or `dismissed` is
+  ValueError before the batch, with the reference's text (`{status!r}`,
+  `repr_str`). In the batch: the whole table loaded, the first pending
+  row of the id (else None, and `before_stamp` is not run); then
+  `before_stamp` on the batch (a closure over the `Transaction`, its
+  error rolling everything back); then the stamp: `verdict_ts` is
+  `now.isoformat()` (the reference's `utcnow()`), the note as given (None
+  clears an old one), each side's body hash where its body is given
+  (`a` hashed before `b`); one put. Returns the stamped row.
+- **scan_conflicts.** `find_conflict_candidates(memories, threshold,
+  now)` before any store call (its TypeError and UnicodeEncodeError leave
+  the store untouched), then `upsert_scan`.
+- **split_judgeable.** `is_active` asked left to right with
+  short-circuit, the order kept, the whole input consumed; an error of
+  `is_active` ends it (the reference's raise propagates).
+- **conflicts_pending_count.** `len(pending())`, or 0 and the warning
+  `conflict queue unreadable in <path>` for any error (`except
+  Exception`). The path is the caller's `str(store.path)`, an argument,
+  since a transaction does not carry it.
+
+**Outcome rows.** An error is pinned by its class, and by its text only
+where the text is the product's own: `resolve`'s ValueError and the
+store's refusals (`a conflict needs id`, a NotFoundError's `repr`).
+SQLite's wording and an interpreter's (an OverflowError's message) are
+left out, the same way in `gen_conflicts._outcome` and the Rust tests'
+`outcome`. A SQLite failure, in the listing, in `count_memories` or in a
+write, is named as `sqlite3` names it, by its result code through the
+crate's `store::reads::failure_of` (`_pysqlite_seterror`'s table): `no
+such table` and a busy or full store OperationalError, a corrupt page
+DatabaseError, SQLITE_TOOBIG DataError, a constraint or SQLITE_MISMATCH
+IntegrityError, SQLITE_NOMEM MemoryError. A TEXT cell that is not UTF-8,
+a transaction SQLite ended (`_require_open`) and a later writer's
+minimum (`require_current_writer`) are OperationalError, as the
+reference raises them; a minimum that does not read as a number is
+`store_versions.StoreVersionError`.
+
+**Patterns and platforms.** No regular expression is used; nothing is
+added to the engine's inventory. The stub file reads nothing of the
+machine and holds no stated difference, so it is not gated. The store
+file runs over stores opened as `store_rows_written.jsonl`'s are and has
+its gates and their reasons (Unicode, pydantic-core, POSIX only);
+`conflicts_queue_not_posix` records its gap off unix as class os. The
+Windows flavour's stated gap (Linear ENG-124) does not reach the queue:
+it resolves no path.
+
+#### Stated differences
+
+None. The queue makes the reference's decisions on every input the
+fixtures hold.
+
+#### Reference findings (reproduced, not changed)
+
+- **A NaN similarity read back stops every scan** (T1). A row whose
+  similarity cell is the text `nan` (or a NaN any other way) loads with a
+  NaN similarity; `_replace_all` finds it unequal to itself and puts it
+  again, and SQLite stores the bound NaN as NULL, so the put fails the
+  NOT NULL constraint (IntegrityError) and the whole upsert rolls back:
+  every later `upsert_scan`, and a `resolve` of that row, fails the same
+  way until the cell is changed. Reproduced:
+  `conflicts_queue_store.jsonl`, case `cells`, steps 17 and 18.
+- **A BLOB id cannot be collected** (T1). A row whose id cell is a BLOB
+  loads with the id's `repr`; when collection drops it,
+  `delete_conflict` names no row by that text, NotFoundError rolls the
+  upsert back, and the scan fails until the row is changed. Only a row
+  written past the log holds a BLOB. Reproduced: case `cells`, step 11.
+- **Linear ENG-427** (conflicts-1's detection, T1 through this unit).
+  The clause split at a dot between digits reads "18.x is not supported;
+  20.x is supported." against its inverse as no flip, so
+  `scan_conflicts` files no row for the pair (the dedup proposes it as a
+  duplicate instead). Reproduced: `conflicts_queue.jsonl`'s second `scan`
+  case (`added` 0, no put) and case `lifecycle`'s last step of the store
+  file.
+
+#### Fixtures and tests
+
+`gen_conflicts.generate_queue` writes `conflicts_queue.jsonl` (not
+gated, 53 KB): 95 cases over the recording stub (`gen_conflicts.Stub`: every
+call logged, the batch's entry and its commit or rollback, a failing
+call at a given count, the counts in turn) and the sweep. Each case
+holds the stub's calls in order, the answer or the error, the warnings
+and the table after it where it changed: `load` and `pending` over every
+skip and every raise that goes on; `file_pair` new, queued, judged,
+skipped and raising; `upsert_scan` over refreshes, the detector's `or`,
+unchanged rows at four places and -0.0, NaN, listed key order, every
+resurrection rule (hashes, verdict times with `Z`, naive and
+unparseable, a side outside the snapshot), a naive `updated` and a
+hashed surrogate rolled back, collection with deletes before puts,
+deferral with the second count, repeated ids in the table, the fresh
+pairs and the snapshot (a repeated memory read as its last where a
+stored hash is checked), and the store raising at each call;
+`scan_conflicts` with ENG-427's pair and a naive raise; `resolve` over
+every status refusal, the re-check, the hashes, the note, `before_stamp`
+logging, writing and raising; `split_judgeable`; the pending count; and
+`_judged_content_changed` alone (a repeated memory id among its
+cases). The sweep row draws 1,000 sequences of
+four calls (file, resolve or upsert, each call failing at a drawn op one
+time in eight) over a stub of up to four drawn rows, by count (4,000
+lines) and SHA-256. `gen_conflicts.generate_queue_store` writes
+`conflicts_queue_store.jsonl` (57 KB, four cases, 51 calls, both counts
+in its header): each step's answer, warnings (the store's path written
+`<store>`), clock readings in order, the log rows it appended and the
+table after it, over a queue's life on a store, the store's refusals
+inside a batch, `count_memories` failing (the `memories` table renamed
+away: OperationalError, rolled back), cells written past the log (TEXT,
+INTEGER and BLOB similarities, a BLOB similarity past ASCII skipped, a
+BLOB id and status, `nan`, text that is not UTF-8), and queue calls
+inside one batch the caller holds open (`nested`): a refused second
+pair, a `before_stamp` that writes a memory or a conflict and then
+raises, each taking back only its own call's writes, then a resolve, a
+collection and the pending count, all committed with the caller.
+
+`golden_conflicts_queue` checks every case whole and draws the sweep by
+the generator's rule; `golden_conflicts_queue_store` (unix) replays each
+store case natively through `Batched`, and a `nested` step inside one
+`WritableStore::batch` whose queue calls join it through `Transaction`;
+it fails when the file's cases or calls differ from the header's.
+`conflicts_queue_kills` (27) pins
+the deletes before the puts, an unchanged row not put whatever its listed
+form, a NaN put on every scan, -0.0 and the fourth place unchanged, the
+detector kept unless empty, a stored hash outranking `updated`, a partial
+snapshot collecting nothing with the second count in the warning, a
+repeated memory counted once, `before_stamp` after the re-check, the
+status refused before the batch, a refused row skipped and the listing's
+raise kept, a raise rolling back the stub and a real store (no row, no
+log row), `is_active`'s short-circuit and a repeated memory read as its
+last; and over real stores on every platform, a failing `count_memories`
+and a later writer's minimum (OperationalError), an unreadable minimum
+(StoreVersionError), a failing write by its result code (DataError,
+IntegrityError), a transaction SQLite ended (OperationalError) and a
+corrupt `conflicts` page (DatabaseError) named as the reference names them, queue calls inside an open transaction each
+taking back only their own writes and log rows after a raise, a joined
+put whose row the table refuses and a joined delete of a missing row
+taking back what they wrote, the listing in `created, id` order, a
+collection whose delete finds no row rolled back, and a BLOB similarity
+past ASCII refused. Each of these mutants of the port fails it: the
+puts before the deletes, the detector overwritten, `before_stamp` before
+the re-check, every refused row failing the load, collection on a
+partial snapshot, a NaN taken as unchanged, `updated` read beside a
+stored hash, a repeated memory's first kept, a SQLite failure classed
+OperationalError or `native:sqlite` whatever its code, the queue's batch
+inside a transaction without its savepoint, `ORDER BY` without `created`
+or `id`, the joined delete without `_require_row`, and a BLOB past ASCII
+handed to `float()` as code points. The joined put without its own
+savepoint is no mutant: `Transaction::mutate` runs every mutation under
+a savepoint of its own (`native_step`), which takes back the appended log
+row when the table refuses the row. `conflicts_queue_robustness`
+(4) folds 10,000 queued rows into the stub (against 1,000 within
+`TENFOLD`), 10,000 rows on a real store with nothing written, a scan of
+2,000 memories filing 1,000 pairs (against 200 within six hundred times,
+the reference's quadratic scan) and hostile rows (nested past `repr`'s
+depth, past the float range, a million code points, lone surrogates)
+without a panic. The reference takes 3.1 ms and 34.8 ms for the 1,000
+and 10,000 rows and 0.03 s and 2.06 s for the two scans (CPython
+3.13.13, Apple M-series, a loaded machine).
+
+**Closed from conflicts-1's review.** B1: `conflicts.jsonl` holds the
+similarity `"1.5\x0b"` (read 1.5: `float()` strips a trailing vertical
+tab, which only `conflicts.rs`'s own strip answers). B2:
+`conflicts_robustness::every_threshold_bound` asserts the reference's
+counts over its 40 memories: 780 at NaN, -inf, `f64::MIN_POSITIVE` and
+-0.0, and 0 at infinity, 1.0 and `f64::MAX`.
+
+**Left for later.** The handler that lists and judges pairs
+(h_conflicts-1, with `before_stamp`'s link writes), `memory_admin`'s
+`conflict_scan` and `conflict_verdict` wiring, and the health count's
+caller (handlers, health).
 
 ## The store, read only
 
@@ -28931,6 +29190,18 @@ verification), reproduced with the crate's `repr`.
   `AttributeError` "'list' object has no attribute 'get'"); a falsy `id`,
   `a_id`, `b_id`, in that order: `ValueError` "a conflict needs {name}",
   before the transaction; `conflict_put`. `delete_conflict` (157-162).
+  `list_conflicts` (148-154, `tables::list_conflicts`) over a connection:
+  the fourteen columns of every row `ORDER BY created, id`, each cell as
+  `sqlite3` hands it (`SqlValue`: NULL, INTEGER, REAL, TEXT, BLOB); a TEXT
+  cell that is not UTF-8 is `StoreError::NotUtf8` (Python's
+  OperationalError). `Transaction::put_conflict` and
+  `Transaction::delete_conflict` are the two writers inside an open
+  transaction, as `_transaction()` joins a `batch()`: the record refused
+  before anything as above, then the mutation (after `_require_row` for
+  the delete) under a savepoint of its own (`Transaction::scope`), whose
+  failure takes back only what it wrote. The `WritableStore` methods keep
+  their transactions of their own and share the payload's check
+  (unit conflicts-2).
 - `put_import` / `delete_import` (165-196), `put_quarantine` /
   `delete_quarantine` (199-236): the payload as given, one mutation; the
   deletes `_require_row` first.
@@ -31683,10 +31954,9 @@ What the reference has and this build does not, by area:
 - Of the caller's resolution
   `prime_roots` and `middleware`, the MCP server's wire path (`identity`
   resolves the rest; its admission is `store::caller`).
-- `conflicts.py` past its detection half (conflicts-1, built in
-  `conflicts`): `CONFLICTS_FILENAME`, `ConflictQueue`, `scan_conflicts`,
-  `split_judgeable` and `conflicts_pending_count` (conflicts-2), and the
-  handler that lists and judges pairs (h_conflicts-1).
+- `conflicts.py`'s handler that lists and judges pairs (h_conflicts-1);
+  the detection half (conflicts-1, `conflicts`) and the queue
+  (conflicts-2, `conflicts::queue`) are built.
 - `membership_resolve.py` past rung 2 of the ladder (`_token_now`,
   `_token_read`, `_by_object` and `_rung_two` are built in
   `membership::rung` and the tally and tie wording in

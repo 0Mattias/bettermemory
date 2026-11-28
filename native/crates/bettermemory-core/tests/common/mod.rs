@@ -11,6 +11,7 @@ pub mod bulk;
 pub mod choose;
 pub mod cli_root;
 pub mod commit_anchors;
+pub mod conflicts_queue;
 pub mod created;
 pub mod dedup;
 pub mod docfreq_source;

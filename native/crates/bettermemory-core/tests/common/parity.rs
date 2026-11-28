@@ -383,6 +383,10 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `str.lower`, the tokenizer, `str.strip`, `float`'s digits and spaces
         // and `repr` past ASCII (`gen_conflicts`).
         "conflicts_unicode.jsonl" => &[Unicode],
+        // The queue over stores opened as `store_rows_written.jsonl`'s are:
+        // the index text is the tokenizer's, the records pydantic's
+        // (`gen_conflicts.generate_queue_store`).
+        "conflicts_queue_store.jsonl" => &[Unicode, Pydantic],
         // The tokenizer, `str.strip` and `\w` past ASCII (`gen_search_snippet`).
         "search_snippet_unicode.jsonl" => &[Unicode],
         // `\s` and the tokenizer past ASCII (`gen_review_tables`).

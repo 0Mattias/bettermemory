@@ -424,6 +424,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "supersession_detect_unicode": gen_supersession_detect.generate_unicode,
     "conflicts": gen_conflicts.generate,
     "conflicts_unicode": gen_conflicts.generate_unicode,
+    "conflicts_queue": gen_conflicts.generate_queue,
+    "conflicts_queue_store": gen_conflicts.generate_queue_store,
     "search_snippet": gen_search_snippet.generate,
     "search_snippet_unicode": gen_search_snippet.generate_unicode,
     "search_hit": gen_search_hit.generate,
@@ -855,6 +857,9 @@ UNICODE_GATED = frozenset(
         # `str.lower`, the tokenizer, `str.strip`, `float`'s digits and
         # spaces and `repr` past ASCII (`gen_conflicts`).
         "conflicts_unicode",
+        # The queue's writes over a real store: the tokenizer's index text
+        # and the digest's rows, as `store_rows_written` (`gen_conflicts`).
+        "conflicts_queue_store",
         "search_snippet_unicode",
         # `\s` and the tokenizer past ASCII (`gen_review_tables`).
         "review_tables_unicode",
@@ -1279,6 +1284,7 @@ PYDANTIC_GATED = frozenset(
         "store_returned_posix",
         "store_membership",
         "store_rows_written",
+        "conflicts_queue_store",
         "store_provenance",
         "history_record",
         "store_bulk",
@@ -1607,6 +1613,9 @@ POSIX_ONLY = frozenset(
         "store_rotation",
         "store_rotation_python",
         "store_rows_written",
+        # The queue over stores opened as `store_rows_written`'s are
+        # (`gen_conflicts.generate_queue_store`).
+        "conflicts_queue_store",
         "githead_posix",
         "gitobjects_files_posix",
         "githead_discovery",

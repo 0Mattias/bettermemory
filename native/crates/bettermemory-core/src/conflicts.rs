@@ -9,6 +9,10 @@
 //! `String`s. Both patterns are the engine's [`Regex`] built once from the
 //! reference's own text, called with the method the reference calls. The
 //! clock `find_conflict_candidates` reads is its caller's argument.
+//!
+//! [`queue`] is unit conflicts-2 (reference lines 732-986): the queue over
+//! the store's `conflicts` table, `scan_conflicts`, `split_judgeable` and
+//! `conflicts_pending_count`, re-exported here.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashSet};
@@ -28,6 +32,14 @@ use crate::search_dedup::{pairwise_content_jaccard, raw_content_token_set, Token
 use crate::store::digest::strip_provenance;
 use crate::supersession::{numeric_token_set, SupersessionError};
 use crate::unicode;
+
+pub mod queue;
+
+pub use queue::{
+    conflicts_pending_count, judged_content_changed, memories_by_id, scan_conflicts,
+    split_judgeable, Batched, ConflictQueue, ConflictRows, ConflictWrites, MemoriesById,
+    QueueError, QueueStore, RawRow, Upserted, CONFLICTS_FILENAME,
+};
 
 /// `_VALID_STATUSES`.
 pub const VALID_STATUSES: [&str; 3] = ["pending", "confirmed", "dismissed"];

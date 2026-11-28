@@ -147,20 +147,20 @@ fn two_bodies_of_a_million_code_points_scan() {
 #[test]
 fn every_threshold_bound() {
     let ms = many(40);
-    for th in [
-        f64::NAN,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        f64::MIN_POSITIVE,
-        -0.0,
-        1.0,
-        f64::MAX,
+    // The reference's count of candidates and skipped pairs over these 40
+    // memories (780 pairs): every pair at a NaN, negative, zero or
+    // subnormal threshold, none at 1.0 and above (conflicts-1's review, B2).
+    for (th, want) in [
+        (f64::NAN, 780),
+        (f64::INFINITY, 0),
+        (f64::NEG_INFINITY, 780),
+        (f64::MIN_POSITIVE, 780),
+        (-0.0, 780),
+        (1.0, 0),
+        (f64::MAX, 0),
     ] {
         let (cands, skips, _) = find_dedup_with_skips(&ms, Some(th)).expect("a scan");
-        let admitted = th.is_nan() || th <= 0.0;
-        if admitted {
-            assert_eq!(cands.len() + skips.len(), 40 * 39 / 2, "{th}");
-        }
+        assert_eq!(cands.len() + skips.len(), want, "{th}");
         assert!(cands.windows(2).all(|w| w[0].similarity >= w[1].similarity));
     }
 }

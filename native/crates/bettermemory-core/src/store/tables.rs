@@ -3,18 +3,24 @@
 //! and the table writers (`store_tables.py`: verifications 36-72 and
 //! 111-133, conflicts 137-162, imports 165-196, quarantine 199-236), each
 //! one transaction on a [`WritableStore`] returning what the reference
-//! returns with what the commit wrote. README, "The store's row writers".
+//! returns with what the commit wrote; `list_conflicts` (148-154) over a
+//! connection; and the conflict writers' joined forms on an open
+//! [`Transaction`], as the reference's `_transaction()` joins a `batch()`.
+//! README, "The store's row writers".
 //!
 //! Not ported: `prune_episode_sessions` (chunked, its own unit).
 
-use rusqlite::OptionalExtension;
+use rusqlite::types::ValueRef;
+use rusqlite::{Connection, OptionalExtension};
 
 use super::create::Provider;
 use super::home::{self, dict, not_found, record_refusal, refused, truthy, type_name, Home};
 use super::open::WritableStore;
 use super::tx::{Committed, Transaction};
 use super::write::WriteError;
+use super::{SqlValue, StoreError};
 use crate::datetime::DateTime;
+use crate::log::LogRow;
 use crate::pyvalue::{PyStr, PyValue};
 use crate::records::lax::Arg;
 use crate::records::{Episode, Fields};
@@ -128,6 +134,100 @@ fn require_row(
         Ok(())
     } else {
         Err(not_found(&PyValue::str(key)))
+    }
+}
+
+/// `put_conflict`'s payload: `{"conflict": {c: record.get(c)}}` over
+/// [`CONFLICT_COLUMNS`], a falsy `id`, `a_id` or `b_id` refused
+/// (ValueError) and a record that is not a mapping refused as `.get`
+/// refuses it.
+fn conflict_payload(record: &PyValue) -> Result<PyValue, WriteError> {
+    let PyValue::Dict(items) = record else {
+        return Err(no_attribute(record, "get"));
+    };
+    let get = |c: &str| {
+        let key = PyValue::str(c);
+        items
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map_or(PyValue::None, |(_, v)| v.clone())
+    };
+    let conflict: Vec<(&str, PyValue)> = CONFLICT_COLUMNS.iter().map(|c| (*c, get(c))).collect();
+    for (required, value) in conflict.iter().take(3) {
+        if !truthy(value) {
+            return Err(refused(
+                "ValueError",
+                format!("a conflict needs {required}"),
+            ));
+        }
+    }
+    Ok(dict(vec![("conflict", dict(conflict))]))
+}
+
+/// `Store.list_conflicts()` (`store_tables.py` 148-154): every row's
+/// [`CONFLICT_COLUMNS`] cells in column order, `ORDER BY created, id`,
+/// each as `sqlite3` hands it (NULL, INTEGER, REAL, TEXT, BLOB). A TEXT
+/// cell that is not UTF-8 fails the fetch, as Python's OperationalError
+/// "Could not decode to UTF-8" does ([`StoreError::NotUtf8`]).
+pub fn list_conflicts(conn: &Connection) -> Result<Vec<Vec<SqlValue>>, StoreError> {
+    let sql = format!(
+        "SELECT {} FROM conflicts ORDER BY created, id",
+        CONFLICT_COLUMNS.join(", ")
+    );
+    let mut stmt = conn.prepare(&sql).map_err(StoreError::Sqlite)?;
+    let mut rows = stmt.query([]).map_err(StoreError::Sqlite)?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().map_err(StoreError::Sqlite)? {
+        let mut cells = Vec::with_capacity(CONFLICT_COLUMNS.len());
+        for (i, column) in CONFLICT_COLUMNS.iter().enumerate() {
+            cells.push(match row.get_ref(i).map_err(StoreError::Sqlite)? {
+                ValueRef::Null => SqlValue::Null,
+                ValueRef::Integer(n) => SqlValue::Integer(n),
+                ValueRef::Real(f) => SqlValue::Real(f),
+                ValueRef::Text(t) => SqlValue::Text(
+                    std::str::from_utf8(t)
+                        .map_err(|_| StoreError::NotUtf8 {
+                            table: "conflicts",
+                            column,
+                        })?
+                        .to_owned(),
+                ),
+                ValueRef::Blob(b) => SqlValue::Blob(b.to_vec()),
+            });
+        }
+        out.push(cells);
+    }
+    Ok(out)
+}
+
+impl Transaction<'_> {
+    /// `Store.put_conflict(record, session=)` inside this transaction
+    /// (`_transaction()` joining a `batch()`): the record refused as
+    /// [`WritableStore::put_conflict`] refuses it before anything, then
+    /// `conflict_put` under a savepoint of its own ([`Transaction::scope`]),
+    /// whose failure takes back only what it wrote.
+    pub fn put_conflict(
+        &mut self,
+        record: &PyValue,
+        session: Option<&str>,
+    ) -> Result<LogRow, WriteError> {
+        let payload = conflict_payload(record)?;
+        self.scope(|tx| tx.mutate("conflict_put", &payload, session))
+    }
+
+    /// `Store.delete_conflict(conflict_id, session=)` inside this
+    /// transaction: under a savepoint, NotFoundError for an id with no row
+    /// (`_require_row`), then `conflict_delete`.
+    pub fn delete_conflict(
+        &mut self,
+        conflict_id: &str,
+        session: Option<&str>,
+    ) -> Result<LogRow, WriteError> {
+        let payload = dict(vec![("id", PyValue::str(conflict_id))]);
+        self.scope(|tx| {
+            require_row(tx, "conflicts", "id", conflict_id)?;
+            tx.mutate("conflict_delete", &payload, session)
+        })
     }
 }
 
@@ -380,27 +480,7 @@ impl WritableStore {
         session: Option<&str>,
         provider: &mut dyn Provider,
     ) -> Result<Committed, WriteError> {
-        let PyValue::Dict(items) = record else {
-            return Err(no_attribute(record, "get"));
-        };
-        let get = |c: &str| {
-            let key = PyValue::str(c);
-            items
-                .iter()
-                .find(|(k, _)| *k == key)
-                .map_or(PyValue::None, |(_, v)| v.clone())
-        };
-        let conflict: Vec<(&str, PyValue)> =
-            CONFLICT_COLUMNS.iter().map(|c| (*c, get(c))).collect();
-        for (required, value) in conflict.iter().take(3) {
-            if !truthy(value) {
-                return Err(refused(
-                    "ValueError",
-                    format!("a conflict needs {required}"),
-                ));
-            }
-        }
-        let payload = dict(vec![("conflict", dict(conflict))]);
+        let payload = conflict_payload(record)?;
         one(self, provider, "conflict_put", &payload, session, None)
     }
 

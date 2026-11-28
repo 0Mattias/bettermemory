@@ -171,9 +171,12 @@
 //!   shapes, kinship, context, surface forms), and the detector over the
 //!   active records or a store's digest read best first through a trait;
 //! - [`conflicts`]: corpus-level contradiction candidates: the queue row
-//!   (`ConflictCandidate`, its dict form and its two hashes) and the
+//!   (`ConflictCandidate`, its dict form and its two hashes), the
 //!   pairwise dedup scan with the negation and numeric guards that file a
-//!   disagreement instead of crowning a keeper;
+//!   disagreement instead of crowning a keeper, and the queue over the
+//!   store's `conflicts` table (`conflicts::queue`: load, file, fold a
+//!   scan in, resolve a verdict, split the judgeable rows, count the
+//!   pending ones) through store traits;
 //! - [`records`]: the reference's record models (memory, tombstone,
 //!   episode, origin, actor, link) validated from a payload or a row and
 //!   written back, with pydantic's errors, and the result models
