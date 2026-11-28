@@ -39,7 +39,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `origin_model` | `origin_model.py`'s `Origin` as captured: `CapturedOrigin`, the stored `records::Origin` with `_repo_url_alternates`, `git_indeterminate` and `git_refusal` beside it | `origin_model.jsonl` |
 | `origin_dates` | `origin_dates.py`'s git-asking leaves: `_read_author_timestamps`, `_hashed_seconds`, `_HEAD_PROBES`, `_refused_head`, `_unborn_or_broken`, `_unread_entry`, `_extended_author_timestamps`, `_marked_seconds`, over the `OriginGit` runner and the `DateFiles` leaves; `origin_dates::memo`: `_instant`, `commit_author_timestamps` and `_remember_dates` over the caller's `TimestampsMemo`, `MemoLeaves` and `ShallowHold` | `origin_dates_reads.jsonl`, `origin_dates_memo.jsonl` |
 | `origin_git` | The Git process and repository identity probes in `origin.py`. `OriginRunner` implements `origin_dates::OriginGit` and shares the calling thread’s counts with its other Git readers. |
-| `origin_reach` | Unit origin-3a of `origin.py`: `repo_toplevel`, `repo_toplevel_and_head`, `toplevel_and_head_from_files`, `head_sha`, `commit_reachable` and `_walk_reachable`, over `OriginRunner` and the `Reads` trait (`RepositoryReads` over the ported readers) | `origin_reach.jsonl`, `origin_reach_posix.jsonl` |
+| `origin_reach` | Units origin-3a and origin-3b of `origin.py`: `repo_toplevel`, `repo_toplevel_and_head`, `toplevel_and_head_from_files`, `head_sha`, `commit_reachable` and `_walk_reachable`, over `OriginRunner` and the `Reads` trait (`RepositoryReads` over the ported readers); `origin_reach::walk`: the walk memo (`_WALK_MEMO`, `_WALK_TIMED_OUT`, `_clear_walk_memo`, `_timed_out_walk`, `_keep_timed_out_walk`), `commits_since_anchor` and `_held_anchor` (`WalkReads` adds the walk's signature reads) | `origin_reach.jsonl`, `origin_reach_posix.jsonl`, `origin_reach_walk.jsonl`, `origin_reach_walk_posix.jsonl` |
 | `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d`; XID_Start, XID_Continue and `str.isidentifier` (`unicode::xid`); the names `\N{...}` reads, `getcode` of `unicodedata._ucnhash_CAPI` without named sequences (`unicode::names::lookup`, `stored`; unit claims-6) | `unicode.jsonl`, `unicode_sequences.jsonl`, `unicode_xid.jsonl`, `unicode_names.jsonl` |
 | `use_tokens` | the per-turn use-token bookkeeping of `handlers/_shared.py`: `_drain_expired_use_tokens`, `_emit_expired_use_tokens`, `_advance_turn`, `_event_ts_epoch`, `_scan_settled_use_events`, `_already_recorded_pending_ids` and its alias `_hook_attributed_pending_ids`, `_attach_use_tokens`; the recorder and its log are a trait (`UseLog`) | `use_tokens.jsonl`, `use_tokens_python.jsonl` |
 | `pyre` | the regular expression engine, whose reference is CPython 3.13.13's `re`. Unit 1: `_sre.unicode_tolower`, `sre_upper_unicode` and `_sre.unicode_iscased` (`fold::sre_lower`, `sre_upper`, `sre_iscased`), `re._casefix._EXTRA_CASES` (`extra_cases`), the literal under IGNORECASE as `_compiler._compile` emits it, LOCALE and the ASCII fold refused (`Lit`). Unit pyre-2, `re` as it reads a pattern: `re._parser`'s tree (`SubPattern` and its items) and `str(tree)`, the comparison of two items as Python compares them, `State` (`groups`, `opengroup`, `closegroup`, `checkgroup`, `checklookbehindgroup`), the names of `re`'s errors and of what the engine refuses, the `Tokenizer` (`match`, `get`, `getwhile`, `getuntil`, `tell`, `seek`, `error`), `_escape`, `_class_escape`, `_uniq`, the sets and flat sequences `_parse` reads (`parse_flat`), `re.escape`. Unit pyre-3a: the repeats of `_parse` with their errors (`parse::repeat`) and `SubPattern.getwidth` (`SubPattern::getwidth`). Unit pyre-3b: `re._parser.parse` (`parse::parse`) with `_parse_sub` and its rewrites, the groups, lookarounds and inline flags of `_parse`, the unpacking of plain groups, `Tokenizer.checkgroupname`, `_parse_flags` and `fix_flags`; `parse_flat` reads through it. Unit pyre-3c: the matcher's subset over the finished tree (`parse::refusal`, wired at the end of `parse`), with its nesting bound `MATCH_DEPTH`. Unit pyre-4a: `re._compiler._optimize_charset` with `_mk_bitmap` and `_bytes_to_codes` (`charset::optimize_charset`), the opcode the `IN` branch of `_compile` chooses, with the engine's refusals (`compile_class`), and `_sre`'s test of one code point against a class (`Charset::contains`). Unit pyre-4b: a parsed tree lowered to the engine's arena of nodes threaded by `next` (`lower::lower`), `_compiler._simple` (`simple`) and `_combine_flags` (`combine_flags`), the classing of each repeat as REPEAT_ONE, MIN_REPEAT_ONE or REPEAT with MAX_UNTIL or MIN_UNTIL, the lookbehind errors of `_compile`, the arena cap. Unit pyre-5a: a lowered program run as `_sre` answers `Pattern.match`, `fullmatch` and `search` with `pos` and `endpos` (`exec::exec`), with the step count, a budget and fallible growth. Unit pyre-5b: `_sre`'s ASSERT and ASSERT_NOT (`Op::Look`, `Op::LookEnd`) run in `exec` as sub-attempts on the same stack; `supports` refuses nothing. Unit pyre-6a: `re.compile` of a `str` or bytes pattern (`regex::Regex::new`, `new_bytes`), `Pattern.pattern`, `flags`, `groups`, `groupindex`, `Pattern.match`, `fullmatch`, `search`, `finditer` and `findall` with `pos` and `endpos` and `_sre`'s `must_advance` (`advance`), `re.Match` (`Match`). Unit pyre-6b: `Pattern.sub`, `subn` and `split` with a count, a literal or a function replacement, a literal holding a backslash refused as a template (`replace::ReplaceError::Template`). Unit pyre-7 (tests only): every pattern of the reference the engine runs, built from its own text and flags, against `re` over texts that tell its mutants apart, the four data-built families, the tripwire on the reference's sites. Unit pyre-9: the call-owned memo (`memo::Memo`, `Setting`, `Way`, `Stats`, `last_call`, `premises`; `exec::exec_with`), failure bits per node and position, runs and failed ends per repeat, the steps of a whole call | `pyre.jsonl`, `pyre_unicode.jsonl`, `pyre_python.jsonl`, `pyre_lower.jsonl`, `pyre_exec.jsonl`, `pyre_api.jsonl`, `pyre_inventory.jsonl`, `pyre_memo.jsonl` |
@@ -2467,7 +2467,8 @@ No regular expression is matched here: the anchors come from
   search uses: it calls `resolve_hit_drift` with the pass's directory
   and located root as `CountReads::at`, the caller's `Unwalked`, a walk
   closure over the pass's walked map (`origin.commits_since_anchor`,
-  unit origin-3b's) and the pass's lazy `timestamps`. The fixture
+  built by origin-3b in `origin_reach::walk`; the binding is a later
+  unit's) and the pass's lazy `timestamps`. The fixture
   scripts the resolution through the same trait, as the generator
   patches `resolve_hit_drift`.
 - `DriftReads` extends `HistoryReads` with the reads this half adds. Its
@@ -2557,8 +2558,9 @@ No regular expression is matched here: the anchors come from
 ### Left for later units
 
 `_stamp_hit_drift` and `ResponseBuilder.attach_commit_drift_counts`
-(response-9), `origin.commits_since_anchor` (origin-3b, the walk
-closure), and the search and show wiring.
+(response-9), binding the pass's walk closure to
+`origin.commits_since_anchor` (built by origin-3b in
+`origin_reach::walk`), and the search and show wiring.
 
 ## The commit-drift bases and the status leaves of `verify.py` (`verify_basis.py`, `verify::status`)
 
@@ -2607,8 +2609,9 @@ reference's re-exports of `Anchoring`, `PathDriftReport`,
   probes are compared, so a naive stamp over an empty history answers 0,
   and a mixed list raises or not as the reference's does.
 - `origin.repo_toplevel_and_head` and `origin.commits_since_anchor` are
-  not built (origin-3, origin-4); `_count_since_verify` takes them as the
-  trait `AnchorWalk`. The walk notes a give-up on the `Unwalked` it is
+  built (origin-3a in `origin_reach`, origin-3b in `origin_reach::walk`);
+  `_count_since_verify` takes them as the trait `AnchorWalk`, and binding
+  that trait to them, with the process's walk memo, is a later unit's. The walk notes a give-up on the `Unwalked` it is
   handed (`&mut`), and the count taken before the walk is read with
   `given_up_since` after it, as the reference reads its thread-local.
   The whole-history dates (`commit_author_timestamps`, built in
@@ -12674,6 +12677,8 @@ that Unicode too.
 | `golden_origin_git_posix`: `normal_repositories` | `origin_git_posix.jsonl` | iii (platform) |
 | `golden_origin_reach`: `scripted_reads`; `origin_reach_kills` (10), `origin_reach_robustness` (3) | `origin_reach.jsonl` (the last two none) | i |
 | `golden_origin_reach_posix`: `local_repositories` (unix; `origin_reach_not_posix` records the gap off it as class os) | `origin_reach_posix.jsonl` | i |
+| `golden_origin_reach_walk`: `every_sequence`, `sweep_by_count_and_digest`, `walk_argv_is_the_reference_s`; `origin_reach_walk_kills` (10), `origin_reach_walk_robustness` (4) | `origin_reach_walk.jsonl` (the last two none) | i |
+| `golden_origin_reach_walk_posix`: `walks_in_local_repositories` (unix; `origin_reach_walk_not_posix` records the gap off it as class os and pins the Windows flavour's decline) | `origin_reach_walk_posix.jsonl` | i |
 | `golden_origin_dates_reads`: `every_row`; `origin_dates_kills` (7), `origin_dates_robustness` (3) | `origin_dates_reads.jsonl` (the last two none) | i |
 | `golden_origin_dates_memo`: `every_row`; `origin_dates_memo_kills` (7), `origin_dates_memo_robustness` (2) | `origin_dates_memo.jsonl` (the last two none) | i |
 | `golden_origin_history_located`: `origin_history_located_every_query`, `origin_history_located_modes_every_query` (unix; `golden_origin_history_located_not_posix` records the gap off it as class os); `origin_history_located_kills` (15), `origin_history_located_robustness` (7) | `origin_history_located.jsonl`, `origin_history_located_modes.jsonl` (the last two none) | i |
@@ -22901,7 +22906,7 @@ built elsewhere (`origin_git`, `origin_match`, `origin_cache`) or left:
 | unit | functions (reference lines) | needs from the machine | status |
 | --- | --- | --- | --- |
 | origin-3a | `repo_toplevel` (1046-1065), `repo_toplevel_and_head` (1068-1100), `toplevel_and_head_from_files` (1103-1149), `head_sha` (1152-1162), `commit_reachable` (1165-1229), `_walk_reachable` (1507-1588) | git through `origin_git::OriginRunner`; discovery, HEAD, the repository's and the machine's config, `_spelled_as_git`, `Path.resolve` and the shallow cuts through `origin_reach::Reads` | built: `origin_reach` |
-| origin-3b | the walk memo (`_WALK_MEMO_CAP` to `_keep_timed_out_walk`, 1230-1336), `commits_since_anchor` (1342-1484), `_held_anchor` (1487-1504) | the walk of 3a, `walk_files_signature`, the clock | not built |
+| origin-3b | the walk memo (its comment, `_WALK_MEMO_CAP` to `_keep_timed_out_walk`, 1223-1336), `commits_since_anchor` (1342-1484), `_held_anchor` (1487-1504) | the walk of 3a, `walk_files_signature`, `directories_held`, the monotonic clock through `origin_reach::Reads` | built: `origin_reach::walk` |
 | origin-4 | `resolve_repo_pathspecs` (1591-1686) | 3a's `repo_toplevel`, `relative_to_root` | not built |
 | origin-5 | `MAX_PATCH_STREAM_COMMITS`, `commit_patch_stream` (1689-1860) | git, `_dequote_patch_headers` | not built |
 | origin-1 | `capture`, `_resolved`, `capture_caller` and their cache wiring (120-500) | every probe above, the cache of `origin_cache` | not built |
@@ -22982,11 +22987,11 @@ the reference's `cwd is None`.
   gap (ENG-124), recorded in `origin_reach_not_posix` (class os).
 
 **Left for later units.** The walk memo and counting through a timed-out
-walk (`timed_out`, the commits listed alone) are origin-3b's; a caller that
-skips this walk's boundary or cut test would count where the reference
-falls back to the dates. Wiring `response_history`'s `HistoryReads`
-(`files_pair`, `git_pair`) and `verify_basis` to these functions is a later
-unit's.
+walk (`timed_out`, the commits listed alone) are built by origin-3b (below);
+a caller that skips this walk's boundary or cut test would count where the
+reference falls back to the dates. Wiring `response_history`'s
+`HistoryReads` (`files_pair`, `git_pair`) and `verify_basis` to these
+functions is a later unit's.
 
 **Fixtures.** `gen_origin_reach.py` writes `origin_reach.jsonl` (not gated:
 103 rows of scripted git replies and scripted file reads, `printed_path`
@@ -23011,6 +23016,208 @@ folder and answers None; the generator refuses a temporary directory with a
 `origin_reach_kills` and `origin_reach_robustness` hold the rest, among
 them a root ending in a CR under the Windows flavour and
 `RepositoryReads`' root spelling with the darwin flag set and clear.
+
+### Unit origin-3b, built (`origin_reach::walk`)
+
+`origin_reach::walk` is unit origin-3b of `origin.py` (line numbers at
+v9's 59ab7955, 1,860 lines): the walk memo (1223-1336),
+`commits_since_anchor` (1342-1484) and `_held_anchor` (1487-1504), in 560
+lines of Rust source with 36 more in `origin_reach.rs` (the module line,
+its re-exports and three `Reads` methods).
+
+**Outputs and their tiers.** No value of this unit is stored, signed,
+hashed or written to a file, and no text of it reaches the model: no T1
+value and no T2 text.
+
+- T3: `commits_since_anchor`'s answer (the walk: its commits, the paths
+  each touched, `listed`, `timed_out`; or None), the five tallies it moves
+  on the runner, the walks it gives up on and why the last was
+  (`Unwalked`), and what it leaves in the caller's pass (`Walked`). The
+  count of commits reaches tool answers (the commit-drift numbers of
+  search and show) as data, so it is compared whole.
+- T3: `_held_anchor`'s answer (ERROR, TIMEOUT or None).
+- T3: the two memos (which key holds what, when an entry expires, what a
+  replay counts): process state, compared through the answers and
+  tallies, and in the fixtures through each table's keys in order.
+- T3, outcome rows: the real-repository fixture records no text git
+  writes; a failure is pinned by its tallies and the walks given up on.
+
+**What each function reproduces.**
+
+- `WalkMemo`: `_WALK_MEMO` and `_WALK_TIMED_OUT` behind one lock, each
+  an `OrderedDict` as a hash map from the key to its entry and its place
+  (a running number) beside the keys by place, oldest first, capped at
+  `WALK_MEMO_CAP` (128). `recall` is `_WALK_MEMO.get` with `move_to_end`
+  on a hit; `store` is `_WALK_MEMO[key] = walk` (a key already held keeps
+  its place and takes the new walk) and then `popitem(last=False)` past
+  the cap.
+  `recall_timed_out` is `_timed_out_walk`'s table half: the clock is read
+  only where the key is held, an entry is kept while `0.0 <= now - stamp
+  < 60.0` and moved to the end, and an entry outside that window (a clock
+  gone back, NaN) is deleted. `keep_timed_out` is `_keep_timed_out_walk`'s
+  table half: set, moved to the end, the oldest evicted past the cap.
+  `walk_memo()` is the process's one memo, which registers
+  `_clear_walk_memo` (`clear_walk_memo`) with `caches` under
+  `origin._clear_walk_memo` on first use.
+- `commits_since_anchor(memo, runner, reads, unwalked, cwd, anchor,
+  (toplevel, head), walked)`: the reference's branches in its order. None
+  for no `cwd` or an anchor `is_full_commit_sha` refuses; both root and
+  head from `repo_toplevel_and_head` when either is missing (a given head
+  is dropped with a missing root); the signature read with the directories
+  held (None, with nothing held, for a root no file name holds); the key
+  `(str(toplevel), anchor, head, signature)` only where the signature is
+  not None; then the memo, the timed-out memo (a kept walk
+  counts a timeout again, a kept unread one counts a timeout and gives the
+  walk up again), the pass (a walk that timed out counts a timeout, one not
+  listed a failure, an unread one a timeout or a failure by its kind and
+  gives the walk up again, True a failure, False nothing); then the walk
+  with names. Where it answers None with the failed tally moved, the
+  commits listed alone, marked `timed_out` where the names met their
+  timeout; where that answers None too, TIMEOUT where the listing timed
+  out, else `_held_anchor` where it failed; a reason given up for is set
+  in the pass, and kept a minute where either walk timed out, the call is
+  keyed and the signature and directories read as before. A walk that is
+  unkeyed or not listed is set in the pass, and kept a minute where it
+  timed out and is keyed (`_keep_timed_out_walk` keeps nothing under no
+  key, so an unkeyed walk is never kept); a listed keyed walk is stored
+  only where the signature reads the same again and `directories_held`
+  holds. The walk is an `Arc`: the memo, the pass and
+  the caller share one, as the reference returns the stored object.
+- `held_anchor`: `git cat-file -e <anchor>^{commit}` through
+  `OriginRunner::result` with a timeout of 5.0; no result is
+  `unanswered(before, now, named=True)`; an exit above 0 is None; 0 or a
+  signal (negative) is ERROR.
+- Every count again goes through `OriginGit::note_failed` and
+  `note_timed_out`, which count nothing while the runner holds a deferred
+  error, so that error stays for `take_error` as `origin_git` keeps it.
+  The unit's own git call is `runner.result` (in `held_anchor`);
+  `runner.output` runs in origin-3a's `walk_reachable` and
+  `repo_toplevel_and_head`, which it calls. Their errors pass out as
+  `Error::Git`, where the reference raises.
+
+**Decisions.**
+
+- The memo is an argument, not a static read inside the logic: the
+  process's one (`walk_memo()`) or a test's own, so the golden rows and
+  the eight-thread test each start from an empty memo.
+- `Reads` gains three methods at the end, each declining
+  (`Error::NotPorted`) unless implemented: `walk_files(root, held)`
+  (`walk_files_signature`), `directories_held` and `monotonic`, the last
+  two answering a `Result` so that a `Reads` without them declines where
+  the call reads them rather than keeping nothing or serving nothing; a
+  clock that declines leaves a kept entry in place. `RepositoryReads`
+  implements the last two (`facts::directories_held`
+  over the rule's file system, and its clock, which is `time.monotonic`
+  for `machine_config_reads` too). It holds no index memo and no
+  GIT_INDEX_FILE flag, and adding fields to it would change origin-3a's
+  test constructions, so `WalkReads` wraps a `RepositoryReads` with the
+  index memo and that flag and implements `walk_files` over
+  `origin_gitfiles::walk::walk_files_signature` with the same config memo.
+- `toplevel` is the text `str(toplevel)`, encoded once for git and the
+  reads as the runner encodes a path. A root no file name can hold (a lone
+  surrogate on POSIX) has no bytes: its signature is None with nothing
+  held, as `walk_files_signature` answers where no `.git` entry is found,
+  so the call is unkeyed, the pass is read, an anchor at the head answers
+  the empty walk (set in the pass), and only a walk that runs git there
+  answers `Error::Git(UnicodeEncode)`, where the reference's spawn raises
+  UnicodeEncodeError.
+- `WalkKey` compares the signature by `WalkFiles` equality, the tuple
+  equality of the reference's key, and hashes its three texts
+  (`WalkFiles` has no hash; keys that differ only in the signature share
+  one, which `==` settles). A look-up hashes the key once and compares it
+  only with the entries of its hash, as a dict does, so a call costs the
+  same at any count and grows with the root's length once, not once an
+  entry. Measured in release on a loaded machine, a memo hit on the
+  newest of 128 keys under one root of 4,096 characters takes about 9 us
+  (the whole call about 18 us), most of it hashing and comparing the
+  root.
+- No regular expression is read by these functions.
+- Under the Windows flavour `walk_files_signature` declines (ENG-124), so
+  `commits_since_anchor` answers `Error::NotPorted` before the walk runs
+  where the reference keys and walks: before any git runs where the
+  caller passes both the root and the head; where it passes neither or
+  only one, `repo_toplevel_and_head` runs first, with `git rev-parse
+  --show-toplevel HEAD` where the files do not settle the root (or
+  origin-3a's resolve declines there). GIT_INDEX_FILE set answers None
+  first, as the reference does. The gap is recorded in
+  `origin_reach_walk_not_posix` (class os), which also pins the decline.
+
+#### Stated differences
+
+None. On every input the fixtures hold, the port answers as the reference.
+
+**Reference behaviour reproduced and reported.** A walk given up as ERROR
+after its names timed out is kept a minute and served again as one
+timeout (failed and timed-out tallies both up one), while the call that
+met it moved the failed tally by two and the timed-out tally by one; the
+same walk replayed from the pass counts one failure and no timeout, and a
+None after a names timeout replays from the pass as a failure, not a
+timeout. A caller that reads whether every failure was a timeout
+(`_response._DriftPass`) judges the replay otherwise than the call. Rows:
+`origin_reach_walk.jsonl`, "names timed out, listing failed, anchor held"
+and "names timed out, listing not ancestor". A timeout while finding the
+root and head (ENG-353) reads as no repository here too:
+`commits_since_anchor` answers None (the dates) at reference lines
+1405-1406, `if located is None: return None`, after the
+`repo_toplevel_and_head` call at line 1404, with the timed-out tally moved
+and no walk given up; row "root lookup timed out".
+
+**Left for later units.** Binding `verify_basis`'s `commits_since_anchor`
+seam, the response pass's walk closure and `health_stats` to this
+function, with the process's memo, is their units'. `resolve_repo_pathspecs`
+(origin-4), `commit_patch_stream` (origin-5) and `capture` (origin-1) are
+not built.
+
+**Fixtures.** `gen_origin_reach.generate_walk` writes
+`origin_reach_walk.jsonl` (not gated, 47 KB): a header with the step
+defaults and both walk argvs whole, 52 call sequences over scripted git
+replies, a scripted signature (`sig` before the walk, `after` for the
+reads after it), `held`, the cuts, the root and head leaves of
+`origin_reach.jsonl` and a clock reading each step's `now`; each step
+records the answer, the five tallies, the walks given up on, every git
+call (timeout, working directory, argv), every in-process read in order
+and both memos. They cover every branch above, the 60-second edge (59.999
+kept, 60.0 dropped, a clock gone back dropped), the replays, the root and
+head read from the files and from git, a refused checkout, `_held_anchor`
+on exits 0, 1, 128 and -9, a timeout, a missing git and an OSError, a
+root holding a lone surrogate (`toplevel_cps`; the scripted signature
+answers None for it unread, as the real one does), and both memos past
+their caps (`fill` steps of 128 and 129 keys, the anchors
+numbered in 40 hex digits). A last row pins 2,000 seeded call sequences
+(6,830 steps) by count and SHA-256: splitmix64 draws each step's anchor,
+head, pass and clock shift, then every git reply, signature, held and
+cuts read as the reference asks for it, and the Rust test draws the same.
+The root is `top`, `wt`, `top~r` or `top` with a lone surrogate (read as
+POSIX's, whatever the host), no path with a separator, so the file is the
+same on every host. `gen_origin_reach.generate_walk_posix` writes
+`origin_reach_walk_posix.jsonl` (POSIX_ONLY, 11 KB): 9 scenarios over
+repositories made in a temporary directory as `origin_reach_posix.jsonl`
+makes them (a linear history, a moved head, a `.gitmodules` written, a
+merge, a rebased anchor, a shallow file, the directories moved, the
+clock), 36 calls with the root and head read from the files, the memos
+and tallies running on across scenarios, and the faults git cannot be
+made to meet scripted on the walk (its names or both walks timing out or
+exiting 128, a file created and removed in the root folder, whose times
+a step sets to 2001 first, and the index's times set to 2001). The clock
+reads a call's fifth field (0 where it has none) through `WalkReads` and
+`RepositoryReads`: a walk kept at 100 is served at 159.999 and walked
+again at 160, and one kept at 200 is walked again at 199.5. Each call
+records its answer, the git processes it started, the tallies, the walks
+given up on and both memos' lengths. `golden_origin_reach_walk` and
+`golden_origin_reach_walk_posix` (unix) compare every row;
+`origin_reach_walk_kills` (13) holds a key without the signature, a walk
+stored after the files or directories moved, 60.0 kept, a clock gone back
+kept, a replay not counted, exit 128 read as held, a signal read as absent,
+the listing alone where the names were read, an LRU that evicts the
+newest, two keys differing only in their signature taken for one, a root
+no file name holds raising before the pass or where no git runs, and the
+process's memo not registered with `caches` under
+`origin._clear_walk_memo` or cleared by halves;
+`origin_reach_walk_robustness` (5) holds 100,000 calls over 1,000 keys
+within `TENFOLD` of 10,000, eight threads filling both tables past their
+caps, hostile anchors, roots, clocks and exit codes, the Windows flavour's
+decline, and a `Reads` without `directories_held` or `monotonic`
+declining where the call reads them.
 
 ## HEAD and refs from a git directory's files
 
@@ -31453,8 +31660,9 @@ What the reference has and this build does not, by area:
 - Checkout capture still requires the orchestration in `origin.py`;
   `origin_match` holds its caller matching, `origin_git` its Git probes and
   `origin_cache` its signature and cache, `origin_reach` the root, head
-  and reachable-walk reads (origin-3a), while registration and lookup
-  wiring stay with the capture's consumers.
+  and reachable-walk reads (origin-3a) and `origin_reach::walk` the walk
+  since an anchor with its memo (origin-3b), while registration and
+  lookup wiring stay with the capture's consumers.
   Other work remains in `location.py` past its view continuity, the
   capture's filesystem leaves and its capture signature and cache
   (`continuity`, `view_state`, their helpers and unit 1's leaves in
@@ -31515,8 +31723,9 @@ What the reference has and this build does not, by area:
   narrowing (`_weak_tier_evaluation`, `_claim_legs`, `_resolve_reachable`,
   `_resolve_with_claims`, `resolve_commit_drift`), and its anchor and
   drift-count readers (`verify::anchors`, `verify::count`).
-  `verify::hit` supplies the per-hit drift result. The response pass still
-  needs the walk (`commits_since_anchor`, origin-3b).
+  `verify::hit` supplies the per-hit drift result. The response pass's
+  walk closure still has to be bound to `commits_since_anchor` (built in
+  `origin_reach::walk`).
   Of the response layer, `_response_links.py`, the drift memo,
   `check_reason`, `verdict_and_reason`, the trust appliers,
   the per-memory reads in `verdict.py`, `verdict.with_objection`, `render_hit`,

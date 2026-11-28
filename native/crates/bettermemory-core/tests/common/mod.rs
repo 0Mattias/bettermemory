@@ -42,6 +42,7 @@ pub mod opened;
 pub mod origin_dates;
 pub mod origin_dates_memo;
 pub mod origin_history_located;
+pub mod origin_reach_walk;
 pub mod parity;
 pub mod provenance;
 pub mod recall_prompt;

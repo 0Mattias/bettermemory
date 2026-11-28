@@ -11,7 +11,9 @@
 //!   may move the root or kill the process;
 //! - [`head_sha`] (1152-1162) and [`commit_reachable`] (1165-1229);
 //! - [`walk_reachable`] (1507-1588): `_walk_reachable`, the commits from
-//!   an anchor to a head and the paths each one changed.
+//!   an anchor to a head and the paths each one changed;
+//! - [`walk`] (unit origin-3b): the walk memo, [`commits_since_anchor`]
+//!   (1342-1484) and [`held_anchor`] (1487-1504).
 //!
 //! Git runs through [`OriginRunner`] (origin's `_git` and `_git_result`,
 //! with their tallies and log lines). The files are read through
@@ -34,14 +36,21 @@ use crate::githead::GitDir;
 use crate::gitsystem::answers;
 use crate::origin_dates::{is_full_commit_sha, OriginGit, WALK_MARK};
 use crate::origin_git::{self, Completed, Level, Logger, OriginRunner, Output};
-use crate::origin_gitfiles::facts::machine_config_dies;
+use crate::origin_gitfiles::facts::{directories_held, machine_config_dies, Held};
 use crate::origin_gitfiles::machine::spelled_as_git;
 use crate::origin_gitfiles::root::{config_moves_worktree, ConfigMemo};
+use crate::origin_gitfiles::walk::WalkFiles;
 use crate::origin_gitfiles::{unquote_c_path, Raised};
 use crate::origin_history::{cuts, Cut, ReachableWalk, AS_STORED_DIFF};
 use crate::pyvalue::PyStr;
 use crate::unicode::{cps, lower};
 use std::collections::{BTreeMap, HashSet};
+
+pub mod walk;
+pub use walk::{
+    clear_walk_memo, commits_since_anchor, held_anchor, walk_memo, Kept, WalkKey, WalkMemo,
+    WalkReads,
+};
 
 /// What the reference lets out of these functions, or where the port
 /// declines.
@@ -83,6 +92,23 @@ pub trait Reads {
     fn resolve(&mut self, path: &[u8]) -> Result<Vec<u8>, Unresolved>;
     /// `origin_history.cuts(toplevel)`.
     fn cuts(&mut self, toplevel: &[u8]) -> Result<Option<Cut>, Error>;
+    /// `walk_files_signature(root, directories=held)`, `held` None for
+    /// the read without it. Declines unless implemented.
+    fn walk_files(
+        &mut self,
+        _root: &[u8],
+        _held: Option<&mut Held>,
+    ) -> Result<Option<WalkFiles>, Error> {
+        Err(Error::NotPorted)
+    }
+    /// `directories_held(held)`. Declines unless implemented.
+    fn directories_held(&mut self, _held: &Held) -> Result<bool, Error> {
+        Err(Error::NotPorted)
+    }
+    /// `time.monotonic()`. Declines unless implemented.
+    fn monotonic(&mut self) -> Result<f64, Error> {
+        Err(Error::NotPorted)
+    }
 }
 
 /// [`Reads`] over the ported readers: discovery through the membership
@@ -96,7 +122,8 @@ pub struct RepositoryReads<'a, F: Fs, A: Answers + ?Sized, R: Records + ?Sized, 
     pub config_memo: &'a mut ConfigMemo,
     pub machine_reads: &'a mut StampedReads,
     pub inputs: &'a Inputs<'a>,
-    /// The clock `machine_config_reads` reads before a first read.
+    /// `time.monotonic`: the clock `machine_config_reads` reads before a
+    /// first read, and the walk memo's.
     pub clock: &'a mut dyn FnMut() -> f64,
     /// `sys.platform == "darwin"`, which `_spelled_as_git` reads.
     pub darwin: bool,
@@ -146,6 +173,12 @@ impl<F: Fs, A: Answers + ?Sized, R: Records + ?Sized, O: Owners + ?Sized> Reads
             Err(Failure::NotPorted) => Err(Error::NotPorted),
             Err(failure) => Err(Error::Files(failure)),
         }
+    }
+    fn directories_held(&mut self, held: &Held) -> Result<bool, Error> {
+        Ok(directories_held(self.rule.ctx.fs, held))
+    }
+    fn monotonic(&mut self) -> Result<f64, Error> {
+        Ok((self.clock)())
     }
 }
 
