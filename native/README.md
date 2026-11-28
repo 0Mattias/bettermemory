@@ -75,7 +75,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `response_render` | `_response.py`'s `ResponseBuilder.render_hit`, `render_show`, `_SHOW_DEFAULTS`, `_NATIVE_SEP`, `_slashed`, `_path_states`, `_compact_origin`, `_grouped_links` | `response_render.jsonl` |
 | `response_reason`, `response_trust` | `_response.py`'s `check_reason` (`_named`, `_REASON_PATHS`, `_rejection_note`), `_UNTRUSTED_PROVENANCE`, `_untrusted`, `verdict_and_reason`, `_row_reason`, `_claim_at_index`, `TRUST_UNAVAILABLE_RECOMMENDATION`, `ResponseBuilder.attach_provenance`, `apply_trust_unavailable`, `apply_trust`; `verdict.py`'s `_OBJECTED` and `with_objection` | `response_reason.jsonl` |
 | `verdict` | `verdict.py`'s `MemoryVerdict`, `UnresolvedVerdict`, `resolve_verdicts`, `memoised_verdicts`, `memory_verdict`, `_open_legs`, `_verdict` (the commit legs a trait, the path drift read and `unchecked_verdict` closures) | `verdict.jsonl` |
-| `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms; `_query_biased_snippet` with its memos (`snippet`), `_memory_tokens`, `seed_memory_tokens` and their LRU (`token_cache`), `top_hit_leads_runner_up`; unit search-1b (`hit`): `_build_hit`, `_claim_anchors` | `search.jsonl`, `search_ranker.jsonl`, `search_snippet.jsonl`, `search_snippet_unicode.jsonl`, `search_hit.jsonl` |
+| `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms; `_query_biased_snippet` with its memos (`snippet`), `_memory_tokens`, `seed_memory_tokens` and their LRU (`token_cache`), `top_hit_leads_runner_up`; unit search-1b (`hit`): `_build_hit`, `_claim_anchors`; units search-2a and search-2b (`outer`): `search` and `rank` around the ranker, `_filter_candidates`, `candidate_admitted`, `_browse_hits`, `_ranked_hits`, `_query_tokens`, the leg sets, `_record_matched_legs`, `_matched_leg` | `search.jsonl`, `search_ranker.jsonl`, `search_snippet.jsonl`, `search_snippet_unicode.jsonl`, `search_hit.jsonl`, `search_outer.jsonl` |
 | `search_dedup` | `search_dedup` whole: `_raw_content_token_set`, `_content_token_set`, `raw_content_tokens` and its LRU (a value the caller holds), `_pairwise_content_jaccard`, `similarity_bound`, `find_similar`, `find_similar_tombstones`, `find_similar_in` and `find_similar_tombstones_in` over a store trait, `models.snippet_for` | `search_dedup.jsonl`, `search_dedup_unicode.jsonl` |
 | `supersession` | units supersession-1a and 1b of `supersession.py`: `CHANGE_CUES`, `_CUE_RE` (`cue_pattern`), the other patterns, `_VALUE_PREPS`, `_CUE_TOKENS`, the claim and floor constants, `SupersessionMatch` (`note`, `detector`), `SupersessionReport`, `change_cues`, `_word_tokens` and its cache, `anchored_values`, `_proper_nouns`, `value_tokens`, `anchor_tokens`, `_numeric_token_set`, `_numeric_shape`, `values_are_kin`, `_content_stream`, `_context`, `_surface_forms`, `_surface_form`; `claim_sized` and `_strip_provenance` re-exported from `store::digest`; the detector: `_one_claim_replaced`, `_floor`, `_SCORE_BATCH`, `detect_supersession` (with `_claims_among` and `_detect`), `detect_supersession_in` (with `_best_first` and its heap) over the `SupersessionStore` trait, `_rule` | `supersession_features.jsonl`, `supersession_features_unicode.jsonl`, `supersession_detect.jsonl`, `supersession_detect_unicode.jsonl` |
 | `conflicts` | unit conflicts-1 of `conflicts.py`: `_VALID_STATUSES`, `_body_hash`, `_pair_id`, `ConflictCandidate` (`to_dict`, `from_dict`), `DedupCandidate`, `PolaritySkippedPair`, `ConflictingPair`, `_pick_keeper`, `_find_dedup_with_skips`, `_NEGATION_MARKERS`, `_has_negation`, `_numeric_divergence`, `_clause_polarity`, `_body_signals`, `_polarity_flip`, `_conflict_signal`, `_polarity_skip`, `_find_dedup_jaccard`, `skip_to_candidate`, `find_conflict_candidates` (the clock an argument); unit conflicts-2 (`conflicts::queue`): `CONFLICTS_FILENAME`, `ConflictQueue` (`load`, `pending`, `file_pair`, `upsert_scan`, `_judged_content_changed`, `resolve`, `_replace_all`) over the store's traits (`ConflictRows`, `ConflictWrites`, `QueueStore`; the writable store, its transaction and `Batched`), `scan_conflicts`, `split_judgeable`, `conflicts_pending_count` (the clock, the warning sink and `before_stamp` arguments) | `conflicts.jsonl`, `conflicts_unicode.jsonl`, `conflicts_queue.jsonl`, `conflicts_queue_store.jsonl` |
@@ -5357,8 +5357,9 @@ reference's token cache); `Corpus::search` ranks one query with
 life, `rrf_k`, the lane and rescue switches, `allow_empty_query`, scope and
 excluded-scope filters, a corpus-stats provider callback). The reference's
 admission, actor filters, claim anchoring, `hydrate`, `matched_leg_out` and
-each hit's snippet and path-drift report need the store or the filesystem
-and are not here: the store unit adds them around `Corpus::search`.
+each hit's snippet and path-drift report are `search::outer`'s ("The outer
+search"), around `Corpus::search_legs`, which is `Corpus::search` naming
+the ids each leg scored.
 
 Scores are bit-identical to the reference: the same operations in the same
 order, `f64` throughout, sums accumulated in the reference's order. Three
@@ -5532,8 +5533,8 @@ past `_SNIPPET_SCAN_CHARS`).
   once with every id in order (an id twice is asked twice), then each
   record's anchor is asked with its origin's `worktree_root`, None only
   where the record has no origin or the origin has none.
-- **Left for search-2.** The outer `search()` with `hydrate`, the
-  anchoring's prime and `matched_leg_out`.
+- **Left for search-2** (built: "The outer search" below). The outer
+  `search()` with `hydrate`, the anchoring's prime and `matched_leg_out`.
 
 Fixtures: `tests/contract/gen_search_hit.py` writes `search_hit.jsonl`
 (not gated) over six memories the generator builds (attestations as
@@ -5552,6 +5553,183 @@ Tests: `golden_search_hit`, `search_hit_kills` (no read with
 `path_drift` off, no origin root beside an anchor, the record's own legs,
 each bucket on its field, half to even, the relevance bounds, the snippet
 budget, an escaping drift error, one prime per page).
+
+## The outer search (`search.search` and `search.rank`)
+
+`search::outer` (426 lines) reproduces units search-2a and search-2b, read
+at 59ab7955: `search.search` and `search.rank` as the reference composes
+them around the ranker, with the admission and writer filters, the browse
+branch, `hydrate`, the claim anchors, the hits built and the
+`matched_leg_out` record of which ranker surfaced each hit. `search/mod.rs`
+gains the leg sets (`Legs`, `Corpus::search_legs`) and `query_tokens`.
+Nothing here opens a store or reads the machine: every effect is an
+argument.
+
+### Map, by function
+
+| function | reference lines | needs from the machine | status |
+| --- | --- | --- | --- |
+| `_filter_candidates` | search.py 717-752 | the admission (`Admission`) | built (`filter_candidates`) |
+| `candidate_admitted` | 755-814 | the admission | built |
+| `_browse_hits` | 1330-1358 | `hydrate`, the anchoring, the drift read | built (`browse_hits`, private) |
+| the `track_legs` sets of `_rank_single_leg`, `_rescue_fuse`, `_rank_hybrid` and `_rank_candidates` | 1408-1449, 1487-1554, 1571-1639, 1656-1723 | nothing | built (`Corpus::search_legs`, `Legs`) |
+| `_ranked_hits` | 1726-1744 | the anchoring, the drift read | built (`hits`, private) |
+| `search` | 1747-1909 | the clock (the caller's), the admission, `hydrate`, the anchoring, the drift read | built (`outer::search`) |
+| `rank` | 1912-1961 | the clock, the admission | built (`outer::rank`) |
+| `search_steps._query_tokens` | search_steps.py 81-105 | nothing | built (`search::query_tokens`, which `Corpus::search` now calls) |
+| `search_steps._record_matched_legs` | 58-79 | nothing | built (`record_matched_legs`) |
+| `LEG_LEXICAL`, `LEG_EXPANSION`, `_matched_leg` | search_lane.py 536-556 | nothing | built (`matched_leg`) |
+
+### Outputs and their tiers
+
+- T2: every hit `search` returns (id, order, score, relevance,
+  `match_terms`, snippet and the fields `_build_hit` fills) and each
+  matched leg, which `handlers/search.py` turns into `memory_search`'s hit
+  rows (719-730).
+- T1: the same hits' ids, scores and legs, which the search event records
+  (`handlers/search.py` 1071-1094): the values are this unit's, the
+  event's bytes the handler's.
+- T3: `rank`'s `(id, match_terms)` list (`review.roster_for`), the calls
+  made of the admission, `hydrate` and the anchoring, and the browse order.
+
+All three are compared whole in `search_outer.jsonl`.
+
+### What each part reproduces, and the decisions
+
+- **The candidate list.** The filters run before the ranking, over every
+  record in order, and the ranked corpus is `Corpus::new` over the
+  admitted candidates in that order. Of the two ways the brief offered
+  (an admitted mask in `Options` intersected in `Corpus::filter`, or a
+  corpus built per request over the candidates), the second is taken: the
+  ranked corpus is then the reference's candidate list itself, so the BM25
+  denominator, every document frequency and `avgdl` are computed over it
+  by construction, and `Options` and `Corpus::filter` are unchanged for
+  the in-memory callers. The scope and excluded-scope filters are read
+  from `Options` and applied here; the inner ranking runs with neither.
+  `search_outer.jsonl`'s BM25 rows under an excluded scope and a model
+  filter pin the scores (1.0803 over the candidates where a ranking of
+  every record filtered after gives 2.1682).
+- **The admission.** The trait `Admission` holds the three calls the
+  reference makes: `prime` once with every record's id in order (an empty
+  list included; never for an empty query that may not browse), `home`
+  for every record in order (one the excluded scopes drop included), and
+  `admits_row(scopes, recorded)` only for a record past the excluded
+  scopes and the scope filter, with None for a record with no homes row.
+  The trait's calls return `EffectError`, which escapes as
+  `OuterError::Effect` at the call that raised, so the calls before it
+  stand and none follow. The store's implementation is unit h_search-1's:
+  it joins two built reads (`membership::queries::Membership::homes` for
+  `prime` and `home`, `store::caller::Admission::admits_row` for the
+  decision) over the request's store and membership model, which that
+  unit holds, with a memo of the homes read and the errors of both mapped
+  to `EffectError`. `store::pool::Filters::admits` keeps its own copy of
+  the predicate.
+- **The writer filters** are `identity::actor_matches` over the record's
+  declared client and model: exact, case-sensitive, and a record with no
+  actor matches neither filter.
+- **The browse.** The candidates sorted by `(updated, id)` descending
+  (`updated` by its instant), stably, then sliced with Python's slice
+  semantics; `hydrate` of a non-empty slice is taken as it answers, of any
+  length; the anchors are read over that answer; each hit has score 0.0,
+  no terms and `query_unique` 0. Candidates that mix naive and aware
+  `updated` are TypeError, as in the reference: its sort key leads with
+  `updated`, so the sort always compares such a pair (`Corpus::search`'s
+  own browse answers `InvalidInput` there, the ranker's choice, and is not
+  what this path calls). No leg is recorded.
+- **The ranked path.** The legs are recorded first, then `hydrate` is
+  called on the trimmed records when there are some; an answer of another
+  length is `SearchError::ValueError` (`zip(..., strict=True)`), with the
+  legs dict already filled, as the reference leaves it. Each hit is built
+  from the hydrated record with the ranked score and terms.
+- **The anchors.** `_claim_anchors` runs over the page before any hit is
+  built. A `ClaimAnchor` reaches the drift read through a private
+  `ReadAnchor` that holds the anchoring's path checks (`AnchorPaths`,
+  `commit_anchors::HostPaths` on a host): without a translation a path is
+  its own target, its code points kept; with one, the translation reads a
+  `str`, and a path holding a lone surrogate is answered unanchored, a gap
+  of this build (the reference translates such a path; ENG-432). No
+  product writer stores such a path, but a `verified_paths_json` cell
+  edited by hand to an escaped surrogate reads back as one on both sides.
+  The gap closes when `ClaimAnchor`, its translate memo, `expanduser`,
+  `AnchorPaths` and `MembershipModel::translate` take code points.
+- **The legs.** `Corpus::search_legs` fills `Legs` when asked and costs
+  nothing otherwise: in keyword and BM25 mode every id the leg scored; in
+  hybrid mode every id either base ranking scored; the rescue leg's ids
+  when it joined the fusion (none when its evidence withheld it). They are
+  sets of ids, not record positions, so a record a pool lists twice is one
+  id, as in the reference. `record_matched_legs` names each trimmed hit's
+  leg (lexical wins; a hit neither leg scored gets none) and sets it in
+  `LegsOut`, a dict in insertion order: an id already there keeps its place
+  and takes the new leg.
+- **`rank`** reads of `Options` the mode, `half_life_days`, `rrf_k`,
+  `conversational`, `excluded_scopes` and the provider; the scope filter,
+  the writer filters, the rescue leg, the browse and the trim are off, as
+  the reference sets them, and no hit is built.
+- **The mode and the clock.** `_check_mode` is `Mode::parse`, the caller's
+  before the call (a bad mode raises before any call of the admission).
+  The reference's default `now` is the wall clock in UTC; here `now` is
+  the caller's to read.
+- **Errors.** `OuterError::Search` (the ranker's refusals and exceptions,
+  and the length mismatch), `Drift` (a hit's drift read) and `Effect`
+  (the admission or `hydrate`).
+
+No regular expression is matched here: the tokenizer's and the ranker's
+patterns are built in their units.
+
+### Fixtures
+
+`gen_search_hit.generate_outer` writes `search_outer.jsonl` (76 KB, 68
+cases), UNICODE_GATED and PLATFORM_GATED as `search.jsonl` is (the
+ranker's score bits and the tokenizer's terms). Its twelve memories are
+`search_hit.jsonl`'s six and six more with actors exact and in other
+cases, scopes to filter on, and two pairs of tied `updated` stamps (one
+pair at one instant spelled at +00:00 and +02:00), and a thirteenth whose
+`updated` is naive, which a case ranks only where it names it. The
+admission is a stand-in with a homes table and a list of admitted
+`(scopes, project)` pairs; `hydrate` swaps, drops and appends records; the
+anchoring and the drift read are `search_hit.jsonl`'s stand-ins. Each row
+holds the hits (each field's value in the model's order, which the header
+lists, the score as its bits), the legs dict in order and every call of
+the stand-ins in one log. Rows: each filter alone and together, an empty
+scope list, the writer filters exact and in another case, the admission
+with no home, nothing admitted (with an anchoring, never asked), raising
+in `prime` and in `home`, an empty list and a record listed twice; BM25
+and keyword over filtered lists; a query repeating a token and one
+repeating a stem (`query_unique` and the relevance count distinct tokens);
+the browse with ties, a stopword query, scopes, `hydrate` shorter and
+longer, a legs dict, `max_results` 0 and negative, path drift and anchors,
+a naive `updated` beside aware ones (TypeError) and alone; `hydrate` on
+the ranked path same, shorter (ValueError), longer (ValueError), with
+nothing to hydrate, and with 1 and -2 hits; the legs of every mode, the
+rescue leg joining and not, lexical over expansion, a legs dict holding
+ids; a bad mode; `rank` over the same. An error row is an outcome row: the
+exception's class without its message (the strict zip's message words a
+length).
+
+Tests: `golden_search_outer`; `search_outer_kills` (14: a record with no
+actor under a writer filter, a case-folded match, the homes primed once in
+order and never for an empty query, a record with no home, the filters
+before the ranking, the browse key, TypeError for a browse over naive and
+aware stamps, no leg for a browse hit, lexical over expansion and an id
+keeping its place, the strict length on the ranked path and the browse
+keeping it, no `hydrate` of an empty page, the hits from the hydrated
+records, `rank` filtering by no scope and trimming nothing, `rank` running
+no rescue leg and never browsing whatever `Options` holds, the anchor's
+translation and a path's code points on the way to the drift read);
+`search_outer_robustness` (4: 400 seeded random searches over random
+corpora, filters, admissions, modes and `hydrate` lengths, keeping the
+reference's invariants; `max_results` at the integer bounds; the filter
+and the legs record growing linearly). `golden_search` and
+`golden_search_hit` pass unchanged.
+
+### Left for later units
+
+- h_search-1: the store's `Admission` (the request's admission from
+  `store::caller` with the homes read), the hydrator (the whole record's
+  loader), the anchoring and drift effects over a host, and
+  `memory_search`'s hit rows from the hits and the legs.
+- h_search-2: the hit signals and relations.
+- `review.roster_for`'s call of `rank`.
 
 ## Write-time dedup (`search_dedup.py`)
 
@@ -13137,6 +13315,7 @@ that Unicode too.
 | `golden_standing_reads`: `standing_reads_every_case`; `standing_reads_kills` (11), `standing_reads_robustness` (4) | `standing_reads.jsonl` (the last two none) | i |
 | `golden_mirror_format`: `mirror_format_every_case`; `mirror_format_kills` (10), `mirror_format_robustness` (3) | `mirror_format.jsonl` (the last two none) | i |
 | `golden_search`: `search_every_query_every_mode` | `search.jsonl` | iii |
+| `golden_search_outer`: `golden_search_outer`; `search_outer_kills` (14), `search_outer_robustness` (4) | `search_outer.jsonl` (the last two read its memories) | iii |
 | `golden_search_dedup`: `search_dedup_every_case` | `search_dedup.jsonl` | i |
 | `golden_search_dedup`: `search_dedup_unicode_every_case` | `search_dedup_unicode.jsonl` | ii (Unicode) |
 | `search_dedup_kills` (12), `search_dedup_robustness` (6) | none | i |

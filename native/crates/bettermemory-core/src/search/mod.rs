@@ -8,17 +8,18 @@
 //! a query. Every float is computed by the reference's operations in its
 //! order: see `num` for the ones that are not a single IEEE-754 operation.
 //!
-//! Where the in-memory path stops: the reference's `admission` (membership
-//! of each record's home), `client_filter`/`model_filter` (the record's
-//! actor), `anchoring`, `hydrate`, `path_drift` and the hit's snippet and
-//! drift report, and `matched_leg_out`, are not here; the store unit adds
-//! them around [`Corpus::search`]. The corpus-stats provider is here, as a
-//! callback ([`Options::corpus_stats_provider`]).
+//! The reference's `admission` (membership of each record's home),
+//! `client_filter`/`model_filter` (the record's actor), `anchoring`,
+//! `hydrate`, `path_drift`, the hit's snippet and drift report, and
+//! `matched_leg_out` are [`outer`]'s, around [`Corpus::search_legs`], which
+//! also names the ids each leg scored ([`Legs`]). The corpus-stats provider
+//! is here, as a callback ([`Options::corpus_stats_provider`]).
 
 pub mod expansion;
 pub mod hit;
 pub mod lane;
 pub mod num;
+pub mod outer;
 pub mod snippet;
 pub mod token_cache;
 
@@ -147,6 +148,27 @@ impl Default for Options<'_> {
     }
 }
 
+/// The ids each leg of a ranking scored (`_rank_candidates`'
+/// `lexical_ids` and `expansion_ids`): every id a base leg (keyword, BM25)
+/// scored, and every id the rescue leg scored when it joined the fusion.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Legs {
+    pub lexical: HashSet<String>,
+    pub expansion: HashSet<String>,
+}
+
+/// `search_steps._query_tokens(query, allow_empty_query)`: the query's
+/// tokens less stopwords, or all of them (and the fallback flag) when that
+/// leaves none of a non-empty list and the query may not be empty.
+pub fn query_tokens(query: &[u32], allow_empty_query: bool) -> (Vec<String>, bool) {
+    let raw = lexicon::tokenize(query);
+    let tokens = lexicon::strip_stopwords(&raw);
+    if tokens.is_empty() && !raw.is_empty() && !allow_empty_query {
+        return (raw, true);
+    }
+    (tokens, false)
+}
+
 /// One ranked hit: the record (its index in the corpus), the unrounded
 /// score, the score the hit carries (`round(score, 4)`), the relevance
 /// label and the match terms.
@@ -238,7 +260,7 @@ struct Query<'c> {
     candidates: Vec<u32>,
 }
 
-fn slice_len(len: usize, max_results: i64) -> usize {
+pub(crate) fn slice_len(len: usize, max_results: i64) -> usize {
     if max_results >= 0 {
         len.min(usize::try_from(max_results).unwrap_or(usize::MAX))
     } else {
@@ -400,16 +422,26 @@ impl Corpus {
         now: &DateTime,
         opts: &Options<'_>,
     ) -> Result<Vec<Hit>, SearchError> {
+        self.search_legs(query, now, opts, None)
+    }
+
+    /// [`Corpus::search`], filling `legs` (when given) with the ids each
+    /// leg scored, as the reference does when `track_legs` is set. A
+    /// browse fills nothing.
+    pub fn search_legs(
+        &self,
+        query: &[u32],
+        now: &DateTime,
+        opts: &Options<'_>,
+        mut legs: Option<&mut Legs>,
+    ) -> Result<Vec<Hit>, SearchError> {
+        if let Some(l) = legs.as_deref_mut() {
+            *l = Legs::default();
+        }
         if !now.is_valid() || opts.half_life_days.is_nan() {
             return Err(SearchError::InvalidInput);
         }
-        let raw = lexicon::tokenize(query);
-        let mut query_tokens = lexicon::strip_stopwords(&raw);
-        let mut stopword_fallback = false;
-        if query_tokens.is_empty() && !raw.is_empty() && !opts.allow_empty_query {
-            query_tokens = raw;
-            stopword_fallback = true;
-        }
+        let (query_tokens, stopword_fallback) = query_tokens(query, opts.allow_empty_query);
         if query_tokens.is_empty() && !opts.allow_empty_query {
             return Ok(Vec::new());
         }
@@ -450,7 +482,15 @@ impl Corpus {
         // order of first occurrence: `dict.fromkeys(query_tokens)`.
         let uniq: Vec<u32> = (0..q.terms.len() as u32).collect();
         let query_unique = uniq.len();
-        let scored = q.rank(query, &query_tokens, &uniq, now, opts, stopword_fallback)?;
+        let scored = q.rank(
+            query,
+            &query_tokens,
+            &uniq,
+            now,
+            opts,
+            stopword_fallback,
+            legs,
+        )?;
         let n = slice_len(scored.len(), opts.max_results);
         Ok(scored[..n]
             .iter()
@@ -953,6 +993,15 @@ impl Query<'_> {
         Ok(out)
     }
 
+    /// The ids of every record `legs` scored.
+    fn ids(&self, legs: &[&[Scored]]) -> HashSet<String> {
+        let records = &self.corpus.records;
+        legs.iter()
+            .flat_map(|leg| leg.iter())
+            .map(|s| records[s.0 as usize].id.clone())
+            .collect()
+    }
+
     fn sorted_ids(&self, leg: &[Scored]) -> Vec<u32> {
         let mut order: Vec<usize> = (0..leg.len()).collect();
         order.sort_by(|&a, &b| key_cmp(self.corpus, (leg[a].0, leg[a].1), (leg[b].0, leg[b].1)));
@@ -1026,6 +1075,7 @@ impl Query<'_> {
         now: &DateTime,
         opts: &Options<'_>,
         fallback: bool,
+        mut legs: Option<&mut Legs>,
     ) -> Result<Vec<Scored>, SearchError> {
         // `_conversational_gates`.
         let mut reading: Option<TemporalReading> = None;
@@ -1044,14 +1094,16 @@ impl Query<'_> {
             }
         }
         let mut scored = match opts.mode {
-            Mode::Keyword => {
-                let mut s = self.keyword_leg(uniq)?;
+            Mode::Keyword | Mode::Bm25 => {
+                let mut s = if opts.mode == Mode::Keyword {
+                    self.keyword_leg(uniq)?
+                } else {
+                    self.bm25_leg(uniq, fallback, corpus_stats.as_ref())?
+                };
                 s.sort_by(|a, b| key_cmp(self.corpus, (a.0, a.1), (b.0, b.1)));
-                s
-            }
-            Mode::Bm25 => {
-                let mut s = self.bm25_leg(uniq, fallback, corpus_stats.as_ref())?;
-                s.sort_by(|a, b| key_cmp(self.corpus, (a.0, a.1), (b.0, b.1)));
+                if let Some(l) = legs.as_deref_mut() {
+                    l.lexical = self.ids(&[&s]);
+                }
                 s
             }
             Mode::Hybrid => {
@@ -1074,9 +1126,12 @@ impl Query<'_> {
                 }
                 let kw = self.keyword_leg(uniq)?;
                 let bm = self.bm25_leg(uniq, fallback, hybrid_stats.as_ref())?;
+                if let Some(l) = legs.as_deref_mut() {
+                    l.lexical = self.ids(&[&kw, &bm]);
+                }
                 let mut scored = self.fuse(&[&kw, &bm], opts.rrf_k, &[1.0, 1.0])?;
                 if opts.rescue_expansion && !fallback {
-                    scored = self.rescue(scored, &kw, &bm, uniq, hybrid_stats, opts)?;
+                    scored = self.rescue(scored, &kw, &bm, uniq, hybrid_stats, opts, legs)?;
                 }
                 scored
             }
@@ -1097,6 +1152,7 @@ impl Query<'_> {
         uniq: &[u32],
         hybrid_stats: Option<CorpusStats>,
         opts: &Options<'_>,
+        legs: Option<&mut Legs>,
     ) -> Result<Vec<Scored>, SearchError> {
         let coverage = match scored.first() {
             Some((_, _, matched)) => {
@@ -1137,6 +1193,9 @@ impl Query<'_> {
         let evidence = top.map_or(0, |t| t.2.len());
         if leg.is_empty() || evidence < RESCUE_LEG_MIN_EVIDENCE {
             return Ok(scored);
+        }
+        if let Some(l) = legs {
+            l.expansion = self.ids(&[&leg]);
         }
         let fused = self.fuse(&[kw, bm, &leg], opts.rrf_k, &[1.0, 1.0, RESCUE_LEG_WEIGHT])?;
         Ok(fused

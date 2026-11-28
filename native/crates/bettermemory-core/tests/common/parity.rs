@@ -348,6 +348,7 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // `strftime`'s `%Y` of a year before 1000 is the C library's.
         "models_text_platform.jsonl" => &[Python, Platform],
         "search.jsonl"
+        | "search_outer.jsonl"
         | "search_ranker.jsonl"
         | "search_store.jsonl"
         | "store_files.jsonl"

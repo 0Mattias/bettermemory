@@ -429,6 +429,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "search_snippet": gen_search_snippet.generate,
     "search_snippet_unicode": gen_search_snippet.generate_unicode,
     "search_hit": gen_search_hit.generate,
+    "search_outer": gen_search_hit.generate_outer,
     "store_path": gen_store_path.generate,
     "datetime": gen_time.generate,
     "argparse": gen_argparse.generate,
@@ -847,6 +848,8 @@ UNICODE_GATED = frozenset(
         "store_path",
         "store_files",
         "search_ranker",
+        # The ranker's terms around `search.search` (`gen_search_hit`).
+        "search_outer",
         "search_dedup_unicode",
         # `str.lower`, `str.split`, `str.isdigit`, `\b`, `\d` and the tokenizer
         # past ASCII (`gen_supersession_features`).
@@ -1342,6 +1345,8 @@ PLATFORM_GATED = frozenset(
         # Whether the scratch volume folds case (`gen_scope_match`).
         "scope_match_volume",
         "search_ranker",
+        # The ranker's score bits around `search.search` (`gen_search_hit`).
+        "search_outer",
         "store",
         "store_path",
         "store_files",

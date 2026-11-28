@@ -161,8 +161,10 @@
 //!   id, the hostname, the id file's object and the two files read;
 //!   `open_machine` and `_write_record`, with the machine's own reads);
 //! - [`search`]: `search.search` over records in memory, bit for bit,
-//!   the query-biased snippet and its memos, the token cache, and each
-//!   hit with its drift report and the page's claim anchors (`hit`);
+//!   the query-biased snippet and its memos, the token cache, each hit
+//!   with its drift report and the page's claim anchors (`hit`), and the
+//!   outer `search` and `rank` with the admission and writer filters, the
+//!   browse, `hydrate` and the leg each hit was found by (`outer`);
 //! - [`search_dedup`]: write-time dedup, the Jaccard scorer and its
 //!   token cache;
 //! - [`supersession`]: write-time supersession: the cue table, the
